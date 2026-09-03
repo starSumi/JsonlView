@@ -1,22 +1,14 @@
 {
-  "name": "@sumi-lab/jsonl-view",
+  "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "momo",
   "license": "UNLICENSED",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/starSumi/JsonlView.git"
   },
-  "files": [
-    "dist",
-    "native/jsonl-core",
-    "docs",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE.txt"
-  ],
   "type": "module",
   "main": "./dist/extension.cjs",
   "engines": {
@@ -121,7 +113,7 @@
     "build": "node esbuild.mjs",
     "benchmark:engine": "node scripts/benchmark-engine.mjs",
     "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
-    "native:build": "napi build --cwd native/jsonl-core --platform --release --output-dir . --no-js --no-dts-header",
+    "native:build": "node scripts/build-native.mjs",
     "native:check": "cargo check --manifest-path native/jsonl-core/Cargo.toml",
     "native:fmt": "cargo fmt --manifest-path native/jsonl-core/Cargo.toml -- --check",
     "native:test": "cargo test --manifest-path native/jsonl-core/Cargo.toml",
@@ -130,7 +122,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package:vsix": "pnpm native:verify && pnpm build && vsce package --no-dependencies --allow-missing-repository --out jsonl-view.vsix"
+    "package:vsix": "pnpm native:verify && pnpm build && vsce package --no-dependencies --allow-missing-repository --out jsonl-view.vsix",
+    "package:npm": "node scripts/prepare-npm-package.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "3.14.10",

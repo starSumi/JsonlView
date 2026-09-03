@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Separated the valid unscoped VS Code extension manifest from the generated
+  `@sumi-lab/jsonl-view` npm package metadata.
+- Added reproducible native release path remapping to keep builder directories
+  out of the distributed addon.
+
 ## 0.1.0
 
 - Added bounded JSONL byte indexing, lazy hydration, malformed-record retention,

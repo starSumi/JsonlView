@@ -5,4 +5,4 @@ coverage/
 *.log
 .jsonlview-cache/
 .vscode-test/
-
+npm-package/
