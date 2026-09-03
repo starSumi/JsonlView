@@ -1,0 +1,11 @@
+{
+  "name": "@jsonl-view/jsonl-core",
+  "version": "0.1.0",
+  "private": true,
+  "napi": {
+    "binaryName": "jsonl_core",
+    "targets": [
+      "x86_64-pc-windows-msvc"
+    ]
+  }
+}

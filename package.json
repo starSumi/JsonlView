@@ -1,0 +1,158 @@
+{
+  "name": "@sumi-lab/jsonl-view",
+  "displayName": "JsonlView",
+  "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
+  "version": "0.1.0",
+  "publisher": "momo",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "files": [
+    "dist",
+    "native/jsonl-core",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.txt"
+  ],
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "engines": {
+    "vscode": "^1.126.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "jsonl",
+    "ndjson",
+    "logs",
+    "agent",
+    "codex",
+    "claude",
+    "opentelemetry",
+    "trace",
+    "observability"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "JsonlView currently requires file-backed random access."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "jsonlView.open",
+        "title": "JsonlView: Open as Data Studio",
+        "icon": "$(table)"
+      },
+      {
+        "command": "jsonlView.rebuildIndex",
+        "title": "JsonlView: Rebuild Index",
+        "icon": "$(refresh)"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "jsonlView.editor",
+        "displayName": "JsonlView Data Studio",
+        "selector": [
+          {
+            "filenamePattern": "*.jsonl"
+          },
+          {
+            "filenamePattern": "*.ndjson"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "JsonlView",
+      "properties": {
+        "jsonlView.hydration.maxBytes": {
+          "type": "number",
+          "default": 1048576,
+          "minimum": 65536,
+          "maximum": 4194304,
+          "description": "Maximum bytes automatically hydrated for one JSONL record."
+        },
+        "jsonlView.pageSize": {
+          "type": "number",
+          "default": 100,
+          "minimum": 20,
+          "maximum": 500,
+          "description": "Rows requested per viewport page."
+        },
+        "jsonlView.profile.autoDetect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Suggest a semantic profile when bounded samples provide sufficient evidence."
+        },
+        "jsonlView.native.newlineScanner": {
+          "type": "string",
+          "enum": [
+            "off",
+            "auto",
+            "on"
+          ],
+          "enumDescriptions": [
+            "Use the adaptive Node scanner and never probe native code.",
+            "Experimentally benchmark the native scanner on win32-x64 and keep it only when it wins by at least 10%.",
+            "Prefer the native scanner, with ABI validation and automatic fallback on any failure."
+          ],
+          "default": "off",
+          "description": "Experimental Rust newline scanner. Native failures always fall back to the bounded Node implementation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "benchmark:engine": "node scripts/benchmark-engine.mjs",
+    "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
+    "native:build": "napi build --cwd native/jsonl-core --platform --release --output-dir . --no-js --no-dts-header",
+    "native:check": "cargo check --manifest-path native/jsonl-core/Cargo.toml",
+    "native:fmt": "cargo fmt --manifest-path native/jsonl-core/Cargo.toml -- --check",
+    "native:test": "cargo test --manifest-path native/jsonl-core/Cargo.toml",
+    "native:verify": "node scripts/verify-native-addon.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:vsix": "pnpm native:verify && pnpm build && vsce package --no-dependencies --allow-missing-repository --out jsonl-view.vsix"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "3.14.10",
+    "lucide-react": "1.37.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.8.6",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@types/vscode": "1.120.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "packageManager": "pnpm@10.26.0",
+  "volta": {
+    "node": "24.15.0",
+    "pnpm": "10.26.0"
+  }
+}

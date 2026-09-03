@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+*.vsix
+*.log
+.jsonlview-cache/
+.vscode-test/
+
