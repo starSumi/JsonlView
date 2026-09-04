@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Added reviewed product screenshots for the table, tree, schema, and Insights
+  views.
+- Moved synthetic fixtures and acceptance reports to the companion
+  `JsonlView-harness` workspace.
+- Added third-party license notices for bundled runtime dependencies.
+
 ## 0.1.5
 
 - Removed a private benchmark-sized value from a public test fixture.

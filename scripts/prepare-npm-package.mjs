@@ -24,7 +24,7 @@ const packageJson = {
   repository: sourcePackage.repository,
   type: sourcePackage.type,
   main: './dist/extension.cjs',
-  files: ['dist', 'native/jsonl-core', 'docs', 'README.md', 'CHANGELOG.md', 'LICENSE.txt'],
+  files: ['dist', 'native/jsonl-core', 'docs', 'README.md', 'CHANGELOG.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'],
   publishConfig: { access: 'public', registry: 'https://registry.npmjs.org' },
 };
 await writeFile(resolve(output, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
@@ -40,7 +40,7 @@ for (const path of [
   await cp(resolve(root, path), resolve(output, path));
 }
 await cp(resolve(root, 'docs'), resolve(output, 'docs'), { recursive: true });
-for (const path of ['README.md', 'CHANGELOG.md', 'LICENSE.txt']) {
+for (const path of ['README.md', 'CHANGELOG.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt']) {
   await cp(resolve(root, path), resolve(output, path));
 }
 console.log(`Prepared npm package at ${output}`);

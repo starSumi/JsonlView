@@ -15,18 +15,40 @@ It opens `.jsonl` and `.ndjson` as an optional read-only custom editor with:
   derived semantics, and Agent content containers with Auto/Text/Markdown/JSON modes,
   and byte-boundary detail views;
 - source generation tracking, stale-message rejection, manual rebuild, and follow mode;
-- flicker-free tail follow that keeps the prior page visible until the verified
-  append generation can replace it atomically;
+- tail follow that keeps the prior page visible until a verified append
+  generation can replace it atomically;
 - on-demand category and time-bucket Insights with cancellation and hard scan limits.
 
 The source file remains authoritative. JsonlView never edits it, executes its
 contents, or sends records over the network. File-backed resources are required
 in this release.
 
+## Visual examples
+
+These screenshots use synthetic fixtures maintained in the companion
+`JsonlView-harness` checkout. They show the workbench across agent events,
+telemetry, and aggregate analysis.
+
+### Codex Rollout - Table
+
+![Codex Rollout table](docs/assets/codex-rollout-table.png)
+
+### Generic Agent Events - Table and Tree
+
+![Generic Agent Events table with Tree detail](docs/assets/generic-agent-table-tree.png)
+
+### OpenTelemetry - Schema and Tree
+
+![OpenTelemetry schema with Tree detail](docs/assets/opentelemetry-schema-tree.png)
+
+### Claude Code Session - Insights
+
+![Claude Code Session insights](docs/assets/claude-code-insights.png)
+
 ## Product boundary
 
-JSONL is the current physical format, not the product's semantic ceiling. A
-profile may interpret one JSONL record as an application log, OTel log/span,
+JSONL is the current physical format, while profiles provide the semantic view.
+A profile may interpret one JSONL record as an application log, OTel log/span,
 request event, Codex/Claude event, or software-engineering Agent step. Profiles
 do not own file I/O and cannot rewrite, drop, or split the authoritative record.
 

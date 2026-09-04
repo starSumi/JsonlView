@@ -61,7 +61,7 @@ until packaged Extension Host and crash-loop gates exist.
 
 ## Phase B: text and predicate scans
 
-Algorithms are selected by query shape, not prestige:
+Algorithms are selected by the measured query shape:
 
 | Query | Candidate algorithm | Correctness step |
 | --- | --- | --- |
