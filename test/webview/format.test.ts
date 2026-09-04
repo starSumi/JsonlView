@@ -45,6 +45,6 @@ describe('webview formatting selectors', () => {
   });
 
   it('formats decimal byte strings without changing their stored representation', () => {
-    expect(formatBytes('280605706')).toBe('267.6 MB');
+    expect(formatBytes('123456789')).toBe('117.7 MB');
   });
 });

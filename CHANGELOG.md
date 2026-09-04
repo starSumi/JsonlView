@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- Removed a private benchmark-sized value from a public test fixture.
+
+## 0.1.4
+
+- Set the VS Code Marketplace and Open VSX publisher identity to
+  `Sumi-Sophia`; the generated npm package remains `@sumi-labs/jsonl-view`.
+
 ## 0.1.3
 
 - Removed private corpus size and performance metadata from the public
