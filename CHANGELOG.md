@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Removed private corpus size and performance metadata from the public
+  acceleration roadmap; public claims now point to reproducible synthetic
+  benchmark inputs.
+
 ## 0.1.2
 
 - Corrected the generated npm package scope to `@sumi-labs/jsonl-view`.
