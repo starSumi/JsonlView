@@ -1,9 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Corrected the generated npm package scope to `@sumi-labs/jsonl-view`.
+
 ## 0.1.1
 
 - Separated the valid unscoped VS Code extension manifest from the generated
-  `@sumi-lab/jsonl-view` npm package metadata.
+  scoped npm package metadata.
 - Added reproducible native release path remapping to keep builder directories
   out of the distributed addon.
 

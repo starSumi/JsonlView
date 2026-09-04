@@ -103,6 +103,6 @@ and [`docs/acceleration-roadmap.md`](docs/acceleration-roadmap.md).
 ## Package distribution
 
 The VSIX is the normal installation path for VS Code. The same runtime can be
-prepared as `@sumi-lab/jsonl-view` for the Sumi Lab package namespace with
+prepared as `@sumi-labs/jsonl-view` for the Sumi Labs package namespace with
 `pnpm package:npm`. The generated npm package is source-available under
 `LICENSE.txt` and is not an open-source license grant.

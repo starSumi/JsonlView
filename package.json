@@ -2,7 +2,7 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "momo",
   "license": "UNLICENSED",
   "repository": {

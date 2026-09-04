@@ -17,7 +17,7 @@ run('pnpm', ['native:build']);
 
 const sourcePackage = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const packageJson = {
-  name: '@sumi-lab/jsonl-view',
+  name: '@sumi-labs/jsonl-view',
   version: sourcePackage.version,
   description: sourcePackage.description,
   license: sourcePackage.license,
