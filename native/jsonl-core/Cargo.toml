@@ -1,9 +1,9 @@
 [package]
 name = "jsonl-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-license = "UNLICENSED"
+license = "MIT"
 publish = false
 
 [lib]
@@ -11,11 +11,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 memchr = "2.8.3"
-napi = { version = "3.12.2", default-features = false, features = ["napi8"] }
-napi-derive = "3.6.3"
+napi = { version = "3.12.4", default-features = false, features = ["napi8"] }
+napi-derive = "3.6.5"
 
 [build-dependencies]
-napi-build = "2.4.1"
+napi-build = "2.4.2"
 
 [profile.release]
 lto = "thin"

@@ -55,9 +55,20 @@ export function getColumnText(row: RowProjection, columnId: string): string {
 export function visibleColumns(
   columns: ColumnSpec[],
   visibility: Record<string, boolean>,
+  order: readonly string[] = [],
 ): ColumnSpec[] {
-  const candidates = [ORDINAL_COLUMN, ...columns.filter((column) => column.id !== '$ordinal')];
-  const selected = candidates.filter((column) => visibility[column.id] !== false);
+  const byId = new Map(columns.filter((column) => column.id !== '$ordinal').map((column) => [column.id, column]));
+  const ordered = order
+    .map((id) => byId.get(id))
+    .filter((column): column is ColumnSpec => column !== undefined);
+  for (const column of columns) {
+    if (column.id !== '$ordinal' && !ordered.some((candidate) => candidate.id === column.id)) ordered.push(column);
+  }
+  const candidates = [ORDINAL_COLUMN, ...ordered];
+  // The physical ordinal is the only stable cursor users can correlate across
+  // filters, rebuilds, and sorted views, so it is always the first visible
+  // column and cannot be hidden or reordered.
+  const selected = candidates.filter((column) => column.id === '__ordinal' || visibility[column.id] !== false);
   return selected.length > 0 ? selected : [ORDINAL_COLUMN];
 }
 

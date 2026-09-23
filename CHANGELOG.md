@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.2.0 - 2026-09-23
+
+- Release JsonlView under the MIT License.
+- Build npm and VSIX packages from the same frozen JavaScript, CSS, and native
+  inputs. The release gate now inspects the exact `.tgz` and VSIX archives,
+  checks both embedded identities, and rejects duplicate or unexpected paths.
+- Keep sorted views on the nearest valid page after a rebuild shrinks the
+  result set; incomplete scans no longer guess a replacement offset.
+- Bound array probing, command formatting, diff projection, Claude content
+  blocks, syntax highlighting, and Raw rendering before they create large DOM
+  trees. Large Raw records now use navigable source chunks while Copy keeps the
+  complete hydrated value.
+- Bind the rebuilt native addon's SHA-256 to both distribution manifests and
+  re-open the finished VSIX to hash the embedded binary before promotion.
+- Render Codex `FileChange` unified diffs in a dedicated bounded view with
+  numbered context, green additions, red removals, and Raw/Copy preservation;
+  support both path-keyed change maps and array-shaped changes.
+- Render Codex command arrays as wrapped Shell/PowerShell code and format
+  common one-line Code Mode JavaScript objects/statements for display while
+  preserving the original command/input for Copy and Raw.
+- Add an explicit, separately bounded full-record hydration action for oversized
+  details; list hydration remains conservative and never becomes unbounded.
+- Refresh React, virtual-list, icon, type, and napi-rs dependencies to current
+  compatible releases; keep major-version migrations as separately validated
+  work.
+- Add a V8 coverage command and CI thresholds focused on product source files.
+- Harden scheduled dependency freshness checks with compact registry requests,
+  bounded retries, and visible degraded failures.
+- Document the marketplace/private-gallery update boundary and reject an
+  activation-time self-updater that would bypass editor trust semantics.
+- Preserve the active physical page across manual rebuilds, including source
+  invalidation, cancellation, shrinking files, and late generation messages;
+  keep unfinished page drafts separate from submitted requests.
+- Add a plan-only promotion coordinator that joins candidate provenance and
+  leaves local VS Code, GitHub, npm, Open VSX, and Marketplace as independent
+  authorization/readback lanes.
+- Recognize Claude Code job timelines (`at/state/detail/text`) as lifecycle
+  events, preserving timestamps and state evidence instead of rendering rows as
+  `other`.
+- Recognize the observed Claude command-history surface with normalized
+  timestamps and explicit project/session evidence; keep the profile id stable
+  while versioning its projection contract.
+- Render Claude assistant and job-timeline text through the bounded Markdown
+  container while keeping user prompts, tool output, and ordinary logs in their
+  safer Auto/Text paths.
+- Add pull-request CI, weekly dependency freshness reports, Dependabot upkeep,
+  and an external benchmark trend report with comparable-workload baselines.
+- Keep native benchmark probes on the shared ABI contract, record benchmark
+  provenance, and run the packaged native smoke on Windows CI independently of
+  the registry-backed freshness report.
+- Harden pnpm-facing maintenance and promotion CLIs so one forwarded `--`
+  separator is accepted while a second separator remains an explicit error.
+- Bound sorted query candidates to lightweight index references, rehydrate only
+  the visible window, and preserve a logical continuation when page hydration
+  reaches its cap; sparse bounded scans no longer advertise a phantom next page.
+- Mark filtered results as partial when a record cannot be inspected under the
+  record hydration/parser boundary instead of silently treating it as a miss.
+- Keep the additive scan-reason value backward-tolerant in the Webview, so a
+  stale client shows a generic scan-limit label instead of rendering a blank
+  status.
+- Route structured tool output through JSON-aware containers, unwrap bounded
+  double-serialized documents, and offer conservative Shell/PowerShell/Rust/
+  Python/JavaScript code highlighting without changing the copied source.
+- Keep the first structured output preview small, while `Show full` can render
+  an ordinary object/array up to a separate finite expansion budget; larger
+  values remain explicitly Raw-only instead of silently losing content.
+- Align the extension engine and VS Code type baseline to the portable VS Code
+  1.136 runtime so candidate VSIX packaging validates the actual acceptance host.
+
 ## 0.1.6
 
 - Added reviewed product screenshots for the table, tree, schema, and Insights

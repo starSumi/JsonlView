@@ -2,7 +2,15 @@ node_modules/
 dist/
 coverage/
 *.vsix
+*.tgz
 *.log
+*.provenance.json
+.env
+.env.*
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
 .jsonlview-cache/
 .vscode-test/
-npm-package/

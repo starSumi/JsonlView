@@ -7,16 +7,17 @@ export {
   type BackgroundIndexHandle,
   type EngineDiagnostics,
   type GetDetailOptions,
+  type GetProblemsOptions,
   type GetRowsOptions,
   type IndexMoreOptions,
   type JsonlEngineOptions,
   type NativeNewlineScannerSetting,
   type JsonlOperationContext,
   type RowEnricher,
-  type RowScanBudget,
   type SourceRefreshKind,
   type SourceRefreshResult,
 } from './jsonl-engine';
+export type { RowScanBudget } from '../shared/types';
 export { JsonlEngineError, isAbortError, type EngineErrorCode } from './errors';
 export {
   evaluatePredicate,

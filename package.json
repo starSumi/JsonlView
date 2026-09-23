@@ -2,17 +2,37 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "publisher": "Sumi-Sophia",
-  "license": "UNLICENSED",
+  "private": false,
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/starSumi/JsonlView.git"
   },
+  "homepage": "https://github.com/starSumi/JsonlView#readme",
+  "bugs": {
+    "url": "https://github.com/starSumi/JsonlView/issues"
+  },
+  "files": [
+    "dist",
+    "native/jsonl-core/*.node",
+    "native/jsonl-core/index.d.ts",
+    "native/jsonl-core/package.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.txt",
+    "THIRD-PARTY-NOTICES.txt",
+    "docs/acceleration-roadmap.md",
+    "docs/format-and-profile-boundaries.md",
+    "docs/decisions",
+    "docs/assets",
+    "third_party/licenses"
+  ],
   "type": "module",
   "main": "./dist/extension.cjs",
   "engines": {
-    "vscode": "^1.126.0"
+    "vscode": "^1.136.0"
   },
   "extensionKind": [
     "workspace"
@@ -79,6 +99,20 @@
           "maximum": 4194304,
           "description": "Maximum bytes automatically hydrated for one JSONL record."
         },
+        "jsonlView.hydration.fullMaxBytes": {
+          "type": "number",
+          "default": 16777216,
+          "minimum": 1048576,
+          "maximum": 268435456,
+          "description": "Maximum bytes read when Show full is explicitly requested for one record."
+        },
+        "jsonlView.hydration.pageMaxBytes": {
+          "type": "number",
+          "default": 8388608,
+          "minimum": 1048576,
+          "maximum": 268435456,
+          "description": "Soft aggregate bytes hydrated for one visible page; one boundary record may exceed it to preserve progress."
+        },
         "jsonlView.pageSize": {
           "type": "number",
           "default": 100,
@@ -112,36 +146,54 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "benchmark:engine": "node scripts/benchmark-engine.mjs",
+    "benchmark:trend": "node scripts/benchmark-trend.mjs",
     "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
+    "check:dependencies": "node scripts/check-dependency-freshness.mjs",
+    "check:cargo-notices": "node scripts/check-cargo-notices.mjs",
+    "generate:cargo-notices": "node scripts/generate-cargo-notices.mjs",
+    "check:runtime-notices": "node scripts/check-runtime-notices.mjs",
+    "audit:cargo": "cargo audit --file native/jsonl-core/Cargo.lock",
+    "check:cargo-policy": "cargo deny --manifest-path native/jsonl-core/Cargo.toml --config deny.toml check advisories licenses bans sources",
+    "discover:producers": "node scripts/discover-producer-surfaces.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "promotion:plan": "node scripts/promotion-plan.mjs",
+    "sync:local": "node scripts/sync-local-extension.mjs",
+    "package:npm": "node scripts/prepare-npm-package.mjs",
     "native:build": "node scripts/build-native.mjs",
     "native:check": "cargo check --manifest-path native/jsonl-core/Cargo.toml",
     "native:fmt": "cargo fmt --manifest-path native/jsonl-core/Cargo.toml -- --check",
+    "native:clippy": "cargo clippy --manifest-path native/jsonl-core/Cargo.toml --all-targets --locked -- -D warnings",
     "native:test": "cargo test --manifest-path native/jsonl-core/Cargo.toml",
     "native:verify": "node scripts/verify-native-addon.mjs",
     "watch": "node esbuild.mjs --watch",
+    "check:contract": "node scripts/check-engineering-contract.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "package:vsix": "pnpm native:verify && pnpm build && vsce package --no-dependencies --allow-missing-repository --out jsonl-view.vsix",
-    "package:npm": "node scripts/prepare-npm-package.mjs"
+    "package:vsix": "node scripts/package-vsix.mjs",
+    "package:vsix:candidate": "node scripts/package-vsix-candidate.mjs"
   },
   "dependencies": {
-    "@tanstack/react-virtual": "3.14.10",
-    "lucide-react": "1.37.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "@tanstack/react-virtual": "3.14.13",
+    "lucide-react": "1.47.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.8.6",
-    "@types/node": "24.10.1",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
-    "@types/vscode": "1.120.0",
+    "@napi-rs/cli": "3.10.5",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/vscode": "1.136.0",
+    "@vitest/coverage-v8": "5.0.1",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.2",
+    "tar": "7.5.22",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "5.0.1",
+    "yauzl": "3.4.0"
   },
   "packageManager": "pnpm@10.26.0",
   "volta": {

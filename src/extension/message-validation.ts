@@ -3,6 +3,7 @@ import {
   type FieldPath,
   type Predicate,
   type RecordRef,
+  type RowScanBudget,
   type WebviewRequest,
 } from '../shared/types';
 
@@ -10,6 +11,9 @@ const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_QUERY_DEPTH = 16;
 const MAX_QUERY_NODES = 256;
 const MAX_QUERY_STRING = 16 * 1024;
+const MAX_SCAN_RECORDS = 1_000_000;
+const MAX_SCAN_BYTES = 512 * 1024 * 1024;
+const MAX_SCAN_AHEAD_MS = 60_000;
 
 export interface ValidationResult {
   ok: boolean;
@@ -29,6 +33,9 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
   }
   if (!isBoundedString(value.documentId, 256) || !isBoundedString(value.generation, 256)) {
     return failure('Document identity is required.');
+  }
+  if (value.epoch !== undefined && (!Number.isSafeInteger(value.epoch) || Number(value.epoch) < 0)) {
+    return failure('Epoch must be a non-negative safe integer.');
   }
   if (!isBoundedString(value.requestId, MAX_REQUEST_ID_LENGTH)) {
     return failure('Request id is required.');
@@ -58,11 +65,58 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
       ) {
         return failure('Invalid row direction.');
       }
+      if (value.payload.sort !== undefined && !isRowSort(value.payload.sort)) {
+        return failure('Invalid row sort.');
+      }
+      if (
+        value.payload.sort !== undefined
+        && (value.payload.anchorOrdinal !== undefined || value.payload.direction !== undefined)
+      ) {
+        return failure('Sorted rows cannot include a physical anchor or direction.');
+      }
+      const sortOffset = value.payload.sortOffset;
+      if (sortOffset !== undefined && !isDecimalString(sortOffset)) {
+        return failure('Sorted row offset must be a decimal string.');
+      }
+      if (sortOffset !== undefined && value.payload.sort === undefined) {
+        return failure('Sorted row offset requires a sort descriptor.');
+      }
+      if (
+        sortOffset !== undefined
+        && isRowSort(value.payload.sort)
+        && typeof sortOffset === 'string'
+        && BigInt(sortOffset) + BigInt(Number(limit)) > 2_048n
+      ) {
+        return failure('Sorted row offset plus limit is outside the bounded result window.');
+      }
+      if (value.payload.scanBudget !== undefined && !isRowScanBudget(value.payload.scanBudget)) {
+        return failure('Invalid or over-budget row scan allowance.');
+      }
       if (value.payload.predicate !== undefined) {
         const budget = { nodes: 0 };
         if (!isPredicate(value.payload.predicate, 0, budget)) {
           return failure('Invalid or over-budget query predicate.');
         }
+      }
+      break;
+    }
+    case 'GET_PROBLEMS': {
+      const limit = value.payload.limit;
+      if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 200) {
+        return failure('Problem limit must be between 1 and 200.');
+      }
+      if (value.payload.anchorOrdinal !== undefined && !isDecimalString(value.payload.anchorOrdinal)) {
+        return failure('Problem anchor must be a decimal string.');
+      }
+      if (
+        value.payload.direction !== undefined
+        && value.payload.direction !== 'forward'
+        && value.payload.direction !== 'backward'
+      ) {
+        return failure('Invalid problem direction.');
+      }
+      if (value.payload.scanBudget !== undefined && !isRowScanBudget(value.payload.scanBudget)) {
+        return failure('Invalid or over-budget problem scan allowance.');
       }
       break;
     }
@@ -121,6 +175,12 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
   return { ok: true, request: value as unknown as WebviewRequest };
 }
 
+function isRowSort(value: unknown): value is { columnId: string; direction: 'asc' | 'desc' } {
+  return isObject(value)
+    && isBoundedString(value.columnId, 256)
+    && (value.direction === 'asc' || value.direction === 'desc');
+}
+
 function isPredicate(value: unknown, depth: number, budget: { nodes: number }): value is Predicate {
   if (!isObject(value) || depth > MAX_QUERY_DEPTH || ++budget.nodes > MAX_QUERY_NODES) {
     return false;
@@ -175,6 +235,16 @@ function isPredicate(value: unknown, depth: number, budget: { nodes: number }): 
         ['eq', 'ne', 'lt', 'lte', 'gt', 'gte'].includes(String(value.cmp)) &&
         isScalar(value.value)
       );
+    case 'profile_text':
+      return (
+        isBoundedString(value.field, 128)
+        && ['contains', 'starts_with', 'ends_with'].includes(String(value.cmp))
+        && isBoundedString(value.value, MAX_QUERY_STRING)
+        && typeof value.caseSensitive === 'boolean'
+      );
+    case 'profile_exists':
+    case 'profile_is_null':
+      return isBoundedString(value.field, 128);
     default:
       return false;
   }
@@ -209,6 +279,36 @@ function isRecordRef(value: unknown): value is RecordRef {
       String(value.parseState),
     )
   );
+}
+
+function isRowScanBudget(value: unknown): value is RowScanBudget {
+  if (!isObject(value)) return false;
+  const hasRecords = value.maxExaminedRecords !== undefined;
+  const hasBytes = value.maxExaminedBytes !== undefined;
+  const hasDeadline = value.deadlineEpochMs !== undefined;
+  if (!hasRecords && !hasBytes && !hasDeadline) return false;
+  if (hasRecords && (
+    !Number.isSafeInteger(value.maxExaminedRecords)
+    || Number(value.maxExaminedRecords) < 1
+    || Number(value.maxExaminedRecords) > MAX_SCAN_RECORDS
+  )) return false;
+  if (hasBytes) {
+    let bytes: bigint;
+    try {
+      if (typeof value.maxExaminedBytes === 'bigint') bytes = value.maxExaminedBytes;
+      else if (isDecimalString(value.maxExaminedBytes)) bytes = BigInt(value.maxExaminedBytes);
+      else return false;
+    } catch {
+      return false;
+    }
+    if (bytes < 1n || bytes > BigInt(MAX_SCAN_BYTES)) return false;
+  }
+  if (hasDeadline && (
+    !Number.isSafeInteger(value.deadlineEpochMs)
+    || Number(value.deadlineEpochMs) < 0
+    || Number(value.deadlineEpochMs) > Date.now() + MAX_SCAN_AHEAD_MS
+  )) return false;
+  return true;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

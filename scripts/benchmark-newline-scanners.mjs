@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { assertNativeContract, readNativeContract } from './native-contract.mjs';
 
 const PAGE_CAPACITY = 16 * 1024;
 function main() {
@@ -37,19 +38,17 @@ const results = {
 };
 
 if (native === undefined) {
-  results.scanners.nativeScanLfInto = { available: false };
+  results.scanners.nativeScanLf = { available: false };
 } else {
-  const contract = { abiVersion: native.binding.abiVersion(), capabilities: native.binding.capabilities() };
-  if (contract.abiVersion !== 1 || (contract.capabilities & 1) === 0) {
-    throw new Error(`native ABI mismatch: ${JSON.stringify(contract)}`);
-  }
+  const contract = readNativeContract(native.binding);
+  assertNativeContract(contract);
   assertSame('native vs Buffer.indexOf full input', fingerprint(scanNative(input, native.binding)), expected);
   assertSame(
     'native vs old JS loop reference sample',
     fingerprint(scanNative(referenceInput, native.binding)),
     referenceFingerprint,
   );
-  results.scanners.nativeScanLfInto = {
+  results.scanners.nativeScanLf = {
     available: true,
     path: native.path,
     contract,
@@ -106,7 +105,7 @@ function scanNative(buffer, binding) {
     }
     pages.add(output, count);
     start = previous + 1;
-    if (count < output.length) break;
+    if (count < PAGE_CAPACITY) break;
   }
   return pages;
 }
@@ -210,16 +209,20 @@ function loadNative() {
 }
 
 function parseArguments(arguments_) {
+  arguments_ = arguments_[0] === '--' ? arguments_.slice(1) : arguments_;
   const parsed = { sizeMiB: 32, lineBytes: 256, warmup: 2, rounds: 9, file: undefined };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
     const next = arguments_[index + 1];
-    if (argument === '--file' && next !== undefined) parsed.file = next;
-    else if (argument === '--size-mib' && next !== undefined) parsed.sizeMiB = positiveInteger(next, argument);
-    else if (argument === '--line-bytes' && next !== undefined) parsed.lineBytes = positiveInteger(next, argument);
-    else if (argument === '--warmup' && next !== undefined) parsed.warmup = positiveInteger(next, argument);
-    else if (argument === '--rounds' && next !== undefined) parsed.rounds = positiveInteger(next, argument);
-    else continue;
+    if (!['--file', '--size-mib', '--line-bytes', '--warmup', '--rounds'].includes(argument)) {
+      throw new Error(`unknown argument: ${argument}`);
+    }
+    if (next === undefined || next.startsWith('--')) throw new Error(`${argument} requires a value`);
+    if (argument === '--file') parsed.file = next;
+    else if (argument === '--size-mib') parsed.sizeMiB = positiveInteger(next, argument);
+    else if (argument === '--line-bytes') parsed.lineBytes = positiveInteger(next, argument);
+    else if (argument === '--warmup') parsed.warmup = positiveInteger(next, argument);
+    else if (argument === '--rounds') parsed.rounds = positiveInteger(next, argument);
     index += 1;
   }
   return parsed;

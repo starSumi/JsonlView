@@ -1,10 +1,13 @@
 import { build, context } from 'esbuild';
 import { rm } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const watch = process.argv.includes('--watch');
 const production = !watch;
+const outputDirectory = resolve(process.env.JSONLVIEW_DIST_OUTPUT ?? fileURLToPath(new URL('./dist/', import.meta.url)));
 
-await rm(new URL('./dist/', import.meta.url), { recursive: true, force: true });
+await rm(outputDirectory, { recursive: true, force: true });
 
 const extensionOptions = {
   entryPoints: ['src/extension/extension.ts'],
@@ -12,7 +15,7 @@ const extensionOptions = {
   format: 'cjs',
   platform: 'node',
   target: 'node22',
-  outfile: 'dist/extension.cjs',
+  outfile: resolve(outputDirectory, 'extension.cjs'),
   external: ['vscode'],
   sourcemap: !production,
   minify: production,
@@ -25,7 +28,7 @@ const webviewOptions = {
   format: 'iife',
   platform: 'browser',
   target: 'es2022',
-  outfile: 'dist/webview.js',
+  outfile: resolve(outputDirectory, 'webview.js'),
   sourcemap: !production,
   minify: production,
   define: {

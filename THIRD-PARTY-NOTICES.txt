@@ -1,6 +1,6 @@
 JsonlView bundles the following third-party runtime dependencies.
 
-react 19.2.8
+react 19.3.0
 Copyright (c) Meta Platforms, Inc. and affiliates.
 MIT License
 
@@ -22,7 +22,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-scheduler 0.27.0
+scheduler 0.28.0
 Copyright (c) Meta Platforms, Inc. and affiliates.
 MIT License
 
@@ -44,7 +44,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-@tanstack/virtual-core 3.17.8
+@tanstack/virtual-core 3.17.11
 Copyright (c) 2021-present Tanner Linsley
 MIT License
 
@@ -66,7 +66,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-react-dom 19.2.8
+react-dom 19.3.0
 Copyright (c) Meta Platforms, Inc. and affiliates.
 MIT License
 
@@ -88,7 +88,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-@tanstack/react-virtual 3.14.10
+@tanstack/react-virtual 3.14.13
 Copyright (c) 2021-present Tanner Linsley
 MIT License
 
@@ -110,7 +110,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-lucide-react 1.37.0
+lucide-react 1.47.0
 Copyright (c) 2026 Lucide Icons and Contributors.
 ISC License
 
@@ -122,9 +122,9 @@ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
 WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
 MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
 ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
-IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 Lucide includes icons derived from Feather.
 Copyright (c) 2013-present Cole Bemis.
@@ -147,3 +147,50 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Rust native dependency inventory
+--------------------------------
+The native scanner is built from the exact registry packages resolved by
+`native/jsonl-core/Cargo.lock`. Each entry records its Cargo SPDX expression
+and the exact upstream license/notice files shipped with the extension.
+Files labeled `reviewed upstream` are pinned overrides only for crates whose
+published package omitted a license file; the checker binds the override to
+the crate's `.cargo_vcs_info.json` revision.
+
+- `bitflags@2.13.1` — License: MIT OR Apache-2.0 — Files: `bitflags-2.13.1-LICENSE-APACHE.txt`, `bitflags-2.13.1-LICENSE-MIT.txt`
+- `cfg-if@1.0.4` — License: MIT OR Apache-2.0 — Files: `cfg-if-1.0.4-LICENSE-APACHE.txt`, `cfg-if-1.0.4-LICENSE-MIT.txt`
+- `convert_case@0.12.0` — License: MIT — Files: `convert_case-0.12.0-LICENSE.txt`
+- `ctor@1.0.13` — License: Apache-2.0 OR MIT — Files: `ctor-1.0.13-LICENSE-APACHE.txt`, `ctor-1.0.13-LICENSE-MIT.txt`
+- `futures@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-0.3.34-LICENSE-APACHE.txt`, `futures-0.3.34-LICENSE-MIT.txt`
+- `futures-channel@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-channel-0.3.34-LICENSE-APACHE.txt`, `futures-channel-0.3.34-LICENSE-MIT.txt`
+- `futures-core@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-core-0.3.34-LICENSE-APACHE.txt`, `futures-core-0.3.34-LICENSE-MIT.txt`
+- `futures-executor@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-executor-0.3.34-LICENSE-APACHE.txt`, `futures-executor-0.3.34-LICENSE-MIT.txt`
+- `futures-io@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-io-0.3.34-LICENSE-APACHE.txt`, `futures-io-0.3.34-LICENSE-MIT.txt`
+- `futures-macro@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-macro-0.3.34-LICENSE-APACHE.txt`, `futures-macro-0.3.34-LICENSE-MIT.txt`
+- `futures-sink@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-sink-0.3.34-LICENSE-APACHE.txt`, `futures-sink-0.3.34-LICENSE-MIT.txt`
+- `futures-task@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-task-0.3.34-LICENSE-APACHE.txt`, `futures-task-0.3.34-LICENSE-MIT.txt`
+- `futures-util@0.3.34` — License: MIT OR Apache-2.0 — Files: `futures-util-0.3.34-LICENSE-APACHE.txt`, `futures-util-0.3.34-LICENSE-MIT.txt`
+- `libc@0.2.189` — License: MIT OR Apache-2.0 — Files: `libc-0.2.189-LICENSE-APACHE.txt`, `libc-0.2.189-LICENSE-MIT.txt`
+- `libloading@0.9.0` — License: ISC — Files: `libloading-0.9.0-LICENSE.txt`
+- `memchr@2.8.3` — License: Unlicense OR MIT — Files: `memchr-2.8.3-COPYING.txt`, `memchr-2.8.3-LICENSE-MIT.txt`
+- `napi@3.12.4` — License: MIT — Files: `napi-3.12.4-napi-rs-LICENSE.txt`; reviewed upstream 1492b220d5ad01807b2dcbd250e8383f9d738311
+- `napi-build@2.4.2` — License: MIT — Files: `napi-build-2.4.2-napi-rs-LICENSE.txt`; reviewed upstream 31c27a1676a7c4b317f4e144e0a9cb94e8354143
+- `napi-derive@3.6.5` — License: MIT — Files: `napi-derive-3.6.5-napi-rs-LICENSE.txt`; reviewed upstream 1492b220d5ad01807b2dcbd250e8383f9d738311
+- `napi-derive-backend@6.1.3` — License: MIT — Files: `napi-derive-backend-6.1.3-napi-rs-LICENSE.txt`; reviewed upstream 31c27a1676a7c4b317f4e144e0a9cb94e8354143
+- `napi-sys@3.3.1` — License: MIT — Files: `napi-sys-3.3.1-napi-rs-LICENSE.txt`; reviewed upstream 31c27a1676a7c4b317f4e144e0a9cb94e8354143
+- `nohash-hasher@0.2.0` — License: Apache-2.0 OR MIT — Files: `nohash-hasher-0.2.0-LICENSE-APACHE.txt`, `nohash-hasher-0.2.0-LICENSE-MIT.txt`
+- `pin-project-lite@0.2.17` — License: Apache-2.0 OR MIT — Files: `pin-project-lite-0.2.17-LICENSE-APACHE.txt`, `pin-project-lite-0.2.17-LICENSE-MIT.txt`
+- `proc-macro2@1.0.107` — License: MIT OR Apache-2.0 — Files: `proc-macro2-1.0.107-LICENSE-APACHE.txt`, `proc-macro2-1.0.107-LICENSE-MIT.txt`
+- `quote@1.0.47` — License: MIT OR Apache-2.0 — Files: `quote-1.0.47-LICENSE-APACHE.txt`, `quote-1.0.47-LICENSE-MIT.txt`
+- `rustc-hash@2.1.3` — License: Apache-2.0 OR MIT — Files: `rustc-hash-2.1.3-LICENSE-APACHE.txt`, `rustc-hash-2.1.3-LICENSE-MIT.txt`
+- `semver@1.0.28` — License: MIT OR Apache-2.0 — Files: `semver-1.0.28-LICENSE-APACHE.txt`, `semver-1.0.28-LICENSE-MIT.txt`
+- `slab@0.4.12` — License: MIT — Files: `slab-0.4.12-LICENSE.txt`
+- `syn@2.0.119` — License: MIT OR Apache-2.0 — Files: `syn-2.0.119-LICENSE-APACHE.txt`, `syn-2.0.119-LICENSE-MIT.txt`
+- `syn@3.0.4` — License: MIT OR Apache-2.0 — Files: `syn-3.0.4-LICENSE-APACHE.txt`, `syn-3.0.4-LICENSE-MIT.txt`
+- `unicode-ident@1.0.24` — License: (MIT OR Apache-2.0) AND Unicode-3.0 — Files: `unicode-ident-1.0.24-LICENSE-APACHE.txt`, `unicode-ident-1.0.24-LICENSE-MIT.txt`, `unicode-ident-1.0.24-LICENSE-UNICODE.txt`
+- `unicode-segmentation@1.13.3` — License: MIT OR Apache-2.0 — Files: `unicode-segmentation-1.13.3-COPYRIGHT.txt`, `unicode-segmentation-1.13.3-LICENSE-APACHE.txt`, `unicode-segmentation-1.13.3-LICENSE-MIT.txt`
+- `windows-link@0.2.1` — License: MIT OR Apache-2.0 — Files: `windows-link-0.2.1-license-apache-2.0.txt`, `windows-link-0.2.1-license-mit.txt`
+
+The inventory and files are generated from the locked Cargo metadata by
+`node scripts/generate-cargo-notices.mjs`; `pnpm check:cargo-notices`
+recomputes them and fails on any drift.

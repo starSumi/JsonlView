@@ -193,11 +193,33 @@ export class OpenTelemetryProfile implements AgentProfile {
 }
 
 function classifyRecord(value: Record<string, unknown>): OtelRecordKind {
-  if (Array.isArray(own(value, 'resourceLogs'))) return 'resourceLogs';
-  if (Array.isArray(own(value, 'resourceSpans'))) return 'resourceSpans';
+  if (hasEnvelopeEvidence(value, 'resourceLogs', 'scopeLogs', 'logRecords')) return 'resourceLogs';
+  if (hasEnvelopeEvidence(value, 'resourceSpans', 'scopeSpans', 'spans')) return 'resourceSpans';
   if (isOtelSpanRecord(value)) return 'span';
   if (isOtelLogRecord(value)) return 'log';
   return 'unknown';
+}
+
+/**
+ * An empty array is valid JSON but is not enough evidence that a record is an
+ * OTLP File Exporter envelope. Require one resource group and one nested
+ * scope/signal container so ordinary application fields cannot hijack the
+ * semantic profile.
+ */
+function hasEnvelopeEvidence(
+  value: Record<string, unknown>,
+  envelopeKey: 'resourceLogs' | 'resourceSpans',
+  scopeKey: 'scopeLogs' | 'scopeSpans',
+  signalKey: 'logRecords' | 'spans',
+): boolean {
+  const groups = own(value, envelopeKey);
+  if (!Array.isArray(groups) || groups.length === 0) return false;
+  return groups.some((group) => {
+    if (!isObject(group)) return false;
+    const scopes = own(group, scopeKey);
+    if (!Array.isArray(scopes) || scopes.length === 0) return false;
+    return scopes.some((scope) => isObject(scope) && Array.isArray(own(scope, signalKey)) && (own(scope, signalKey) as unknown[]).length > 0);
+  });
 }
 
 function isOtelSpanRecord(value: Record<string, unknown>): boolean {

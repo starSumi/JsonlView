@@ -54,6 +54,25 @@ describe('VS Code message client', () => {
     expect(sent[0]?.type).toBe('READY');
   });
 
+  it('rejects a correlated OPENED message whose snapshot identity is inconsistent', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'bootstrap',
+      generation: 'bootstrap',
+    });
+    const request = client.send('READY', {});
+    const inconsistent = {
+      ...message('OPENED', request.id, 'g2', summary),
+      payload: {
+        ...summary,
+        snapshot: { ...summary.snapshot, generation: 'g1' },
+      },
+    };
+
+    expect(client.accept(inconsistent)).toBeUndefined();
+    expect(client.session).toEqual({ documentId: 'bootstrap', generation: 'bootstrap' });
+    expect(client.hasPending('ready')).toBe(true);
+  });
+
   it('rejects stale generations and uncorrelated row pages', () => {
     const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
       documentId: 'doc',
@@ -146,6 +165,105 @@ describe('VS Code message client', () => {
     expect(client.accept(otherDocument)).toBeUndefined();
   });
 
+  it('rejects a late OPENED for a generation that was already retired', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g1',
+    });
+    const first = message('OPENED', '', 'g2', summary);
+    expect(client.accept(first)).toBe(first);
+
+    const late = message('OPENED', '', 'g1', {
+      ...summary,
+      snapshot: { ...summary.snapshot, generation: 'g1' },
+    });
+    expect(client.accept(late)).toBeUndefined();
+    expect(client.session).toEqual({ documentId: 'doc', generation: 'g2' });
+  });
+
+  it('rejects an unseen older same-document OPENED when epoch ordering is available', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g2',
+      epoch: 2,
+    });
+    const older = {
+      ...message('OPENED', '', 'g1', {
+        ...summary,
+        snapshot: { ...summary.snapshot, generation: 'g1', epoch: 1 },
+      }),
+      epoch: 1,
+    };
+
+    expect(client.accept(older)).toBeUndefined();
+    expect(client.session).toEqual({ documentId: 'doc', generation: 'g2', epoch: 2 });
+  });
+
+  it('accepts a newer same-document OPENED and advances the epoch', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g1',
+      epoch: 1,
+    });
+    const newer = {
+      ...message('OPENED', '', 'g2', {
+        ...summary,
+        snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 },
+      }),
+      epoch: 2,
+    };
+
+    expect(client.accept(newer)).toBe(newer);
+    expect(client.session).toEqual({ documentId: 'doc', generation: 'g2', epoch: 2 });
+  });
+
+  it('rejects an unsolicited OPENED message whose envelope disagrees with its snapshot', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g1',
+    });
+    const inconsistent = {
+      ...message('OPENED', '', 'g2', summary),
+      documentId: 'doc',
+      generation: 'g3',
+    };
+
+    expect(client.accept(inconsistent)).toBeUndefined();
+    expect(client.session).toEqual({ documentId: 'doc', generation: 'g1' });
+  });
+
+  it('rejects an OPENED message whose envelope epoch disagrees with its snapshot', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g1',
+      epoch: 1,
+    });
+    const inconsistent = {
+      ...message('OPENED', '', 'g2', {
+        ...summary,
+        snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 },
+      }),
+      epoch: 3,
+    };
+
+    expect(client.accept(inconsistent)).toBeUndefined();
+    expect(client.session).toEqual({ documentId: 'doc', generation: 'g1', epoch: 1 });
+  });
+
+  it('clears pending work when an accepted session epoch changes', () => {
+    const sent: WebviewRequest[] = [];
+    const client = new VsCodeMessageClient({ postMessage: (value) => sent.push(value) }, {
+      documentId: 'doc',
+      generation: 'g1',
+      epoch: 1,
+    });
+    client.send('GET_ROWS', { limit: 100 });
+    client.setSession({ documentId: 'doc', generation: 'g1', epoch: 2 });
+
+    expect(client.hasPending('rows')).toBe(false);
+    expect(sent).toHaveLength(1);
+  });
+
   it('rejects unknown extension message types', () => {
     expect(isExtensionMessage({
       protocolVersion: PROTOCOL_VERSION,
@@ -178,5 +296,26 @@ describe('VS Code message client', () => {
     expect(client.accept(message('INSIGHTS', 'unknown', 'g2', payload))).toBeUndefined();
     expect(client.accept(message('INSIGHTS', request.id, 'g2', payload))?.type).toBe('INSIGHTS');
     expect(client.hasPending('insights')).toBe(false);
+  });
+
+  it('accepts a correlated bounded problem page and completes its request', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g2',
+    });
+    const request = client.send('GET_PROBLEMS', { limit: 20 });
+    const payload = {
+      items: [{ code: 'BLANK_RECORD', message: 'blank', severity: 'warning' as const }],
+      anchorOrdinal: '4',
+      hasBefore: false,
+      hasAfter: true,
+      indexedRecords: '5',
+      observedProblemRecords: '1',
+      complete: false,
+      scan: { examinedRecords: '5', examinedBytes: '20', cursorOrdinal: '4', direction: 'forward' as const, truncatedReason: 'byte_limit' as const },
+    };
+
+    expect(client.accept(message('PROBLEMS', request.id, 'g2', payload))?.type).toBe('PROBLEMS');
+    expect(client.hasPending('problems')).toBe(false);
   });
 });

@@ -59,6 +59,11 @@ type NativeLoadResult =
   | { reason: string };
 
 let cachedNativeLoad: NativeLoadResult | undefined;
+// A packaged native failure is process-wide: another Engine instance should
+// not repeatedly load or call a binding that has already failed. Injected
+// bindings remain instance-scoped so differential tests and embedders can
+// exercise independent candidates without contaminating the process latch.
+let processNativeFuseReason: string | undefined;
 
 const NEWLINE_BYTE = 0x0a;
 const UINT32_MAX = 0xffff_ffff;
@@ -144,6 +149,7 @@ export function createNewlineScanner(options: CreateNewlineScannerOptions = {}):
   let calibration: NewlineScannerCalibration | undefined;
   let lastNodeStrategy: NodeNewlineStrategy | undefined;
   let probed = options.nativeBinding !== undefined;
+  const processFuseEligible = options.nativeBinding === undefined && options.nativeCandidates === undefined;
 
   const diagnostics = (): NewlineScannerDiagnostics => ({
     requestedMode,
@@ -165,11 +171,16 @@ export function createNewlineScanner(options: CreateNewlineScannerOptions = {}):
     nativeBinding = undefined;
     activeMode = 'node';
     fallbackReason = reason;
+    if (processFuseEligible && processNativeFuseReason === undefined) processNativeFuseReason = reason;
   };
 
   const probeNative = (): NativeNewlineBinding | undefined => {
     if (probed) return nativeBinding;
     probed = true;
+    if (processFuseEligible && processNativeFuseReason !== undefined) {
+      disableNative(`native scanner process fuse is active: ${processNativeFuseReason}`);
+      return undefined;
+    }
     if (requestedMode === 'auto' && (platform !== 'win32' || architecture !== 'x64')) {
       disableNative(`native auto mode is experimental and limited to win32-x64, observed ${platform}-${architecture}`);
       return undefined;
@@ -209,7 +220,10 @@ export function createNewlineScanner(options: CreateNewlineScannerOptions = {}):
       }
       pages.push({ values: output, length: count });
       start = previous + 1;
-      if (count < output.length) break;
+      // A short page is the native scanner's end-of-input signal. Comparing
+      // with output.length is tautological because count was just assigned
+      // from it; use the requested page capacity instead.
+      if (count < OFFSET_PAGE_CAPACITY) break;
     }
     return new PackedNewlineOffsets(pages);
   };

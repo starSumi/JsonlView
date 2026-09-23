@@ -1,10 +1,10 @@
 import React from 'react';
-import { AlignLeft, Braces, FileText, Sparkles } from 'lucide-react';
+import { AlignLeft, Braces, Code2, FileText, Sparkles } from 'lucide-react';
 import { HighlightedCode } from './code-syntax';
 import { CopyButton } from './copy-button';
 import { JsonCode, stringifyJsonBounded } from './json-syntax';
 
-export type ContentMode = 'auto' | 'text' | 'markdown' | 'json';
+export type ContentMode = 'auto' | 'text' | 'markdown' | 'json' | 'code';
 export type DetectedContentKind = 'text' | 'markdown' | 'json';
 
 export interface EmbeddedJsonCandidate {
@@ -12,6 +12,14 @@ export interface EmbeddedJsonCandidate {
   end: number;
   source: string;
   value: object | unknown[];
+}
+
+interface JsonScanFrame {
+  opening: '{' | '[';
+  start: number;
+  end?: number;
+  invalid: boolean;
+  children: JsonScanFrame[];
 }
 
 interface MarkdownHeading {
@@ -68,24 +76,101 @@ type MarkdownBlock =
   | MarkdownRule;
 
 const MAX_RICH_TEXT_CHARS = 64 * 1024;
+const MAX_EXPANDED_RICH_TEXT_CHARS = 256 * 1024;
 const MAX_MARKDOWN_BLOCKS = 256;
 const MAX_MARKDOWN_ROWS = 128;
 const MAX_MARKDOWN_CELLS = 32;
 const MAX_INLINE_PARTS = 256;
+const ANSI_ESCAPE_PATTERN = /(?:\u001B\][^\u0007]*(?:\u0007|\u001B\\)|\u001B\[[0-?]*[ -/]*[@-~])/g;
+// A candidate is parsed at most once per structural frame and the aggregate
+// source passed to JSON.parse is bounded. This keeps hostile nested input from
+// turning the renderer into a quadratic parser while retaining useful fallback
+// candidates inside malformed outer text.
+const MAX_EMBEDDED_JSON_PARSE_CHARS = MAX_RICH_TEXT_CHARS * 8;
 
 function objectOrArray(value: unknown): value is object | unknown[] {
   return value !== null && typeof value === 'object';
 }
 
-function parseJsonObjectOrArray(source: string): object | unknown[] | undefined {
+function parseJsonObjectOrArray(source: string, depth = 0): object | unknown[] | undefined {
   const trimmed = source.trim();
-  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return undefined;
+  if (!trimmed || depth > 2) return undefined;
   try {
     const parsed: unknown = JSON.parse(trimmed);
+    // Tool bridges sometimes serialize a JSON document twice. Unwrap only a
+    // quoted object/array so ordinary quoted text remains text.
+    if (typeof parsed === 'string') {
+      const nested = parsed.trim();
+      if (nested !== trimmed && (nested.startsWith('{') || nested.startsWith('['))) {
+        return parseJsonObjectOrArray(nested, depth + 1);
+      }
+      return undefined;
+    }
     return objectOrArray(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Infer a conservative lexer for raw tool output. This is a signal-based
+ * classifier, not a language parser; uncertain output stays selectable text.
+ */
+export function inferCodeLanguage(source: string, hint?: string): string | undefined {
+  const explicit = hint?.trim().toLowerCase();
+  if (explicit) return explicit;
+  const normalized = source
+    .replace(ANSI_ESCAPE_PATTERN, '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\d+:\s?/, ''))
+    .join('\n');
+  const rustSignals = [
+    /\b(?:use|pub|crate|mod|impl|struct|enum|trait)\s+[A-Za-z_]/,
+    /\bfn\s+[A-Za-z_][\w]*\s*\(/,
+    /\blet\s+(?:mut\s+)?[A-Za-z_][\w]*\s*=/,
+    /\b(?:match|async|await)\b/,
+    /::[A-Za-z_][\w]*/,
+  ].filter((pattern) => pattern.test(normalized)).length;
+  if (rustSignals >= 2) return 'rust';
+  const shellSignals = [
+    /^\s*#!.*\b(?:sh|bash|zsh|fish|pwsh|powershell)\b/m,
+    /\b(?:if|then|fi|for|foreach|do|done|case|esac)\b/,
+    /(?:^|\s)(?:Get-[A-Za-z]+|Set-[A-Za-z]+|Write-[A-Za-z]+|npm|pnpm|cargo|git)\b/m,
+    /\$env:[A-Za-z_]|\bexport\s+[A-Za-z_][\w]*=/,
+    /\[\s+-[a-zA-Z]+\s+[^\]]+\]/,
+  ].filter((pattern) => pattern.test(normalized)).length;
+  if (shellSignals >= 2) return 'shell';
+  const pythonSignals = [
+    /^\s*def\s+[A-Za-z_][\w]*\s*\(/m,
+    /^\s*(?:from\s+\S+\s+)?import\s+\S+/m,
+    /\b(?:elif|lambda|None|True|False)\b/,
+  ].filter((pattern) => pattern.test(normalized)).length;
+  if (pythonSignals >= 2) return 'python';
+  const javascriptSignals = [
+    /\b(?:const|let|var|function|import|export)\s+[A-Za-z_$]/,
+    /\b(?:await|async)\b|=>/,
+    /\b(?:console|process|require)\.[A-Za-z_]/,
+  ].filter((pattern) => pattern.test(normalized)).length;
+  if (javascriptSignals >= 2) return 'javascript';
+  return undefined;
+}
+
+/**
+ * Terminal-oriented producers commonly wrap every line in ANSI colour codes,
+ * and tools such as `rg -n` prefix source lines with `42:`. Those bytes are
+ * meaningful in Text/Raw mode but prevent a Markdown heading/list from being
+ * recognized. Normalize only the rich presentation path; never mutate the
+ * value offered for copying or the exact source views.
+ */
+export function normalizeMarkdownSource(source: string): string {
+  const withoutAnsi = source.replace(ANSI_ESCAPE_PATTERN, '');
+  const lines = withoutAnsi.split(/\r?\n/);
+  const numbered = lines.filter((line) => /^\s*\d+:\s?/.test(line));
+  if (numbered.length < 2) return withoutAnsi;
+  const nonEmpty = lines.filter((line) => line.trim().length > 0);
+  if (nonEmpty.length === 0 || numbered.length / nonEmpty.length < 0.5) return withoutAnsi;
+  const unnumbered = lines.map((line) => line.replace(/^\s*\d+:\s?/, '')).join('\n');
+  return hasMarkdownSignal(unnumbered) ? unnumbered : withoutAnsi;
 }
 
 /**
@@ -94,44 +179,95 @@ function parseJsonObjectOrArray(source: string): object | unknown[] | undefined 
  * terminate a candidate.
  */
 export function extractEmbeddedJson(source: string): EmbeddedJsonCandidate[] {
+  const roots: JsonScanFrame[] = [];
+  const stack: JsonScanFrame[] = [];
+  let inString = false;
+  let escaped = false;
+
+  // Build delimiter intervals once. A mismatch invalidates the active root and
+  // resets the stack; completed descendants remain attached for fallback.
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor] ?? '';
+    // Quotes in ordinary prose are not JSON string state. The previous
+    // candidate scanner also reset its quote state for every opening token.
+    if (stack.length === 0) {
+      if (character === '{' || character === '[') {
+        const frame: JsonScanFrame = { opening: character, start: cursor, invalid: false, children: [] };
+        stack.push(frame);
+      }
+      continue;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '{' || character === '[') {
+      const frame: JsonScanFrame = { opening: character, start: cursor, invalid: false, children: [] };
+      stack.at(-1)?.children.push(frame);
+      stack.push(frame);
+      continue;
+    }
+    if (character !== '}' && character !== ']') continue;
+    const expected = character === '}' ? '{' : '[';
+    const frame = stack.at(-1);
+    if (!frame || frame.opening !== expected) {
+      const root = stack[0];
+      if (root) {
+        root.invalid = true;
+        roots.push(root);
+      }
+      stack.length = 0;
+      inString = false;
+      escaped = false;
+      continue;
+    }
+    frame.end = cursor + 1;
+    stack.pop();
+    if (stack.length === 0) {
+      roots.push(frame);
+      inString = false;
+      escaped = false;
+    }
+  }
+  const incompleteRoot = stack[0];
+  if (incompleteRoot && !roots.includes(incompleteRoot)) {
+    incompleteRoot.invalid = true;
+    roots.push(incompleteRoot);
+  }
+
   const candidates: EmbeddedJsonCandidate[] = [];
   const maxCandidates = 4;
-  for (let start = 0; start < source.length && candidates.length < maxCandidates; start += 1) {
-    const opening = source[start];
-    if (opening !== '{' && opening !== '[') continue;
-    const stack: string[] = [opening];
-    let inString = false;
-    let escaped = false;
-    for (let cursor = start + 1; cursor < source.length; cursor += 1) {
-      const character = source[cursor] ?? '';
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (character === '\\') escaped = true;
-        else if (character === '"') inString = false;
-        continue;
-      }
-      if (character === '"') {
-        inString = true;
-        continue;
-      }
-      if (character === '{' || character === '[') {
-        stack.push(character);
-        continue;
-      }
-      if (character !== '}' && character !== ']') continue;
-      const expected = character === '}' ? '{' : '[';
-      if (stack.at(-1) !== expected) break;
-      stack.pop();
-      if (stack.length !== 0) continue;
-      const candidateSource = source.slice(start, cursor + 1);
-      if (candidateSource.length <= MAX_RICH_TEXT_CHARS) {
+  let parseBudget = MAX_EMBEDDED_JSON_PARSE_CHARS;
+  const pending = [...roots].reverse();
+  while (pending.length > 0 && candidates.length < maxCandidates) {
+    const frame = pending.pop();
+    if (!frame) continue;
+    let accepted = false;
+    if (!frame.invalid && frame.end !== undefined) {
+      const length = frame.end - frame.start;
+      if (length <= MAX_RICH_TEXT_CHARS && length <= parseBudget) {
+        parseBudget -= length;
+        const candidateSource = source.slice(frame.start, frame.end);
         const value = parseJsonObjectOrArray(candidateSource);
         if (value !== undefined) {
-          candidates.push({ start, end: cursor + 1, source: candidateSource, value });
-          start = cursor;
+          candidates.push({ start: frame.start, end: frame.end, source: candidateSource, value });
+          accepted = true;
         }
       }
-      break;
+    }
+    // A valid outer value owns its descendants. If it is malformed, continue
+    // in source order so an embedded inner value can still be recovered.
+    if (!accepted) {
+      for (let index = frame.children.length - 1; index >= 0; index -= 1) {
+        const child = frame.children[index];
+        if (child) pending.push(child);
+      }
     }
   }
   return candidates;
@@ -155,8 +291,9 @@ function hasMarkdownSignal(source: string): boolean {
 export function classifyContent(source: string): DetectedContentKind {
   const bounded = source.slice(0, MAX_RICH_TEXT_CHARS);
   if (parseJsonObjectOrArray(bounded) !== undefined && bounded.trim() === source.trim()) return 'json';
-  if (extractEmbeddedJson(bounded).length > 0 && !hasMarkdownSignal(bounded)) return 'json';
-  return hasMarkdownSignal(bounded) ? 'markdown' : 'text';
+  const markdownSource = normalizeMarkdownSource(bounded);
+  if (extractEmbeddedJson(bounded).length > 0 && !hasMarkdownSignal(markdownSource)) return 'json';
+  return hasMarkdownSignal(markdownSource) ? 'markdown' : 'text';
 }
 
 function splitTableRow(line: string): string[] {
@@ -363,9 +500,10 @@ interface ContentViewProps {
   truncated?: boolean;
   ariaLabel?: string;
   defaultMode?: ContentMode;
+  codeLanguage?: string;
 }
 
-const modeButtons: Array<{ id: ContentMode; label: string; Icon: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean }> }> = [
+const modeButtons: Array<{ id: Exclude<ContentMode, 'code'>; label: string; Icon: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean }> }> = [
   { id: 'auto', label: 'Auto', Icon: Sparkles },
   { id: 'text', label: 'Text', Icon: AlignLeft },
   { id: 'markdown', label: 'Markdown', Icon: FileText },
@@ -384,7 +522,8 @@ function autoPresentation(source: string): React.JSX.Element {
   if (wholeJson) return wholeJson;
   // Markdown owns fenced blocks and structural syntax. Only extract inline
   // JSON from prose when the text is otherwise not confidently Markdown.
-  if (hasMarkdownSignal(source)) return <MarkdownView source={source} />;
+  const markdownSource = normalizeMarkdownSource(source);
+  if (hasMarkdownSignal(markdownSource)) return <MarkdownView source={markdownSource} />;
   const candidates = extractEmbeddedJson(source);
   if (candidates.length) {
     const parts: React.ReactNode[] = [];
@@ -401,16 +540,21 @@ function autoPresentation(source: string): React.JSX.Element {
   return <div className="content-text">{source}</div>;
 }
 
-export function ContentView({ text, truncated = false, ariaLabel = 'Event content', defaultMode = 'auto' }: ContentViewProps): React.JSX.Element {
+export function ContentView({ text, truncated = false, ariaLabel = 'Event content', defaultMode = 'auto', codeLanguage }: ContentViewProps): React.JSX.Element {
   const [mode, setMode] = React.useState<ContentMode>(defaultMode);
   React.useEffect(() => setMode(defaultMode), [defaultMode]);
-  const bounded = text.slice(0, MAX_RICH_TEXT_CHARS);
+  // A section initially receives an 8k preview. Once the user explicitly
+  // expands it, allow a larger but still bounded render. The complete record
+  // remains available through Raw/copy without becoming one enormous DOM node.
+  const richTextLimit = truncated ? MAX_RICH_TEXT_CHARS : MAX_EXPANDED_RICH_TEXT_CHARS;
+  const bounded = text.slice(0, richTextLimit);
   const analysisTruncated = text.length > bounded.length;
   const detected = React.useMemo(() => classifyContent(bounded), [bounded]);
   let body: React.JSX.Element;
-  if (mode === 'text') body = <div className="content-text">{text}</div>;
-  else if (mode === 'markdown') body = <MarkdownView source={bounded} />;
-  else if (mode === 'json') body = jsonPresentation(bounded) ?? <div className="content-text">{text}</div>;
+  if (mode === 'text') body = <div className="content-text">{bounded}</div>;
+  else if (mode === 'markdown') body = <MarkdownView source={normalizeMarkdownSource(bounded)} />;
+  else if (mode === 'json') body = jsonPresentation(bounded) ?? <div className="content-text">{bounded}</div>;
+  else if (mode === 'code') body = <HighlightedCode source={bounded} language={codeLanguage ?? inferCodeLanguage(bounded) ?? ''} ariaLabel={`${ariaLabel} code`} />;
   else body = autoPresentation(bounded);
 
   return (
@@ -422,11 +566,16 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
               <Icon size={13} aria-hidden />{label}
             </button>
           ))}
+          {codeLanguage ? (
+            <button type="button" className={mode === 'code' ? 'is-active' : ''} aria-pressed={mode === 'code'} onClick={() => setMode('code')}>
+              <Code2 size={13} aria-hidden />Code
+            </button>
+          ) : null}
         </div>
-        <span className="content-detected" title="Detected source format">Detected: {detected}</span>
+        <span className="content-detected" title="Detected source format">Detected: {codeLanguage ? `${detected} · ${codeLanguage}` : detected}</span>
       </div>
       {truncated ? <div className="content-budget-notice" role="status">Preview limited to 8,000 characters. Choose Show full to inspect the complete field.</div> : null}
-      {analysisTruncated ? <div className="content-budget-notice" role="status">Rich parsing is limited to the first {MAX_RICH_TEXT_CHARS.toLocaleString()} characters; Text keeps the complete value.</div> : null}
+      {analysisTruncated ? <div className="content-budget-notice" role="status">Rendering is limited to the first {richTextLimit.toLocaleString()} characters; use Raw or Copy for the complete value.</div> : null}
       <div className="content-body">{body}</div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tokenizeCode } from '../../src/webview/code-syntax';
+import { formatJavaScriptForDisplay, tokenizeCode } from '../../src/webview/code-syntax';
 
 describe('bounded code syntax', () => {
   it('lexes common Python snippets without treating quoted comments as comments', () => {
@@ -22,5 +22,15 @@ describe('bounded code syntax', () => {
     expect(result.truncated).toBe(true);
     expect(result.displayedChars).toBe(8);
     expect(result.tokens.map((token) => token.text).join('')).toBe('xxxxxxxx');
+  });
+
+  it('formats one-line JavaScript tool calls without touching quoted source', () => {
+    const source = 'const r = await tools.exec_command({cmd:"git diff -- a b"}); text(r.output);';
+    const formatted = formatJavaScriptForDisplay(source);
+    expect(formatted).toContain('exec_command({\n');
+    expect(formatted).toContain('  cmd:"git diff -- a b"\n');
+    expect(formatted).toContain('});\ntext(r.output);');
+    expect(formatted).toContain('text(r.output);');
+    expect(formatted).not.toContain('\\n');
   });
 });

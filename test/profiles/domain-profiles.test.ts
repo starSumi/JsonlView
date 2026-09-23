@@ -8,6 +8,7 @@ import {
   softwareEngineeringAgentFixture,
   softwareEngineeringTrajectoryFixture,
   structuredApplicationLogFixture,
+  tracingSubscriberLogFixture,
 } from './fixtures';
 
 const context = { generation: 'generation-domain-profiles' };
@@ -124,6 +125,56 @@ describe('OpenTelemetry profile', () => {
     expect(decision.selectedProfileId).toBe('structured-application-log');
     expect(decision.detections.find((item) => item.profileId === 'opentelemetry')).toMatchObject({ requiredEvidenceMet: false });
   });
+
+  it('does not promote empty or malformed File Exporter arrays to OTel', () => {
+    const values = [
+      { resourceLogs: [] },
+      { resourceSpans: [{ resource: {}, scopeSpans: [] }] },
+      { resourceLogs: [{ scopeLogs: [{ logRecords: [] }] }] },
+    ];
+    const decision = new AgentProfileRegistry().detect(samples(values));
+
+    expect(decision.selectedProfileId).toBe('generic');
+    expect(decision.detections.find((item) => item.profileId === 'opentelemetry')).toMatchObject({
+      requiredEvidenceMet: false,
+    });
+  });
+});
+
+describe('Claude transcript profile', () => {
+  it('accepts standard role/message transcripts without per-record session ids', () => {
+    const decision = new AgentProfileRegistry().detect(samples([
+      {
+        type: 'user',
+        timestamp: '2024-01-01T10:00:00Z',
+        message: { content: 'Fix the login bug' },
+        cwd: '/workspace/project',
+      },
+      {
+        type: 'assistant',
+        timestamp: '2024-01-01T10:00:05Z',
+        message: {
+          model: 'claude-sonnet-4-20250514',
+          content: [{ type: 'text', text: 'Looking at the auth module...' }],
+        },
+      },
+      {
+        type: 'user',
+        timestamp: '2024-01-01T10:05:00Z',
+        message: { content: 'That looks right' },
+      },
+      {
+        type: 'assistant',
+        timestamp: '2024-01-01T10:05:05Z',
+        message: {
+          model: 'claude-sonnet-4-20250514',
+          content: [{ type: 'text', text: 'Applied the fix.' }],
+        },
+      },
+    ])).selectedProfileId;
+
+    expect(decision).toBe('claude-code-session');
+  });
 });
 
 describe('Software engineering Agent profile', () => {
@@ -233,5 +284,30 @@ describe('Structured application log profile', () => {
     ]));
     expect(ordinary.detections.find((item) => item.profileId === 'structured-application-log')).toMatchObject({ requiredEvidenceMet: false });
     expect(ordinary.selectedProfileId).toBe('generic');
+  });
+
+  it('recognizes tracing-subscriber JSON fields without confusing JSON-RPC envelopes', () => {
+    const registry = new AgentProfileRegistry();
+    const decision = registry.detect(samples(tracingSubscriberLogFixture));
+    expect(decision.selectedProfileId).toBe('structured-application-log');
+
+    const rows = tracingSubscriberLogFixture.map((value) => registry.project(
+      'structured-application-log',
+      { value },
+      context,
+    ));
+    expect(rows[0]).toMatchObject({
+      eventKind: 'log',
+      severity: 'INFO',
+      summary: 'codex_app_server::startup: app-server started',
+    });
+    expect(derived(rows[0]!)).toMatchObject({ logger: 'codex_app_server::startup' });
+    expect(derived(rows[1]!)).toMatchObject({ exception: 'upstream unavailable' });
+
+    const rpc = new AgentProfileRegistry().detect(samples([
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+      { jsonrpc: '2.0', id: 1, result: { capabilities: {} } },
+    ]));
+    expect(rpc.selectedProfileId).toBe('generic');
   });
 });

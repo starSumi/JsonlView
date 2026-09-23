@@ -12,10 +12,13 @@ import type {
   ParseState,
   Predicate,
   ProblemRef,
+  ProblemPage,
   RecordDetail,
   RecordRef,
   RowPage,
   RowProjection,
+  RowScanBudget,
+  RowSort,
   ScanTruncationReason,
   SnapshotIdentity,
 } from '../shared/types';
@@ -30,10 +33,34 @@ import {
 } from './segment-index';
 
 const DEFAULT_FINGERPRINT_BYTES = 64 * 1024;
+// Small documents can establish an exact baseline during open. Larger files
+// build it in the background so the first page is not gated by a second full
+// read; a write that overlaps that deferred read is reported as unknown.
+const INLINE_FULL_FINGERPRINT_BYTES = 8n * 1024n * 1024n;
+// Sorting is intentionally a bounded operation until a durable external-sort
+// projection is introduced. The limits keep an accidental click on a huge log
+// from turning the extension host into an unbounded memory/CPU job.
+const DEFAULT_SORT_MAX_EXAMINED_RECORDS = 100_000;
+const DEFAULT_SORT_MAX_EXAMINED_BYTES = 64 * 1024 * 1024;
+const DEFAULT_SORT_MAX_MILLISECONDS = 5_000;
+const HARD_SORT_MAX_EXAMINED_RECORDS = 1_000_000;
+const HARD_SORT_MAX_EXAMINED_BYTES = 512 * 1024 * 1024;
+const HARD_SORT_MAX_MILLISECONDS = 60_000;
+const MAX_SORT_WINDOW = 2_048;
+// Problems are an independent bounded scan. They are not folded into the
+// row page or DocumentSummary, so an explicit request can disclose progress
+// without retaining the complete source or a global problem array in the UI.
+const DEFAULT_PROBLEM_MAX_EXAMINED_RECORDS = 100_000;
+const DEFAULT_PROBLEM_MAX_EXAMINED_BYTES = 64 * 1024 * 1024;
+const DEFAULT_PROBLEM_MAX_MILLISECONDS = 5_000;
+const HARD_PROBLEM_MAX_EXAMINED_RECORDS = 1_000_000;
+const HARD_PROBLEM_MAX_EXAMINED_BYTES = 512 * 1024 * 1024;
+const HARD_PROBLEM_MAX_MILLISECONDS = 60_000;
 
 export interface JsonlEngineOptions {
   documentId?: string;
   generation?: string;
+  epoch?: number;
   uri?: string;
   readChunkBytes?: number;
   segmentTargetBytes?: number;
@@ -41,6 +68,8 @@ export interface JsonlEngineOptions {
   exactCacheSegments?: number;
   maxQueuedOperations?: number;
   maxRecordBytes?: number;
+  /** Maximum bytes an explicit detail request may hydrate for one record. */
+  fullRecordMaxBytes?: number;
   pageHydrationMaxBytes?: number;
   previewBytes?: number;
   rowPreviewCharacters?: number;
@@ -75,6 +104,9 @@ export interface GetRowsOptions extends JsonlOperationContext {
   direction?: 'forward' | 'backward';
   limit?: number;
   predicate?: Predicate;
+  sort?: RowSort;
+  /** Zero-based logical offset used only when sort is present. */
+  sortOffset?: string | bigint;
   columns?: ColumnSpec[];
   enricher?: RowEnricher;
   /** Receives each hydrated record without retaining it in the returned page. */
@@ -82,15 +114,16 @@ export interface GetRowsOptions extends JsonlOperationContext {
   scanBudget?: RowScanBudget;
 }
 
-export interface RowScanBudget {
-  maxExaminedRecords?: number;
-  maxExaminedBytes?: string | bigint;
-  deadlineEpochMs?: number;
+export interface GetProblemsOptions extends JsonlOperationContext {
+  anchorOrdinal?: string | bigint;
+  direction?: 'forward' | 'backward';
+  limit?: number;
+  scanBudget?: RowScanBudget;
 }
 
 export interface GetDetailOptions extends JsonlOperationContext {
   enricher?: RowEnricher;
-  /** Requests the complete record only when it remains within maxRecordBytes. */
+  /** Requests complete record hydration within the explicit detail budget. */
   full?: boolean;
 }
 
@@ -124,6 +157,7 @@ interface NormalizedOptions {
   exactCacheSegments: number;
   maxQueuedOperations: number;
   maxRecordBytes: number;
+  fullRecordMaxBytes: number;
   pageHydrationMaxBytes: number;
   previewBytes: number;
   rowPreviewCharacters: number;
@@ -137,6 +171,11 @@ interface NormalizedOptions {
 
 interface SourceFingerprint {
   length: number;
+  hash: string;
+}
+
+interface FullSourceFingerprint {
+  length: bigint;
   hash: string;
 }
 
@@ -154,6 +193,11 @@ interface HydratedRecord {
   rawComplete: boolean;
   value?: unknown;
   problems: ProblemRef[];
+}
+
+interface SortCandidate {
+  internal: InternalRecordRef;
+  key: unknown;
 }
 
 class SerialExecutor {
@@ -198,6 +242,8 @@ export class JsonlFileEngine {
   private readonly schema: ProgressiveSchemaTracker;
   private closing = false;
   private closed = false;
+  private invalidated = false;
+  private readonly problemCache = new Map<bigint, readonly ProblemRef[]>();
 
   private constructor(
     filePath: string,
@@ -209,8 +255,12 @@ export class JsonlFileEngine {
     private readonly sourceInode: bigint,
     private readonly sourceMtimeMs: number,
     private readonly sourceMtimeNs: bigint,
+    private readonly sourceCtimeNs: bigint,
     private readonly prefixFingerprint: SourceFingerprint,
     private readonly tailFingerprint: SourceFingerprint,
+    private fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined,
+    private fullFingerprintKnown: boolean,
+    private readonly fingerprintAbort: AbortController,
   ) {
     this.filePath = filePath;
     this.snapshot = snapshot;
@@ -237,6 +287,7 @@ export class JsonlFileEngine {
     const normalized = normalizeOptions(options);
     const absolutePath = resolve(filePath);
     const handle = await open(absolutePath, 'r');
+    const fingerprintAbort = new AbortController();
     try {
       const sourceStat = await handle.stat({ bigint: true });
       if (!sourceStat.isFile()) {
@@ -249,12 +300,29 @@ export class JsonlFileEngine {
       const tailLength = prefixLength;
       const prefixFingerprint = await fingerprintRange(handle, 0n, prefixLength);
       const tailFingerprint = await fingerprintRange(handle, sourceStat.size - BigInt(tailLength), tailLength);
+      // Small files establish a baseline on the open path. Large logs defer
+      // the O(n) digest until a refresh or snapshot guard needs an exact
+      // append decision, keeping first-page work bounded.
+      let fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined;
+      let fullFingerprintKnown = false;
+      if (sourceStat.size <= INLINE_FULL_FINGERPRINT_BYTES) {
+        const baseline = await fingerprintStableRange(
+          handle,
+          sourceStat.size,
+          sourceStat.mtimeNs,
+          sourceStat.ctimeNs,
+          fingerprintAbort.signal,
+        );
+        fullFingerprint = Promise.resolve(baseline);
+        fullFingerprintKnown = baseline !== undefined;
+      }
       const generation = options.generation ?? randomUUID();
       const documentId = options.documentId ?? randomUUID();
       const mtimeMs = Number(sourceStat.mtimeMs);
       const snapshot: SnapshotIdentity = {
         documentId,
         generation,
+        ...(options.epoch === undefined ? {} : { epoch: options.epoch }),
         uri: options.uri ?? pathToFileURL(absolutePath).toString(),
         scheme: options.uri === undefined ? 'file' : safeScheme(options.uri),
         sizeBytes: sourceStat.size.toString(),
@@ -275,10 +343,15 @@ export class JsonlFileEngine {
         sourceStat.ino,
         mtimeMs,
         sourceStat.mtimeNs,
+        sourceStat.ctimeNs,
         prefixFingerprint,
         tailFingerprint,
+        fullFingerprint,
+        fullFingerprintKnown,
+        fingerprintAbort,
       );
     } catch (error) {
+      fingerprintAbort.abort();
       await handle.close();
       throw error;
     }
@@ -309,9 +382,9 @@ export class JsonlFileEngine {
     return this.enqueue(async () => {
       const guard = this.makeGuard(options);
       guard();
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
       await this.index.indexMore(options.maxBytes ?? this.options.readChunkBytes, guard);
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
       return this.getSummary();
     });
   }
@@ -320,9 +393,9 @@ export class JsonlFileEngine {
     return this.enqueue(async () => {
       const guard = this.makeGuard(context);
       guard();
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
       await this.index.finish(guard);
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
       return this.getSummary();
     });
   }
@@ -383,35 +456,58 @@ export class JsonlFileEngine {
     return this.enqueue(async () => {
       const guard = this.makeGuard(options);
       guard();
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
       const limit = boundedInteger(options.limit ?? 100, 1, 500, 'limit');
       const direction = options.direction ?? 'forward';
       const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
+      const sort = normalizeRowSort(options.sort);
+      if (sort !== undefined) {
+        if (options.anchorOrdinal !== undefined || options.direction !== undefined) {
+          throw new JsonlEngineError(
+            'INVALID_ARGUMENT',
+            'Sorted row requests cannot also specify a physical anchor or direction.',
+          );
+        }
+        if (isOrdinalSort(sort)) {
+          return this.getOrdinalSortedRows(options, guard, limit, sort);
+        }
+        return this.getSortedRows(options, guard, limit, sort);
+      }
       const anchor = options.anchorOrdinal === undefined
         ? undefined
         : parseNonNegativeBigInt(options.anchorOrdinal, 'anchorOrdinal');
       const collected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
       let retainedBytes = 0n;
       let stoppedByBudget = false;
-      let stoppedByPageLimit = false;
       let examinedRecords = 0n;
       let examinedBytes = 0n;
       let scanCursor: bigint | undefined;
       let scanTruncatedReason: ScanTruncationReason | undefined;
+      let sawUninspectableRecord = false;
 
       if (direction === 'forward') {
         let ordinal = anchor === undefined ? 0n : anchor + 1n;
-        const collectionTarget = scanBudget === undefined ? limit + 1 : limit;
+        // Always probe one record beyond the requested page. With a bounded
+        // scan this is what distinguishes an exact page at EOF from a page
+        // that has more matches behind the scan budget.
+        const collectionTarget = limit + 1;
         while (collected.length < collectionTarget) {
           guard();
+          // A deadline is a hard stop and should not trigger another index
+          // read. Record/byte limits are checked after probing the next ref so
+          // an exact budget at EOF is not reported as a false truncation.
+          if (scanBudget?.deadlineEpochMs !== undefined && Date.now() >= scanBudget.deadlineEpochMs) {
+            scanTruncatedReason = 'time_limit';
+            break;
+          }
+          const internal = await this.index.getRecord(ordinal, guard);
+          if (internal === undefined) break;
           scanTruncatedReason = scanLimitBeforeNextRecord(
             scanBudget,
             examinedRecords,
             examinedBytes,
           );
           if (scanTruncatedReason !== undefined) break;
-          const internal = await this.index.getRecord(ordinal, guard);
-          if (internal === undefined) break;
           if (
             scanBudget?.maxExaminedBytes !== undefined
             && examinedBytes + internal.contentByteLength > scanBudget.maxExaminedBytes
@@ -419,20 +515,26 @@ export class JsonlFileEngine {
             scanTruncatedReason = 'byte_limit';
             break;
           }
+          if (
+            collected.length > 0
+            && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+          ) {
+            // Leave the boundary record unconsumed. The next continuation can
+            // present it without sampling a record excluded by this page cap.
+            stoppedByBudget = true;
+            scanTruncatedReason = 'hydration_limit';
+            break;
+          }
           const candidate = await this.hydrate(internal, guard);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
+          if (options.predicate !== undefined && candidate.value === undefined) {
+            sawUninspectableRecord = true;
+          }
           const profile = candidate.value === undefined
             ? undefined
             : options.enricher?.project(candidate.value, candidate.ref);
           const matches = this.matches(candidate, options.predicate, options.enricher, profile);
           if (matches) {
-            if (
-              collected.length > 0
-              && retainedBytes + candidate.internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
-            ) {
-              stoppedByBudget = true;
-              break;
-            }
             collected.push(profile === undefined ? { hydrated: candidate } : { hydrated: candidate, profile });
             retainedBytes += candidate.internal.contentByteLength;
           }
@@ -441,7 +543,6 @@ export class JsonlFileEngine {
           scanCursor = ordinal;
           ordinal += 1n;
         }
-        stoppedByPageLimit = scanBudget !== undefined && collected.length >= limit;
       } else {
         let ordinal: bigint;
         if (anchor === undefined) {
@@ -455,32 +556,61 @@ export class JsonlFileEngine {
 
         while (ordinal >= 0n && collected.length <= limit) {
           guard();
+          if (scanBudget?.deadlineEpochMs !== undefined && Date.now() >= scanBudget.deadlineEpochMs) {
+            scanTruncatedReason = 'time_limit';
+            break;
+          }
           const internal = await this.index.getRecord(ordinal, guard);
           if (internal === undefined) break;
+          scanTruncatedReason = scanLimitBeforeNextRecord(
+            scanBudget,
+            examinedRecords,
+            examinedBytes,
+          );
+          if (scanTruncatedReason !== undefined) break;
+          if (
+            scanBudget?.maxExaminedBytes !== undefined
+            && examinedBytes + internal.contentByteLength > scanBudget.maxExaminedBytes
+          ) {
+            scanTruncatedReason = 'byte_limit';
+            break;
+          }
+          if (
+            collected.length > 0
+            && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+          ) {
+            // Leave the boundary record unconsumed so the next backward page
+            // can present it without sampling excluded data.
+            stoppedByBudget = true;
+            scanTruncatedReason = 'hydration_limit';
+            break;
+          }
           const candidate = await this.hydrate(internal, guard);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
+          if (options.predicate !== undefined && candidate.value === undefined) {
+            sawUninspectableRecord = true;
+          }
           const profile = candidate.value === undefined
             ? undefined
             : options.enricher?.project(candidate.value, candidate.ref);
           if (this.matches(candidate, options.predicate, options.enricher, profile)) {
-            if (
-              collected.length > 0
-              && retainedBytes + candidate.internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
-            ) {
-              stoppedByBudget = true;
-              break;
-            }
             collected.push(profile === undefined ? { hydrated: candidate } : { hydrated: candidate, profile });
             retainedBytes += candidate.internal.contentByteLength;
           }
+          examinedRecords += 1n;
+          examinedBytes += internal.contentByteLength;
+          scanCursor = ordinal;
           ordinal -= 1n;
         }
       }
 
       const hasExtra = collected.length > limit
         || stoppedByBudget
-        || stoppedByPageLimit
-        || scanTruncatedReason !== undefined;
+        || scanTruncatedReason !== undefined
+        || sawUninspectableRecord;
+      if (scanTruncatedReason === undefined && sawUninspectableRecord) {
+        scanTruncatedReason = 'uninspectable_record';
+      }
       let selected = collected.slice(0, limit);
       if (direction === 'backward') selected = selected.reverse();
       const columns = options.columns === undefined
@@ -489,9 +619,15 @@ export class JsonlFileEngine {
       const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
       const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
       const lastOrdinal = selected[selected.length - 1]?.hydrated.internal.ordinal;
+      // When the bounded probe collected one extra matching row, keep the
+      // continuation cursor at the visible page boundary. Returning the
+      // last examined ordinal would skip that extra row on the next page.
+      const continuationCursor = collected.length > limit && selected.length > 0
+        ? (direction === 'forward' ? lastOrdinal : firstOrdinal)
+        : scanCursor;
       const total = this.index.totalRecords;
 
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
 
       return {
         rows,
@@ -501,20 +637,426 @@ export class JsonlFileEngine {
           : (firstOrdinal ?? anchor ?? 0n).toString(),
         hasBefore: direction === 'backward'
           ? hasExtra
-          : firstOrdinal !== undefined && firstOrdinal > 0n,
+          : firstOrdinal !== undefined
+            ? firstOrdinal > 0n
+            : anchor !== undefined && anchor > 0n,
         hasAfter: direction === 'forward'
           ? hasExtra
-          : lastOrdinal !== undefined && (total === undefined || lastOrdinal + 1n < total),
+          : lastOrdinal !== undefined
+            ? (total === undefined || lastOrdinal + 1n < total)
+            : anchor !== undefined
+              && anchor + 1n < (total ?? this.index.indexedRecords),
         indexedRecords: this.index.indexedRecords.toString(),
         ...(total === undefined ? {} : { totalRecords: total.toString() }),
-        ...(scanBudget === undefined ? {} : {
+        ...(scanBudget === undefined && !stoppedByBudget && scanTruncatedReason === undefined ? {} : {
           scan: {
             examinedRecords: examinedRecords.toString(),
             examinedBytes: examinedBytes.toString(),
-            ...(scanCursor === undefined ? {} : { cursorOrdinal: scanCursor.toString() }),
+            ...(continuationCursor === undefined ? {} : { cursorOrdinal: continuationCursor.toString() }),
+            ...(scanTruncatedReason === undefined ? {} : { direction }),
             ...(scanTruncatedReason === undefined ? {} : { truncatedReason: scanTruncatedReason }),
           },
         }),
+      };
+    });
+  }
+
+  /**
+   * Physical ordinal sorting is a cursor operation, not a field sort. It can
+   * read the newest records from EOF without retaining a global candidate set.
+   */
+  private async getOrdinalSortedRows(
+    options: GetRowsOptions,
+    guard: () => void,
+    limit: number,
+    sort: RowSort,
+  ): Promise<RowPage> {
+    const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
+    const direction = sort.direction === 'desc' ? 'backward' : 'forward';
+    const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
+    await this.index.finish(guard);
+    const total = this.index.totalRecords ?? this.index.indexedRecords;
+    const columns = options.columns === undefined
+      ? this.defaultColumns(options.enricher?.columns)
+      : options.columns.slice(0, this.options.defaultColumnLimit + 1);
+    const selected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
+    let retainedBytes = 0n;
+    let examinedRecords = 0n;
+    let examinedBytes = 0n;
+    let matchedRecords = 0n;
+    let scanCursor: bigint | undefined;
+    let truncatedReason: ScanTruncationReason | undefined;
+    let sawUninspectableRecord = false;
+    let hydrationTruncated = false;
+
+    if (options.predicate === undefined) {
+      // With no predicate, logical offset maps directly to a physical ordinal.
+      const first = direction === 'forward' ? offset : total - 1n - offset;
+      for (let index = 0; index < limit; index += 1) {
+        const ordinal = direction === 'forward' ? first + BigInt(index) : first - BigInt(index);
+        if (ordinal < 0n || ordinal >= total) break;
+        guard();
+        const internal = await this.index.getRecord(ordinal, guard);
+        if (internal === undefined) break;
+        if (
+          selected.length > 0
+          && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+        ) {
+          hydrationTruncated = true;
+          truncatedReason = 'hydration_limit';
+          break;
+        }
+        const hydrated = await this.hydrate(internal, guard);
+        options.onHydrated?.({ value: hydrated.value, ref: hydrated.ref, parseState: hydrated.state });
+        const profile = hydrated.value === undefined
+          ? undefined
+          : options.enricher?.project(hydrated.value, hydrated.ref);
+        selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
+        retainedBytes += internal.contentByteLength;
+        examinedRecords += 1n;
+        examinedBytes += internal.contentByteLength;
+        scanCursor = ordinal;
+      }
+      matchedRecords = total;
+    } else {
+      let ordinal = direction === 'forward' ? 0n : total - 1n;
+      const targetEnd = offset + BigInt(limit);
+      while (ordinal >= 0n && ordinal < total) {
+        guard();
+        truncatedReason = scanLimitBeforeNextRecord(scanBudget, examinedRecords, examinedBytes);
+        if (truncatedReason !== undefined) break;
+        const internal = await this.index.getRecord(ordinal, guard);
+        if (internal === undefined) break;
+        if (
+          scanBudget?.maxExaminedBytes !== undefined
+          && examinedBytes + internal.contentByteLength > scanBudget.maxExaminedBytes
+        ) {
+          truncatedReason = 'byte_limit';
+          break;
+        }
+        const hydrated = await this.hydrate(internal, guard);
+        options.onHydrated?.({ value: hydrated.value, ref: hydrated.ref, parseState: hydrated.state });
+        if (hydrated.value === undefined) sawUninspectableRecord = true;
+        const profile = hydrated.value === undefined
+          ? undefined
+          : options.enricher?.project(hydrated.value, hydrated.ref);
+        if (this.matches(hydrated, options.predicate, options.enricher, profile)) {
+          matchedRecords += 1n;
+          if (matchedRecords > offset && selected.length < limit) {
+            if (
+              selected.length > 0
+              && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+            ) {
+              hydrationTruncated = true;
+              truncatedReason = 'hydration_limit';
+              break;
+            }
+            selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
+            retainedBytes += internal.contentByteLength;
+          }
+          if (matchedRecords >= targetEnd + 1n) {
+            scanCursor = ordinal;
+            examinedRecords += 1n;
+            examinedBytes += internal.contentByteLength;
+            break;
+          }
+        }
+        examinedRecords += 1n;
+        examinedBytes += internal.contentByteLength;
+        scanCursor = ordinal;
+        ordinal += direction === 'forward' ? 1n : -1n;
+      }
+      if (truncatedReason === undefined && sawUninspectableRecord) {
+        truncatedReason = 'uninspectable_record';
+      }
+    }
+
+    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+    const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
+    const lastOrdinal = selected.at(-1)?.hydrated.internal.ordinal;
+    const hasMoreMatches = options.predicate === undefined
+      ? offset + BigInt(selected.length) < total
+      : matchedRecords > offset + BigInt(selected.length);
+    const hasAfter = hydrationTruncated || truncatedReason !== undefined || hasMoreMatches;
+    await this.assertSnapshotUnchanged(guard);
+
+    return {
+      rows,
+      columns,
+      anchorOrdinal: (lastOrdinal ?? firstOrdinal ?? 0n).toString(),
+      hasBefore: offset > 0n,
+      hasAfter,
+      indexedRecords: this.index.indexedRecords.toString(),
+      totalRecords: total.toString(),
+      sort,
+      sortOffset: offset.toString(),
+      ...(hydrationTruncated && selected.length < limit
+        ? { sortNextOffset: (offset + BigInt(selected.length)).toString() }
+        : {}),
+      matchedRecords: matchedRecords.toString(),
+      scan: {
+        examinedRecords: examinedRecords.toString(),
+        examinedBytes: examinedBytes.toString(),
+        ...(scanCursor === undefined ? {} : { cursorOrdinal: scanCursor.toString() }),
+        ...(truncatedReason === undefined ? {} : { truncatedReason, direction }),
+      },
+    };
+  }
+
+  /**
+   * Execute a globally ordered page without sorting only the already visible
+   * rows. Every matching record in the bounded scan contributes a lightweight
+   * key/reference candidate; only the best window is retained, and selected
+   * records are hydrated after ordering. `scan` makes an incomplete result
+   * explicit so the UI can distinguish an exact page from a budget-limited one.
+   */
+  private async getSortedRows(
+    options: GetRowsOptions,
+    guard: () => void,
+    limit: number,
+    sort: RowSort,
+  ): Promise<RowPage> {
+    const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
+    const windowEnd = offset + BigInt(limit);
+    if (windowEnd > BigInt(MAX_SORT_WINDOW)) {
+      throw new JsonlEngineError(
+        'INVALID_ARGUMENT',
+        `sortOffset plus limit must not exceed ${String(MAX_SORT_WINDOW)}.`,
+      );
+    }
+    const scanBudget = normalizeSortScanBudget(options.scanBudget);
+    let columns = options.columns === undefined
+      ? this.defaultColumns(options.enricher?.columns)
+      : options.columns.slice(0, this.options.defaultColumnLimit + 1);
+    const sortColumn = columns.find((column) => column.id === sort.columnId)
+      ?? (sort.columnId === '__ordinal'
+        ? { id: '__ordinal', label: '#', source: 'system' as const }
+        : sort.columnId === '$ordinal'
+          ? { id: '$ordinal', label: '#', source: 'system' as const }
+          : sortColumnFromId(sort.columnId));
+    if (sortColumn === undefined) {
+      throw new JsonlEngineError('INVALID_ARGUMENT', `Unknown sort column: ${sort.columnId}.`);
+    }
+    if (!columns.some((column) => column.id === sortColumn.id)) {
+      columns = [sortColumn, ...columns].slice(0, this.options.defaultColumnLimit + 1);
+    }
+
+    const candidates: SortCandidate[] = [];
+    let matchedRecords = 0n;
+    let examinedRecords = 0n;
+    let examinedBytes = 0n;
+    let scanCursor: bigint | undefined;
+    let truncatedReason: ScanTruncationReason | undefined;
+    let sawUninspectableRecord = false;
+    const retainLimit = Number(windowEnd + 1n);
+    let ordinal = 0n;
+
+    while (true) {
+      guard();
+      if (scanBudget.deadlineEpochMs !== undefined && Date.now() >= scanBudget.deadlineEpochMs) {
+        truncatedReason = 'time_limit';
+        break;
+      }
+      const internal = await this.index.getRecord(ordinal, guard);
+      if (internal === undefined) break;
+      truncatedReason = scanLimitBeforeNextRecord(scanBudget, examinedRecords, examinedBytes);
+      if (truncatedReason !== undefined) break;
+      if (
+        scanBudget.maxExaminedBytes !== undefined
+        && examinedBytes + internal.contentByteLength > scanBudget.maxExaminedBytes
+      ) {
+        truncatedReason = 'byte_limit';
+        break;
+      }
+      const hydrated = await this.hydrate(internal, guard);
+      options.onHydrated?.({ value: hydrated.value, ref: hydrated.ref, parseState: hydrated.state });
+      if (options.predicate !== undefined && hydrated.value === undefined) {
+        sawUninspectableRecord = true;
+      }
+      const profile = hydrated.value === undefined
+        ? undefined
+        : options.enricher?.project(hydrated.value, hydrated.ref);
+      if (this.matches(hydrated, options.predicate, options.enricher, profile)) {
+        matchedRecords += 1n;
+        const candidate: SortCandidate = {
+          internal,
+          key: sortValueForColumn(hydrated, sortColumn, profile),
+        };
+        insertSortCandidate(candidates, candidate, sort.direction, retainLimit);
+      }
+      examinedRecords += 1n;
+      examinedBytes += internal.contentByteLength;
+      scanCursor = ordinal;
+      ordinal += 1n;
+    }
+
+    const ordered = candidates;
+    const selectedCandidates = ordered.slice(Number(offset), Number(windowEnd));
+    const selected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
+    let retainedBytes = 0n;
+    let hydrationTruncated = false;
+    for (const candidate of selectedCandidates) {
+      guard();
+      if (
+        selected.length > 0
+        && retainedBytes + candidate.internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+      ) {
+        hydrationTruncated = true;
+        break;
+      }
+      const hydrated = await this.hydrate(candidate.internal, guard);
+      const profile = hydrated.value === undefined
+        ? undefined
+        : options.enricher?.project(hydrated.value, hydrated.ref);
+      selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
+      retainedBytes += candidate.internal.contentByteLength;
+    }
+    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+    const hasMoreRetainedMatches = candidates.length > Number(windowEnd);
+    const hasAfter = hydrationTruncated || hasMoreRetainedMatches;
+    const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
+    const lastOrdinal = selected.at(-1)?.hydrated.internal.ordinal;
+    const effectiveTruncatedReason = truncatedReason
+      ?? (hydrationTruncated ? 'hydration_limit' : undefined)
+      ?? (sawUninspectableRecord ? 'uninspectable_record' : undefined);
+    const sortNextOffset = selected.length < selectedCandidates.length
+      ? offset + BigInt(selected.length)
+      : undefined;
+    await this.assertSnapshotUnchanged(guard);
+
+    return {
+      rows,
+      columns,
+      // Keep a physical anchor for detail/rebuild diagnostics. Sorted paging
+      // itself uses sortOffset and never interprets this as a logical rank.
+      anchorOrdinal: (lastOrdinal ?? firstOrdinal ?? 0n).toString(),
+      hasBefore: offset > 0n,
+      hasAfter,
+      indexedRecords: this.index.indexedRecords.toString(),
+      ...(this.index.totalRecords === undefined ? {} : { totalRecords: this.index.totalRecords.toString() }),
+      sort,
+      sortOffset: offset.toString(),
+      ...(sortNextOffset === undefined ? {} : { sortNextOffset: sortNextOffset.toString() }),
+      matchedRecords: matchedRecords.toString(),
+      scan: {
+        examinedRecords: examinedRecords.toString(),
+        examinedBytes: examinedBytes.toString(),
+        ...(scanCursor === undefined ? {} : { cursorOrdinal: scanCursor.toString() }),
+        ...(effectiveTruncatedReason === undefined ? {} : { truncatedReason: effectiveTruncatedReason }),
+      },
+    };
+  }
+
+  /**
+   * Scan problem entries independently from the visible row page. The scan is
+   * cursor-based and budgeted; callers must not interpret an incomplete page
+   * as a complete-file problem index.
+   */
+  getProblems(options: GetProblemsOptions = {}): Promise<ProblemPage> {
+    return this.enqueue(async () => {
+      const guard = this.makeGuard(options);
+      guard();
+      await this.assertSnapshotUnchanged(guard);
+      const limit = boundedInteger(options.limit ?? 100, 1, 200, 'limit');
+      const direction = options.direction ?? 'forward';
+      const scanBudget = normalizeProblemScanBudget(options.scanBudget, direction);
+      const anchor = options.anchorOrdinal === undefined
+        ? undefined
+        : parseNonNegativeBigInt(options.anchorOrdinal, 'anchorOrdinal');
+
+      if (direction === 'backward') await this.index.finish(guard);
+      let ordinal = direction === 'backward'
+        ? (anchor === undefined ? (this.index.totalRecords ?? 0n) - 1n : anchor - 1n)
+        : (anchor === undefined ? 0n : anchor + 1n);
+      const items: ProblemRef[] = [];
+      let examinedRecords = 0n;
+      let examinedBytes = 0n;
+      let lastExamined: bigint | undefined;
+      let firstExamined: bigint | undefined;
+      let truncatedReason: ScanTruncationReason | undefined;
+      let stoppedByPageLimit = false;
+      let reachedBoundary = false;
+
+      while (ordinal >= 0n) {
+        guard();
+        truncatedReason = scanLimitBeforeNextRecord(scanBudget, examinedRecords, examinedBytes);
+        if (truncatedReason !== undefined) break;
+        const internal = await this.index.getRecord(ordinal, guard);
+        if (internal === undefined) {
+          reachedBoundary = true;
+          break;
+        }
+        if (
+          scanBudget?.maxExaminedBytes !== undefined
+          && examinedBytes + internal.contentByteLength > scanBudget.maxExaminedBytes
+        ) {
+          truncatedReason = 'byte_limit';
+          break;
+        }
+
+        let problems = this.problemCache.get(ordinal);
+        if (problems === undefined) {
+          const hydrated = await this.hydrate(internal, guard);
+          problems = hydrated.problems;
+          this.problemCache.set(ordinal, problems);
+        }
+        examinedRecords += 1n;
+        examinedBytes += internal.contentByteLength;
+        firstExamined ??= ordinal;
+        lastExamined = ordinal;
+        if (problems.length > 0) {
+          // Keep a physical record's entries together. This may return more
+          // than `limit` when one record has multiple diagnostics, avoiding a
+          // continuation cursor that would duplicate or drop an entry.
+          items.push(...problems);
+          if (items.length >= limit) {
+            stoppedByPageLimit = true;
+            break;
+          }
+        }
+        ordinal += direction === 'forward' ? 1n : -1n;
+      }
+
+      const nextOrdinal = lastExamined === undefined
+        ? ordinal
+        : lastExamined + (direction === 'forward' ? 1n : -1n);
+      // Do not probe the next record here: doing so would perform work after a
+      // caller's scan budget was exhausted. Index state is enough to describe
+      // whether continuation may have more physical records.
+      const hasMoreRecords = direction === 'backward'
+        ? nextOrdinal >= 0n && nextOrdinal < (this.index.totalRecords ?? 0n)
+        : nextOrdinal >= 0n && (nextOrdinal < this.index.indexedRecords || !this.index.indexingComplete);
+      const complete = truncatedReason === undefined
+        && (!stoppedByPageLimit || !hasMoreRecords)
+        && anchor === undefined
+        && (reachedBoundary || (!hasMoreRecords && lastExamined !== undefined));
+      const total = this.index.totalRecords;
+      const startOrdinal = direction === 'forward'
+        ? (anchor ?? 0n)
+        : (anchor === undefined ? (total ?? 0n) : anchor);
+      const hasBefore = direction === 'backward'
+        ? hasMoreRecords
+        : (firstExamined ?? startOrdinal) > 0n;
+      const hasAfter = direction === 'backward'
+        ? total !== undefined && startOrdinal < total - 1n
+        : hasMoreRecords;
+
+      await this.assertSnapshotUnchanged(guard);
+      return {
+        items,
+        anchorOrdinal: (lastExamined ?? anchor ?? 0n).toString(),
+        hasBefore,
+        hasAfter,
+        indexedRecords: this.index.indexedRecords.toString(),
+        observedProblemRecords: this.schema.problemRecordCount.toString(),
+        complete,
+        scan: {
+          examinedRecords: examinedRecords.toString(),
+          examinedBytes: examinedBytes.toString(),
+          ...(lastExamined === undefined ? {} : { cursorOrdinal: lastExamined.toString() }),
+          direction,
+          ...(truncatedReason === undefined ? {} : { truncatedReason }),
+        },
       };
     });
   }
@@ -531,11 +1073,11 @@ export class JsonlFileEngine {
       if (internal === undefined || !sameCoordinates(internal, ref, this.snapshot.generation)) {
         throw new JsonlEngineError('INVALID_RECORD_REF', 'Record coordinates do not match the current snapshot index.');
       }
-      const hydrated = await this.hydrate(internal, guard);
+      const hydrated = await this.hydrate(internal, guard, options.full === true);
       const profile = hydrated.value === undefined
         ? undefined
         : options.enricher?.project(hydrated.value, hydrated.ref);
-      await this.assertSnapshotUnchanged();
+      await this.assertSnapshotUnchanged(guard);
       return {
         ref: hydrated.ref,
         rawPreview: hydrated.rawPreview,
@@ -547,12 +1089,19 @@ export class JsonlFileEngine {
     });
   }
 
-  getSchema(offset = 0, limit = 100): Promise<{ fields: FieldStats[]; totalFields: number; complete: boolean }> {
+  getSchema(
+    offset = 0,
+    limit = 100,
+    context: JsonlOperationContext = {},
+  ): Promise<{ fields: FieldStats[]; totalFields: number; complete: boolean }> {
     return this.enqueue(async () => {
-      this.makeGuard({})();
+      const guard = this.makeGuard(context);
+      guard();
       const safeOffset = boundedInteger(offset, 0, Number.MAX_SAFE_INTEGER, 'offset');
       const safeLimit = boundedInteger(limit, 1, 500, 'limit');
-      return this.schema.page(safeOffset, safeLimit, this.index.indexingComplete, this.index.totalRecords);
+      const page = this.schema.page(safeOffset, safeLimit, this.index.indexingComplete, this.index.totalRecords);
+      guard();
+      return page;
     });
   }
 
@@ -578,17 +1127,34 @@ export class JsonlFileEngine {
         observedAt,
       };
 
-      if (!currentStat.isFile()) return { kind: 'replace', ...base };
-      if (
-        this.sourceDevice !== 0n
-        && this.sourceInode !== 0n
-        && (currentStat.dev !== this.sourceDevice || currentStat.ino !== this.sourceInode)
-      ) {
+      if (!currentStat.isFile()) {
         return { kind: 'replace', ...base };
       }
-      if (currentSize < this.fileSize) return { kind: 'truncate', ...base };
+      const sourceIdentityAvailable = this.sourceDevice !== 0n
+        && this.sourceInode !== 0n
+        && currentStat.dev !== 0n
+        && currentStat.ino !== 0n;
+      if (!sourceIdentityAvailable) {
+        return { kind: 'unknown', ...base };
+      }
+      if (currentStat.dev !== this.sourceDevice || currentStat.ino !== this.sourceInode) {
+        return { kind: 'replace', ...base };
+      }
+      if (currentSize < this.fileSize) {
+        return { kind: 'truncate', ...base };
+      }
 
-      const currentHandle = await open(this.filePath, 'r');
+      let currentHandle: FileHandle;
+      try {
+        currentHandle = await open(this.filePath, 'r');
+      } catch (error) {
+        if (isNodeError(error) && error.code === 'ENOENT') {
+          return { kind: 'delete', ...base };
+        }
+        // The path changed between stat and open. Do not turn a transient
+        // writer/replace race into an unstructured reconcile error.
+        return { kind: 'unknown', ...base };
+      }
       try {
         const prefix = await fingerprintRange(currentHandle, 0n, this.prefixFingerprint.length);
         guard();
@@ -602,14 +1168,55 @@ export class JsonlFileEngine {
         if (oldTail.hash !== this.tailFingerprint.hash || oldTail.length !== this.tailFingerprint.length) {
           return { kind: 'replace', ...base };
         }
+
+        const original = await this.getFullFingerprint();
+        if (original === undefined) return { kind: 'unknown', ...base };
+        const currentOldRange = await fingerprintWholeRange(currentHandle, this.fileSize, undefined, guard);
+        if (currentOldRange.hash !== original.hash || currentOldRange.length !== original.length) {
+          return { kind: 'replace', ...base };
+        }
+
+        // A writer can advance the file after the range hash was read. Do not
+        // publish an append/unchanged classification for that moving target;
+        // the next debounced probe will observe a stable generation.
+        let latestStat;
+        try {
+          latestStat = await stat(this.filePath, { bigint: true });
+        } catch (error) {
+          if (isNodeError(error) && error.code === 'ENOENT') {
+            return { kind: 'delete', ...base };
+          }
+          throw error;
+        }
+        if (!latestStat.isFile()) {
+          return { kind: 'replace', ...base };
+        }
+        if (
+          latestStat.dev !== this.sourceDevice
+          || latestStat.ino !== this.sourceInode
+            || latestStat.size !== currentSize
+            || latestStat.mtimeNs !== currentStat.mtimeNs
+            || latestStat.ctimeNs !== currentStat.ctimeNs
+        ) {
+          return { kind: 'unknown', ...base };
+        }
       } finally {
         await currentHandle.close();
       }
 
       if (currentSize > this.fileSize) return { kind: 'append', ...base };
-      if (Number(currentStat.mtimeMs) === this.sourceMtimeMs) return { kind: 'unchanged', ...base };
-      return { kind: 'unknown', ...base };
+      return { kind: 'unchanged', ...base };
     });
+  }
+
+  /**
+   * Whether this generation has an exact original-range fingerprint that can
+   * be used to prove an append. Large files intentionally defer that O(n)
+   * baseline until a refresh needs it; stable follow recovery can instead
+   * validate a newly opened candidate as a full resync.
+   */
+  get canValidateOriginalSnapshot(): boolean {
+    return this.fullFingerprintKnown;
   }
 
   async dispose(): Promise<void> {
@@ -617,6 +1224,7 @@ export class JsonlFileEngine {
     if (!this.closing) {
       this.closing = true;
       this.lifecycleAbort.abort();
+      this.fingerprintAbort.abort();
       for (const controller of this.backgroundControllers) controller.abort();
       this.backgroundControllers.clear();
     }
@@ -652,28 +1260,104 @@ export class JsonlFileEngine {
     };
   }
 
-  private async assertSnapshotUnchanged(): Promise<void> {
+  private async assertSnapshotUnchanged(guard?: () => void): Promise<void> {
+    guard?.();
+    if (this.invalidated) {
+      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source no longer matches this snapshot.');
+    }
+    let pathState;
+    try {
+      pathState = await stat(this.filePath, { bigint: true });
+    } catch {
+      this.invalidateSnapshot();
+      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source path no longer identifies this snapshot.');
+    }
+    if (
+      this.sourceDevice !== 0n
+      && this.sourceInode !== 0n
+      && (pathState.dev !== this.sourceDevice || pathState.ino !== this.sourceInode)
+    ) {
+      this.invalidateSnapshot();
+      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source path now identifies a different file.');
+    }
     const current = await this.handle.stat({ bigint: true });
-    if (current.size === this.fileSize && current.mtimeNs === this.sourceMtimeNs) return;
+    guard?.();
+    if (
+      current.size === this.fileSize
+      && current.mtimeNs === this.sourceMtimeNs
+      && current.ctimeNs === this.sourceCtimeNs
+    ) return;
+    if (current.size < this.fileSize) {
+      this.invalidateSnapshot();
+      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source was truncated after this snapshot opened.');
+    }
     if (current.size > this.fileSize) {
       const prefix = await fingerprintRange(this.handle, 0n, this.prefixFingerprint.length);
+      guard?.();
       const oldTail = await fingerprintRange(
         this.handle,
         this.fileSize - BigInt(this.tailFingerprint.length),
         this.tailFingerprint.length,
       );
+      guard?.();
       if (
         prefix.hash === this.prefixFingerprint.hash
         && prefix.length === this.prefixFingerprint.length
         && oldTail.hash === this.tailFingerprint.hash
         && oldTail.length === this.tailFingerprint.length
       ) {
-        return;
+        const original = await this.getFullFingerprint();
+        if (original === undefined) {
+          // A moving writer means this generation has no trustworthy baseline.
+          // Rebuild after the writer settles instead of treating new bytes as
+          // append-only data.
+          throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source has no stable baseline; rebuild after the writer settles.');
+        }
+        const currentOldRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard);
+        if (currentOldRange.hash !== original.hash || currentOldRange.length !== original.length) {
+          this.invalidateSnapshot();
+          throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed inside the open snapshot range.');
+        }
+        const latest = await this.handle.stat({ bigint: true });
+        guard?.();
+        if (
+          latest.size === current.size
+          && latest.mtimeNs === current.mtimeNs
+          && latest.ctimeNs === current.ctimeNs
+          && latest.dev === current.dev
+          && latest.ino === current.ino
+        ) return;
+        throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed while the snapshot was being checked.');
       }
+      this.invalidateSnapshot();
+      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed at the beginning of the snapshot range.');
     }
-    if (current.size !== this.fileSize || current.mtimeNs !== this.sourceMtimeNs) {
-      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed after this snapshot opened.');
+    if (
+      current.size === this.fileSize
+      && (current.mtimeNs !== this.sourceMtimeNs || current.ctimeNs !== this.sourceCtimeNs)
+    ) {
+      const original = await this.getFullFingerprint();
+      if (original === undefined) {
+        throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source has no stable baseline; rebuild after the writer settles.');
+      }
+      const currentRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard);
+      if (currentRange.hash !== original.hash || currentRange.length !== original.length) {
+        this.invalidateSnapshot();
+        throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed inside the open snapshot range.');
+      }
+      const latest = await this.handle.stat({ bigint: true });
+      guard?.();
+      if (
+        latest.size === current.size
+        && latest.mtimeNs === current.mtimeNs
+        && latest.ctimeNs === current.ctimeNs
+        && latest.dev === current.dev
+        && latest.ino === current.ino
+      ) return;
+      throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed while the snapshot was being checked.');
     }
+    this.invalidateSnapshot();
+    throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed after this snapshot opened.');
   }
 
   private async assertSnapshotMetadataUnchanged(): Promise<void> {
@@ -681,6 +1365,7 @@ export class JsonlFileEngine {
     try {
       pathState = await stat(this.filePath, { bigint: true });
     } catch {
+      this.invalidateSnapshot();
       throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source path no longer identifies this snapshot.');
     }
     const handleState = await this.handle.stat({ bigint: true });
@@ -688,15 +1373,48 @@ export class JsonlFileEngine {
     const sameOpenFile = pathState.dev === handleState.dev && pathState.ino === handleState.ino;
     const truncated = pathState.size < this.fileSize || handleState.size < this.fileSize;
     const divergentSize = pathState.size !== handleState.size;
-    const equalLengthRewrite = handleState.size === this.fileSize && handleState.mtimeNs !== this.sourceMtimeNs;
+    const equalLengthRewrite = handleState.size === this.fileSize
+      && (handleState.mtimeNs !== this.sourceMtimeNs || handleState.ctimeNs !== this.sourceCtimeNs);
     if (!sameIdentity || !sameOpenFile || truncated || divergentSize || equalLengthRewrite) {
+      this.invalidateSnapshot();
       throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed before staged index data could commit.');
     }
   }
 
-  private async hydrate(internal: InternalRecordRef, guard: () => void): Promise<HydratedRecord> {
+  private getFullFingerprint(): Promise<FullSourceFingerprint | undefined> {
+    if (this.fullFingerprint === undefined) {
+      // Large files do not pay this O(n) read during open/first-page work. The
+      // first refresh or snapshot guard that needs an exact baseline starts it
+      // once and shares the result with concurrent callers.
+      this.fullFingerprint = Promise.resolve()
+        .then(() => fingerprintStableRange(
+          this.handle,
+          this.fileSize,
+          this.sourceMtimeNs,
+          this.sourceCtimeNs,
+          this.fingerprintAbort.signal,
+        ))
+        .then((result) => {
+          this.fullFingerprintKnown = result !== undefined;
+          return result;
+        });
+    }
+    return this.fullFingerprint;
+  }
+
+  private invalidateSnapshot(): void {
+    this.invalidated = true;
+    this.problemCache.clear();
+  }
+
+  private async hydrate(
+    internal: InternalRecordRef,
+    guard: () => void,
+    full = false,
+  ): Promise<HydratedRecord> {
     guard();
-    if (internal.contentByteLength > BigInt(this.options.maxRecordBytes)) {
+    const hydrationLimit = full ? this.options.fullRecordMaxBytes : this.options.maxRecordBytes;
+    if (internal.contentByteLength > BigInt(hydrationLimit)) {
       internal.parseState = 'oversized';
       const previewLength = Number(internal.contentByteLength < BigInt(this.options.previewBytes)
         ? internal.contentByteLength
@@ -706,7 +1424,9 @@ export class JsonlFileEngine {
       const ref = this.index.toPublic(internal, this.snapshot.generation);
       const problems: ProblemRef[] = [{
         code: 'OVERSIZED_RECORD',
-        message: `Record is ${internal.contentByteLength.toString()} bytes; automatic hydration is capped at ${String(this.options.maxRecordBytes)} bytes.`,
+        message: full
+          ? `Record is ${internal.contentByteLength.toString()} bytes; explicit detail hydration is capped at ${String(hydrationLimit)} bytes.`
+          : `Record is ${internal.contentByteLength.toString()} bytes; automatic hydration is capped at ${String(hydrationLimit)} bytes.`,
         severity: 'warning',
         ref,
       }];
@@ -907,6 +1627,12 @@ function normalizeOptions(options: JsonlEngineOptions): NormalizedOptions {
     exactCacheSegments: boundedInteger(options.exactCacheSegments ?? 4, 1, 64, 'exactCacheSegments'),
     maxQueuedOperations: boundedInteger(options.maxQueuedOperations ?? 64, 1, 4096, 'maxQueuedOperations'),
     maxRecordBytes: boundedInteger(options.maxRecordBytes ?? 1024 * 1024, 1, 64 * 1024 * 1024, 'maxRecordBytes'),
+    fullRecordMaxBytes: boundedInteger(
+      options.fullRecordMaxBytes ?? 16 * 1024 * 1024,
+      1,
+      256 * 1024 * 1024,
+      'fullRecordMaxBytes',
+    ),
     pageHydrationMaxBytes: boundedInteger(options.pageHydrationMaxBytes ?? 8 * 1024 * 1024, 1, 256 * 1024 * 1024, 'pageHydrationMaxBytes'),
     previewBytes: boundedInteger(options.previewBytes ?? 16 * 1024, 1, 1024 * 1024, 'previewBytes'),
     rowPreviewCharacters: boundedInteger(options.rowPreviewCharacters ?? 240, 16, 4096, 'rowPreviewCharacters'),
@@ -948,9 +1674,6 @@ function normalizeRowScanBudget(
   direction: 'forward' | 'backward',
 ): NormalizedRowScanBudget | undefined {
   if (value === undefined) return undefined;
-  if (direction !== 'forward') {
-    throw new JsonlEngineError('INVALID_ARGUMENT', 'scanBudget is supported only for forward scans.');
-  }
   const maxExaminedRecords = value.maxExaminedRecords === undefined
     ? undefined
     : BigInt(boundedInteger(
@@ -985,6 +1708,215 @@ function normalizeRowScanBudget(
     ...(maxExaminedBytes === undefined ? {} : { maxExaminedBytes }),
     ...(deadlineEpochMs === undefined ? {} : { deadlineEpochMs }),
   };
+}
+
+function normalizeProblemScanBudget(
+  value: RowScanBudget | undefined,
+  direction: 'forward' | 'backward',
+): NormalizedRowScanBudget {
+  const normalized = normalizeRowScanBudget(value ?? {
+    maxExaminedRecords: DEFAULT_PROBLEM_MAX_EXAMINED_RECORDS,
+    maxExaminedBytes: BigInt(DEFAULT_PROBLEM_MAX_EXAMINED_BYTES),
+    deadlineEpochMs: Date.now() + DEFAULT_PROBLEM_MAX_MILLISECONDS,
+  }, direction);
+  if (normalized === undefined) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', 'A problem scan requires a bounded scan budget.');
+  }
+  if (
+    normalized.maxExaminedRecords !== undefined
+    && normalized.maxExaminedRecords > BigInt(HARD_PROBLEM_MAX_EXAMINED_RECORDS)
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', `problem scan record budget must not exceed ${String(HARD_PROBLEM_MAX_EXAMINED_RECORDS)}.`);
+  }
+  if (
+    normalized.maxExaminedBytes !== undefined
+    && normalized.maxExaminedBytes > BigInt(HARD_PROBLEM_MAX_EXAMINED_BYTES)
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', `problem scan byte budget must not exceed ${String(HARD_PROBLEM_MAX_EXAMINED_BYTES)}.`);
+  }
+  if (
+    normalized.deadlineEpochMs !== undefined
+    && normalized.deadlineEpochMs > Date.now() + HARD_PROBLEM_MAX_MILLISECONDS
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', `problem scan deadline must be within ${String(HARD_PROBLEM_MAX_MILLISECONDS)}ms.`);
+  }
+  return normalized;
+}
+
+function normalizeRowSort(value: RowSort | undefined): RowSort | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value.columnId !== 'string'
+    || value.columnId.length === 0
+    || value.columnId.length > 256
+    || (value.direction !== 'asc' && value.direction !== 'desc')
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', 'sort must contain a bounded columnId and asc/desc direction.');
+  }
+  return { columnId: value.columnId, direction: value.direction };
+}
+
+function isOrdinalSort(sort: RowSort): boolean {
+  return sort.columnId === '__ordinal' || sort.columnId === '$ordinal';
+}
+
+function normalizeSortScanBudget(value: RowScanBudget | undefined): NormalizedRowScanBudget {
+  const normalized = normalizeRowScanBudget(value ?? {
+    maxExaminedRecords: DEFAULT_SORT_MAX_EXAMINED_RECORDS,
+    maxExaminedBytes: BigInt(DEFAULT_SORT_MAX_EXAMINED_BYTES),
+    deadlineEpochMs: Date.now() + DEFAULT_SORT_MAX_MILLISECONDS,
+  }, 'forward');
+  if (normalized === undefined) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', 'A sorted query requires a bounded scan budget.');
+  }
+  if (
+    normalized.maxExaminedRecords !== undefined
+    && normalized.maxExaminedRecords > BigInt(HARD_SORT_MAX_EXAMINED_RECORDS)
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', `sort scan record budget must not exceed ${String(HARD_SORT_MAX_EXAMINED_RECORDS)}.`);
+  }
+  if (
+    normalized.maxExaminedBytes !== undefined
+    && normalized.maxExaminedBytes > BigInt(HARD_SORT_MAX_EXAMINED_BYTES)
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', `sort scan byte budget must not exceed ${String(HARD_SORT_MAX_EXAMINED_BYTES)}.`);
+  }
+  if (
+    normalized.deadlineEpochMs !== undefined
+    && normalized.deadlineEpochMs > Date.now() + HARD_SORT_MAX_MILLISECONDS
+  ) {
+    throw new JsonlEngineError('INVALID_ARGUMENT', 'sort scan deadline must be within 60 seconds.');
+  }
+  return normalized;
+}
+
+function sortValueForColumn(
+  hydrated: HydratedRecord,
+  column: ColumnSpec,
+  profile: AgentRowProjection | undefined,
+): unknown {
+  if (column.source === 'system' || column.id === '__ordinal' || column.id === '$ordinal') {
+    return hydrated.internal.ordinal;
+  }
+  if (column.source === 'profile') {
+    if (profile === undefined) return undefined;
+    if (Object.hasOwn(profile, column.id)) {
+      return (profile as AgentRowProjection & Record<string, unknown>)[column.id];
+    }
+    return profile.derivedFields?.[column.id];
+  }
+  if (column.path === undefined || hydrated.value === undefined) return undefined;
+  const resolved = resolveFieldPath(hydrated.value, column.path);
+  return resolved.exists ? resolved.value : undefined;
+}
+
+function sortColumnFromId(id: string): ColumnSpec | undefined {
+  // Generic columns use the JSON-encoded FieldPath as their stable id. A
+  // plain key is accepted as a compatibility convenience for callers that do
+  // not yet have a schema projection.
+  try {
+    const parsed: unknown = JSON.parse(id);
+    if (Array.isArray(parsed) && parsed.length <= 32) {
+      const tokens = parsed.flatMap((token): import('../shared/types').PathToken[] => {
+        if (token === null || typeof token !== 'object' || Array.isArray(token)) return [];
+        const candidate = token as Record<string, unknown>;
+        if (candidate.kind === 'key') {
+          return typeof candidate.value === 'string' && candidate.value.length <= 256
+            ? [{ kind: 'key', value: candidate.value }]
+            : [];
+        }
+        if (candidate.kind === 'index') {
+          return typeof candidate.value === 'number'
+            && Number.isSafeInteger(candidate.value)
+            && candidate.value >= 0
+            ? [{ kind: 'index', value: candidate.value }]
+            : [];
+        }
+        return [];
+      });
+      if (tokens.length === parsed.length) {
+        return { id, label: id, path: { tokens }, source: 'record' };
+      }
+    }
+  } catch {
+    // Fall through to a bounded plain-key interpretation.
+  }
+  if (/^[A-Za-z_$][\w$]{0,127}$/.test(id)) {
+    return { id, label: id, path: { tokens: [{ kind: 'key', value: id }] }, source: 'record' };
+  }
+  return undefined;
+}
+
+function insertSortCandidate(
+  candidates: SortCandidate[],
+  candidate: SortCandidate,
+  direction: RowSort['direction'],
+  limit: number,
+): void {
+  const comparator = (left: SortCandidate, right: SortCandidate): number =>
+    compareSortCandidates(left, right, direction);
+  let low = 0;
+  let high = candidates.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (comparator(candidates[middle]!, candidate) <= 0) low = middle + 1;
+    else high = middle;
+  }
+  candidates.splice(low, 0, candidate);
+  if (candidates.length > limit) candidates.pop();
+}
+
+function compareSortCandidates(
+  left: SortCandidate,
+  right: SortCandidate,
+  direction: RowSort['direction'],
+): number {
+  const valueOrder = compareSortValues(left.key, right.key, direction);
+  if (valueOrder !== 0) return valueOrder;
+  if (left.internal.ordinal < right.internal.ordinal) return -1;
+  if (left.internal.ordinal > right.internal.ordinal) return 1;
+  return 0;
+}
+
+/** Missing/null values are placed last in either direction for scan stability. */
+function compareSortValues(left: unknown, right: unknown, direction: RowSort['direction']): number {
+  const leftMissing = left === undefined || left === null;
+  const rightMissing = right === undefined || right === null;
+  if (leftMissing || rightMissing) {
+    if (leftMissing && rightMissing) return 0;
+    // Keep null/missing values at the end for both directions. This branch is
+    // deliberately resolved before applying the asc/desc inversion below;
+    // otherwise descending order would move them to the front.
+    return leftMissing ? 1 : -1;
+  }
+  let result: number;
+  if (typeof left === 'number' && typeof right === 'number') {
+    result = left < right ? -1 : left > right ? 1 : 0;
+  } else if (typeof left === 'string' && typeof right === 'string') {
+    result = left < right ? -1 : left > right ? 1 : 0;
+  } else if (typeof left === 'boolean' && typeof right === 'boolean') {
+    result = left === right ? 0 : left ? 1 : -1;
+  } else {
+    const leftKind = jsonKindOf(left);
+    const rightKind = jsonKindOf(right);
+    if (leftKind !== rightKind) {
+      result = leftKind < rightKind ? -1 : 1;
+    } else {
+      const leftText = searchableSortValue(left);
+      const rightText = searchableSortValue(right);
+      result = leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
+    }
+  }
+  return direction === 'asc' ? result : -result;
+}
+
+function searchableSortValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return String(value);
+  }
 }
 
 function scanLimitBeforeNextRecord(
@@ -1035,6 +1967,74 @@ async function fingerprintRange(handle: FileHandle, start: bigint, length: numbe
     length: offset,
     hash: createHash('sha256').update(buffer.subarray(0, offset)).digest('hex'),
   };
+}
+
+async function fingerprintStableRange(
+  handle: FileHandle,
+  length: bigint,
+  baselineMtimeNs: bigint,
+  baselineCtimeNs: bigint,
+  signal?: AbortSignal,
+): Promise<FullSourceFingerprint | undefined> {
+  try {
+    const before = await handle.stat({ bigint: true });
+    // Do not establish a baseline after a writer has already moved the file.
+    // The original bytes are then unknowable without a separate snapshot.
+    if (
+      !before.isFile()
+      || before.size !== length
+      || before.mtimeNs !== baselineMtimeNs
+      || before.ctimeNs !== baselineCtimeNs
+    ) return undefined;
+    const fingerprint = await fingerprintWholeRange(handle, length, signal);
+    const after = await handle.stat({ bigint: true });
+    if (
+      after.size !== length
+      || after.mtimeNs !== before.mtimeNs
+      || after.ctimeNs !== before.ctimeNs
+      || fingerprint.length !== length
+    ) {
+      // A concurrent append/rewrite invalidates this one-shot baseline. The
+      // caller must open a new generation once the writer is quiescent.
+      return undefined;
+    }
+    return fingerprint;
+  } catch {
+    return undefined;
+  }
+}
+
+async function fingerprintWholeRange(
+  handle: FileHandle,
+  length: bigint,
+  signal?: AbortSignal,
+  guard?: () => void,
+): Promise<FullSourceFingerprint> {
+  const hash = createHash('sha256');
+  const chunk = Buffer.allocUnsafe(1024 * 1024);
+  let offset = 0n;
+  while (offset < length) {
+    guard?.();
+    if (signal?.aborted) throw new Error('fingerprint aborted');
+    const remaining = length - offset;
+    const requested = Number(remaining < BigInt(chunk.length) ? remaining : BigInt(chunk.length));
+    let filled = 0;
+    while (filled < requested) {
+      const { bytesRead } = await handle.read(
+        chunk,
+        filled,
+        requested - filled,
+        offset + BigInt(filled),
+      );
+      if (bytesRead <= 0) break;
+      filled += bytesRead;
+    }
+    if (filled === 0) break;
+    hash.update(chunk.subarray(0, filled));
+    offset += BigInt(filled);
+  }
+  guard?.();
+  return { length: offset, hash: hash.digest('hex') };
 }
 
 function formatFingerprint(fingerprint: SourceFingerprint): string {

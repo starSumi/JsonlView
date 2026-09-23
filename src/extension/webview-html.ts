@@ -29,6 +29,7 @@ export function getWebviewHtml(
 <body
   data-document-id="${escapeAttribute(snapshot.documentId)}"
   data-generation="${escapeAttribute(snapshot.generation)}"
+  ${snapshot.epoch === undefined ? '' : `data-epoch="${String(snapshot.epoch)}"`}
   data-uri="${escapeAttribute(snapshot.uri)}"
   data-page-size="${String(Math.min(500, Math.max(20, Math.trunc(pageSize))))}"
 >

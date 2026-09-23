@@ -112,20 +112,27 @@ try {
 }
 
 function parseArguments(values: string[]): Arguments {
+  const args = values[0] === '--' ? values.slice(1) : values;
   let file: string | undefined;
   let scanner: NativeNewlineScannerSetting = 'off';
   let query = true;
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index];
-    const next = values[index + 1];
-    if (value === '--file' && next !== undefined) {
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    const next = args[index + 1];
+    if (value === '--file') {
+      if (next === undefined || next.startsWith('--')) throw new Error('--file requires a path');
       file = resolve(next);
       index += 1;
-    } else if (value === '--scanner' && (next === 'off' || next === 'auto' || next === 'on')) {
+    } else if (value === '--scanner') {
+      if (next !== 'off' && next !== 'auto' && next !== 'on') {
+        throw new Error('--scanner requires one of: off, auto, on');
+      }
       scanner = next;
       index += 1;
     } else if (value === '--no-query') {
       query = false;
+    } else {
+      throw new Error(`unknown argument: ${value}`);
     }
   }
   if (file === undefined) throw new Error('Usage: pnpm benchmark:engine --file <path> [--scanner off|auto|on] [--no-query]');

@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5 peeled commit
+        with:
+          version: 10.26.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+      - name: Audit all dependencies
+        run: pnpm audit --audit-level high
+      - run: pnpm check:contract
+      - run: pnpm check:cargo-notices
+      - run: pnpm check:runtime-notices
+      - run: pnpm typecheck
+      - run: pnpm test:coverage
+      - run: pnpm build
+      - run: pnpm native:check
+      - run: pnpm native:fmt
+      - run: pnpm native:clippy
+      - run: pnpm native:test
+      - name: Rust advisory and supply-chain policy
+        run: |
+          cargo install --locked cargo-audit@0.22.2 cargo-deny@0.20.2
+          pnpm audit:cargo
+          pnpm check:cargo-policy
+      # Public CI is a verifier, not a release store. Bundles, native addons,
+      # and VSIX candidates stay in the external harness/release environment;
+      # uploading them here would make every PR artifact publicly downloadable
+      # before identity, license, and provenance gates have passed.
+
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5 peeled commit
+        with:
+          version: 10.26.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate locked native manifest
+        shell: pwsh
+        run: cargo metadata --manifest-path native/jsonl-core/Cargo.toml --locked --no-deps --format-version 1 | Out-Null
+      - run: pnpm check:cargo-notices
+      - run: pnpm native:clippy
+      - name: Rebuild native addon from Rust source
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP 'jsonlview-native-build'
+          $targetDir = Join-Path $env:RUNNER_TEMP 'jsonlview-cargo-target'
+          $distDir = Join-Path $env:RUNNER_TEMP 'jsonlview-dist-build'
+          $reportDir = Join-Path $env:RUNNER_TEMP 'jsonlview-native-provenance'
+          New-Item -ItemType Directory -Force -Path $buildDir, $targetDir, $reportDir | Out-Null
+          $env:JSONLVIEW_NATIVE_OUTPUT_DIR = $buildDir
+          $env:JSONLVIEW_NATIVE_TARGET_DIR = $targetDir
+          pnpm native:build
+          $env:JSONLVIEW_DIST_OUTPUT = $distDir
+          pnpm build
+          git diff --exit-code -- native/jsonl-core/Cargo.lock
+          "JSONLVIEW_NATIVE_BUILD_DIR=$buildDir" >> $env:GITHUB_ENV
+          "JSONLVIEW_DIST_BUILD_DIR=$distDir" >> $env:GITHUB_ENV
+          "JSONLVIEW_NATIVE_REPORT_DIR=$reportDir" >> $env:GITHUB_ENV
+      - name: Verify rebuilt native candidate
+        shell: pwsh
+        run: node scripts/verify-native-addon.mjs --addon (Join-Path $env:JSONLVIEW_NATIVE_BUILD_DIR 'jsonl_core.win32-x64-msvc.node')
+      - name: Verify source-to-binary provenance
+        shell: pwsh
+        run: node scripts/verify-native-provenance.mjs --candidate "$env:JSONLVIEW_NATIVE_BUILD_DIR" --skip-committed --out "$env:JSONLVIEW_NATIVE_REPORT_DIR/provenance.json"
+      - name: Package paired npm and VSIX candidates
+        shell: pwsh
+        run: |
+          $vsix = Join-Path $env:RUNNER_TEMP 'jsonl-view.vsix'
+          $vsixManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'vsix-manifest.json'
+          $npmStage = Join-Path $env:RUNNER_TEMP 'jsonl-view-npm-stage'
+          $npmManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'npm-manifest.json'
+          $npmTarball = Join-Path $env:RUNNER_TEMP 'sumi-labs-jsonl-view.tgz'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          node scripts/prepare-npm-package.mjs --allow-proprietary --name '@sumi-labs/jsonl-view' --version "$version" --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --output "$npmStage" --manifest "$npmManifest" --tarball "$npmTarball"
+          node scripts/package-vsix-candidate.mjs --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$vsix" --manifest "$vsixManifest"
+          node scripts/verify-candidate-pair.mjs --npm "$npmTarball" --vsix "$vsix" --expected-npm-name '@sumi-labs/jsonl-view' --expected-publisher 'Sumi-Sophia' --expected-version "$version"
+      - name: Benchmark rebuilt native addon
+        shell: pwsh
+        run: |
+          $env:JSONLVIEW_NEWLINE_NATIVE_PATH = Join-Path $env:JSONLVIEW_NATIVE_BUILD_DIR 'jsonl_core.win32-x64-msvc.node'
+          node scripts/benchmark-newline-scanners.mjs --size-mib 8 --line-bytes 256 --warmup 1 --rounds 3 | Tee-Object -FilePath (Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'newline-benchmark.json')

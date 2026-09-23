@@ -69,4 +69,17 @@ describe('bounded interactive JSON tree model', () => {
     expect(markup).toContain('json-token-key');
     expect(markup).toContain('json-token-boolean');
   });
+
+  it('marks long primitive previews and exposes the complete value for copying', () => {
+    const value = { message: 'x'.repeat(300) };
+    const result = buildVisibleJsonTree(value, new Set([JSON_TREE_ROOT_ID]), { maxPreviewChars: 32 });
+    const message = result.rows.find((row) => row.label === 'message');
+
+    expect(message?.previewTruncated).toBe(true);
+    expect(message?.copyValue).toBe('x'.repeat(300));
+    expect(message?.preview).toContain('...');
+
+    const markup = renderToStaticMarkup(React.createElement(JsonTree, { value }));
+    expect(markup).toContain('aria-label="Copy message"');
+  });
 });

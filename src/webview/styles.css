@@ -180,13 +180,31 @@ select:focus-visible,
 
 .icon-button:hover:not(:disabled),
 .search-clear:hover,
-.columns-menu[open] > summary {
+.columns-menu[open] > summary,
+.filter-menu[open] > summary {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
 .columns-menu {
   position: relative;
   flex: 0 0 28px;
+}
+
+.filter-menu {
+  position: relative;
+  flex: 0 0 28px;
+}
+
+.filter-menu > summary {
+  list-style: none;
+}
+
+.filter-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.filter-menu > summary.is-active {
+  color: var(--vscode-textLink-foreground);
 }
 
 .columns-menu > summary {
@@ -234,6 +252,67 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.filter-popover {
+  position: absolute;
+  z-index: 20;
+  top: 32px;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+  padding: 10px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow);
+  background: var(--vscode-menu-background);
+}
+
+.filter-popover label:not(.filter-check) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-popover label > span {
+  flex: 0 0 48px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.filter-popover select,
+.filter-popover input:not([type="checkbox"]) {
+  min-width: 0;
+  flex: 1;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid var(--vscode-input-border);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+}
+
+.filter-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.filter-actions button {
+  padding: 4px 10px;
+}
+
+.filter-popover small {
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.35;
+}
+
 .status-strip {
   display: flex;
   flex: 0 0 28px;
@@ -271,6 +350,12 @@ select:focus-visible,
 
 .status-problem {
   color: var(--vscode-errorForeground);
+}
+
+.status-scope {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .status-spacer {
@@ -489,6 +574,40 @@ body.is-resizing-detail {
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
   font-weight: 600;
+}
+
+.data-grid-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.data-grid-sort:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.sort-muted {
+  opacity: 0.35;
+}
+
+.column-drag-handle {
+  flex: 0 0 auto;
+  opacity: 0.4;
+  cursor: grab;
+}
+
+.data-grid-heading[draggable="true"]:active .column-drag-handle {
+  cursor: grabbing;
 }
 
 .data-grid-heading-label {
@@ -1063,6 +1182,148 @@ body.is-resizing-column * {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
+/* Unified diffs get a stable, source-like gutter so additions and removals
+ * remain scannable without flattening the patch into generic JSON. */
+.diff-view {
+  min-width: 0;
+  max-block-size: 50vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 6px 2px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.diff-toolbar-label {
+  font-family: var(--vscode-editor-font-family);
+}
+
+.diff-toolbar button {
+  min-height: 22px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  font-size: 11px;
+}
+
+.diff-toolbar button:hover,
+.diff-toolbar button.is-active {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.diff-lines {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 4px 0;
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size, 12px);
+  line-height: 1.45;
+  contain: content;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 42px 42px 20px minmax(0, 1fr);
+  width: max-content;
+  min-width: max-content;
+  padding-inline-end: 8px;
+  white-space: pre;
+}
+
+.diff-line-number {
+  padding-inline: 6px;
+  color: var(--vscode-editorLineNumber-foreground);
+  text-align: end;
+  user-select: none;
+}
+
+.diff-line-marker {
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  user-select: none;
+}
+
+.diff-line-text {
+  min-width: 0;
+  padding-inline-start: 6px;
+}
+
+.diff-line-add {
+  color: var(--vscode-diffEditor-insertedTextForeground, var(--vscode-editor-foreground));
+  background: var(--vscode-diffEditor-insertedLineBackground, color-mix(in srgb, #2ea043 18%, transparent));
+}
+
+.diff-line-add .diff-line-marker {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+}
+
+.diff-line-remove {
+  color: var(--vscode-diffEditor-removedTextForeground, var(--vscode-editor-foreground));
+  background: var(--vscode-diffEditor-removedLineBackground, color-mix(in srgb, #f85149 18%, transparent));
+}
+
+.diff-line-remove .diff-line-marker {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+}
+
+.diff-line-hunk {
+  color: var(--vscode-textLink-foreground);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
+  font-weight: 600;
+}
+
+.diff-line-header,
+.diff-line-meta {
+  color: var(--vscode-descriptionForeground);
+}
+
+.diff-lines.is-wrapped,
+.diff-lines.is-wrapped .diff-line {
+  min-width: 0;
+}
+
+.diff-lines.is-wrapped .diff-line {
+  width: 100%;
+  grid-template-columns: 42px 42px 20px minmax(0, 1fr);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Structured event arguments are often a JSON string containing one very
+ * long prompt. Keep the tree vertical inside the drawer; Raw remains the
+ * exact source view when horizontal inspection is needed. */
+.event-section .json-fold-view {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+}
+
+.event-section .json-fold-view .json-line-code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .event-text,
 .event-code {
   max-block-size: 50vh;
@@ -1409,6 +1670,20 @@ body.is-resizing-column * {
   color: var(--vscode-descriptionForeground);
 }
 
+.detail-unavailable {
+  display: grid;
+  gap: 8px;
+  margin: 12px;
+  padding: 14px;
+  border: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-textBlockQuote-background, transparent);
+}
+
+.detail-unavailable strong {
+  color: var(--vscode-foreground);
+}
+
 .tree-preview {
   min-width: 100%;
   padding: 4px 0;
@@ -1418,7 +1693,7 @@ body.is-resizing-column * {
 
 .tree-row {
   display: grid;
-  grid-template-columns: minmax(100px, 1.3fr) 56px minmax(96px, 1fr);
+  grid-template-columns: minmax(100px, 1.3fr) 56px minmax(96px, 1fr) 28px;
   min-height: 25px;
   align-items: center;
   border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 50%, transparent);
@@ -1435,6 +1710,21 @@ body.is-resizing-column * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tree-copy-spacer {
+  width: 24px;
+  height: 24px;
+}
+
+.tree-row .copy-button {
+  opacity: 0;
+}
+
+.tree-row:hover .copy-button,
+.tree-row:focus-within .copy-button,
+.tree-row.is-preview-truncated .copy-button {
+  opacity: 1;
 }
 
 .tree-path {

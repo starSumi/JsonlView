@@ -30,6 +30,8 @@ export interface FieldPath {
 export interface SnapshotIdentity {
   documentId: string;
   generation: string;
+  /** Optional monotonic lifecycle epoch. Older protocol fixtures may omit it. */
+  epoch?: number;
   uri: string;
   scheme: string;
   sizeBytes: string;
@@ -143,6 +145,30 @@ export interface FieldStats {
 
 export type CompareOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
 
+export type RowFilterOperator =
+  | CompareOperator
+  | 'contains'
+  | 'starts_with'
+  | 'ends_with'
+  | 'exists'
+  | 'is_null'
+  | 'kind_is';
+
+/** A serializable field filter that the Webview can turn into a Predicate. */
+export interface RowFilter {
+  columnId: string;
+  operator: RowFilterOperator;
+  value?: JsonScalar;
+  caseSensitive?: boolean;
+  kind?: JsonKind;
+  /**
+   * Captured at apply time so a restored filter remains executable while the
+   * first post-rebuild page is still waiting for fresh column metadata.
+   */
+  source?: 'record' | 'profile';
+  path?: FieldPath;
+}
+
 export type Predicate =
   | { op: 'and' | 'or'; args: Predicate[] }
   | { op: 'not'; arg: Predicate }
@@ -151,7 +177,9 @@ export type Predicate =
   | { op: 'exists' | 'is_null'; path: FieldPath }
   | { op: 'kind_is'; path: FieldPath; kind: JsonKind }
   | { op: 'text_search'; value: string; caseSensitive: boolean; paths?: FieldPath[] }
-  | { op: 'profile_field'; field: string; cmp: CompareOperator; value: JsonScalar };
+  | { op: 'profile_field'; field: string; cmp: CompareOperator; value: JsonScalar }
+  | { op: 'profile_text'; field: string; cmp: 'contains' | 'starts_with' | 'ends_with'; value: string; caseSensitive: boolean }
+  | { op: 'profile_exists' | 'profile_is_null'; field: string };
 
 export interface ColumnSpec {
   id: string;
@@ -169,16 +197,59 @@ export interface RowPage {
   hasAfter: boolean;
   indexedRecords: string;
   totalRecords?: string;
+  /** Echoes the logical ordering used for this page, when present. */
+  sort?: RowSort;
+  /** Logical zero-based offset for a sorted page. Physical anchors remain in anchorOrdinal. */
+  sortOffset?: string;
+  /** Next logical offset when a bounded sorted page returned fewer rows than requested. */
+  sortNextOffset?: string;
+  /** Number of records matching the predicate in the bounded scan result. */
+  matchedRecords?: string;
   scan?: RowScanStats;
 }
 
-export type ScanTruncationReason = 'record_limit' | 'byte_limit' | 'time_limit';
+/** A bounded page of individual problem entries, independent of visible rows. */
+export interface ProblemPage {
+  items: ProblemRef[];
+  anchorOrdinal: string;
+  hasBefore: boolean;
+  hasAfter: boolean;
+  indexedRecords: string;
+  /** Schema-tracker problem records observed during hydration; not a complete-file total. */
+  observedProblemRecords: string;
+  /** True only when the problem scan reached the source boundary without truncation. */
+  complete: boolean;
+  scan: RowScanStats;
+}
+
+/** Bounded work allowance for a potentially sparse row/filter scan. */
+export interface RowScanBudget {
+  maxExaminedRecords?: number;
+  maxExaminedBytes?: string | bigint;
+  deadlineEpochMs?: number;
+}
+
+export type ScanTruncationReason =
+  | 'record_limit'
+  | 'byte_limit'
+  | 'time_limit'
+  | 'hydration_limit'
+  | 'uninspectable_record';
 
 export interface RowScanStats {
   examinedRecords: string;
   examinedBytes: string;
   cursorOrdinal?: string;
+  /** Physical direction needed to resume a truncated unsorted scan. */
+  direction?: 'forward' | 'backward';
   truncatedReason?: ScanTruncationReason;
+}
+
+export type SortDirection = 'asc' | 'desc';
+
+export interface RowSort {
+  columnId: string;
+  direction: SortDirection;
 }
 
 export interface RecordDetail {
@@ -239,13 +310,29 @@ export interface ProtocolEnvelope<TType extends string, TPayload> {
   type: TType;
   documentId: string;
   generation: string;
+  /** Optional monotonic lifecycle epoch for ordering unseen generations. */
+  epoch?: number;
   requestId: string;
   payload: TPayload;
 }
 
 export type WebviewRequest =
   | ProtocolEnvelope<'READY', { restoredState?: unknown }>
-  | ProtocolEnvelope<'GET_ROWS', { anchorOrdinal?: string; direction?: 'forward' | 'backward'; limit: number; predicate?: Predicate }>
+  | ProtocolEnvelope<'GET_ROWS', {
+    anchorOrdinal?: string;
+    direction?: 'forward' | 'backward';
+    limit: number;
+    predicate?: Predicate;
+    sort?: RowSort;
+    sortOffset?: string;
+    scanBudget?: RowScanBudget;
+  }>
+  | ProtocolEnvelope<'GET_PROBLEMS', {
+    anchorOrdinal?: string;
+    direction?: 'forward' | 'backward';
+    limit: number;
+    scanBudget?: RowScanBudget;
+  }>
   | ProtocolEnvelope<'GET_DETAIL', { ref: RecordRef; full?: boolean }>
   | ProtocolEnvelope<'GET_SCHEMA', { offset: number; limit: number }>
   | ProtocolEnvelope<'GET_INSIGHTS', { dimension: InsightDimension; predicate?: Predicate }>
@@ -257,6 +344,7 @@ export type WebviewRequest =
 export type ExtensionMessage =
   | ProtocolEnvelope<'OPENED', DocumentSummary>
   | ProtocolEnvelope<'ROWS', RowPage>
+  | ProtocolEnvelope<'PROBLEMS', ProblemPage>
   | ProtocolEnvelope<'DETAIL', RecordDetail>
   | ProtocolEnvelope<'SCHEMA', { fields: FieldStats[]; totalFields: number; complete: boolean }>
   | ProtocolEnvelope<'INSIGHTS', InsightSummary>

@@ -1,0 +1,41 @@
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+all-features = false
+no-default-features = false
+
+[advisories]
+ignore = []
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+# The native crate is distributed inside the VSIX and npm package but is not
+# itself published to crates.io. Its final project license is checked by the
+# release preflight alongside package.json and LICENSE.txt.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+allow-workspace = true
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

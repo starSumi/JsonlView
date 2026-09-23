@@ -329,12 +329,35 @@ interface JsonCodeProps {
   source: string;
   ariaLabel: string;
   className?: string;
-  preserveFullSource?: boolean;
   collapsible?: boolean;
 }
 
 interface JsonFoldCodeProps extends JsonCodeProps {
   collapsible: true;
+}
+
+function JsonHighlightedCode({
+  source,
+  ariaLabel,
+  className,
+}: JsonCodeProps): React.JSX.Element {
+  const result = React.useMemo(() => tokenizeJson(source), [source]);
+  return (
+    <>
+      {result.truncated ? (
+        <div className="bounded-notice" role="status">
+          Syntax preview is limited to the first {result.displayedChars.toLocaleString()} characters.
+        </div>
+      ) : null}
+      <pre className={`json-code${className ? ` ${className}` : ''}`} aria-label={ariaLabel}>
+        {result.tokens.map((token, index) => (
+          token.kind === 'plain'
+            ? <React.Fragment key={index}>{token.text}</React.Fragment>
+            : <span className={`json-token json-token-${token.kind}`} key={index}>{token.text}</span>
+        ))}
+      </pre>
+    </>
+  );
 }
 
 function TokenSpans({ source, lineKey }: { source: string; lineKey: string }): React.JSX.Element {
@@ -416,7 +439,6 @@ export function JsonCode({
   source,
   ariaLabel,
   className,
-  preserveFullSource = false,
   collapsible = false,
 }: JsonCodeProps): React.JSX.Element {
   if (collapsible) {
@@ -429,25 +451,5 @@ export function JsonCode({
       />
     );
   }
-  const result = React.useMemo(() => tokenizeJson(source), [source]);
-  const unhighlightedRemainder = preserveFullSource ? source.slice(result.displayedChars) : '';
-  return (
-    <>
-      {result.truncated ? (
-        <div className="bounded-notice" role="status">
-          {preserveFullSource
-            ? `Syntax highlighting is limited to the first ${result.displayedChars.toLocaleString()} characters; the remaining source stays available below.`
-            : `Syntax preview is limited to the first ${result.displayedChars.toLocaleString()} characters.`}
-        </div>
-      ) : null}
-      <pre className={`json-code${className ? ` ${className}` : ''}`} aria-label={ariaLabel}>
-        {result.tokens.map((token, index) => (
-          token.kind === 'plain'
-            ? <React.Fragment key={index}>{token.text}</React.Fragment>
-            : <span className={`json-token json-token-${token.kind}`} key={index}>{token.text}</span>
-        ))}
-        {unhighlightedRemainder}
-      </pre>
-    </>
-  );
+  return <JsonHighlightedCode source={source} ariaLabel={ariaLabel} {...(className === undefined ? {} : { className })} />;
 }

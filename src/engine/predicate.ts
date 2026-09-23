@@ -161,7 +161,35 @@ export function evaluatePredicate(
       if (fields === undefined || !Object.prototype.hasOwnProperty.call(fields, predicate.field)) {
         return false;
       }
-      return compare(fields[predicate.field], predicate.cmp, predicate.value);
+      // Profile projections use optional properties. Match record-field
+      // semantics: an absent/undefined value is not a comparison match,
+      // including for `ne` (which otherwise treats undefined as unequal).
+      const actual = fields[predicate.field];
+      if (actual === undefined) return false;
+      return compare(actual, predicate.cmp, predicate.value);
+    }
+    case 'profile_text': {
+      const fields = context.profileFields;
+      if (fields === undefined || !Object.prototype.hasOwnProperty.call(fields, predicate.field)) return false;
+      const actual = fields[predicate.field];
+      if (typeof actual !== 'string') return false;
+      const haystack = predicate.caseSensitive ? actual : actual.toLocaleLowerCase();
+      const needle = predicate.caseSensitive ? predicate.value : predicate.value.toLocaleLowerCase();
+      if (predicate.cmp === 'contains') return haystack.includes(needle);
+      if (predicate.cmp === 'starts_with') return haystack.startsWith(needle);
+      return haystack.endsWith(needle);
+    }
+    case 'profile_exists': {
+      const fields = context.profileFields;
+      return fields !== undefined
+        && Object.prototype.hasOwnProperty.call(fields, predicate.field)
+        && fields[predicate.field] !== undefined;
+    }
+    case 'profile_is_null': {
+      const fields = context.profileFields;
+      return fields !== undefined
+        && Object.prototype.hasOwnProperty.call(fields, predicate.field)
+        && fields[predicate.field] === null;
     }
   }
 }

@@ -77,6 +77,24 @@ async function key(client, keyName, code, keyCode, modifiers = 0) {
   });
 }
 
+async function clickElement(client, expression) {
+  const evaluated = await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const element = (${expression});
+      const rect = element?.getBoundingClientRect();
+      if (!rect || rect.width === 0 || rect.height === 0) return null;
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    })()`,
+    returnByValue: true,
+  });
+  const point = evaluated.result.value;
+  if (!point) return false;
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+  await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+  await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+  return true;
+}
+
 async function inspectTarget(target, index) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
   await client.open();
@@ -97,7 +115,7 @@ async function inspectTarget(target, index) {
           const view = inspected.defaultView;
           const wait = (milliseconds) => new Promise((resolveWait) => view.setTimeout(resolveWait, milliseconds));
           const button = (label) => [...inspected.querySelectorAll('button')]
-            .find((candidate) => candidate.textContent?.trim() === label);
+            .find((candidate) => candidate.textContent?.trim().startsWith(label));
 
           if (!inspected.querySelector('.detail-drawer')) {
             inspected.querySelector('.data-grid-row')?.click();
@@ -199,6 +217,33 @@ async function inspectTarget(target, index) {
           schemaToggle?.click();
           await wait(100);
           const schemaRowsAfter = inspected.querySelectorAll('.schema-tree-row').length;
+          button('Problems')?.click();
+          for (let attempt = 0; attempt < 120; attempt += 1) {
+            if (
+              inspected.querySelector('.problems-view .problem-row')
+              || inspected.querySelector('.problems-view .workspace-banner')
+            ) break;
+            await wait(50);
+          }
+          const problemsBefore = {
+            rows: inspected.querySelectorAll('.problem-row').length,
+            partial: Boolean(inspected.querySelector('.problems-view .workspace-banner')),
+            body: inspected.querySelector('.problems-view')?.textContent?.trim() ?? null,
+          };
+          const continueButton = button('Continue scan');
+          const canContinue = Boolean(continueButton);
+          continueButton?.click();
+          if (canContinue) {
+            for (let attempt = 0; attempt < 120; attempt += 1) {
+              const nextButton = button('Continue scan');
+              if (!nextButton || !nextButton.disabled) break;
+              await wait(50);
+            }
+          }
+          const problemsAfter = {
+            rows: inspected.querySelectorAll('.problem-row').length,
+            partial: Boolean(inspected.querySelector('.problems-view .workspace-banner')),
+          };
           if (!${leaveInsights ? 'true' : 'false'}) {
             button('Table')?.click();
             await wait(100);
@@ -227,6 +272,7 @@ async function inspectTarget(target, index) {
             splitter: { widthBefore, widthAfterKeyboard, widthAfterPointer },
             insights,
             schema: { schemaToggleLabel, rowsBefore: schemaRowsBefore, rowsAfter: schemaRowsAfter },
+            problems: { before: problemsBefore, after: problemsAfter, canContinue },
           };
         })()`,
         awaitPromise: true,
@@ -437,11 +483,21 @@ if (!inspectOnly) {
     await delay(300);
     await key(workbenchClient, 'Escape', 'Escape', 27);
     await delay(250);
-    await key(workbenchClient, 'P', 'KeyP', 80, 2 | 8);
+    await delay(250);
+    const viewOpened = await clickElement(workbenchClient, `document.querySelector('.menubar-menu-button[aria-label="View"]')`);
+    if (!viewOpened) throw new Error('VS Code View menu was not visible.');
+    await delay(300);
+    const paletteOpened = await clickElement(workbenchClient, `[
+      ...document.querySelectorAll('.monaco-menu .action-menu-item')
+    ].find((candidate) => candidate.textContent?.includes('Command Palette'))`);
+    if (!paletteOpened) throw new Error('VS Code Command Palette menu item was not visible.');
     await delay(500);
     await workbenchClient.send('Input.insertText', { text: 'JsonlView: Open as Data Studio' });
-    await delay(800);
-    await key(workbenchClient, 'Enter', 'Enter', 13);
+    await delay(500);
+    const resultClicked = await clickElement(workbenchClient, `[
+      ...document.querySelectorAll('.quick-input-list .monaco-list-row')
+    ].find((candidate) => candidate.textContent?.includes('JsonlView: Open as Data Studio'))`);
+    if (!resultClicked) await key(workbenchClient, 'Enter', 'Enter', 13);
   } finally {
     workbenchClient.close();
   }

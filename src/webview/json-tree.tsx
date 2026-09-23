@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { JsonKind } from '../shared/types';
+import { CopyButton } from './copy-button';
 
 export const JSON_TREE_ROOT_ID = '$';
 
@@ -13,6 +14,8 @@ export interface JsonTreeRow {
   expandable: boolean;
   expanded: boolean;
   limited: boolean;
+  previewTruncated: boolean;
+  copyValue?: string;
 }
 
 export interface JsonTreeResult {
@@ -37,13 +40,14 @@ function kindOf(value: unknown): JsonKind {
   return 'string';
 }
 
-function primitivePreview(value: unknown, maxChars: number): string {
+function primitivePreview(value: unknown, maxChars: number): { preview: string; truncated: boolean; copyValue: string } {
   if (typeof value === 'string') {
-    const visible = value.length > maxChars ? `${value.slice(0, maxChars)}...` : value;
-    return JSON.stringify(visible);
+    const truncated = value.length > maxChars;
+    const visible = truncated ? `${value.slice(0, maxChars)}...` : value;
+    return { preview: JSON.stringify(visible), truncated, copyValue: value };
   }
-  if (value === null) return 'null';
-  return String(value);
+  if (value === null) return { preview: 'null', truncated: false, copyValue: 'null' };
+  return { preview: String(value), truncated: false, copyValue: String(value) };
 }
 
 function previewClass(kind: JsonKind): string {
@@ -104,7 +108,8 @@ export function buildVisibleJsonTree(
       ? String(node.length)
       : composite
         ? objectSize(node as Record<string, unknown>, maxChildren)
-        : '0';
+      : '0';
+    const primitive = composite ? undefined : primitivePreview(node, maxPreviewChars);
     rows.push({
       id,
       label,
@@ -114,10 +119,12 @@ export function buildVisibleJsonTree(
         ? '[Circular]'
         : composite
           ? `${kind} (${size})${depthLimited ? ' - depth limit' : ''}`
-          : primitivePreview(node, maxPreviewChars),
+          : primitive?.preview ?? 'undefined',
       expandable: composite && !circular && !depthLimited,
       expanded,
       limited: circular || depthLimited,
+      previewTruncated: primitive?.truncated ?? false,
+      ...(primitive === undefined ? {} : { copyValue: primitive.copyValue }),
     });
 
     if (!expanded || !composite || rows.length >= maxNodes) return;
@@ -183,7 +190,7 @@ export function JsonTree({ value }: JsonTreeProps): React.JSX.Element {
     <div className="tree-preview" role="tree" aria-label="Bounded JSON tree">
       {tree.rows.map((row) => (
         <div
-          className={`tree-row${row.limited ? ' is-limited' : ''}`}
+          className={`tree-row${row.limited ? ' is-limited' : ''}${row.previewTruncated ? ' is-preview-truncated' : ''}`}
           role="treeitem"
           aria-level={row.depth + 1}
           aria-expanded={row.expandable ? row.expanded : undefined}
@@ -204,6 +211,7 @@ export function JsonTree({ value }: JsonTreeProps): React.JSX.Element {
           </div>
           <span className={`tree-kind kind-${row.kind}`}>{row.kind}</span>
           <span className={`tree-value ${previewClass(row.kind)}`} title={row.preview}>{row.preview}</span>
+          {row.copyValue !== undefined ? <CopyButton text={row.copyValue} label={`Copy ${row.label}`} /> : <span className="tree-copy-spacer" aria-hidden />}
         </div>
       ))}
       {tree.limited ? <div className="tree-budget-notice" role="note">Tree preview reached its depth, child, or node budget.</div> : null}

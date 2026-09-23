@@ -3,13 +3,26 @@ export const codexFixture = [
     timestamp: '2026-08-30T01:00:00.000Z',
     ordinal: 1,
     type: 'session_meta',
-    payload: { id: 'session-redacted', cwd: 'C:/redacted' },
+    payload: {
+      session_id: 'session-redacted',
+      id: 'session-redacted',
+      timestamp: '2026-08-30T01:00:00.000Z',
+      cwd: 'C:/redacted',
+      originator: 'codex-cli',
+      cli_version: '0.1.0',
+    },
   },
   {
     timestamp: '2026-08-30T01:00:01.000Z',
     ordinal: 2,
     type: 'turn_context',
-    payload: { turn_id: 'turn-redacted', model: 'model-redacted' },
+    payload: {
+      turn_id: 'turn-redacted',
+      cwd: 'C:/redacted',
+      approval_policy: 'on-request',
+      sandbox_policy: { type: 'workspace-write' },
+      model: 'model-redacted',
+    },
   },
   {
     timestamp: '2026-08-30T01:00:02.000Z',
@@ -50,14 +63,163 @@ export const codexFixture = [
   {
     timestamp: '2026-08-30T01:00:07.000Z',
     ordinal: 8,
-    type: 'inter_agent_communication_metadata',
-    payload: { agent_id: 'child-redacted', parent_id: 'parent-redacted', message: 'redacted delegation' },
+    type: 'inter_agent_communication',
+    payload: {
+      author: 'parent-redacted',
+      recipient: 'child-redacted',
+      other_recipients: [],
+      content: 'redacted delegation',
+      trigger_turn: true,
+    },
   },
   {
     timestamp: '2026-08-30T01:00:08.000Z',
     ordinal: 9,
     type: 'future_record_type',
     payload: { future: true },
+  },
+] as const;
+
+// Redacted snapshots of the separate `codex exec --json` stdout contract.
+// These are top-level tagged events, not rollout envelopes.
+export const codexExecFixture = [
+  { type: 'thread.started', thread_id: 'thread-exec-redacted' },
+  { type: 'turn.started' },
+  { type: 'item.completed', item: { id: 'item-message-redacted', type: 'agent_message', text: 'Completed response' } },
+  { type: 'item.completed', item: { id: 'item-command-redacted', type: 'command_execution', command: 'pnpm test', aggregated_output: 'passed', exit_code: 0, status: 'completed' } },
+  { type: 'turn.completed', usage: { input_tokens: 12, cached_input_tokens: 2, output_tokens: 8, reasoning_output_tokens: 3 } },
+] as const;
+
+// Redacted raw trace-bundle events. `payloads/` references are intentionally
+// left as scalar paths; the viewer must not eagerly open sibling files.
+export const codexTraceFixture = [
+  {
+    schema_version: 1,
+    seq: 1,
+    wall_time_unix_ms: 1788346097000,
+    rollout_id: 'rollout-trace-redacted',
+    thread_id: 'thread-trace-redacted',
+    codex_turn_id: null,
+    payload: { type: 'rollout_started', trace_id: 'trace-redacted', root_thread_id: 'thread-trace-redacted' },
+  },
+  {
+    schema_version: 1,
+    seq: 2,
+    wall_time_unix_ms: 1788346098000,
+    rollout_id: 'rollout-trace-redacted',
+    thread_id: 'thread-trace-redacted',
+    codex_turn_id: 'turn-trace-redacted',
+    payload: { type: 'codex_turn_started', codex_turn_id: 'turn-trace-redacted', thread_id: 'thread-trace-redacted' },
+  },
+  {
+    schema_version: 1,
+    seq: 3,
+    wall_time_unix_ms: 1788346099000,
+    rollout_id: 'rollout-trace-redacted',
+    thread_id: 'thread-trace-redacted',
+    codex_turn_id: 'turn-trace-redacted',
+    payload: { type: 'tool_call_started', tool_call_id: 'tool-trace-redacted', kind: 'shell', summary: 'Run tests' },
+  },
+  {
+    schema_version: 1,
+    seq: 4,
+    wall_time_unix_ms: 1788346100000,
+    rollout_id: 'rollout-trace-redacted',
+    thread_id: 'thread-trace-redacted',
+    codex_turn_id: 'turn-trace-redacted',
+    payload: { type: 'codex_turn_ended', codex_turn_id: 'turn-trace-redacted', status: 'completed' },
+  },
+] as const;
+
+export const codexRolloutAuxiliaryFixture = [
+  {
+    timestamp: '2026-09-02T10:49:00.000Z',
+    type: 'inter_agent_communication',
+    payload: { author: '/root', recipient: '/root/child', other_recipients: [], content: 'delegated', trigger_turn: true },
+  },
+  {
+    timestamp: '2026-09-02T10:49:01.000Z',
+    type: 'token_usage_record',
+    payload: {
+      thread_id: 'thread-redacted',
+      turn_id: 'turn-redacted',
+      session_id: 'session-redacted',
+      root_turn_id: 'root-turn-redacted',
+      response_id: 'response-redacted',
+      usage: { input_tokens: 4, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 6 },
+      turn_token_usage: { input_tokens: 4, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 6 },
+      thread_token_usage: { input_tokens: 4, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 6 },
+    },
+  },
+  {
+    timestamp: '2026-09-02T10:49:02.000Z',
+    type: 'retained_context',
+    payload: {
+      type: 'verified_answer',
+      turn_id: 'turn-redacted',
+      call_id: 'call-redacted',
+      questions: [],
+      acceptance_order: 2,
+    },
+  },
+  {
+    timestamp: '2026-09-02T10:49:03.000Z',
+    type: 'security_risk_score',
+    payload: { scores: { 'call-redacted': 0.2 }, call_id: 'call-redacted' },
+  },
+  {
+    timestamp: '2026-09-02T10:49:04.000Z',
+    type: 'realtime_item',
+    payload: { id: 'realtime-item-redacted', realtime_session_id: 'realtime-session-redacted', type: 'transcript_segment', role: 'user', text: 'audio' },
+  },
+] as const;
+
+// Redacted snapshots of Codex's auxiliary append-only JSONL surfaces. The
+// producer source serializes these as fixed scalar objects, independently from
+// rollout envelopes.
+export const codexHistoryFixture = [
+  {
+    session_id: '01a060f8-803d-7563-872e-e2e4e54e6708',
+    ts: 1788346097,
+    text: 'Inspect the failing parser',
+  },
+  {
+    session_id: '01a061b9-2090-7343-abf9-4b16528826a2',
+    ts: 1788346120,
+    text: 'Run the focused tests',
+  },
+  {
+    session_id: '01a061c0-2090-7343-abf9-4b16528826a2',
+    ts: 1788346150,
+    text: 'Review the release evidence',
+  },
+  {
+    session_id: '01a061d0-2090-7343-abf9-4b16528826a2',
+    ts: 1788346180,
+    text: 'Publish after the final gate',
+  },
+] as const;
+
+export const codexSessionIndexFixture = [
+  {
+    id: '01a060f8-803d-7563-872e-e2e4e54e6708',
+    thread_name: 'Parser investigation',
+    updated_at: '2026-09-02T10:48:17.959Z',
+  },
+  {
+    id: '01a061b9-2090-7343-abf9-4b16528826a2',
+    thread_name: 'Release review',
+    updated_at: '2026-09-02T11:02:17.959+00:00',
+  },
+  {
+    id: '01a061c0-2090-7343-abf9-4b16528826a2',
+    thread_name: 'Follow recovery',
+    updated_at: '2026-09-02T11:12:17.959Z',
+  },
+  {
+    id: '01a061d0-2090-7343-abf9-4b16528826a2',
+    thread_name: 'Benchmark trend',
+    updated_at: '2026-09-02T11:22:17.959Z',
   },
 ] as const;
 export const claudeFixture = [
@@ -109,6 +271,30 @@ export const claudeFixture = [
     parentUuid: 'message-error-redacted',
     timestamp: '2026-08-30T02:00:04.000Z',
     future: true,
+  },
+] as const;
+
+// Redacted snapshots of the two non-transcript Claude JSONL surfaces observed
+// in the local runtime. These remain small contract fixtures, not raw logs.
+export const claudeJobTimelineFixture = [
+  { at: '2026-08-30T02:10:00.000Z', state: 'working', detail: 'Indexing source', text: '' },
+  { at: '2026-08-30T02:10:01.000Z', state: 'done', detail: 'Index complete', text: '## Delivery\n\n- **Rows** are ready' },
+] as const;
+
+export const claudeHistoryFixture = [
+  {
+    display: '/model',
+    pastedContents: {},
+    timestamp: 1788055800000,
+    project: 'C:/redacted/project',
+    sessionId: 'session-history-redacted',
+  },
+  {
+    display: 'Inspect the failing parser',
+    pastedContents: {},
+    timestamp: 1788055860000,
+    project: 'C:/redacted/project',
+    sessionId: 'session-history-redacted',
   },
 ] as const;
 
@@ -324,4 +510,22 @@ export const structuredApplicationLogFixture = [
     'logging.googleapis.com/spanId': 'gcp-span-redacted',
   },
   { futureApplicationRecord: true },
+] as const;
+
+// tracing-subscriber JSON (`LOG_FORMAT=json`) writes structured fields under
+// `fields` and uses `target` as the source name.
+export const tracingSubscriberLogFixture = [
+  {
+    timestamp: '2026-09-08T02:00:00.000Z',
+    level: 'INFO',
+    fields: { message: 'app-server started', request_id: 'request-trace-redacted' },
+    target: 'codex_app_server::startup',
+    span: {},
+  },
+  {
+    timestamp: '2026-09-08T02:00:01.000Z',
+    level: 'ERROR',
+    fields: { message: 'request failed', error: 'upstream unavailable' },
+    target: 'codex_app_server::transport',
+  },
 ] as const;

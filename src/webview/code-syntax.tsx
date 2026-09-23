@@ -18,12 +18,166 @@ export interface CodeSyntaxOptions {
   maxTokens?: number;
 }
 
+/**
+ * Add readable line breaks to the small JavaScript snippets emitted by agent
+ * tool calls. This is a display-only lexical pass: strings, comments, and
+ * template literals are copied byte-for-byte, while the original source stays
+ * available to the caller for Raw/Copy.
+ */
+export function formatJavaScriptForDisplay(source: string): string {
+  if (!source || source.includes('\n')) {
+    return source.replace(/\r\n?/g, '\n');
+  }
+
+  let output = '';
+  let indent = 0;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let quote: '"' | "'" | '`' | undefined;
+  let lineComment = false;
+  let blockComment = false;
+  let escaped = false;
+
+  const writeIndent = (): void => {
+    if (output.length === 0 || output.endsWith('\n')) output += '  '.repeat(Math.max(0, indent));
+  };
+  const newline = (): void => {
+    output = output.replace(/[ \t]+$/g, '');
+    if (!output.endsWith('\n')) output += '\n';
+  };
+  const nextNonWhitespace = (index: number): string | undefined => {
+    for (let cursor = index; cursor < source.length; cursor += 1) {
+      if (!/\s/.test(source[cursor] ?? '')) return source[cursor];
+    }
+    return undefined;
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index] ?? '';
+    const next = source[index + 1] ?? '';
+
+    if (lineComment) {
+      writeIndent();
+      output += current;
+      if (current === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      writeIndent();
+      output += current;
+      if (current === '*' && next === '/') {
+        output += next;
+        index += 1;
+        blockComment = false;
+      }
+      continue;
+    }
+    if (quote) {
+      writeIndent();
+      output += current;
+      if (escaped) escaped = false;
+      else if (current === '\\') escaped = true;
+      else if (current === quote) quote = undefined;
+      continue;
+    }
+    if (current === '/' && next === '/') {
+      writeIndent();
+      output += '//';
+      index += 1;
+      lineComment = true;
+      continue;
+    }
+    if (current === '/' && next === '*') {
+      writeIndent();
+      output += '/*';
+      index += 1;
+      blockComment = true;
+      continue;
+    }
+    if (current === '"' || current === "'" || current === '`') {
+      writeIndent();
+      output += current;
+      quote = current;
+      escaped = false;
+      continue;
+    }
+
+    if (current === '{') {
+      writeIndent();
+      output += '{';
+      braceDepth += 1;
+      if (nextNonWhitespace(index + 1) !== '}') {
+        indent += 1;
+        newline();
+      }
+      continue;
+    }
+    if (current === '}') {
+      if (!output.endsWith('\n')) newline();
+      indent = Math.max(0, indent - 1);
+      writeIndent();
+      output += '}';
+      braceDepth = Math.max(0, braceDepth - 1);
+      const after = nextNonWhitespace(index + 1);
+      if (after !== ';' && after !== ',' && after !== ')' && after !== ']' && after !== '.') newline();
+      continue;
+    }
+    if (current === '(') {
+      writeIndent();
+      output += current;
+      parenDepth += 1;
+      continue;
+    }
+    if (current === ')') {
+      writeIndent();
+      output += current;
+      parenDepth = Math.max(0, parenDepth - 1);
+      continue;
+    }
+    if (current === '[') {
+      writeIndent();
+      output += current;
+      continue;
+    }
+    if (current === ']') {
+      writeIndent();
+      output += current;
+      continue;
+    }
+    if (current === ';' && parenDepth === 0) {
+      writeIndent();
+      output += ';';
+      newline();
+      continue;
+    }
+    if (current === ',' && braceDepth > 0) {
+      writeIndent();
+      output += ',';
+      newline();
+      continue;
+    }
+    if (current === '\n') {
+      newline();
+      continue;
+    }
+    if (/\s/.test(current)) {
+      const last = output.at(-1);
+      if (output.length > 0 && last !== ' ' && last !== '\n') output += ' ';
+      continue;
+    }
+    writeIndent();
+    output += current;
+  }
+
+  return output.trimEnd();
+}
+
 const DEFAULT_MAX_CHARS = 128 * 1024;
 const DEFAULT_MAX_TOKENS = 12_000;
 
 const KEYWORDS: Record<string, ReadonlySet<string>> = {
   python: new Set('and as assert async await break case class continue def del elif else except False finally for from global if import in is lambda match None nonlocal not or pass raise return True try while with yield'.split(' ')),
-  shell: new Set('case do done elif else esac fi for function if in select then until while export local readonly declare'.split(' ')),
+  shell: new Set('case catch do done elif else esac fi for foreach function if in param return select then throw try until while export local readonly declare'.split(' ')),
   javascript: new Set('as async await break case catch class const continue debugger default delete do else export extends false finally for from function get if import in instanceof let new null of return set static super switch this throw true try typeof undefined var void while with yield'.split(' ')),
   rust: new Set('as async await break const continue crate else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while'.split(' ')),
   sql: new Set('add all alter and as asc between by case check column create cross current_date current_time current_timestamp database default delete desc distinct drop else end exists false for foreign from full grant group having in index inner insert intersect into is join key left like limit not null on or order outer primary references right select set table then true union unique update values view when where with'.split(' ')),
@@ -34,7 +188,7 @@ type SyntaxFamily = keyof typeof KEYWORDS | 'plain';
 function syntaxFamily(language: string): SyntaxFamily {
   const normalized = language.toLowerCase().replace(/^language-/, '');
   if (['py', 'python', 'python3'].includes(normalized)) return 'python';
-  if (['bash', 'sh', 'shell', 'zsh', 'fish'].includes(normalized)) return 'shell';
+  if (['bash', 'sh', 'shell', 'zsh', 'fish', 'pwsh', 'powershell', 'ps1'].includes(normalized)) return 'shell';
   if (['js', 'jsx', 'ts', 'tsx', 'javascript', 'typescript', 'node'].includes(normalized)) return 'javascript';
   if (['rs', 'rust'].includes(normalized)) return 'rust';
   if (['sql', 'postgres', 'postgresql', 'mysql', 'sqlite'].includes(normalized)) return 'sql';
@@ -185,14 +339,13 @@ export function HighlightedCode({ source, language = '', ariaLabel, className }:
   const result = React.useMemo(() => tokenizeCode(source, language), [language, source]);
   return (
     <>
-      {result.truncated ? <div className="content-budget-notice" role="status">Syntax highlighting is limited to the first {result.displayedChars.toLocaleString()} characters; the remaining source stays available below.</div> : null}
+      {result.truncated ? <div className="content-budget-notice" role="status">Syntax preview is limited to the first {result.displayedChars.toLocaleString()} characters.</div> : null}
       <pre className={`content-code${className ? ` ${className}` : ''}`} aria-label={ariaLabel}>
         {result.tokens.map((token, index) => (
           token.kind === 'plain'
             ? <React.Fragment key={index}>{token.text}</React.Fragment>
             : <span className={`code-token code-token-${token.kind}`} key={`${token.kind}:${index}`}>{token.text}</span>
         ))}
-        {source.slice(result.displayedChars)}
       </pre>
     </>
   );

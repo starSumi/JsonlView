@@ -13,12 +13,14 @@ export interface MessageTransport {
 export interface ProtocolSession {
   documentId: string;
   generation: string;
+  epoch?: number;
 }
 
 export interface PendingRequest {
   id: string;
   kind: RequestKind;
   generation: string;
+  epoch?: number;
 }
 
 export type RequestPayload<TType extends WebviewRequest['type']> = Extract<
@@ -29,6 +31,7 @@ export type RequestPayload<TType extends WebviewRequest['type']> = Extract<
 const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
   'OPENED',
   'ROWS',
+  'PROBLEMS',
   'DETAIL',
   'SCHEMA',
   'INSIGHTS',
@@ -41,6 +44,7 @@ const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
 const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   READY: 'ready',
   GET_ROWS: 'rows',
+  GET_PROBLEMS: 'problems',
   GET_DETAIL: 'detail',
   GET_SCHEMA: 'schema',
   GET_INSIGHTS: 'insights',
@@ -70,6 +74,7 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
     && EXTENSION_MESSAGE_TYPES.has(candidate.type as ExtensionMessage['type'])
     && typeof candidate.documentId === 'string'
     && typeof candidate.generation === 'string'
+    && (candidate.epoch === undefined || (Number.isSafeInteger(candidate.epoch) && candidate.epoch >= 0))
     && typeof candidate.requestId === 'string'
     && 'payload' in candidate;
 }
@@ -78,13 +83,28 @@ export function shouldAcceptMessage(
   message: ExtensionMessage,
   session: ProtocolSession,
   pending: ReadonlyMap<string, PendingRequest>,
+  retiredGenerations: ReadonlySet<string> = new Set(),
 ): boolean {
   const request = pending.get(message.requestId);
   if (message.type === 'OPENED') {
-    return request?.kind === 'ready'
-      || request?.kind === 'rebuild'
-      || (message.requestId === '' && message.documentId === session.documentId);
+    if (!openedSnapshotMatchesEnvelope(message)) {
+      return false;
+    }
+    if (retiredGenerations.has(message.payload.snapshot.generation)) {
+      return false;
+    }
+    if (!acceptOpenedEpoch(message, session)) return false;
+    if (request?.kind === 'ready') {
+      // READY starts from a bootstrap identity, so the opened document may
+      // legitimately differ from the request's initial document id.
+      return true;
+    }
+    if (request?.kind === 'rebuild') {
+      return message.documentId === session.documentId;
+    }
+    return message.requestId === '' && message.documentId === session.documentId;
   }
+  if (!acceptEpoch(message.epoch, session.epoch)) return false;
   if (message.documentId !== session.documentId || message.generation !== session.generation) {
     return false;
   }
@@ -93,6 +113,9 @@ export function shouldAcceptMessage(
   }
   if (message.type === 'ROWS') {
     return request?.kind === 'rows' && request.generation === session.generation;
+  }
+  if (message.type === 'PROBLEMS') {
+    return request?.kind === 'problems' && request.generation === session.generation;
   }
   if (message.type === 'DETAIL') {
     return request?.kind === 'detail' && request.generation === session.generation;
@@ -116,9 +139,39 @@ export function shouldAcceptMessage(
   return false;
 }
 
+function acceptEpoch(messageEpoch: number | undefined, sessionEpoch: number | undefined): boolean {
+  return messageEpoch === undefined || sessionEpoch === undefined || messageEpoch === sessionEpoch;
+}
+
+function acceptOpenedEpoch(
+  message: Extract<ExtensionMessage, { type: 'OPENED' }>,
+  session: ProtocolSession,
+): boolean {
+  const messageEpoch = message.epoch ?? message.payload.snapshot.epoch;
+  if (messageEpoch === undefined || session.epoch === undefined) return true;
+  if (messageEpoch < session.epoch) return false;
+  if (messageEpoch === session.epoch && message.generation !== session.generation) return false;
+  return true;
+}
+
+function openedSnapshotMatchesEnvelope(
+  message: Extract<ExtensionMessage, { type: 'OPENED' }>,
+): boolean {
+  const snapshot = message.payload?.snapshot;
+  return snapshot !== undefined
+    && typeof snapshot.documentId === 'string'
+    && typeof snapshot.generation === 'string'
+    && message.documentId === snapshot.documentId
+    && message.generation === snapshot.generation
+    && (message.epoch === undefined
+      || snapshot.epoch === undefined
+      || message.epoch === snapshot.epoch);
+}
+
 function responseCompletesRequest(type: ExtensionMessage['type']): boolean {
   return type === 'OPENED'
     || type === 'ROWS'
+    || type === 'PROBLEMS'
     || type === 'DETAIL'
     || type === 'SCHEMA'
     || type === 'INSIGHTS'
@@ -130,6 +183,11 @@ function responseCompletesRequest(type: ExtensionMessage['type']): boolean {
 export class VsCodeMessageClient {
   readonly #transport: MessageTransport;
   readonly #pending = new Map<string, PendingRequest>();
+  // This closes the regression path for generations the client has already
+  // observed. Legacy protocol messages may omit the optional monotonic epoch,
+  // so unseen same-document generations without ordering metadata remain
+  // producer-trust-bound; epoch-bearing messages are ordered explicitly.
+  readonly #retiredGenerations = new Set<string>();
   #session: ProtocolSession;
 
   public constructor(transport: MessageTransport, initialSession: ProtocolSession) {
@@ -142,7 +200,13 @@ export class VsCodeMessageClient {
   }
 
   public setSession(session: ProtocolSession): void {
-    if (session.generation !== this.#session.generation || session.documentId !== this.#session.documentId) {
+    const identityChanged = session.generation !== this.#session.generation
+      || session.documentId !== this.#session.documentId;
+    const epochChanged = session.epoch !== this.#session.epoch;
+    if (identityChanged || epochChanged) {
+      if (identityChanged && this.#session.generation.length > 0) {
+        this.#retiredGenerations.add(this.#session.generation);
+      }
       this.#pending.clear();
     }
     this.#session = session;
@@ -158,12 +222,14 @@ export class VsCodeMessageClient {
       id: requestId,
       kind,
       generation: this.#session.generation,
+      ...(this.#session.epoch === undefined ? {} : { epoch: this.#session.epoch }),
     };
     const envelope = {
       protocolVersion: PROTOCOL_VERSION,
       type,
       documentId: this.#session.documentId,
       generation: this.#session.generation,
+      ...(this.#session.epoch === undefined ? {} : { epoch: this.#session.epoch }),
       requestId,
       payload,
     } as WebviewRequest;
@@ -188,13 +254,16 @@ export class VsCodeMessageClient {
   }
 
   public accept(value: unknown): ExtensionMessage | undefined {
-    if (!isExtensionMessage(value) || !shouldAcceptMessage(value, this.#session, this.#pending)) {
+    if (!isExtensionMessage(value) || !shouldAcceptMessage(value, this.#session, this.#pending, this.#retiredGenerations)) {
       return undefined;
     }
     if (value.type === 'OPENED') {
       this.setSession({
         documentId: value.payload.snapshot.documentId,
         generation: value.payload.snapshot.generation,
+        ...(value.epoch === undefined && value.payload.snapshot.epoch === undefined
+          ? {}
+          : { epoch: value.epoch ?? value.payload.snapshot.epoch }),
       });
     }
     if (responseCompletesRequest(value.type)) {

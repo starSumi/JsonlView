@@ -128,6 +128,22 @@ describe('JSON syntax rendering helpers', () => {
     expect(markup).toMatch(/aria-pressed="false" disabled=""[^>]*>Pretty<\/button>/);
     expect(markup).toMatch(/aria-pressed="true"[^>]*>Source<\/button>/);
     expect(markup).toContain('class="json-code json-source json-wrap"');
-    expect(markup).toContain('aria-label="Copy JSON"');
+    expect(markup).toContain('aria-label="Copy source preview"');
+    expect(markup).toContain('jsonlView.hydration.maxBytes');
+  });
+
+  it('renders very large raw records in navigable chunks instead of one DOM node', () => {
+    const tail = 'TAIL_SENTINEL';
+    const source = JSON.stringify({ value: `${'x'.repeat(300_000)}${tail}` });
+    const markup = renderToStaticMarkup(React.createElement(RawJsonView, {
+      source,
+      rawComplete: false,
+      parseState: 'oversized',
+    }));
+
+    expect(markup).toContain('Source chunk navigation');
+    expect(markup).toContain('Next chunk');
+    expect(markup).toContain('large record cannot freeze the Webview');
+    expect(markup).not.toContain(tail);
   });
 });

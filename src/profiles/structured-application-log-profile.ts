@@ -127,7 +127,7 @@ const TIME_PATHS = [
   ['timestamp'], ['time'], ['@timestamp'], ['@t'], ['datetime'], ['timeMillis'], ['instant', 'timeMillis'],
 ] as const;
 const LOGGER_PATHS = [
-  ['logger'], ['category'], ['component'], ['loggerName'], ['SourceContext'], ['name'], ['log', 'logger'],
+  ['logger'], ['category'], ['component'], ['loggerName'], ['SourceContext'], ['name'], ['target'], ['log', 'logger'],
 ] as const;
 const SERVICE_PATHS = [
   ['serviceName'], ['service_name'], ['service', 'name'], ['resource', 'service', 'name'],
@@ -145,10 +145,10 @@ const SPAN_PATHS = [
   ['spanId'], ['span_id'], ['SpanId'], ['span', 'id'], ['logging.googleapis.com/spanId'],
 ] as const;
 const MESSAGE_PATHS = [
-  ['message'], ['msg'], ['@m'], ['@mt'], ['event', 'original'],
+  ['message'], ['msg'], ['@m'], ['@mt'], ['event', 'original'], ['fields', 'message'],
 ] as const;
 const ERROR_PATHS = [
-  ['exception'], ['Exception'], ['error'], ['err'], ['stack'], ['stacktrace'], ['error', 'message'], ['error', 'stack'], ['error', 'stack_trace'], ['exception', 'message'], ['exception', 'stacktrace'],
+  ['exception'], ['Exception'], ['error'], ['err'], ['stack'], ['stacktrace'], ['error', 'message'], ['error', 'stack'], ['error', 'stack_trace'], ['exception', 'message'], ['exception', 'stacktrace'], ['fields', 'error'], ['fields', 'error', 'message'], ['fields', 'error', 'stack'],
 ] as const;
 
 function locateLevel(value: Record<string, unknown>): Located<string> | undefined {

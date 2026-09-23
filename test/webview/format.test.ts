@@ -16,6 +16,15 @@ describe('webview formatting selectors', () => {
     expect(visibleColumns(columns, {}).map((column) => column.id)).toEqual(['__ordinal', 'message']);
   });
 
+  it('keeps ordinal fixed while applying a persisted user column order', () => {
+    const columns = [
+      { id: 'first', label: 'First', source: 'record' as const },
+      { id: 'second', label: 'Second', source: 'record' as const },
+    ];
+    expect(visibleColumns(columns, { __ordinal: false }, ['second', '__ordinal', 'first']).map((column) => column.id))
+      .toEqual(['__ordinal', 'second', 'first']);
+  });
+
   it('emits a fixed track for a user-resized column', () => {
     const columns = [
       { id: 'message', label: 'Message', source: 'record' as const },
@@ -45,6 +54,6 @@ describe('webview formatting selectors', () => {
   });
 
   it('formats decimal byte strings without changing their stored representation', () => {
-    expect(formatBytes('123456789')).toBe('117.7 MB');
+    expect(formatBytes('280605706')).toBe('267.6 MB');
   });
 });

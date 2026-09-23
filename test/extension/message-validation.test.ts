@@ -19,6 +19,57 @@ describe('webview message validation', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts bounded sorted rows and rejects an offset without sort', () => {
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: 'status', direction: 'desc' },
+      sortOffset: '100',
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sortOffset: '100',
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: 'status', direction: 'asc' },
+      sortOffset: '2000',
+    })).ok).toBe(false);
+  });
+
+  it('accepts bounded scan allowances and rejects unsafe combinations', () => {
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      predicate: { op: 'text_search', value: 'needle', caseSensitive: false },
+      scanBudget: { maxExaminedRecords: 1000, maxExaminedBytes: '65536' },
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      scanBudget: { maxExaminedRecords: 0 },
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      scanBudget: { maxExaminedBytes: 'not-a-number' },
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: 'status', direction: 'asc' },
+      anchorOrdinal: '10',
+    })).ok).toBe(false);
+  });
+
+  it('accepts profile text and presence predicates', () => {
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 10,
+      predicate: {
+        op: 'and',
+        args: [
+          { op: 'profile_text', field: 'summary', cmp: 'contains', value: 'error', caseSensitive: false },
+          { op: 'profile_exists', field: 'status' },
+        ],
+      },
+    })).ok).toBe(true);
+  });
+
   it('rejects an oversized page', () => {
     const result = validateWebviewRequest(envelope('GET_ROWS', { limit: 10_000 }));
     expect(result.ok).toBe(false);
@@ -43,5 +94,18 @@ describe('webview message validation', () => {
       predicate: { op: 'text_search', value: 'error', caseSensitive: false },
     })).ok).toBe(true);
     expect(validateWebviewRequest(envelope('GET_INSIGHTS', { dimension: 'arbitrary' })).ok).toBe(false);
+  });
+
+  it('accepts bounded problem continuation and rejects an unsafe problem budget', () => {
+    expect(validateWebviewRequest(envelope('GET_PROBLEMS', {
+      limit: 50,
+      anchorOrdinal: '1024',
+      direction: 'forward',
+      scanBudget: { maxExaminedRecords: 1000, maxExaminedBytes: '65536' },
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_PROBLEMS', {
+      limit: 50,
+      scanBudget: { maxExaminedRecords: 0 },
+    })).ok).toBe(false);
   });
 });

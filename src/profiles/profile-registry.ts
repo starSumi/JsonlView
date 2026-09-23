@@ -1,6 +1,9 @@
 import type { AgentRowProjection, ProfileSuggestion } from '../shared/types';
 import { ClaudeCodeProfile } from './claude-profile';
+import { CodexHistoryProfile, CodexSessionIndexProfile } from './codex-auxiliary-profile';
+import { CodexExecProfile } from './codex-exec-profile';
 import { CodexRolloutProfile } from './codex-profile';
+import { CodexTraceProfile } from './codex-trace-profile';
 import { correlateBatch } from './correlation';
 import { GenericAgentEventsProfile } from './generic-agent-profile';
 import { GENERIC_PROFILE_ID, GenericProfile } from './generic-profile';
@@ -34,10 +37,16 @@ export class AgentProfileRegistry {
   public constructor(options: ProfileRegistryOptions = {}) {
     this.detectionThreshold = options.detectionThreshold ?? 0.65;
     this.ambiguityDelta = options.ambiguityDelta ?? 0.08;
-    this.maxDetectionSamples = options.maxDetectionSamples ?? 64;
+    // Head/tail probing is supplemented by a few stratified middle windows;
+    // leave room for those samples while keeping detection bounded.
+    this.maxDetectionSamples = options.maxDetectionSamples ?? 96;
     this.register(new GenericProfile());
     if (options.includeBuiltins !== false) {
       this.register(new CodexRolloutProfile());
+      this.register(new CodexExecProfile());
+      this.register(new CodexTraceProfile());
+      this.register(new CodexHistoryProfile());
+      this.register(new CodexSessionIndexProfile());
       this.register(new ClaudeCodeProfile());
       this.register(new GenericAgentEventsProfile());
       this.register(new OpenTelemetryProfile());

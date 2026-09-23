@@ -4,11 +4,16 @@ import type {
   FieldPath,
   ProfileSuggestion,
   RecordRef,
+  ParseState,
 } from '../shared/types';
 
 export interface GenericRecordSample {
   value: unknown;
   ordinal?: string;
+  /** Physical parse outcome; present for runtime samples, optional for fixtures. */
+  parseState?: ParseState;
+  /** Ephemeral locator hint used only during detection; never persisted or sent to the Webview. */
+  sourcePathHint?: string;
 }
 
 export interface HydratedRecord {

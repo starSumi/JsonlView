@@ -1,11 +1,12 @@
-import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   IntegratedJsonlSession,
   type IntegratedSessionOptions,
 } from '../../src/extension/integrated-session';
+import type { FollowRecoveryIdentity } from '../../src/extension/follow-recovery';
 import {
   otelFixture,
   softwareEngineeringAgentFixture,
@@ -26,13 +27,15 @@ afterEach(async () => {
 async function openFixture(
   records: readonly unknown[],
   options: Partial<Omit<IntegratedSessionOptions, 'uri'>> = {},
+  relativeFile = 'rollout.jsonl',
 ): Promise<{
   path: string;
   session: IntegratedJsonlSession;
 }> {
   const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-session-'));
   directories.push(directory);
-  const path = join(directory, 'rollout.jsonl');
+  const path = join(directory, relativeFile);
+  await mkdir(dirname(path), { recursive: true });
   await writeFile(path, records.map((record) => JSON.stringify(record)).join('\n'));
   const session = await IntegratedJsonlSession.open(path, {
     uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
@@ -44,10 +47,36 @@ async function openFixture(
 }
 
 const codexRecords = [
-  { timestamp: '2026-08-30T00:00:00Z', type: 'session_meta', payload: { id: 'session-1' } },
-  { timestamp: '2026-08-30T00:00:01Z', type: 'turn_context', payload: { turn_id: 'turn-1' } },
-  { timestamp: '2026-08-30T00:00:02Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: 'hello' } },
+  {
+    timestamp: '2026-08-30T00:00:00Z',
+    type: 'session_meta',
+    payload: {
+      session_id: 'session-1',
+      id: 'session-1',
+      timestamp: '2026-08-30T00:00:00Z',
+      cwd: 'C:/redacted',
+      originator: 'codex-cli',
+      cli_version: '0.1.0',
+    },
+  },
+  {
+    timestamp: '2026-08-30T00:00:01Z',
+    type: 'turn_context',
+    payload: {
+      turn_id: 'turn-1',
+      cwd: 'C:/redacted',
+      approval_policy: 'on-request',
+      sandbox_policy: { type: 'workspace-write' },
+      model: 'model-1',
+    },
+  },
+  { timestamp: '2026-08-30T00:00:02Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
   { timestamp: '2026-08-30T00:00:03Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 4, output_tokens: 2 } } } },
+];
+
+const codexHistoryRecords = [
+  { session_id: '01a060f8-803d-7563-872e-e2e4e54e6708', ts: 1788346097, text: 'Inspect the parser' },
+  { session_id: '01a061b9-2090-7343-abf9-4b16528826a2', ts: 1788346120, text: 'Run focused tests' },
 ];
 
 describe('IntegratedJsonlSession', () => {
@@ -93,6 +122,55 @@ describe('IntegratedJsonlSession', () => {
     ]);
     expect(page.rows[2]?.cells.find((cell) => cell.columnId === 'summary')?.value).toBe('assistant message: hello');
     expect(page.rows.every((row) => row.genericSummary.length > 0)).toBe(true);
+  });
+
+  it('uses a trusted Codex auxiliary path to select the matching surface profile', async () => {
+    const history = await openFixture(codexHistoryRecords, {}, '.codex/history.jsonl');
+    expect(history.session.getSummary().profileId).toBe('codex-history');
+    expect(history.session.getProfileColumns().map((column) => column.id)).toEqual([
+      'eventKind', 'timestamp', 'actor', 'summary', 'sessionId', 'sourceKind',
+    ]);
+    const historyPage = await history.session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(historyPage.rows[0]?.cells.find((cell) => cell.columnId === 'sessionId')?.value)
+      .toBe(codexHistoryRecords[0]!.session_id);
+  });
+
+  it('keeps a trusted auxiliary surface generic when physical rows are malformed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-mixed-surface-'));
+    directories.push(directory);
+    const path = join(directory, '.codex', 'history.jsonl');
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, [
+      JSON.stringify(codexHistoryRecords[0]),
+      'not-json',
+      '',
+      JSON.stringify(codexHistoryRecords[1]),
+    ].join('\n'));
+    const session = await IntegratedJsonlSession.open(path, {
+      uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+      backgroundIndexing: false,
+    });
+    sessions.push(session);
+    expect(session.getSummary().profileId).toBe('generic');
+  });
+
+  it('revisits a completed index with a tail sample when valid records arrive late', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-tail-detection-'));
+    directories.push(directory);
+    const path = join(directory, 'late-surface.jsonl');
+    const lateRecords = codexRecords.slice(0, 4).map((record) => JSON.stringify(record)).join('\n');
+    await writeFile(path, `${'\n'.repeat(40)}${lateRecords}`);
+    const session = await IntegratedJsonlSession.open(path, {
+      uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+      deferProfileDetection: true,
+      backgroundIndexing: true,
+    });
+    sessions.push(session);
+
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(session.getSummary().profileId).toBe('generic');
+    await waitFor(() => session.getSummary().profileId === 'codex-rollout', 2_000);
+    expect(session.getSummary().profileSuggestions.some((suggestion) => suggestion.id === 'codex-rollout' && suggestion.score > 0.65)).toBe(true);
   });
 
   it.each([
@@ -152,6 +230,37 @@ describe('IntegratedJsonlSession', () => {
     expect(page.rows).toHaveLength(codexRecords.length + 1);
   });
 
+  it('recovers a large deferred-baseline file as a stable full resync', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-large-follow-'));
+    directories.push(directory);
+    const path = join(directory, 'large.jsonl');
+    const initial = `${JSON.stringify({ payload: 'x'.repeat(8 * 1024 * 1024) })}\n`;
+    await writeFile(path, initial);
+    const session = await IntegratedJsonlSession.open(path, {
+      uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+      backgroundIndexing: false,
+    });
+    sessions.push(session);
+    const before = session.getSummary();
+    const expected: FollowRecoveryIdentity = {
+      documentId: before.snapshot.documentId,
+      uri: before.snapshot.uri,
+      generation: before.snapshot.generation,
+      sizeBytes: before.snapshot.sizeBytes,
+      ...(before.snapshot.device === undefined ? {} : { device: before.snapshot.device }),
+      ...(before.snapshot.inode === undefined ? {} : { inode: before.snapshot.inode }),
+    };
+    await appendFile(path, '{"tail":true}\n');
+
+    const recovered = await session.rebuildStable(expected, new AbortController().signal);
+
+    expect(recovered.snapshot.generation).not.toBe(before.snapshot.generation);
+    expect(BigInt(recovered.snapshot.sizeBytes)).toBeGreaterThan(BigInt(before.snapshot.sizeBytes));
+    const page = await session.getRows({ limit: 2 }, new AbortController().signal);
+    expect(page.rows.length).toBeGreaterThan(0);
+    expect(page.hasAfter).toBe(true);
+  });
+
   it('computes bounded insights only when explicitly requested', async () => {
     const { session } = await openFixture(codexRecords);
 
@@ -205,6 +314,10 @@ describe('IntegratedJsonlSession', () => {
     expect(generic.getSummary().profileId).toBe('generic');
     expect(generic.getSummary().profileSuggestions.map((profile) => profile.id)).toEqual([
       'codex-rollout',
+      'codex-exec-jsonl',
+      'codex-trace',
+      'codex-history',
+      'codex-session-index',
       'claude-code-session',
       'generic-agent-events',
       'opentelemetry',

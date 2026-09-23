@@ -14,7 +14,30 @@ interface DetailDrawerProps {
   loading: boolean;
   activeTab: DetailTab;
   onTabChange: (tab: DetailTab) => void;
+  onRequestFull: () => void;
   onClose: () => void;
+}
+
+function UnavailableRecordView({ detail, loading, onRequestFull }: { detail: RecordDetail; loading: boolean; onRequestFull: () => void }): React.JSX.Element {
+  const previewMessage = detail.rawComplete
+    ? 'The record could not be parsed into a structured value.'
+    : 'Only a bounded source preview is available; the structured value was not hydrated.';
+  return (
+    <div className="detail-unavailable" role="status">
+      <strong>Structured view unavailable</strong>
+      <span>{previewMessage}</span>
+      <span>Parse state: {detail.ref.parseState}</span>
+      {!detail.rawComplete ? (
+        <>
+          <span>Use Raw to inspect or copy the available source preview.</span>
+          <button type="button" className="event-section-action" disabled={loading} onClick={onRequestFull}>
+            {loading ? 'Loading full record...' : 'Show full record'}
+          </button>
+          <span>Automatic reads use <code>jsonlView.hydration.maxBytes</code>; explicit full reads are bounded by <code>jsonlView.hydration.fullMaxBytes</code>.</span>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 const detailTabs: Array<{
@@ -28,7 +51,7 @@ const detailTabs: Array<{
   { id: 'bytes', label: 'Bytes', icon: Database },
 ];
 
-export function DetailDrawer({ detail, loading, activeTab, onTabChange, onClose }: DetailDrawerProps): React.JSX.Element {
+export function DetailDrawer({ detail, loading, activeTab, onTabChange, onRequestFull, onClose }: DetailDrawerProps): React.JSX.Element {
   const derived = useMemo(
     () => detail?.profile ? stringifyJsonBounded(detail.profile) : undefined,
     [detail?.profile],
@@ -44,7 +67,7 @@ export function DetailDrawer({ detail, loading, activeTab, onTabChange, onClose 
           </div>
         </div>
         <div className="detail-header-actions">
-          {detail ? <CopyButton text={detail.rawPreview} label="Copy record JSON" /> : null}
+          {detail ? <CopyButton text={detail.rawPreview} label={detail.rawComplete ? 'Copy record JSON' : 'Copy source preview'} /> : null}
           <button type="button" className="icon-button" title="Close detail" aria-label="Close detail" onClick={onClose}>
             <X size={16} aria-hidden />
           </button>
@@ -74,7 +97,9 @@ export function DetailDrawer({ detail, loading, activeTab, onTabChange, onClose 
               value={detail.value}
               profile={detail.profile}
             />
-            <JsonTree key={`${detail.ref.generation}:${detail.ref.ordinal}`} value={detail.value} />
+            {detail.value !== undefined
+              ? <JsonTree key={`${detail.ref.generation}:${detail.ref.ordinal}`} value={detail.value} />
+              : <UnavailableRecordView detail={detail} loading={loading} onRequestFull={onRequestFull} />}
           </>
         ) : null}
         {detail && activeTab === 'raw' ? (

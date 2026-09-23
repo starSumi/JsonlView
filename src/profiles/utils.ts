@@ -242,7 +242,7 @@ export function usageFromObject(value: unknown): AgentRowProjection['usage'] | u
   }
   const input = firstNumber(value, ['input', 'input_tokens', 'inputTokens']);
   const output = firstNumber(value, ['output', 'output_tokens', 'outputTokens']);
-  const cached = firstNumber(value, ['cached', 'cached_tokens', 'cache_read_input_tokens']);
+  const cached = firstNumber(value, ['cached', 'cached_tokens', 'cache_read_input_tokens', 'cached_input_tokens']);
   const total = firstNumber(value, ['total', 'total_tokens', 'totalTokens']);
   if (input === undefined && output === undefined && cached === undefined && total === undefined) {
     return undefined;

@@ -1,6 +1,15 @@
 import type { AgentRowProjection } from '../shared/types';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import {
+  CLAUDE_CONTROL_TYPES,
+  CLAUDE_TRANSCRIPT_TYPES,
+  claudeHistoryTimestamp,
+  classifyClaudeRecord,
+  hasClaudeIdentityEnvelope,
+  isClaudeJobTimelinePathHint,
+  isClaudeJobTimelineState,
+} from './claude-record-strategy';
+import {
   actorFromRole,
   boundedSummary,
   createProjection,
@@ -19,73 +28,93 @@ import {
   usageFromObject,
 } from './utils';
 
-const CLAUDE_TYPES = new Set([
-  'user',
-  'assistant',
-  'system',
-  'summary',
-  'progress',
-  'file-history-snapshot',
-  'file-history-delta',
-  'mode',
-  'permission-mode',
-  'last-prompt',
-  'attachment',
-  'queue-operation',
-  'atis-latch',
-  'ai-title',
-]);
-const CLAUDE_CONTROL_TYPES = new Set([
-  'mode',
-  'permission-mode',
-  'last-prompt',
-  'attachment',
-  'queue-operation',
-  'atis-latch',
-  'ai-title',
-  'file-history-snapshot',
-  'file-history-delta',
-]);
-
 export class ClaudeCodeProfile implements AgentProfile {
   public readonly id = 'claude-code-session';
   public readonly displayName = 'Claude Code Session';
-  public readonly version = '1';
+  public readonly version = '2';
 
   public detect(sample: readonly GenericRecordSample[]): DetectionResult {
     let typed = 0;
     let messageEnvelope = 0;
     let controlEnvelope = 0;
+    let transcriptEnvelope = 0;
+    let jobTimeline = 0;
+    let history = 0;
     let identity = 0;
+    let timelinePathEvidence = 0;
     const reasons: DetectionResult['reasons'] = [];
     for (const entry of sample) {
       if (!isObject(entry.value)) continue;
       const type = stringAt(entry.value, 'type');
-      if (type && CLAUDE_TYPES.has(type)) {
+      const strategy = classifyClaudeRecord(entry.value);
+      if (strategy === 'job-timeline') {
+        const state = stringAt(entry.value, 'state');
+        if (!isClaudeJobTimelineState(state)) continue;
+        jobTimeline += 1;
         typed += 1;
-        if (CLAUDE_CONTROL_TYPES.has(type)) controlEnvelope += 1;
+        if (isClaudeJobTimelinePathHint(entry.sourcePathHint)) timelinePathEvidence += 1;
+        pushReason(reasons, keyPath('at'), 'Claude Code job timeline record with lifecycle state and text/detail');
+      }
+      if (strategy === 'history') {
+        history += 1;
+        typed += 1;
+        identity += 1;
+        pushReason(reasons, keyPath('display'), 'Claude Code command history record with project and session identity');
+      }
+      const hasIdentity = hasClaudeIdentityEnvelope(entry.value);
+      if (type && CLAUDE_TRANSCRIPT_TYPES.has(type) && (!CLAUDE_CONTROL_TYPES.has(type) || hasIdentity)) {
+        typed += 1;
+        if (CLAUDE_CONTROL_TYPES.has(type) && hasIdentity) controlEnvelope += 1;
         pushReason(reasons, keyPath('type'), `Known Claude Code record type: ${type}`);
       }
       if ((type === 'user' || type === 'assistant') && objectAt(entry.value, 'message')) {
         messageEnvelope += 1;
+        transcriptEnvelope += 1;
         pushReason(reasons, keyPath('message'), 'Claude Code role record with nested message envelope');
       }
-      if (stringAt(entry.value, 'sessionId') && (claudeRecordId(entry.value) || (type !== undefined && CLAUDE_CONTROL_TYPES.has(type)))) {
+      if (hasIdentity) {
         identity += 1;
         pushReason(reasons, stringAt(entry.value, 'uuid') ? keyPath('sessionId') : keyPath('leafUuid'), 'Session and Claude record identity fields are present');
       }
     }
     const denominator = Math.max(1, sample.length);
-    const envelopeEvidence = Math.max(messageEnvelope, controlEnvelope);
-    const score = Math.min(0.99, 0.28 * Math.min(1, typed / denominator) + 0.42 * Math.min(1, envelopeEvidence / 2) + 0.29 * Math.min(1, identity / 2));
+    // Timeline records are selectable automatically only with their explicit
+    // `.claude/jobs/<id>/timeline.jsonl` locator. Without it they remain a
+    // useful manual suggestion, but the generic profile preserves semantics.
+    const timelineAutoEvidence = timelinePathEvidence >= 2 ? jobTimeline : 0;
+    const specializedEvidence = Math.max(timelineAutoEvidence, history);
+    // Claude transcript exports commonly omit sessionId/uuid on individual
+    // lines. The stable discriminator there is the repeated `type` plus
+    // nested role-message envelope; identity fields remain a confidence
+    // signal when present rather than a hard requirement.
+    const transcriptQuorum = transcriptEnvelope >= 2 && typed >= Math.min(2, denominator)
+      ? transcriptEnvelope
+      : 0;
+    const envelopeEvidence = Math.max(messageEnvelope, controlEnvelope, transcriptQuorum, specializedEvidence);
+    const matchingCoverage = Math.max(
+      transcriptEnvelope,
+      controlEnvelope,
+      history,
+      jobTimeline,
+    ) / denominator;
+    const pathBackedTimeline = timelinePathEvidence >= 2 && jobTimeline > 0;
+    // A provider profile must explain a meaningful share of the physical
+    // sample. Two matching rows in a large mixed file are not a schema proof.
+    // The explicit job timeline path is stronger evidence, so it may use a
+    // lower floor while still requiring the actual rows to validate.
+    const coverageFloor = pathBackedTimeline ? 0.2 : 0.25;
+    const coverageMet = matchingCoverage >= coverageFloor;
+    const score = Math.min(0.99, 0.28 * Math.min(1, typed / denominator) + 0.42 * Math.min(1, envelopeEvidence / 2) + 0.29 * Math.min(1, Math.max(identity, specializedEvidence >= 2 ? 1 : 0) / 2));
     return {
       profileId: this.id,
       profileVersion: this.version,
       score,
       reasons,
       requiredEvidenceMet: typed >= Math.min(2, denominator)
-        && identity >= 1
-        && (messageEnvelope >= 1 || controlEnvelope >= 2),
+        && (identity >= 1 || specializedEvidence >= 2 || transcriptQuorum >= 2)
+        && (messageEnvelope >= 1 || controlEnvelope >= 2 || specializedEvidence >= 2)
+        && (timelineAutoEvidence >= 2 || jobTimeline === 0)
+        && coverageMet,
       sampledRecords: sample.length,
     };
   }
@@ -104,7 +133,38 @@ export class ClaudeCodeProfile implements AgentProfile {
     const toolResult = findBlock(blocks, 'tool_result');
     let projection: AgentRowProjection;
 
-    if (toolUse) {
+    const strategy = classifyClaudeRecord(value);
+    if (strategy === 'job-timeline') {
+      const state = stringAt(value, 'state') ?? 'unknown';
+      const text = own(value, 'text');
+      const detail = own(value, 'detail');
+      const hasText = typeof text === 'string' && text.length > 0;
+      const summaryValue = hasText ? text : detail;
+      projection = createProjection(
+        this.id,
+        hasText ? 'message' : 'observation',
+        boundedSummary(summaryValue ?? value, `Claude job ${state}`),
+        keyPath('state'),
+        hasText ? keyPath('text') : (detail !== undefined ? keyPath('detail') : keyPath('state')),
+      );
+      setStringField(projection, 'status', state, keyPath('state'));
+      setDerivedField(projection, 'state', state, keyPath('state'));
+      setDerivedField(projection, 'sourceKind', 'job-timeline', keyPath('state'));
+      if (detail !== undefined && typeof detail === 'string') setDerivedField(projection, 'detail', detail, keyPath('detail'));
+    } else if (strategy === 'history') {
+      const display = own(value, 'display');
+      projection = createProjection(
+        this.id,
+        'message',
+        boundedSummary(display, 'Claude command'),
+        keyPath('display'),
+        keyPath('display'),
+      );
+      setActor(projection, 'user', keyPath('display'));
+      setDerivedField(projection, 'sourceKind', 'history', keyPath('display'));
+      const project = stringAt(value, 'project');
+      if (project) setDerivedField(projection, 'project', project, keyPath('project'));
+    } else if (toolUse) {
       const name = stringAt(toolUse.value, 'name') ?? 'tool';
       projection = createProjection(this.id, 'tool_call', boundedSummary(own(toolUse.value, 'input'), `Tool ${name}`), indexedPath(['message', 'content'], toolUse.index, 'type'), indexedPath(['message', 'content'], toolUse.index, 'input'));
       setActor(projection, 'assistant', stringAt(message, 'role') ? keyPath('message', 'role') : indexedPath(['message', 'content'], toolUse.index, 'type'));
@@ -207,6 +267,8 @@ export class ClaudeCodeProfile implements AgentProfile {
     }
 
     setStringField(projection, 'timestamp', stringAt(value, 'timestamp'), keyPath('timestamp'));
+    if (strategy === 'job-timeline') setStringField(projection, 'timestamp', stringAt(value, 'at'), keyPath('at'));
+    if (strategy === 'history') setStringField(projection, 'timestamp', claudeHistoryTimestamp(value), keyPath('timestamp'));
     setStringField(projection, 'sessionId', stringAt(value, 'sessionId'), keyPath('sessionId'));
     const recordId = claudeRecordId(value);
     setStringField(projection, 'messageId', recordId, stringAt(value, 'uuid') ? keyPath('uuid') : keyPath('leafUuid'));
