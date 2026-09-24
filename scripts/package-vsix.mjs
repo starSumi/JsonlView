@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { artifactDirectory } from './artifact-directory.mjs';
+import { resolvePnpmInvocation } from './package-manager-invocation.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -56,8 +57,8 @@ try {
 }
 
 async function run(command, args, options = {}) {
-  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.exe' : command;
-  const result = await execFile(executable, args, {
+  const invocation = command === 'pnpm' ? resolvePnpmInvocation() : { command, prefix: [] };
+  const result = await execFile(invocation.command, [...invocation.prefix, ...args], {
     cwd: root,
     windowsHide: true,
     ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),

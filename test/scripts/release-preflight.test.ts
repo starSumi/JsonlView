@@ -20,6 +20,8 @@ import { inventoryEmbeddedVsixBundle } from '../../scripts/vsix-bundle-integrity
 import { compareReleaseLegalInventories } from '../../scripts/release-legal-integrity.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { compareVsixArchiveIdentity } from '../../scripts/vsix-archive-integrity.mjs';
+// @ts-expect-error JavaScript release helper has no emitted declaration file.
+import { resolveNpmInvocation, resolvePnpmInvocation } from '../../scripts/package-manager-invocation.mjs';
 
 const temporaryDirectories: string[] = [];
 
@@ -230,6 +232,14 @@ describe('release candidate integrity', () => {
     expect(workflow).toContain("-PathType Leaf");
     const rebuildStep = workflow.slice(workflow.indexOf('- name: Rebuild native addon from Rust source'));
     expect(rebuildStep.indexOf('pnpm native:build')).toBeLessThan(rebuildStep.indexOf('pnpm build'));
+  });
+
+  it('resolves package-manager CLIs without relying on Windows command shims', () => {
+    const npm = resolveNpmInvocation();
+    const pnpm = resolvePnpmInvocation();
+    expect(npm.command).toBe(process.execPath);
+    expect(npm.prefix[0]).toMatch(/npm-cli\.js$/i);
+    expect(pnpm.command.toLowerCase()).not.toMatch(/\.cmd$/);
   });
 
   it('normalizes HTTPS and SSH remotes to one repository identity', () => {

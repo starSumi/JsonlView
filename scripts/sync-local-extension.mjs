@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { artifactDirectory } from './artifact-directory.mjs';
+import { resolvePnpmInvocation } from './package-manager-invocation.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -412,8 +413,8 @@ async function isRegularFile(path) {
 }
 
 async function run(command, args, options = {}) {
-  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.exe' : command;
-  const result = await execFile(executable, args, {
+  const invocation = command === 'pnpm' ? resolvePnpmInvocation() : { command, prefix: [] };
+  const result = await execFile(invocation.command, [...invocation.prefix, ...args], {
     cwd: root,
     windowsHide: true,
     maxBuffer: 32 * 1024 * 1024,

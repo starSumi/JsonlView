@@ -2,14 +2,15 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { resolvePnpmInvocation } from './package-manager-invocation.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
 const noticesPath = resolve(root, 'THIRD-PARTY-NOTICES.txt');
-const pnpm = process.platform === 'win32' ? 'pnpm.exe' : 'pnpm';
+const pnpm = resolvePnpmInvocation();
 
 const [{ stdout }, notices] = await Promise.all([
-  execFile(pnpm, ['list', '--prod', '--depth', 'Infinity', '--json'], {
+  execFile(pnpm.command, [...pnpm.prefix, 'list', '--prod', '--depth', 'Infinity', '--json'], {
     cwd: root,
     windowsHide: true,
     maxBuffer: 8 * 1024 * 1024,

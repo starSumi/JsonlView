@@ -9,6 +9,7 @@ import { compareBundleInventories, copyFrozenBundle, inventoryFrozenBundle } fro
 import { compareNpmFileInventories, inspectNpmTarball } from './npm-tarball-integrity.mjs';
 import { assertOutsideTree, assertPathsDoNotOverlap } from './path-boundary.mjs';
 import { validateProjectLicense } from './license-policy.mjs';
+import { resolveNpmInvocation, resolvePnpmInvocation } from './package-manager-invocation.mjs';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 
 const execFile = promisify(execFileCallback);
@@ -388,8 +389,9 @@ async function pathExists(file) {
 async function createAndInspectTarball(directory, destination, replace, expectedPackage, expectedFiles) {
   const packDirectory = await mkdtemp(join(artifactDirectory(), 'npm-pack-'));
   try {
-    const executable = process.platform === 'win32' ? 'npm.exe' : 'npm';
-    const result = await execFile(executable, [
+    const invocation = resolveNpmInvocation();
+    const result = await execFile(invocation.command, [
+      ...invocation.prefix,
       'pack',
       '--json',
       '--ignore-scripts',
@@ -477,8 +479,8 @@ function assertManifestOutsideOutput(directory, manifest) {
 }
 
 async function run(command, args, options = {}) {
-  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.exe' : command;
-  const result = await execFile(executable, args, {
+  const invocation = command === 'pnpm' ? resolvePnpmInvocation() : { command, prefix: [] };
+  const result = await execFile(invocation.command, [...invocation.prefix, ...args], {
     cwd: root,
     windowsHide: true,
     ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
