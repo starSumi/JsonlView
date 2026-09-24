@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      MAINTENANCE_REPORT_DIR: ${{ runner.temp }}/jsonlview-maintenance
+      MAINTENANCE_REPORT_DIR: .maintenance-artifacts
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -38,7 +38,7 @@ jobs:
         if: always()
         with:
           name: jsonlview-dependency-freshness-${{ github.run_number }}
-          path: ${{ runner.temp }}/jsonlview-maintenance/dependency-freshness.json
+          path: .maintenance-artifacts/dependency-freshness.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -46,8 +46,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      BENCHMARK_REPORT_DIR: ${{ runner.temp }}/jsonlview-maintenance
-      BENCHMARK_HISTORY_FILE: ${{ runner.temp }}/jsonlview-benchmark-history.jsonl
+      BENCHMARK_REPORT_DIR: .maintenance-artifacts
+      BENCHMARK_HISTORY_FILE: .maintenance-artifacts/benchmark-history.jsonl
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -65,7 +65,7 @@ jobs:
       - name: Restore benchmark history
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ${{ runner.temp }}/jsonlview-benchmark-history.jsonl
+          path: .maintenance-artifacts/benchmark-history.jsonl
           key: jsonlview-benchmark-history-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             jsonlview-benchmark-history-${{ github.ref_name }}-
@@ -73,7 +73,7 @@ jobs:
         run: node scripts/benchmark-trend.mjs --out "$BENCHMARK_REPORT_DIR/benchmark-trend.json" --history "$BENCHMARK_HISTORY_FILE"
       - name: Verify a second sample has a comparable baseline
         env:
-          BENCHMARK_RECHECK: ${{ runner.temp }}/jsonlview-maintenance/benchmark-trend-recheck.json
+          BENCHMARK_RECHECK: .maintenance-artifacts/benchmark-trend-recheck.json
         run: |
           node scripts/benchmark-trend.mjs --out "$BENCHMARK_RECHECK" --history "$BENCHMARK_HISTORY_FILE"
           node --input-type=module -e "import { readFile } from 'node:fs/promises'; const report = JSON.parse(await readFile(process.env.BENCHMARK_RECHECK, 'utf8')); if (report.comparison !== 'comparable') { console.error(JSON.stringify({ comparison: report.comparison, history: report.history }, null, 2)); process.exit(1); }"
@@ -82,7 +82,6 @@ jobs:
         with:
           name: jsonlview-benchmark-trend-${{ github.run_number }}
           path: |
-            ${{ runner.temp }}/jsonlview-maintenance/
-            ${{ runner.temp }}/jsonlview-benchmark-history.jsonl
+            .maintenance-artifacts/
           if-no-files-found: warn
           retention-days: 30

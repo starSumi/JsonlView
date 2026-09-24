@@ -26,6 +26,18 @@ describe('Cargo license notice inventory', () => {
     expect(rendered.notices).toContain('`sample-crate-1.2.3-LICENSE-MIT.txt`');
   });
 
+  it('replaces the generated inventory after a Windows CRLF checkout', async () => {
+    const packageRoot = await createPackage('sample-crate', '1.2.3');
+    await writeFile(join(packageRoot, 'LICENSE-MIT'), 'Copyright (c) Example Owner\n', 'utf8');
+    const inventory = await collectLicenseInventory([metadata(packageRoot, 'sample-crate', '1.2.3', 'MIT')]);
+    const initial = renderOutputs(inventory).notices;
+
+    const rendered = renderOutputs(inventory, initial.replaceAll('\n', '\r\n'));
+
+    expect(rendered.notices).toBe(initial);
+    expect(rendered.notices.match(/Rust native dependency inventory/g)).toHaveLength(1);
+  });
+
   it('fails closed when a package has no license file or reviewed override', async () => {
     const packageRoot = await createPackage('unknown-crate', '9.9.9');
 

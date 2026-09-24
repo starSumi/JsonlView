@@ -110,9 +110,14 @@ export function renderOutputs(inventory, currentNotices = '') {
 }
 
 function replaceRustSection(current, noticeLines) {
-  const prefix = current.includes(expectedNoticeHeading)
-    ? current.slice(0, current.indexOf(expectedNoticeHeading)).trimEnd()
-    : current.trimEnd();
+  // Git checkouts may materialize tracked text as CRLF on Windows. Normalize
+  // before locating the generated section so the checker replaces it instead
+  // of appending a duplicate section on a Windows CI runner.
+  const normalizedCurrent = current.replaceAll('\r\n', '\n');
+  const headingOffset = normalizedCurrent.indexOf(expectedNoticeHeading);
+  const prefix = headingOffset >= 0
+    ? normalizedCurrent.slice(0, headingOffset).trimEnd()
+    : normalizedCurrent.trimEnd();
   const section = [
     expectedNoticeHeading,
     'The native scanner is built from the exact registry packages resolved by',
