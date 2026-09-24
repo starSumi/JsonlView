@@ -17,6 +17,15 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
 const SEMVER_PATTERN = /^(0|[1-9]\d*)(?:\.(0|[1-9]\d*)){2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const PUBLISHER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
+const CREDENTIAL_CONTENT_PATTERNS = [
+  // npm's current access-token format is `npm_` plus exactly 36 characters.
+  // Keep the boundaries aligned with the upstream Secretlint npm rule so
+  // standard environment names such as npm_execpath are not false positives.
+  ['npm-token', /(?<!\p{L})npm_[A-Za-z0-9_]{36}(?![A-Za-z0-9_])/u],
+  ['open-vsx-token', /ovsxat_[A-Za-z0-9_-]{8,}/],
+  ['github-token', /(?:ghp_|github_pat_)[A-Za-z0-9_-]{8,}/],
+  ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
+];
 let failures = [];
 let warnings = [];
 let checks = {};
@@ -180,12 +189,6 @@ async function checkTrackedSecrets() {
   const paths = raw.split('\0').filter(Boolean);
   const findings = [];
   const filenamePattern = /(?:^|\/)(?:\.env(?:\.|$)|.*\.(?:pem|key|p12|pfx)|\.npmrc)$/i;
-  const contentPatterns = [
-    ['npm-token', /npm_[A-Za-z0-9_-]{8,}/],
-    ['open-vsx-token', /ovsxat_[A-Za-z0-9_-]{8,}/],
-    ['github-token', /(?:ghp_|github_pat_)[A-Za-z0-9_-]{8,}/],
-    ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
-  ];
   for (const relativePath of paths) {
     if (filenamePattern.test(relativePath)) findings.push({ path: relativePath, kind: 'sensitive-filename' });
     const path = resolve(root, relativePath);
@@ -197,12 +200,19 @@ async function checkTrackedSecrets() {
     } catch {
       continue;
     }
-    for (const [kind, pattern] of contentPatterns) {
-      if (pattern.test(content)) findings.push({ path: relativePath, kind });
+    for (const kind of findCredentialKinds(content)) {
+      findings.push({ path: relativePath, kind });
     }
   }
   if (findings.length > 0) fail('trackedSecrets', 'tracked files contain credential-like names or tokens; rotate and remove before release');
   checks.trackedSecrets = { clean: findings.length === 0, findings };
+}
+
+export function findCredentialKinds(content) {
+  if (typeof content !== 'string') return [];
+  return CREDENTIAL_CONTENT_PATTERNS
+    .filter(([, pattern]) => pattern.test(content))
+    .map(([kind]) => kind);
 }
 
 async function checkNativeProvenance(path, gitIdentity) {

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // The release gate is intentionally a JavaScript CLI; keep its pure integrity
 // helpers covered without making the production script a TypeScript build input.
 // @ts-expect-error release-preflight.mjs has no emitted declaration file.
-import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, normalizeRepositoryIdentity, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
+import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, normalizeRepositoryIdentity, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { bundleFromCandidateInventory, bundleInventoryDigest, compareBundleInventories } from '../../scripts/bundle-integrity.mjs';
 // @ts-expect-error verify-native-provenance.mjs has no emitted declaration file.
@@ -240,6 +240,12 @@ describe('release candidate integrity', () => {
     expect(npm.command).toBe(process.execPath);
     expect(npm.prefix[0]).toMatch(/npm-cli\.js$/i);
     expect(pnpm.command.toLowerCase()).not.toMatch(/\.cmd$/);
+  });
+
+  it('distinguishes npm access tokens from npm runtime environment names', () => {
+    expect(findCredentialKinds('process.env.npm_execpath')).not.toContain('npm-token');
+    const token = ['npm', '_', 'A'.repeat(36)].join('');
+    expect(findCredentialKinds(token)).toContain('npm-token');
   });
 
   it('normalizes HTTPS and SSH remotes to one repository identity', () => {
