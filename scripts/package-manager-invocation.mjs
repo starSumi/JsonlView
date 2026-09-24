@@ -3,9 +3,14 @@ import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
 export function resolveNpmInvocation() {
-  const cli = resolve(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!isRegularFile(cli)) {
-    throw new Error(`npm CLI was not found next to the active Node runtime: ${cli}`);
+  const runtimeDirectory = dirname(process.execPath);
+  const candidates = [
+    resolve(runtimeDirectory, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    resolve(runtimeDirectory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+  const cli = candidates.find(isRegularFile);
+  if (cli === undefined) {
+    throw new Error(`npm CLI was not found in the active Node runtime: ${candidates.join(', ')}`);
   }
   return { command: process.execPath, prefix: [cli] };
 }
