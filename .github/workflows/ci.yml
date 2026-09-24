@@ -83,9 +83,15 @@ jobs:
           $env:JSONLVIEW_NATIVE_OUTPUT_DIR = $buildDir
           $env:JSONLVIEW_NATIVE_TARGET_DIR = $targetDir
           pnpm native:build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath (Join-Path $buildDir 'jsonl_core.win32-x64-msvc.node') -PathType Leaf)) {
+            throw 'Native build completed without producing the expected addon.'
+          }
           $env:JSONLVIEW_DIST_OUTPUT = $distDir
           pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code -- native/jsonl-core/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "JSONLVIEW_NATIVE_BUILD_DIR=$buildDir" >> $env:GITHUB_ENV
           "JSONLVIEW_DIST_BUILD_DIR=$distDir" >> $env:GITHUB_ENV
           "JSONLVIEW_NATIVE_REPORT_DIR=$reportDir" >> $env:GITHUB_ENV

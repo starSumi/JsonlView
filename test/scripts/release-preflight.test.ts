@@ -213,6 +213,25 @@ describe('release candidate integrity', () => {
     }
   });
 
+  it('keeps scheduled maintenance evidence outside the source checkout', async () => {
+    const source = await readFile(new URL('../../.github/workflows/maintenance.yml', import.meta.url), 'utf8');
+    expect(source).toContain('${{ runner.temp }}/jsonlview-maintenance');
+    expect(source).toContain('${{ runner.temp }}/jsonlview-benchmarks');
+    expect(source).not.toContain('.maintenance-artifacts');
+  });
+
+  it('runs the locked native CLI directly and fails the Windows job at the source', async () => {
+    const buildScript = await readFile(new URL('../../scripts/build-native.mjs', import.meta.url), 'utf8');
+    const workflow = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    expect(buildScript).toContain("require.resolve('@napi-rs/cli/package.json')");
+    expect(buildScript).toContain('spawn(process.execPath');
+    expect(buildScript).not.toContain("spawn('pnpm.exe'");
+    expect(workflow).toContain('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }');
+    expect(workflow).toContain("-PathType Leaf");
+    const rebuildStep = workflow.slice(workflow.indexOf('- name: Rebuild native addon from Rust source'));
+    expect(rebuildStep.indexOf('pnpm native:build')).toBeLessThan(rebuildStep.indexOf('pnpm build'));
+  });
+
   it('normalizes HTTPS and SSH remotes to one repository identity', () => {
     expect(normalizeRepositoryIdentity('https://github.com/starSumi/JsonlView.git')).toBe('github.com/starsumi/jsonlview');
     expect(normalizeRepositoryIdentity('git@github.com:starSumi/JsonlView.git')).toBe('github.com/starsumi/jsonlview');

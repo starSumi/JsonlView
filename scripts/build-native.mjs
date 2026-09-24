@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -14,6 +15,14 @@ const rustupHome = resolve(nonEmpty(process.env.RUSTUP_HOME) ?? rustupHomeFromSy
 const declarationPath = resolve(nativeRoot, 'index.d.ts');
 const declaration = readFileSync(declarationPath, 'utf8');
 assertDeclaration(declaration);
+const require = createRequire(import.meta.url);
+const napiPackagePath = require.resolve('@napi-rs/cli/package.json');
+const napiPackage = JSON.parse(readFileSync(napiPackagePath, 'utf8'));
+const napiBin = napiPackage?.bin?.napi;
+if (typeof napiBin !== 'string' || napiBin.length === 0) {
+  throw new Error('@napi-rs/cli does not declare the napi executable');
+}
+const napiCli = resolve(dirname(napiPackagePath), napiBin);
 
 // Cargo accepts encoded flags without shell quoting. Remapping the checkout,
 // Cargo registry, and Rust toolchain keeps local usernames and drive paths out
@@ -33,8 +42,6 @@ const encodedFlags = [
 // must not be forwarded to Cargo, where it changes the parser boundary.
 const forwardedArgs = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2);
 const buildArgs = [
-  'exec',
-  'napi',
   'build',
   '--cwd',
   nativeRoot,
@@ -48,10 +55,11 @@ const buildArgs = [
   ...forwardedArgs,
 ];
 
-// Volta/Scoop expose a real pnpm.exe on Windows; invoking it directly avoids
-// shell concatenation and Node's DEP0190 warning.
-const command = process.platform === 'win32' ? 'pnpm.exe' : 'pnpm';
-const child = spawn(command, [
+// Invoke the installed napi-rs CLI with Node instead of rediscovering pnpm.
+// Package-manager shims differ across local Volta installs and hosted Windows
+// runners, while this executable is already pinned by the project lockfile.
+const child = spawn(process.execPath, [
+  napiCli,
   ...buildArgs,
 ], {
   cwd: root,

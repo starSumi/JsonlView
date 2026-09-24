@@ -16,8 +16,6 @@ jobs:
   dependency-freshness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      MAINTENANCE_REPORT_DIR: .maintenance-artifacts
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -31,23 +29,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Prepare report directory
+        env:
+          MAINTENANCE_REPORT_DIR: ${{ runner.temp }}/jsonlview-maintenance
         run: mkdir -p "$MAINTENANCE_REPORT_DIR"
       - name: Dependency freshness
+        env:
+          MAINTENANCE_REPORT_DIR: ${{ runner.temp }}/jsonlview-maintenance
         run: node scripts/check-dependency-freshness.mjs --out "$MAINTENANCE_REPORT_DIR/dependency-freshness.json"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: jsonlview-dependency-freshness-${{ github.run_number }}
-          path: .maintenance-artifacts/dependency-freshness.json
+          path: ${{ runner.temp }}/jsonlview-maintenance/dependency-freshness.json
           if-no-files-found: warn
           retention-days: 30
 
   benchmark-trend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      BENCHMARK_REPORT_DIR: .maintenance-artifacts
-      BENCHMARK_HISTORY_FILE: .maintenance-artifacts/benchmark-history.jsonl
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -61,27 +60,32 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Prepare report directory
+        env:
+          BENCHMARK_REPORT_DIR: ${{ runner.temp }}/jsonlview-benchmarks
         run: mkdir -p "$BENCHMARK_REPORT_DIR"
       - name: Restore benchmark history
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: .maintenance-artifacts/benchmark-history.jsonl
+          path: ${{ runner.temp }}/jsonlview-benchmarks/benchmark-history.jsonl
           key: jsonlview-benchmark-history-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
             jsonlview-benchmark-history-${{ github.ref_name }}-
       - name: Benchmark trend
+        env:
+          BENCHMARK_REPORT_DIR: ${{ runner.temp }}/jsonlview-benchmarks
+          BENCHMARK_HISTORY_FILE: ${{ runner.temp }}/jsonlview-benchmarks/benchmark-history.jsonl
         run: node scripts/benchmark-trend.mjs --out "$BENCHMARK_REPORT_DIR/benchmark-trend.json" --history "$BENCHMARK_HISTORY_FILE"
       - name: Verify a second sample has a comparable baseline
         env:
-          BENCHMARK_RECHECK: .maintenance-artifacts/benchmark-trend-recheck.json
+          BENCHMARK_RECHECK: ${{ runner.temp }}/jsonlview-benchmarks/benchmark-trend-recheck.json
+          BENCHMARK_HISTORY_FILE: ${{ runner.temp }}/jsonlview-benchmarks/benchmark-history.jsonl
         run: |
-          node scripts/benchmark-trend.mjs --out "$BENCHMARK_RECHECK" --history "$BENCHMARK_HISTORY_FILE"
+          node scripts/benchmark-trend.mjs --out "$BENCHMARK_RECHECK" --history "$BENCHMARK_HISTORY_FILE" --no-append
           node --input-type=module -e "import { readFile } from 'node:fs/promises'; const report = JSON.parse(await readFile(process.env.BENCHMARK_RECHECK, 'utf8')); if (report.comparison !== 'comparable') { console.error(JSON.stringify({ comparison: report.comparison, history: report.history }, null, 2)); process.exit(1); }"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: jsonlview-benchmark-trend-${{ github.run_number }}
-          path: |
-            .maintenance-artifacts/
+          path: ${{ runner.temp }}/jsonlview-benchmarks/
           if-no-files-found: warn
           retention-days: 30

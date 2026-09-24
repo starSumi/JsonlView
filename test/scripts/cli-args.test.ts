@@ -8,7 +8,7 @@ import { parseArguments as parseVsixArgs, stripLeadingScriptSeparator as stripVs
 import { fetchLatestVersion, parseArgs as parseFreshnessArgs } from '../../scripts/check-dependency-freshness.mjs';
 
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -167,6 +167,19 @@ describe('release CLI argument separators', () => {
         '--work', work,
       ], { cwd, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
       expect(result.stdout).toContain('"comparison"');
+      const historyAfterFirstRun = (await readFile(history, 'utf8')).trim().split(/\r?\n/);
+      expect(historyAfterFirstRun).toHaveLength(1);
+      await execFile(process.execPath, [
+        script,
+        '--records', '16',
+        '--payload-bytes', '8',
+        '--out', output,
+        '--history', history,
+        '--work', work,
+        '--no-append',
+      ], { cwd, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+      const historyAfterReadOnlyRecheck = (await readFile(history, 'utf8')).trim().split(/\r?\n/);
+      expect(historyAfterReadOnlyRecheck).toHaveLength(1);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

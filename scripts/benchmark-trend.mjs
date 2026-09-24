@@ -79,7 +79,7 @@ const report = {
   },
   historyFile: options.history,
 };
-await appendFile(options.history, `${JSON.stringify(current)}\n`, 'utf8');
+if (options.append) await appendFile(options.history, `${JSON.stringify(current)}\n`, 'utf8');
 await writeFile(options.out, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify(report, null, 2));
 
@@ -89,10 +89,14 @@ function parseArgs(args) {
     out: resolve(artifactDirectory('benchmarks', 'trend.json')),
     history: resolve(artifactDirectory('benchmarks', 'trend.jsonl')),
     work: resolve(artifactDirectory('benchmarks', 'fixtures')),
-    profile: 'mixed', records: 5000, payloadBytes: 128, scanner: 'off',
+    profile: 'mixed', records: 5000, payloadBytes: 128, scanner: 'off', append: true,
   };
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index];
+    if (key === '--no-append') {
+      parsed.append = false;
+      continue;
+    }
     const value = args[index + 1];
     if (value === undefined) throw new Error(`Missing value for ${key}`);
     if (key === '--out') parsed.out = resolve(value);
