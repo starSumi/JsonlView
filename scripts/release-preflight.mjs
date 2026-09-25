@@ -539,18 +539,9 @@ async function checkVsixPairEvidence(reportPath, currentArtifactPath, pairedArti
       || pairEvidenceSignature(recorded) !== pairEvidenceSignature(evidence)) {
       fail('vsixPair.report', 'VSIX pair report does not match the exact supplied artifacts');
     }
-    const selectedKey = selectedTarget === 'open-vsx' ? 'openVsx' : 'marketplace';
-    checks.vsixPair = {
-      ok: evidence.ok
-        && recordedPairSha256 === computedPairSha256
-        && pairEvidenceSignature(recorded) === pairEvidenceSignature(evidence),
-      pairSha256: computedPairSha256,
-      selectedTarget,
-      selected: evidence.targets[selectedKey],
-      targets: evidence.targets,
-      sharedPayload: evidence.sharedPayload,
-      allowedIdentityDifferences: evidence.allowedIdentityDifferences,
-    };
+    const reportMatches = recordedPairSha256 === computedPairSha256
+      && pairEvidenceSignature(recorded) === pairEvidenceSignature(evidence);
+    checks.vsixPair = projectVsixPairCheck(evidence, selectedTarget, reportMatches);
   } catch (error) {
     fail('vsixPair', `cannot verify paired VSIX evidence: ${errorMessage(error)}`);
   }
@@ -558,6 +549,22 @@ async function checkVsixPairEvidence(reportPath, currentArtifactPath, pairedArti
 
 function pairEvidenceSignature(value) {
   return JSON.stringify(canonicalVsixPairEvidence(value));
+}
+
+/** Preserve every field covered by the canonical pair fingerprint for the next gate. */
+export function projectVsixPairCheck(evidence, selectedTarget, reportMatches = true) {
+  const canonical = canonicalVsixPairEvidence(evidence);
+  const selectedKey = selectedTarget === 'open-vsx' ? 'openVsx' : 'marketplace';
+  const projected = {
+    ...canonical,
+    ok: canonical.ok === true && reportMatches,
+  };
+  return {
+    ...projected,
+    pairSha256: computeVsixPairSha256(projected),
+    selectedTarget,
+    selected: projected.targets?.[selectedKey],
+  };
 }
 
 /** All supplied native digests must be valid and name the same binary. */

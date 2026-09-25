@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // The release gate is intentionally a JavaScript CLI; keep its pure integrity
 // helpers covered without making the production script a TypeScript build input.
 // @ts-expect-error release-preflight.mjs has no emitted declaration file.
-import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, normalizeRepositoryIdentity, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
+import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, normalizeRepositoryIdentity, projectVsixPairCheck, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { bundleFromCandidateInventory, bundleInventoryDigest, compareBundleInventories } from '../../scripts/bundle-integrity.mjs';
 // @ts-expect-error verify-native-provenance.mjs has no emitted declaration file.
@@ -22,6 +22,8 @@ import { compareReleaseLegalInventories } from '../../scripts/release-legal-inte
 import { compareVsixArchiveIdentity, parseVsixManifestIdentity } from '../../scripts/vsix-archive-integrity.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { resolveNpmInvocation, resolvePnpmInvocation } from '../../scripts/package-manager-invocation.mjs';
+// @ts-expect-error JavaScript release helper has no emitted declaration file.
+import { computeVsixPairSha256 } from '../../scripts/verify-vsix-targets.mjs';
 
 const temporaryDirectories: string[] = [];
 
@@ -119,6 +121,39 @@ describe('release candidate integrity', () => {
       'npm candidate name does not match the approved package identity',
       'version differs between VSIX and npm candidates',
     ]);
+  });
+
+  it('preserves the complete paired-VSIX fingerprint across the preflight projection', () => {
+    const evidence = {
+      schemaVersion: 1,
+      ok: true,
+      version: '0.2.1',
+      targets: {
+        openVsx: { key: 'open-vsx', sha256: 'a'.repeat(64) },
+        marketplace: { key: 'marketplace', sha256: 'b'.repeat(64) },
+      },
+      sharedPayload: {
+        files: 89,
+        nativeSha256: 'c'.repeat(64),
+        bundleSha256: 'd'.repeat(64),
+      },
+      allowedIdentityDifferences: ['extension.vsixmanifest', 'extension/package.json'],
+    };
+    const pairSha256 = computeVsixPairSha256(evidence);
+    const projected = projectVsixPairCheck(evidence, 'open-vsx');
+
+    expect(projected).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      version: '0.2.1',
+      pairSha256,
+      selectedTarget: 'open-vsx',
+      selected: evidence.targets.openVsx,
+    });
+    expect(computeVsixPairSha256(projected)).toBe(pairSha256);
+    const rejected = projectVsixPairCheck(evidence, 'open-vsx', false);
+    expect(rejected.ok).toBe(false);
+    expect(computeVsixPairSha256(rejected)).toBe(rejected.pairSha256);
   });
 
   it('turns missing or mismatched candidate provenance into release-gate failures', () => {
