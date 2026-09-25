@@ -125,7 +125,7 @@ the existing record hydration budget.
 `jsonlView.native.newlineScanner` defaults to `off`. `auto` probes the packaged
 win32-x64 Rust/napi-rs scanner and keeps it only when a bounded calibration is at
 least 10% faster than the adaptive Node scanner; missing, incompatible, or
-invalid native output fuses back to Node. `on` prefers native but retains the
+invalid native output falls back to Node. `on` prefers native but retains the
 same validation and fallback. A native process crash cannot be caught by a
 JavaScript fallback, which is why native is not the default in v0.2.
 
