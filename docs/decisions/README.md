@@ -17,6 +17,7 @@ Read these before changing a shared boundary:
 9. [ADR-009 automatic update boundary](009-automatic-update-boundary.md)
 10. [ADR-010 development toolchain baseline](010-toolchain-baseline.md)
 11. [ADR-011 runtime topology and refactor shape](011-runtime-topology-and-refactor-shape.md)
+12. [ADR-012 registry extension identities](012-registry-extension-identities.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

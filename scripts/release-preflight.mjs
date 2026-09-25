@@ -10,6 +10,8 @@ import { isApprovedPublicLicense, validateProjectLicense } from './license-polic
 import { compareReleaseLegalInventories, inventorySourceLegalFiles, selectReleaseLegalInventory } from './release-legal-integrity.mjs';
 import { computeSourceManifest, validateProvenanceSourceBinding } from './verify-native-provenance.mjs';
 import { compareVsixArchiveIdentity, compareVsixArchiveIdentityEvidence, inspectVsixArchive } from './vsix-archive-integrity.mjs';
+import { getExtensionTarget, getReleaseTargets, resolveExtensionTarget } from './release-targets.mjs';
+import { canonicalVsixPairEvidence, computeVsixPairSha256, verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -37,21 +39,26 @@ async function main() {
   failures = [];
   warnings = [];
   checks = {};
+  const canonicalNpmName = getReleaseTargets().npm.name;
 
   if (!options.public) fail('mode', 'release preflight requires --public; staging is not a release gate');
-  if (options.public && options.approvedNpmName === undefined) {
-    fail('npmIdentity', 'public release requires --approved-npm-name <exact npm package name> (or JSONLVIEW_APPROVED_NPM_NAME)');
-  } else if (options.approvedNpmName !== undefined && !PACKAGE_NAME_PATTERN.test(options.approvedNpmName)) {
-    fail('npmIdentity', 'approved npm package name must be a valid exact npm package name');
-  }
+  const npmIdentityIssue = approvedNpmNameIssue(options.approvedNpmName, options.public);
+  if (npmIdentityIssue !== undefined) fail('npmIdentity', npmIdentityIssue);
   if (options.public && options.npmTarball === undefined) {
     fail('npmIdentity', 'public release requires --npm-tarball <exact reviewed .tgz>');
+  }
+  if (options.public && options.vsixTarget === undefined) {
+    fail('vsixIdentity', 'public release requires --vsix-target <open-vsx|marketplace>');
+  }
+  if (options.public && (options.vsixPairReport === undefined || options.pairedVsixArtifact === undefined)) {
+    fail('vsixPair', 'public release requires --vsix-pair-report and --paired-vsix-artifact');
   }
 
   const packageJson = await readJson(resolve(root, 'package.json'), 'package.json');
   const licenseText = await readFile(resolve(root, 'LICENSE.txt'), 'utf8');
   const sourceLegalFiles = await inventorySourceLegalFiles(root);
   const packageIdentity = checkPublicPackage(packageJson, licenseText);
+  const extensionTarget = options.vsixTarget === undefined ? undefined : await resolveExtensionTarget(options.vsixTarget);
   const gitIdentity = await checkGitIdentity();
   const revision = gitIdentity.revision;
   checkOriginRepository(packageIdentity.repository, gitIdentity);
@@ -72,7 +79,11 @@ async function main() {
   if (options.vsixManifest === undefined) {
     fail('vsixCandidate', 'pass --vsix-manifest <packaged VSIX manifest>');
   } else {
-    await checkVsixManifest(options.vsixManifest, options.vsixArtifact, revision, gitIdentity, packageIdentity, npmCandidate, options.approvedNpmName, nativeProvenance, sourceLegalFiles);
+    await checkVsixManifest(options.vsixManifest, options.vsixArtifact, revision, gitIdentity, packageIdentity, extensionTarget, npmCandidate, options.approvedNpmName, nativeProvenance, sourceLegalFiles);
+  }
+  if (options.vsixPairReport !== undefined && options.pairedVsixArtifact !== undefined
+    && options.vsixArtifact !== undefined && options.vsixTarget !== undefined) {
+    await checkVsixPairEvidence(options.vsixPairReport, options.vsixArtifact, options.pairedVsixArtifact, options.vsixTarget);
   }
 
   const outputPath = options.out === undefined ? undefined : resolve(options.out);
@@ -371,7 +382,7 @@ async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revisi
   };
 }
 
-async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdentity, rootPackage, npmCandidate, approvedNpmName, nativeProvenance, sourceLegalFiles) {
+async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdentity, rootPackage, extensionTarget, npmCandidate, approvedNpmName, nativeProvenance, sourceLegalFiles) {
   const manifest = await readJson(resolve(manifestPath), 'VSIX candidate manifest');
   const artifact = manifest.artifact ?? {};
   if (!Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) fail('vsixCandidate.artifact', 'VSIX manifest has no positive artifact size');
@@ -387,7 +398,20 @@ async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdenti
     publicRelease: true,
   });
   for (const issue of packageValidation.issues) fail(`vsixCandidate.package.${issue.field}`, issue.message);
-  const identityIssues = comparePackageIdentities(packageValidation.identity, rootPackage);
+  const expectedTargetPackage = extensionTarget === undefined ? rootPackage : {
+    ...rootPackage,
+    name: extensionTarget.name,
+    displayName: extensionTarget.displayName,
+    publisher: extensionTarget.publisher,
+  };
+  const identityIssues = comparePackageIdentities(packageValidation.identity, expectedTargetPackage, ['name', 'publisher', 'version', 'private', 'license', 'repository']);
+  if (extensionTarget !== undefined && manifest.package?.displayName !== extensionTarget.displayName) {
+    identityIssues.push('displayName differs from the selected extension release target');
+  }
+  if (extensionTarget !== undefined && (manifest.releaseTarget?.key !== extensionTarget.key
+    || manifest.releaseTarget?.extensionId?.toLowerCase() !== `${extensionTarget.publisher}.${extensionTarget.name}`.toLowerCase())) {
+    identityIssues.push('VSIX sidecar releaseTarget differs from the selected extension release target');
+  }
   for (const issue of identityIssues) fail('vsixCandidate.package.identity', issue);
   const npmIdentityIssues = compareNpmCandidateIdentity(packageValidation.identity, npmCandidate?.package, approvedNpmName);
   for (const issue of npmIdentityIssues) fail('candidates.identity', issue);
@@ -446,7 +470,7 @@ async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdenti
     for (const issue of compareVsixArchiveIdentity(archiveIdentity, manifest.package, 'sidecar package')) {
       fail('vsixCandidate.archiveIdentity', issue);
     }
-    for (const issue of compareVsixArchiveIdentity(archiveIdentity, rootPackage, 'root package')) {
+    for (const issue of compareVsixArchiveIdentity(archiveIdentity, expectedTargetPackage, 'release target package')) {
       fail('vsixCandidate.archiveIdentity', issue);
     }
     for (const issue of compareVsixArchiveIdentityEvidence(archiveIdentity, manifest.archiveIdentity)) {
@@ -475,6 +499,13 @@ async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdenti
       matchesCurrent: sourceValidation.ok,
     },
     package: packageValidation.identity,
+    target: extensionTarget === undefined ? null : {
+      key: extensionTarget.key,
+      registry: extensionTarget.registry,
+      extensionId: `${extensionTarget.publisher}.${extensionTarget.name}`,
+      displayName: extensionTarget.displayName,
+      preservesUpdateChain: extensionTarget.preservesUpdateChain,
+    },
     identityMatchesPackage: identityIssues.length === 0,
     identityMatchesNpm: npmIdentityIssues.length === 0,
     archiveIdentity,
@@ -483,6 +514,50 @@ async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdenti
     bundleSha256: embeddedBundle?.sha256 ?? manifest.bundle?.sha256,
     ...(integrity === undefined ? {} : { integrity: integrity.ok, actualBytes: integrity.actualBytes, actualSha256: integrity.actualSha256 }),
   };
+}
+
+async function checkVsixPairEvidence(reportPath, currentArtifactPath, pairedArtifactPath, selectedTarget) {
+  if (![reportPath, currentArtifactPath, pairedArtifactPath].every(isOutsideProductCheckout)) {
+    fail('vsixPair.path', 'pair report and both VSIX artifacts must be outside the product checkout');
+    return;
+  }
+  try {
+    const [recorded, current, paired] = await Promise.all([
+      readJson(resolve(reportPath), 'VSIX pair report'),
+      inspectVsixArchive(resolve(currentArtifactPath)),
+      inspectVsixArchive(resolve(pairedArtifactPath)),
+    ]);
+    const openVsxTarget = getExtensionTarget('open-vsx');
+    const marketplaceTarget = getExtensionTarget('marketplace');
+    const evidence = selectedTarget === 'open-vsx'
+      ? verifyVsixTargetEvidence({ openVsx: current, marketplace: paired }, { openVsxTarget, marketplaceTarget })
+      : verifyVsixTargetEvidence({ openVsx: paired, marketplace: current }, { openVsxTarget, marketplaceTarget });
+    if (!evidence.ok) fail('vsixPair.equality', evidence.failures.join('; '));
+    const recordedPairSha256 = typeof recorded?.pairSha256 === 'string' ? recorded.pairSha256.toLowerCase() : undefined;
+    const computedPairSha256 = computeVsixPairSha256(evidence);
+    if (recordedPairSha256 !== computedPairSha256
+      || pairEvidenceSignature(recorded) !== pairEvidenceSignature(evidence)) {
+      fail('vsixPair.report', 'VSIX pair report does not match the exact supplied artifacts');
+    }
+    const selectedKey = selectedTarget === 'open-vsx' ? 'openVsx' : 'marketplace';
+    checks.vsixPair = {
+      ok: evidence.ok
+        && recordedPairSha256 === computedPairSha256
+        && pairEvidenceSignature(recorded) === pairEvidenceSignature(evidence),
+      pairSha256: computedPairSha256,
+      selectedTarget,
+      selected: evidence.targets[selectedKey],
+      targets: evidence.targets,
+      sharedPayload: evidence.sharedPayload,
+      allowedIdentityDifferences: evidence.allowedIdentityDifferences,
+    };
+  } catch (error) {
+    fail('vsixPair', `cannot verify paired VSIX evidence: ${errorMessage(error)}`);
+  }
+}
+
+function pairEvidenceSignature(value) {
+  return JSON.stringify(canonicalVsixPairEvidence(value));
 }
 
 /** All supplied native digests must be valid and name the same binary. */
@@ -570,21 +645,15 @@ export function comparePackageIdentities(left, right, fields = ['name', 'publish
 }
 
 /**
- * npm permits a scope (`@scope/name`) while VS Code uses the unscoped
- * extension package name. Compare the stable basename plus version, and any
- * optional overlapping fields. A public release may additionally provide an
- * approved exact npm name; that check prevents a different scope from passing
- * merely because its basename is the same.
+ * npm and VS Code extension coordinates are independent public identities.
+ * Compare their shared version and ownership fields, while binding the npm
+ * name to the separately approved exact package name.
  */
 export function compareNpmCandidateIdentity(vsix, npm, approvedNpmName) {
   if (!isRecord(vsix) || !isRecord(npm)) return [];
   const issues = [];
   if (approvedNpmName !== undefined && npm.name !== approvedNpmName) {
     issues.push('npm candidate name does not match the approved package identity');
-  }
-  if (vsix.name !== undefined && npm.name !== undefined) {
-    const npmBaseName = npm.name.startsWith('@') ? npm.name.slice(npm.name.indexOf('/') + 1) : npm.name;
-    if (npmBaseName !== vsix.name) issues.push('name differs between VSIX and npm candidates');
   }
   if (vsix.version !== undefined && npm.version !== undefined && vsix.version !== npm.version) {
     issues.push('version differs between VSIX and npm candidates');
@@ -595,6 +664,18 @@ export function compareNpmCandidateIdentity(vsix, npm, approvedNpmName) {
     }
   }
   return issues;
+}
+
+export function approvedNpmNameIssue(value, required = true) {
+  const canonicalNpmName = getReleaseTargets().npm.name;
+  if (value === undefined) {
+    return required
+      ? 'public release requires --approved-npm-name <exact npm package name> (or JSONLVIEW_APPROVED_NPM_NAME)'
+      : undefined;
+  }
+  if (!PACKAGE_NAME_PATTERN.test(value)) return 'approved npm package name must be a valid exact npm package name';
+  if (value !== canonicalNpmName) return `approved npm package name must match the release target contract (${canonicalNpmName})`;
+  return undefined;
 }
 
 /**
@@ -1016,6 +1097,9 @@ function parseArgs(args) {
     npmTarball: undefined,
     vsixManifest: undefined,
     vsixArtifact: undefined,
+    vsixTarget: process.env.JSONLVIEW_VSIX_TARGET?.trim() || undefined,
+    vsixPairReport: undefined,
+    pairedVsixArtifact: undefined,
     out: undefined,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -1033,9 +1117,15 @@ function parseArgs(args) {
     else if (key === '--npm-tarball') parsed.npmTarball = value;
     else if (key === '--vsix-manifest') parsed.vsixManifest = value;
     else if (key === '--vsix-artifact') parsed.vsixArtifact = value;
+    else if (key === '--vsix-target') parsed.vsixTarget = value;
+    else if (key === '--vsix-pair-report') parsed.vsixPairReport = value;
+    else if (key === '--paired-vsix-artifact') parsed.pairedVsixArtifact = value;
     else if (key === '--out') parsed.out = value;
     else throw new Error(`unknown argument: ${key}`);
     index += 1;
+  }
+  if (parsed.vsixTarget !== undefined && !['open-vsx', 'marketplace'].includes(parsed.vsixTarget)) {
+    throw new Error(`invalid extension release target: ${parsed.vsixTarget}`);
   }
   return parsed;
 }

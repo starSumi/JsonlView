@@ -9,6 +9,7 @@ import { locateNativeBinary } from './verify-native-provenance.mjs';
 import { copyFrozenBundle, compareBundleInventories, inventoryFrozenBundle } from './bundle-integrity.mjs';
 import { compareVsixArchiveIdentity, inspectVsixArchive } from './vsix-archive-integrity.mjs';
 import { assertOutsideTree, assertPathsDoNotOverlap } from './path-boundary.mjs';
+import { resolveExtensionTarget } from './release-targets.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -61,7 +62,17 @@ try {
   ];
   for (const file of packageFiles) await cp(resolve(root, file), resolve(staging, file));
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
-  if (options.publisher !== undefined) packageJson.publisher = options.publisher;
+  const releaseTarget = options.target === undefined ? undefined : await resolveExtensionTarget(options.target);
+  if (releaseTarget !== undefined) {
+    if (options.publisher !== undefined && options.publisher !== releaseTarget.publisher) {
+      throw new Error(`publisher override differs from release target ${releaseTarget.key}`);
+    }
+    packageJson.name = releaseTarget.name;
+    packageJson.displayName = releaseTarget.displayName;
+    packageJson.publisher = releaseTarget.publisher;
+  } else if (options.publisher !== undefined) {
+    packageJson.publisher = options.publisher;
+  }
   if (options.version !== undefined) packageJson.version = options.version;
   // VSCE accepts either a `files` allowlist or .vscodeignore, never both.
   // npm keeps the allowlist in the source manifest; the VSIX staging copy uses
@@ -124,6 +135,7 @@ try {
     },
     package: {
       name: packageJson.name ?? null,
+      displayName: packageJson.displayName ?? null,
       publisher: packageJson.publisher ?? null,
       version: packageJson.version ?? null,
       private: typeof packageJson.private === 'boolean' ? packageJson.private : null,
@@ -131,6 +143,12 @@ try {
       repository: packageJson.repository ?? null,
     },
     archiveIdentity: archive.identity,
+    releaseTarget: releaseTarget === undefined ? null : {
+      key: releaseTarget.key,
+      registry: releaseTarget.registry,
+      extensionId: `${releaseTarget.publisher}.${releaseTarget.name}`,
+      preservesUpdateChain: releaseTarget.preservesUpdateChain,
+    },
     native: {
       candidateSha256: stagedNativeSha256,
       embeddedSha256: embeddedNative.sha256,
@@ -168,6 +186,7 @@ export function parseArguments(args) {
     out: undefined,
     manifest: undefined,
     staging: undefined,
+    target: undefined,
     publisher: undefined,
     version: undefined,
     replace: false,
@@ -185,12 +204,16 @@ export function parseArguments(args) {
     else if (key === '--out') parsed.out = value;
     else if (key === '--manifest') parsed.manifest = value;
     else if (key === '--staging') parsed.staging = value;
+    else if (key === '--target') parsed.target = value;
     else if (key === '--publisher') parsed.publisher = value;
     else if (key === '--version') parsed.version = value;
     else throw new Error(`unknown argument: ${key}`);
     index += 1;
   }
   if (parsed.native === undefined || parsed.dist === undefined || parsed.out === undefined) throw new Error('--native, --dist, and --out are required');
+  if (parsed.target !== undefined && !['open-vsx', 'marketplace'].includes(parsed.target)) {
+    throw new Error(`invalid extension release target: ${parsed.target}`);
+  }
   if (parsed.publisher !== undefined && !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(parsed.publisher)) {
     throw new Error(`invalid VS Code publisher: ${parsed.publisher}`);
   }

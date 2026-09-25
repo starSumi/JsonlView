@@ -101,18 +101,34 @@ jobs:
       - name: Verify source-to-binary provenance
         shell: pwsh
         run: node scripts/verify-native-provenance.mjs --candidate "$env:JSONLVIEW_NATIVE_BUILD_DIR" --skip-committed --out "$env:JSONLVIEW_NATIVE_REPORT_DIR/provenance.json"
-      - name: Package paired npm and VSIX candidates
+      - name: Package paired npm and registry-targeted VSIX candidates
         shell: pwsh
         run: |
-          $vsix = Join-Path $env:RUNNER_TEMP 'jsonl-view.vsix'
-          $vsixManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'vsix-manifest.json'
+          $openVsx = Join-Path $env:RUNNER_TEMP 'jsonl-view-open-vsx.vsix'
+          $marketplaceVsix = Join-Path $env:RUNNER_TEMP 'jsonlview-data-studio-marketplace.vsix'
+          $openVsxManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'open-vsx-manifest.json'
+          $marketplaceManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'marketplace-manifest.json'
           $npmStage = Join-Path $env:RUNNER_TEMP 'jsonl-view-npm-stage'
           $npmManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'npm-manifest.json'
           $npmTarball = Join-Path $env:RUNNER_TEMP 'sumi-labs-jsonl-view.tgz'
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          node scripts/prepare-npm-package.mjs --allow-proprietary --name '@sumi-labs/jsonl-view' --version "$version" --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --output "$npmStage" --manifest "$npmManifest" --tarball "$npmTarball"
-          node scripts/package-vsix-candidate.mjs --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$vsix" --manifest "$vsixManifest"
-          node scripts/verify-candidate-pair.mjs --npm "$npmTarball" --vsix "$vsix" --expected-npm-name '@sumi-labs/jsonl-view' --expected-publisher 'Sumi-Sophia' --expected-version "$version"
+          $targets = Get-Content config/release-targets.json -Raw | ConvertFrom-Json
+          $npmName = $targets.npm.name
+          $publisher = $targets.sourceManifest.publisher
+          $openVsxName = $targets.extensions.'open-vsx'.name
+          $marketplaceName = $targets.extensions.marketplace.name
+          node scripts/prepare-npm-package.mjs --allow-proprietary --name "$npmName" --version "$version" --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --output "$npmStage" --manifest "$npmManifest" --tarball "$npmTarball"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-vsix-candidate.mjs --target open-vsx --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$openVsx" --manifest "$openVsxManifest"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-vsix-candidate.mjs --target marketplace --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$marketplaceVsix" --manifest "$marketplaceManifest"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-candidate-pair.mjs --npm "$npmTarball" --vsix "$openVsx" --expected-npm-name "$npmName" --expected-extension-name "$openVsxName" --expected-publisher "$publisher" --expected-version "$version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-candidate-pair.mjs --npm "$npmTarball" --vsix "$marketplaceVsix" --expected-npm-name "$npmName" --expected-extension-name "$marketplaceName" --expected-publisher "$publisher" --expected-version "$version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-vsix-targets.mjs --open-vsx "$openVsx" --marketplace "$marketplaceVsix" --out (Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'vsix-pair.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Benchmark rebuilt native addon
         shell: pwsh
         run: |

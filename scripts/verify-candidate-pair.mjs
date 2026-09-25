@@ -22,15 +22,14 @@ export function verifyCandidatePairEvidence({ npm, vsix }, expected = {}) {
   const failures = [];
   const npmPackage = npm?.packageJson ?? {};
   const vsixPackage = vsix?.identity?.package ?? {};
-  const npmBaseName = typeof npmPackage.name === 'string' && npmPackage.name.startsWith('@')
-    ? npmPackage.name.slice(npmPackage.name.indexOf('/') + 1)
-    : npmPackage.name;
-  if (npmBaseName !== vsixPackage.name) failures.push('npm package basename differs from VSIX extension name');
   for (const field of ['publisher', 'version']) {
     if (npmPackage[field] !== vsixPackage[field]) failures.push(`${field} differs between npm and VSIX`);
   }
   if (expected.expectedNpmName !== undefined && npmPackage.name !== expected.expectedNpmName) {
     failures.push('npm package name differs from the expected release identity');
+  }
+  if (expected.expectedExtensionName !== undefined && vsixPackage.name !== expected.expectedExtensionName) {
+    failures.push('VSIX extension name differs from the expected release target');
   }
   if (expected.expectedPublisher !== undefined && vsixPackage.publisher !== expected.expectedPublisher) {
     failures.push('VSIX publisher differs from the expected release identity');
@@ -80,7 +79,7 @@ function bundleFromNpmFiles(files) {
 
 export function parseArgs(args) {
   const input = args[0] === '--' ? args.slice(1) : [...args];
-  const parsed = { npm: undefined, vsix: undefined, expectedNpmName: undefined, expectedPublisher: undefined, expectedVersion: undefined };
+  const parsed = { npm: undefined, vsix: undefined, expectedNpmName: undefined, expectedExtensionName: undefined, expectedPublisher: undefined, expectedVersion: undefined };
   for (let index = 0; index < input.length; index += 1) {
     const key = input[index];
     const value = input[index + 1];
@@ -88,6 +87,7 @@ export function parseArgs(args) {
     if (key === '--npm') parsed.npm = resolve(value);
     else if (key === '--vsix') parsed.vsix = resolve(value);
     else if (key === '--expected-npm-name') parsed.expectedNpmName = value;
+    else if (key === '--expected-extension-name') parsed.expectedExtensionName = value;
     else if (key === '--expected-publisher') parsed.expectedPublisher = value;
     else if (key === '--expected-version') parsed.expectedVersion = value;
     else throw new Error(`unknown argument: ${key}`);

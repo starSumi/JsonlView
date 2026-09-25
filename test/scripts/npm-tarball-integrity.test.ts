@@ -21,7 +21,7 @@ describe('npm tarball integrity', () => {
 
     const report = await inspectNpmTarball(tarball);
 
-    expect(report.packageJson).toMatchObject({ name: '@sumi-labs/jsonl-view', version: '0.2.0' });
+    expect(report.packageJson).toMatchObject({ name: '@sumi-labs/jsonl-view', version: '0.2.1' });
     expect(report.artifact.bytes).toBeGreaterThan(0);
     expect(report.artifact.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(report.inventorySha256).toMatch(/^[0-9a-f]{64}$/);
@@ -58,7 +58,7 @@ async function fixtureDirectory(): Promise<string> {
   await mkdir(join(directory, 'package', 'dist'), { recursive: true });
   await writeFile(join(directory, 'package', 'package.json'), `${JSON.stringify({
     name: '@sumi-labs/jsonl-view',
-    version: '0.2.0',
+    version: '0.2.1',
   })}\n`, 'utf8');
   await writeFile(join(directory, 'package', 'dist', 'extension.cjs'), 'module.exports = {};\n', 'utf8');
   return directory;

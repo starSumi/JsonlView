@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1 - 2026-09-25
+
+- Preserve the existing Open VSX update identity as
+  `Sumi-Sophia.jsonl-view` and publish the Visual Studio Marketplace build as
+  `Sumi-Sophia.jsonlview-data-studio`, because `jsonl-view` is already owned by
+  an unrelated Marketplace publisher.
+- Generate both VSIX files from one frozen source, native addon, and production
+  bundle. The release gate now proves that all non-identity archive entries are
+  byte-for-byte equal and binds each artifact to its declared registry target.
+- Keep `jsonlView.*` commands, settings, and custom-editor identifiers stable.
+  The two registry builds are alternatives and must not be installed together.
+- Record candidate-only native comparisons as not applicable instead of
+  reporting an unperformed committed-binary comparison as a failed comparison.
+- Require release changes to reach `main` through a reviewed pull request, then
+  verify required checks, the GitHub latest pointer, release assets, and each
+  registry independently after publication.
+
 ## 0.2.0 - 2026-09-23
 
 - Release JsonlView under the MIT License.

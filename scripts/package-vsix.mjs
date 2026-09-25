@@ -12,6 +12,7 @@ const output = resolve(process.env.JSONLVIEW_VSIX_OUTPUT ?? join(artifactRoot, '
 const manifest = resolve(process.env.JSONLVIEW_VSIX_MANIFEST ?? `${output}.provenance.json`);
 const publisher = process.env.JSONLVIEW_VSIX_PUBLISHER?.trim();
 const version = process.env.JSONLVIEW_VSIX_VERSION?.trim();
+const target = process.env.JSONLVIEW_VSIX_TARGET?.trim();
 let nativeOutput;
 let nativeTarget;
 let distOutput;
@@ -47,6 +48,7 @@ try {
   ];
   if (publisher) candidateArgs.push('--publisher', publisher);
   if (version) candidateArgs.push('--version', version);
+  if (target) candidateArgs.push('--target', target);
   await run(process.execPath, candidateArgs);
 } finally {
   await Promise.allSettled([
