@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "sourceManifest": {
+    "name": "jsonl-view",
+    "publisher": "Sumi-Sophia"
+  },
+  "npm": {
+    "name": "@sumi-labs/jsonl-view"
+  },
+  "extensions": {
+    "open-vsx": {
+      "registry": "open-vsx",
+      "publisher": "Sumi-Sophia",
+      "name": "jsonl-view",
+      "displayName": "JsonlView",
+      "preservesUpdateChain": true
+    },
+    "marketplace": {
+      "registry": "visual-studio-marketplace",
+      "publisher": "Sumi-Sophia",
+      "name": "jsonlview-data-studio",
+      "displayName": "JsonlView Data Studio",
+      "preservesUpdateChain": false
+    }
+  },
+  "sharedContributionIds": [
+    "jsonlView.open",
+    "jsonlView.rebuildIndex",
+    "jsonlView.editor",
+    "jsonlView.hydration.maxBytes",
+    "jsonlView.hydration.fullMaxBytes",
+    "jsonlView.hydration.pageMaxBytes",
+    "jsonlView.pageSize",
+    "jsonlView.profile.autoDetect",
+    "jsonlView.native.newlineScanner"
+  ],
+  "coInstallSupported": false
+}

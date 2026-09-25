@@ -176,6 +176,8 @@ changed. The extension never scans a producer checkout.
 
 Public promotion has a separate read-only gate. `pnpm release:preflight --
 --public --approved-npm-name @sumi-labs/jsonl-view
+--vsix-target <open-vsx|marketplace>
+--vsix-pair-report <pair-report> --paired-vsix-artifact <other-target-vsix>
 --provenance <full-native-report> --npm-manifest <npm-manifest>
 --npm-candidate <candidate-directory> --npm-tarball <exact-tgz>
 --vsix-manifest <vsix-manifest>
@@ -194,6 +196,20 @@ their identities and provenance into a target-separated, plan-only report. It
 requires an explicit window reload readback and leaves GitHub, npm, Open VSX,
 and Marketplace in independent authorization states; it never invokes a
 publisher or registry command.
+
+The public coordinates are explicit because extension names are registry
+identities rather than product labels:
+
+| Target | Public identity |
+| --- | --- |
+| Open VSX | `Sumi-Sophia.jsonl-view` |
+| Visual Studio Marketplace | `Sumi-Sophia.jsonlview-data-studio` |
+| npm | `@sumi-labs/jsonl-view` |
+
+Both VSIX files are built from the same frozen payload. They intentionally keep
+the same `jsonlView.*` commands, settings, and custom-editor ID, so install only
+the build supplied by the registry you use. If switching registries, uninstall
+or disable the other extension first.
 
 Use the exact reviewed VSIX path with `sync:local --vsix <candidate.vsix>` when
 the same artifact will be promoted publicly; rebuilding a second candidate can
@@ -216,7 +232,7 @@ For the extension currently used on this machine, run the local synchronization
 lane with the exact public identity and reviewed version:
 
 ```powershell
-pnpm sync:local -- --publisher Sumi-Sophia --version 0.2.0 --install
+pnpm sync:local -- --target open-vsx --version 0.2.1 --install
 ```
 
 The command builds an external VSIX candidate, installs it through the selected

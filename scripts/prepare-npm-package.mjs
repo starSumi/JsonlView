@@ -226,8 +226,11 @@ try {
       provenanceSchemaVersion: nativeProvenance.schemaVersion,
       sourceDigest: nativeProvenance.comparison?.sourceDigest ?? 'unavailable',
       candidateSha256: stagedNativeSha256,
-      contractEqual: nativeProvenance.comparison?.contractEqual === true,
-      behaviorEqual: nativeProvenance.comparison?.behaviorEqual === true,
+      comparisonMode: nativeProvenance.comparison?.committedBinaryChecked === true
+        ? 'committed-vs-rebuilt'
+        : 'candidate-only',
+      contractEqual: booleanOrNull(nativeProvenance.comparison?.contractEqual),
+      behaviorEqual: booleanOrNull(nativeProvenance.comparison?.behaviorEqual),
       noPrivatePathMarkers: nativeProvenance.comparison?.noPrivatePathMarkers === true,
     },
     bundle: stagedBundle,
@@ -261,6 +264,10 @@ try {
   }
 }
 
+}
+
+export function booleanOrNull(value) {
+  return typeof value === 'boolean' ? value : null;
 }
 
 export function parseArgs(args) {

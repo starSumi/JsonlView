@@ -22,8 +22,9 @@ queries, schema summaries, and timelines are disposable projections.
 When a reviewed change is ready for distribution, synchronize the surfaces in
 this order and record each readback separately:
 
-1. Freeze the source revision, run the release preflight, and build the VSIX
-   candidate outside this checkout.
+1. Put the release change through a pull request and required checks. Protect
+   `main` before merge, then freeze the reviewed merge commit, run the release
+   preflight, and build the VSIX candidates outside this checkout.
 2. Install the candidate with the actual portable VS Code `code.cmd`, verify
    the active extension id/version/path and bundle digest, then reload the
    affected window before calling the local plugin updated.
@@ -32,14 +33,17 @@ this order and record each readback separately:
    read back the exact package/version.
 4. Push the reviewed Git ref and create or update the GitHub release only after
    the remote and commit identities are verified; read back the published ref.
-5. Treat Open VSX and Marketplace as independent targets with their own
-   authorization, artifact, and registry readback. Success on one surface never
-   implies that another surface was updated.
+5. Treat Open VSX and Marketplace as independent targets with their own stable
+   coordinates, authorization, artifact, and registry readback. Verify the two
+   VSIX files differ only in their declared registry identity. Success on one
+   surface never implies that another surface was updated.
 
-For routine local updates, use `pnpm sync:local -- --publisher <publisher>
+For routine local updates, use `pnpm sync:local -- --target <open-vsx|marketplace>
 --version <version> --install`. The command is intentionally local-only and
-must report `reloadRequired` until the active VS Code window is reloaded. Do not
-replace it with a file-watch hook that publishes a registry or pushes a remote.
+must report `reloadRequired` until the active VS Code window is reloaded. The
+two target IDs share contribution identifiers and are not supported as a
+co-install; uninstall or disable one before accepting the other. Do not replace
+this flow with a file-watch hook that publishes a registry or pushes a remote.
 
 The local VSIX identity override (`--publisher`/`--version` on
 `package-vsix-candidate.mjs`) is for same-id acceptance installs only; it does

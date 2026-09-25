@@ -19,7 +19,7 @@ function evidence(native = nativeSha256) {
       packageJson: {
         name: '@sumi-labs/jsonl-view',
         publisher: 'Sumi-Sophia',
-        version: '0.2.0',
+        version: '0.2.1',
       },
       files: [
         ...distFiles.map((file) => ({ ...file, path: `dist/${file.path}` })),
@@ -29,7 +29,7 @@ function evidence(native = nativeSha256) {
     vsix: {
       artifact: { bytes: 200, sha256: '6'.repeat(64) },
       identity: {
-        package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.2.0' },
+        package: { name: 'jsonlview-data-studio', publisher: 'Sumi-Sophia', version: '0.2.1' },
       },
       native: { sha256: native },
       bundle: {
@@ -42,12 +42,24 @@ function evidence(native = nativeSha256) {
 }
 
 describe('paired release candidate verification', () => {
-  it('accepts matching identities, native bytes, and bundles', () => {
+  it('accepts independently named npm and extension identities with matching payloads', () => {
     expect(verifyCandidatePairEvidence(evidence(), {
       expectedNpmName: '@sumi-labs/jsonl-view',
+      expectedExtensionName: 'jsonlview-data-studio',
       expectedPublisher: 'Sumi-Sophia',
-      expectedVersion: '0.2.0',
+      expectedVersion: '0.2.1',
     })).toMatchObject({ ok: true, failures: [] });
+  });
+
+  it('rejects a VSIX built for the wrong registry target', () => {
+    const result = verifyCandidatePairEvidence(evidence(), {
+      expectedNpmName: '@sumi-labs/jsonl-view',
+      expectedExtensionName: 'jsonl-view',
+      expectedPublisher: 'Sumi-Sophia',
+      expectedVersion: '0.2.1',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.failures).toContain('VSIX extension name differs from the expected release target');
   });
 
   it('rejects independently rebuilt native bytes', () => {

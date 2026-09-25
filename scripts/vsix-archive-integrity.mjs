@@ -90,8 +90,8 @@ export function compareVsixArchiveIdentity(archiveIdentity, expectedPackage, lab
       continue;
     }
     const fields = surface === 'package'
-      ? ['name', 'publisher', 'version', 'private', 'license', 'repository']
-      : ['name', 'publisher', 'version'];
+      ? ['name', ...(Object.hasOwn(expectedPackage, 'displayName') ? ['displayName'] : []), 'publisher', 'version', 'private', 'license', 'repository']
+      : ['name', ...(Object.hasOwn(expectedPackage, 'displayName') ? ['displayName'] : []), 'publisher', 'version'];
     for (const field of fields) {
       const matches = field === 'repository'
         ? sameRepositoryIdentity(actual[field], expectedPackage[field])
@@ -116,8 +116,8 @@ export function compareVsixArchiveIdentityEvidence(actualIdentity, expectedIdent
       continue;
     }
     const fields = surface === 'package'
-      ? ['name', 'publisher', 'version', 'private', 'license', 'repository']
-      : ['name', 'publisher', 'version'];
+      ? ['name', ...(Object.hasOwn(expected, 'displayName') ? ['displayName'] : []), 'publisher', 'version', 'private', 'license', 'repository']
+      : ['name', ...(Object.hasOwn(expected, 'displayName') ? ['displayName'] : []), 'publisher', 'version'];
     for (const field of fields) {
       const matches = field === 'repository'
         ? sameRepositoryIdentity(actual[field], expected[field])
@@ -239,7 +239,7 @@ function scanCentralDirectory(snapshot) {
 
           const packageIdentity = parsePackageIdentity(payloads.get(VSIX_PACKAGE_ENTRY)?.contents);
           const vsixManifestIdentity = parseVsixManifestIdentity(payloads.get(VSIX_MANIFEST_ENTRY)?.contents);
-          for (const field of ['name', 'publisher', 'version']) {
+          for (const field of ['name', 'displayName', 'publisher', 'version']) {
             if (packageIdentity[field] !== vsixManifestIdentity[field]) {
               throw new Error(`VSIX embedded identity mismatch for ${field}`);
             }
@@ -285,6 +285,10 @@ function scanCentralDirectory(snapshot) {
             },
             legal: { files: legalFiles },
             files: archiveFiles,
+            metadata: {
+              packageJson: decodeUtf8(payloads.get(VSIX_PACKAGE_ENTRY)?.contents),
+              vsixManifest: decodeUtf8(payloads.get(VSIX_MANIFEST_ENTRY)?.contents),
+            },
             entries: { count: entryCount, uncompressedBytes: totalUncompressedBytes },
           };
           settled = true;
@@ -376,21 +380,24 @@ function parsePackageIdentity(contents) {
   }
   return {
     ...validateIdentity(value, VSIX_PACKAGE_ENTRY),
+    displayName: value.displayName,
     private: value.private,
     license: value.license,
     repository: value.repository,
   };
 }
 
-function parseVsixManifestIdentity(contents) {
+export function parseVsixManifestIdentity(contents) {
   if (!Buffer.isBuffer(contents)) throw new Error(`VSIX ${VSIX_MANIFEST_ENTRY} could not be read`);
   const text = decodeUtf8(contents);
   if (/<!DOCTYPE\b|<!ENTITY\b/i.test(text)) throw new Error('VSIX manifest must not contain a DTD or entity declaration');
   const matches = [...text.matchAll(/<Identity\b([^>]*)>/g)];
   if (matches.length !== 1) throw new Error('VSIX manifest must contain exactly one Identity element');
   const attributes = parseXmlAttributes(matches[0][1]);
+  const displayName = parseSingleXmlText(text, 'DisplayName');
   return validateIdentity({
     name: attributes.Id,
+    displayName,
     publisher: attributes.Publisher,
     version: attributes.Version,
   }, VSIX_MANIFEST_ENTRY);
@@ -411,6 +418,30 @@ function parseXmlAttributes(source) {
   return attributes;
 }
 
+function parseSingleXmlText(source, element) {
+  const pattern = new RegExp(`<${element}>([^<]*)<\\/${element}>`, 'g');
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) throw new Error(`VSIX manifest must contain exactly one ${element} element`);
+  return decodeXmlText(matches[0][1]);
+}
+
+function decodeXmlText(value) {
+  return value.replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);/gi, (entity) => {
+    if (entity === '&amp;') return '&';
+    if (entity === '&lt;') return '<';
+    if (entity === '&gt;') return '>';
+    if (entity === '&quot;') return '"';
+    if (entity === '&apos;') return "'";
+    const numeric = entity.startsWith('&#x') || entity.startsWith('&#X')
+      ? Number.parseInt(entity.slice(3, -1), 16)
+      : Number.parseInt(entity.slice(2, -1), 10);
+    if (!Number.isSafeInteger(numeric) || numeric < 0 || numeric > 0x10ffff) {
+      throw new Error('VSIX manifest contains an invalid XML character reference');
+    }
+    return String.fromCodePoint(numeric);
+  });
+}
+
 function validateIdentity(value, source) {
   const identity = isRecord(value) ? value : {};
   if (typeof identity.name !== 'string' || !PACKAGE_NAME_PATTERN.test(identity.name)) {
@@ -422,10 +453,14 @@ function validateIdentity(value, source) {
   if (typeof identity.version !== 'string' || !SEMVER_PATTERN.test(identity.version)) {
     throw new Error(`VSIX ${source} has an invalid version`);
   }
-  return { name: identity.name, publisher: identity.publisher, version: identity.version };
+  if (typeof identity.displayName !== 'string' || identity.displayName.trim().length === 0) {
+    throw new Error(`VSIX ${source} has an invalid display name`);
+  }
+  return { name: identity.name, displayName: identity.displayName, publisher: identity.publisher, version: identity.version };
 }
 
 function decodeUtf8(contents) {
+  if (!Buffer.isBuffer(contents)) throw new Error('VSIX metadata payload could not be read');
   try {
     return decoder.decode(contents);
   } catch (error) {

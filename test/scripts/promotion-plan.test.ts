@@ -13,10 +13,10 @@ const source = {
 
 function fixtures() {
   return {
-    preflight: { ok: true, mode: 'public-release', checks: { git: { revision: source.gitSha, gitState: source.gitState, statusSha256: source.statusSha256, diffSha256: source.diffSha256, remoteConfigured: true }, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT', repository: 'github.com/starsumi/jsonlview' }, npmCandidate: { approvedName: '@sumi-labs/jsonl-view', integrity: true, clean: true }, vsixCandidate: { integrity: true }, nativeProvenance: { ok: true, committedBinaryChecked: true, contractEqual: true, behaviorEqual: true } }, failures: [] as Array<{ check: string }> },
+    preflight: { ok: true, mode: 'public-release', checks: { git: { revision: source.gitSha, gitState: source.gitState, statusSha256: source.statusSha256, diffSha256: source.diffSha256, remoteConfigured: true }, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT', repository: 'github.com/starsumi/jsonlview' }, npmCandidate: { approvedName: '@sumi-labs/jsonl-view', integrity: true, clean: true, tarball: { bytes: 100, sha256: 'e'.repeat(64) } }, vsixCandidate: { integrity: true, actualBytes: 200, actualSha256: 'd'.repeat(64), target: { key: 'open-vsx', registry: 'open-vsx', extensionId: 'Sumi-Sophia.jsonl-view', displayName: 'JsonlView' } }, vsixPair: { ok: true, selectedTarget: 'open-vsx', selected: { sha256: 'd'.repeat(64) } }, nativeProvenance: { ok: true, committedBinaryChecked: true, contractEqual: true, behaviorEqual: true } }, failures: [] as Array<{ check: string }> },
     local: { source: { sha: source.gitSha, clean: true, statusSha256: source.statusSha256, diffSha256: source.diffSha256 }, candidate: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', sha256: 'd'.repeat(64), extensionId: 'Sumi-Sophia.jsonl-view' }, vscode: { status: 'installed', activeWindowReloaded: true, reloadRequired: false } },
-    vsix: { source, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT' }, artifact: { sha256: 'd'.repeat(64) } },
-    npm: { source, package: { name: '@sumi-labs/jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT' } },
+    vsix: { source, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT' }, artifact: { bytes: 200, sha256: 'd'.repeat(64) } },
+    npm: { source, package: { name: '@sumi-labs/jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT' }, tarball: { bytes: 100, sha256: 'e'.repeat(64) } },
   };
 }
 
@@ -30,12 +30,15 @@ describe('promotion plan', () => {
     expect(plan.targets.localVsCode.reloadEvidence).toBe('manifest');
     expect(plan.targets.npm.publicationAttempted).toBe(false);
     expect(plan.targets.openVsx.readbackRequired).toBe(true);
+    expect(plan.targets.marketplace.status).toBe('not-applicable');
     expect(plan.candidate.approvedNpmName).toBe('@sumi-labs/jsonl-view');
   });
 
   it('blocks a dirty or failed preflight and never upgrades target status', () => {
     const input = fixtures();
-    input.preflight = { ok: false, mode: 'public-release', checks: { git: { revision: source.gitSha, gitState: 'dirty', statusSha256: source.statusSha256, diffSha256: source.diffSha256, remoteConfigured: true }, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT', repository: 'github.com/starsumi/jsonlview' }, npmCandidate: { approvedName: '@sumi-labs/jsonl-view', integrity: true, clean: true }, vsixCandidate: { integrity: true }, nativeProvenance: { ok: true, committedBinaryChecked: true, contractEqual: true, behaviorEqual: true } }, failures: [{ check: 'git.clean' }] };
+    input.preflight.ok = false;
+    input.preflight.checks.git.gitState = 'dirty';
+    input.preflight.failures = [{ check: 'git.clean' }];
     input.local.source.clean = false;
     const plan = buildPromotionPlan(input);
     expect(plan.readyForPromotion).toBe(false);
@@ -45,6 +48,40 @@ describe('promotion plan', () => {
     ]));
     expect(plan.targets.github.status).toBe('blocked-by-gate');
     expect(plan.authorization.supplied).toBe(false);
+  });
+
+  it('creates a Marketplace-only plan for the alternate extension coordinate', () => {
+    const input = fixtures();
+    input.preflight.checks.vsixCandidate.target = {
+      key: 'marketplace',
+      registry: 'visual-studio-marketplace',
+      extensionId: 'Sumi-Sophia.jsonlview-data-studio',
+      displayName: 'JsonlView Data Studio',
+    };
+    input.preflight.checks.vsixPair = { ok: true, selectedTarget: 'marketplace', selected: { sha256: 'd'.repeat(64) } };
+    input.local.candidate.name = 'jsonlview-data-studio';
+    input.local.candidate.extensionId = 'Sumi-Sophia.jsonlview-data-studio';
+    input.vsix.package.name = 'jsonlview-data-studio';
+    const plan = buildPromotionPlan(input);
+    expect(plan.readyForPromotion).toBe(true);
+    expect(plan.candidate.extensionTarget).toBe('marketplace');
+    expect(plan.targets.marketplace.status).toBe('pending-authorization');
+    expect(plan.targets.openVsx.status).toBe('not-applicable');
+    expect(plan.targets.npm.status).toBe('not-applicable');
+  });
+
+  it('rejects stale preflight artifact digests and target-key confusion', () => {
+    const input = fixtures();
+    input.preflight.checks.vsixCandidate.actualSha256 = 'f'.repeat(64);
+    input.preflight.checks.vsixCandidate.target.extensionId = 'Sumi-Sophia.jsonlview-data-studio';
+    input.preflight.checks.npmCandidate.tarball.sha256 = 'a'.repeat(64);
+    const plan = buildPromotionPlan(input);
+    expect(plan.readyForPromotion).toBe(false);
+    expect(plan.blockers).toEqual(expect.arrayContaining([
+      'VSIX sidecar digest differs from the exact artifact approved by preflight',
+      'preflight extension target differs from the canonical release target contract',
+      'npm tarball digest differs from the exact artifact approved by preflight',
+    ]));
   });
 
   it('blocks identity and artifact drift instead of silently publishing a different package', () => {

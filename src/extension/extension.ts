@@ -1,6 +1,7 @@
 import { basename, dirname } from 'node:path';
 import { stat } from 'node:fs/promises';
 import * as vscode from 'vscode';
+import { findExtensionContributionConflict } from './extension-conflicts';
 import { PROTOCOL_VERSION, type DocumentSummary, type ExtensionMessage } from '../shared/types';
 import { DocumentController } from './document-controller';
 import { IntegratedJsonlSession } from './integrated-session';
@@ -348,6 +349,13 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const conflict = findExtensionContributionConflict(context.extension.id, vscode.extensions.all);
+  if (conflict !== undefined) {
+    void vscode.window.showErrorMessage(
+      `JsonlView cannot activate while ${conflict.extensionId} is enabled because both extensions declare ${conflict.contributionIds.join(', ')}. Disable or uninstall one JsonlView build, then reload the window.`,
+    );
+    return;
+  }
   const provider = new JsonlViewProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {

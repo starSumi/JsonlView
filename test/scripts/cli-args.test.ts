@@ -80,11 +80,20 @@ describe('release CLI argument separators', () => {
       '--public',
       '--approved-npm-name',
       '@sumi-labs/jsonl-view',
+      '--vsix-target',
+      'marketplace',
+      '--vsix-pair-report',
+      'pair.json',
+      '--paired-vsix-artifact',
+      'open-vsx.vsix',
       '--out',
       'report.json',
     ])).toMatchObject({
       public: true,
       approvedNpmName: '@sumi-labs/jsonl-view',
+      vsixTarget: 'marketplace',
+      vsixPairReport: 'pair.json',
+      pairedVsixArtifact: 'open-vsx.vsix',
       out: 'report.json',
     });
     expect(parseNpmArgs([
@@ -105,11 +114,19 @@ describe('release CLI argument separators', () => {
       dist: 'dist-candidate',
       output: 'npm-candidate',
     });
-    expect(parseVsixArgs(['--native', 'native.node', '--dist', 'dist-candidate', '--out', 'jsonl-view.vsix'])).toMatchObject({
+    expect(parseVsixArgs(['--target', 'marketplace', '--native', 'native.node', '--dist', 'dist-candidate', '--out', 'jsonl-view.vsix'])).toMatchObject({
+      target: 'marketplace',
       native: 'native.node',
       dist: 'dist-candidate',
       out: 'jsonl-view.vsix',
     });
+  });
+
+  it('rejects an undeclared extension release target', () => {
+    expect(() => parseVsixArgs(['--target', 'other', '--native', 'native.node', '--dist', 'dist-candidate', '--out', 'jsonl-view.vsix']))
+      .toThrow(/invalid extension release target/i);
+    expect(() => parsePreflightArgs(['--vsix-target', 'other']))
+      .toThrow(/invalid extension release target/i);
   });
 
   it('accepts one separator forwarded by a pnpm script invocation', () => {

@@ -1,5 +1,5 @@
 // @ts-expect-error JavaScript CLI module intentionally does not emit declarations.
-import { parseArgs, sourceStateFromGitOutputs } from '../../scripts/sync-local-extension.mjs';
+import { findInstalledTargetConflicts, parseArgs, sourceStateFromGitOutputs } from '../../scripts/sync-local-extension.mjs';
 import { describe, expect, it } from 'vitest';
 
 describe('local extension sync arguments', () => {
@@ -24,6 +24,23 @@ describe('local extension sync arguments', () => {
       version: '0.1.10',
       install: false,
     });
+  });
+
+  it('parses a registry target without requiring a manual publisher override', () => {
+    expect(parseArgs(['--target', 'marketplace', '--version', '0.2.1'])).toMatchObject({
+      target: 'marketplace',
+      version: '0.2.1',
+      install: false,
+    });
+  });
+
+  it('blocks the alternate registry ID even though its extension name differs', () => {
+    expect(findInstalledTargetConflicts([
+      { name: 'Sumi-Sophia.jsonl-view', version: '0.2.1', registered: true },
+      { name: 'other.viewer', version: '1.0.0', registered: true },
+    ], 'Sumi-Sophia.jsonlview-data-studio', 'jsonlview-data-studio')).toEqual([
+      expect.objectContaining({ name: 'Sumi-Sophia.jsonl-view' }),
+    ]);
   });
 
   it('rejects a second separator instead of silently widening the command', () => {

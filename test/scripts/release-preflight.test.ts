@@ -19,7 +19,7 @@ import { inventoryEmbeddedVsixBundle } from '../../scripts/vsix-bundle-integrity
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { compareReleaseLegalInventories } from '../../scripts/release-legal-integrity.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
-import { compareVsixArchiveIdentity } from '../../scripts/vsix-archive-integrity.mjs';
+import { compareVsixArchiveIdentity, parseVsixManifestIdentity } from '../../scripts/vsix-archive-integrity.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { resolveNpmInvocation, resolvePnpmInvocation } from '../../scripts/package-manager-invocation.mjs';
 
@@ -108,7 +108,7 @@ describe('release candidate integrity', () => {
       ['name', 'version'],
     )).toEqual(['version differs between candidate manifests']);
     expect(compareNpmCandidateIdentity(
-      { name: 'jsonl-view', version: '0.1.10' },
+      { name: 'jsonlview-data-studio', version: '0.1.10' },
       { name: '@sumi-labs/jsonl-view', version: '0.1.10' },
     )).toEqual([]);
     expect(compareNpmCandidateIdentity(
@@ -188,12 +188,12 @@ describe('release candidate integrity', () => {
 
   it('binds embedded VSIX package license, privacy, and repository metadata', () => {
     const expected = {
-      name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.2.0', private: false, license: 'MIT',
+      name: 'jsonl-view', displayName: 'JsonlView', publisher: 'Sumi-Sophia', version: '0.2.1', private: false, license: 'MIT',
       repository: { type: 'git', url: 'https://github.com/starSumi/JsonlView.git' },
     };
     const archive = {
       package: { ...expected, private: true, license: 'UNLICENSED' },
-      vsixManifest: { name: expected.name, publisher: expected.publisher, version: expected.version },
+      vsixManifest: { name: expected.name, displayName: expected.displayName, publisher: expected.publisher, version: expected.version },
     };
     expect(compareVsixArchiveIdentity(archive, expected, 'root package')).toEqual(expect.arrayContaining([
       expect.stringContaining('private'),
@@ -201,8 +201,24 @@ describe('release candidate integrity', () => {
     ]));
     expect(compareVsixArchiveIdentity({
       package: expected,
-      vsixManifest: { name: expected.name, publisher: expected.publisher, version: expected.version },
+      vsixManifest: { name: expected.name, displayName: expected.displayName, publisher: expected.publisher, version: expected.version },
     }, { ...expected, repository: 'github.com/starsumi/jsonlview' }, 'canonical root package')).toEqual([]);
+  });
+
+  it('rejects missing, duplicate, and mismatched VSIX display names', () => {
+    const identity = '<Identity Language="en-US" Id="jsonl-view" Version="0.2.1" Publisher="Sumi-Sophia" />';
+    expect(() => parseVsixManifestIdentity(Buffer.from(`<PackageManifest>${identity}</PackageManifest>`)))
+      .toThrow(/exactly one DisplayName/i);
+    expect(() => parseVsixManifestIdentity(Buffer.from(`<PackageManifest>${identity}<DisplayName>One</DisplayName><DisplayName>Two</DisplayName></PackageManifest>`)))
+      .toThrow(/exactly one DisplayName/i);
+
+    const parsed = parseVsixManifestIdentity(Buffer.from(`<PackageManifest>${identity}<DisplayName>Wrong Name</DisplayName></PackageManifest>`));
+    expect(compareVsixArchiveIdentity({
+      package: { name: 'jsonl-view', displayName: 'JsonlView', publisher: 'Sumi-Sophia', version: '0.2.1' },
+      vsixManifest: parsed,
+    }, {
+      name: 'jsonl-view', displayName: 'JsonlView', publisher: 'Sumi-Sophia', version: '0.2.1',
+    })).toContain('VSIX vsixManifest displayName differs from expected package');
   });
 
   it('pins the pnpm setup action to the verified peeled commit', async () => {
@@ -232,6 +248,16 @@ describe('release candidate integrity', () => {
     expect(workflow).toContain("-PathType Leaf");
     const rebuildStep = workflow.slice(workflow.indexOf('- name: Rebuild native addon from Rust source'));
     expect(rebuildStep.indexOf('pnpm native:build')).toBeLessThan(rebuildStep.indexOf('pnpm build'));
+
+    const pairedStep = workflow
+      .slice(workflow.indexOf('- name: Package paired npm and registry-targeted VSIX candidates'))
+      .split(/^\s{6}- name:/m)[0] ?? '';
+    const lines = pairedStep.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const commandIndexes = lines.flatMap((line, index) => line.startsWith('node scripts/') ? [index] : []);
+    expect(commandIndexes.length).toBeGreaterThanOrEqual(6);
+    for (const index of commandIndexes) {
+      expect(lines[index + 1], `missing fail-fast guard after ${lines[index]}`).toBe('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }');
+    }
   });
 
   it('resolves package-manager CLIs without relying on Windows command shims', () => {

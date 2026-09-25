@@ -3,6 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
 import { isApprovedPublicLicense } from './license-policy.mjs';
+import { getExtensionTarget } from './release-targets.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const SHA256 = /^[0-9a-f]{64}$/i;
@@ -32,7 +33,7 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
     blockers.push(`release preflight is not green (${summarizeFailures(preflight?.failures)})`);
   }
   if (preflightChecks.git?.remoteConfigured !== true) blockers.push('preflight does not prove a configured Git remote');
-  for (const checkName of ['package', 'npmCandidate', 'vsixCandidate', 'nativeProvenance']) {
+  for (const checkName of ['package', 'npmCandidate', 'vsixCandidate', 'vsixPair', 'nativeProvenance']) {
     if (!isRecord(preflightChecks[checkName])) blockers.push(`preflight is missing checks.${checkName}`);
   }
   const gatePackage = preflightChecks.package;
@@ -68,10 +69,10 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
   const vsixPackage = isRecord(vsix?.package) ? vsix.package : {};
   const npmPackage = isRecord(npm?.package) ? npm.package : {};
   const vsixArtifact = isRecord(vsix?.artifact) ? vsix.artifact : {};
+  const npmTarball = isRecord(npm?.tarball) ? npm.tarball : {};
 
   const extensionName = stringOrUndefined(localCandidate.name)
-    ?? stringOrUndefined(vsixPackage.name)
-    ?? npmBaseName(npmPackage.name);
+    ?? stringOrUndefined(vsixPackage.name);
   const version = stringOrUndefined(localCandidate.version)
     ?? stringOrUndefined(vsixPackage.version)
     ?? stringOrUndefined(npmPackage.version);
@@ -79,6 +80,9 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
     ?? stringOrUndefined(vsixPackage.publisher);
   const npmName = stringOrUndefined(npmPackage.name);
   const approvedNpmName = stringOrUndefined(preflightChecks.npmCandidate?.approvedName);
+  const extensionTarget = isRecord(preflightChecks.vsixCandidate?.target)
+    ? preflightChecks.vsixCandidate.target
+    : undefined;
 
   if (extensionName === undefined) blockers.push('extension name is missing from the candidate manifests');
   else if (!EXTENSION_NAME.test(extensionName)) blockers.push('extension name is malformed');
@@ -92,8 +96,12 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
   } else if (npmName !== undefined && npmName !== approvedNpmName) {
     blockers.push('npm candidate name differs from the preflight approved package identity');
   }
-  if (extensionName !== undefined && npmName !== undefined && npmBaseName(npmName) !== extensionName) {
-    blockers.push('VSIX extension name differs from the npm package base name');
+  const extensionTargetKey = stringOrUndefined(extensionTarget?.key);
+  let canonicalTarget;
+  if (!['open-vsx', 'marketplace'].includes(extensionTargetKey)) {
+    blockers.push('preflight does not bind the VSIX to a known extension release target');
+  } else {
+    canonicalTarget = getExtensionTarget(extensionTargetKey);
   }
 
   requireField('local candidate version', localCandidate.version, blockers);
@@ -109,11 +117,26 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
   } else {
     blockers.push('local VSIX extension id is missing');
   }
+  if (extensionTarget !== undefined && publisher !== undefined && extensionName !== undefined) {
+    const expectedExtensionId = `${publisher}.${extensionName}`;
+    if (String(extensionTarget.extensionId).toLowerCase() !== expectedExtensionId.toLowerCase()) {
+      blockers.push('preflight extension target does not match the candidate extension id');
+    }
+  }
+  if (canonicalTarget !== undefined) {
+    const expectedExtensionId = `${canonicalTarget.publisher}.${canonicalTarget.name}`;
+    if (extensionName !== canonicalTarget.name
+      || publisher !== canonicalTarget.publisher
+      || String(extensionTarget?.registry) !== canonicalTarget.registry
+      || String(extensionTarget?.extensionId).toLowerCase() !== expectedExtensionId.toLowerCase()
+      || String(extensionTarget?.displayName) !== canonicalTarget.displayName) {
+      blockers.push('preflight extension target differs from the canonical release target contract');
+    }
+  }
   compareEqual('version', [localCandidate.version, vsixPackage.version, npmPackage.version], blockers);
   compareEqual('publisher', [localCandidate.publisher, vsixPackage.publisher, npmPackage.publisher], blockers);
   compareEqual('npm package version', [version, npmPackage.version], blockers);
   if (isRecord(gatePackage)) {
-    compareEqual('preflight package name', [gatePackage.name, extensionName], blockers);
     compareEqual('preflight package publisher', [gatePackage.publisher, publisher], blockers);
     compareEqual('preflight package version', [gatePackage.version, version], blockers);
   }
@@ -126,12 +149,40 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
 
   const localDigest = stringOrUndefined(localCandidate.sha256);
   const vsixDigest = stringOrUndefined(vsixArtifact.sha256);
+  const preflightVsixDigest = stringOrUndefined(preflightChecks.vsixCandidate?.actualSha256);
   if (localDigest === undefined) blockers.push('local VSIX digest is missing');
   if (vsixDigest === undefined) blockers.push('VSIX artifact digest is missing');
+  if (preflightVsixDigest === undefined) blockers.push('preflight VSIX artifact digest is missing');
   if (localDigest !== undefined && !SHA256.test(localDigest)) blockers.push('local VSIX digest is malformed');
   if (vsixDigest !== undefined && !SHA256.test(vsixDigest)) blockers.push('VSIX artifact digest is malformed');
   if (localDigest !== undefined && vsixDigest !== undefined && localDigest.toLowerCase() !== vsixDigest.toLowerCase()) {
     blockers.push('local installed candidate and VSIX release candidate have different digests; install the exact reviewed VSIX');
+  }
+  if (preflightVsixDigest !== undefined && vsixDigest !== undefined && preflightVsixDigest.toLowerCase() !== vsixDigest.toLowerCase()) {
+    blockers.push('VSIX sidecar digest differs from the exact artifact approved by preflight');
+  }
+  if (preflightChecks.vsixCandidate?.actualBytes !== undefined && vsixArtifact.bytes !== preflightChecks.vsixCandidate.actualBytes) {
+    blockers.push('VSIX sidecar byte count differs from the exact artifact approved by preflight');
+  }
+
+  const preflightTarball = preflightChecks.npmCandidate?.tarball;
+  const npmTarballDigest = stringOrUndefined(npmTarball.sha256);
+  const preflightTarballDigest = stringOrUndefined(preflightTarball?.sha256);
+  if (npmTarballDigest === undefined || preflightTarballDigest === undefined) {
+    blockers.push('npm tarball digest is missing from the candidate or preflight');
+  } else if (npmTarballDigest.toLowerCase() !== preflightTarballDigest.toLowerCase()) {
+    blockers.push('npm tarball digest differs from the exact artifact approved by preflight');
+  }
+  if (preflightTarball?.bytes !== undefined && npmTarball.bytes !== preflightTarball.bytes) {
+    blockers.push('npm tarball byte count differs from the exact artifact approved by preflight');
+  }
+
+  const pairCheck = preflightChecks.vsixPair;
+  if (pairCheck?.ok !== true || pairCheck?.selectedTarget !== extensionTargetKey) {
+    blockers.push('preflight does not contain valid paired-VSIX evidence for this target');
+  }
+  if (vsixDigest !== undefined && String(pairCheck?.selected?.sha256).toLowerCase() !== vsixDigest.toLowerCase()) {
+    blockers.push('paired-VSIX evidence does not bind the selected artifact digest');
   }
 
   const localInstalled = local?.vscode?.status === 'installed';
@@ -144,7 +195,7 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
   const localStatus = localInstalled && (localReloaded || manifestReloaded) ? 'accepted' : 'awaiting-reload';
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     operation: 'promotion-plan',
     createdAt,
     publication: 'plan-only; no external writes or registry calls were performed',
@@ -157,7 +208,9 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
       version: version ?? null,
       npmName: npmName ?? null,
       approvedNpmName: approvedNpmName ?? null,
+      extensionTarget: extensionTargetKey ?? null,
       vsixSha256: vsixDigest ?? localDigest ?? null,
+      npmTarballSha256: npmTarballDigest ?? null,
     },
     authorization: {
       required: true,
@@ -171,10 +224,18 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
         reloadEvidence: manifestReloaded ? 'manifest' : localReloaded ? 'operator-asserted' : 'missing',
         readbackRequired: true,
       },
-      github: targetStatusObject(targetStatus, 'push reviewed ref and read back commit/tag/release'),
-      npm: targetStatusObject(targetStatus, 'publish exact npm candidate and read back version/integrity'),
-      openVsx: targetStatusObject(targetStatus, 'publish exact VSIX and read back extension/version/digest'),
-      marketplace: targetStatusObject(targetStatus, 'publish exact VSIX and read back extension/version'),
+      github: extensionTargetKey === 'open-vsx'
+        ? targetStatusObject(targetStatus, 'merge the reviewed PR, create the tag/release, and read back commit, latest pointer, and assets')
+        : notApplicableTarget('owned by the primary Open VSX release plan'),
+      npm: extensionTargetKey === 'open-vsx'
+        ? targetStatusObject(targetStatus, 'publish exact npm candidate and read back version/integrity')
+        : notApplicableTarget('owned by the primary Open VSX release plan'),
+      openVsx: extensionTargetKey === 'open-vsx'
+        ? targetStatusObject(targetStatus, 'publish the Open VSX target VSIX and read back extension/version/digest')
+        : notApplicableTarget('this plan is bound to the Marketplace target'),
+      marketplace: extensionTargetKey === 'marketplace'
+        ? targetStatusObject(targetStatus, 'publish the Marketplace target VSIX and read back extension/version/digest')
+        : notApplicableTarget('this plan is bound to the Open VSX target'),
     },
   };
 }
@@ -185,6 +246,16 @@ function targetStatusObject(status, action) {
     authorizationRequired: true,
     action,
     readbackRequired: true,
+    publicationAttempted: false,
+  };
+}
+
+function notApplicableTarget(reason) {
+  return {
+    status: 'not-applicable',
+    authorizationRequired: false,
+    reason,
+    readbackRequired: false,
     publicationAttempted: false,
   };
 }
@@ -243,11 +314,6 @@ function redactSource(source) {
 
 function validDigestOrNull(value) {
   return typeof value === 'string' && SHA256.test(value) ? value.toLowerCase() : null;
-}
-
-function npmBaseName(value) {
-  if (typeof value !== 'string' || value.length === 0) return undefined;
-  return value.startsWith('@') ? value.slice(value.indexOf('/') + 1) : value;
 }
 
 function firstString(...values) {

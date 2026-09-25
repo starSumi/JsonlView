@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { artifactDirectory } from './artifact-directory.mjs';
 import { resolvePnpmInvocation } from './package-manager-invocation.mjs';
+import { inspectVsixArchive } from './vsix-archive-integrity.mjs';
+import { getReleaseTargets, resolveExtensionTarget } from './release-targets.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -21,15 +23,18 @@ if (isMainModule()) await main();
  */
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  if (options.publisher === undefined || !PUBLISHER.test(options.publisher)) {
-    throw new Error('--publisher is required and must be a VS Code publisher id');
+  const releaseTarget = options.target === undefined ? undefined : await resolveExtensionTarget(options.target);
+  if (releaseTarget !== undefined && options.publisher !== undefined && options.publisher !== releaseTarget.publisher) {
+    throw new Error(`publisher override differs from release target ${releaseTarget.key}`);
   }
+  const publisher = releaseTarget?.publisher ?? options.publisher;
+  if (publisher === undefined || !PUBLISHER.test(publisher)) throw new Error('--publisher or --target is required');
   if (options.version === undefined || !SEMVER.test(options.version)) {
     throw new Error('--version is required and must be a semver version');
   }
 
   const stamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-  const output = resolve(options.out ?? artifactDirectory('local-extension', `${options.publisher}-${options.version}-${stamp}.vsix`));
+  const output = resolve(options.out ?? artifactDirectory('local-extension', `${publisher}-${options.version}-${stamp}.vsix`));
   const manifestPath = resolve(options.manifest ?? `${output}.sync.json`);
   await assertOutsideCheckout(output, 'local VSIX output');
   await assertOutsideCheckout(manifestPath, 'local sync manifest');
@@ -37,18 +42,30 @@ async function main() {
   await assertOutputReady(manifestPath, options.replace);
 
   const sourcePackage = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
-  const extensionName = sourcePackage.name;
+  let extensionName = releaseTarget?.name ?? sourcePackage.name;
   if (typeof extensionName !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(extensionName)) {
     throw new Error(`package.json has an invalid extension name: ${String(extensionName)}`);
   }
-  const extensionId = `${options.publisher}.${extensionName}`;
+  let extensionId = `${publisher}.${extensionName}`;
   const phases = [];
   let artifact = output;
+  let candidateBundleDigests;
 
   if (options.vsix !== undefined) {
     artifact = resolve(options.vsix);
     await assertOutsideCheckout(artifact, 'input VSIX');
     await assertRegularFile(artifact, 'input VSIX');
+    const archive = await inspectVsixArchive(artifact);
+    const identity = archive.identity.package;
+    extensionName = identity.name;
+    extensionId = `${identity.publisher}.${identity.name}`;
+    if (identity.publisher !== publisher || identity.version !== options.version) {
+      throw new Error(`input VSIX identity differs from requested ${publisher}.*@${options.version}`);
+    }
+    if (releaseTarget !== undefined && (identity.name !== releaseTarget.name || identity.displayName !== releaseTarget.displayName)) {
+      throw new Error(`input VSIX identity differs from release target ${releaseTarget.key}`);
+    }
+    candidateBundleDigests = Object.fromEntries(archive.bundle.files.map((file) => [`dist/${file.path}`, file.sha256]));
     phases.push({ name: 'candidate', status: 'provided' });
   } else {
     phases.push({ name: 'candidate', status: 'building' });
@@ -56,15 +73,16 @@ async function main() {
       env: {
         JSONLVIEW_VSIX_OUTPUT: output,
         JSONLVIEW_VSIX_MANIFEST: manifestPath,
-        JSONLVIEW_VSIX_PUBLISHER: options.publisher,
+        JSONLVIEW_VSIX_PUBLISHER: publisher,
         JSONLVIEW_VSIX_VERSION: options.version,
+        ...(releaseTarget === undefined ? {} : { JSONLVIEW_VSIX_TARGET: releaseTarget.key }),
       },
     });
     phases[phases.length - 1].status = 'built';
   }
 
   const artifactDigest = await digestFile(artifact);
-  const bundleDigests = await digestBundles();
+  const bundleDigests = candidateBundleDigests ?? await digestBundles();
   const report = {
     schemaVersion: 1,
     operation: 'local-extension-sync',
@@ -76,7 +94,7 @@ async function main() {
       sha256: artifactDigest.sha256,
       extensionId,
       name: extensionName,
-      publisher: options.publisher,
+      publisher,
       version: options.version,
       bundleSha256: bundleDigests,
     },
@@ -95,9 +113,7 @@ async function main() {
     report.vscode.code = runtime.codeCmd;
     const codeVersion = await readCodeVersion(runtime);
     const before = await scanInstalledExtensions(runtime);
-    const conflicts = before.filter((entry) => entry.registered !== false
-      && entry.name.toLowerCase().endsWith(`.${extensionName.toLowerCase()}`)
-      && entry.name.toLowerCase() !== extensionId.toLowerCase());
+    const conflicts = findInstalledTargetConflicts(before, extensionId, extensionName);
     if (conflicts.length > 0) {
       report.vscode.status = 'blocked-conflict';
       report.vscode.conflicts = conflicts;
@@ -108,7 +124,7 @@ async function main() {
     await runCode(runtime, ['--install-extension', artifact, '--force']);
     const located = await locateInstalledExtension(runtime, extensionId, options.version);
     const installedPackage = JSON.parse(await readFile(join(located, 'package.json'), 'utf8'));
-    if (installedPackage.name !== extensionName || installedPackage.publisher !== options.publisher || installedPackage.version !== options.version) {
+    if (installedPackage.name !== extensionName || installedPackage.publisher !== publisher || installedPackage.version !== options.version) {
       throw new Error(`installed extension identity mismatch at ${located}`);
     }
     const installedBundles = await digestBundlesAt(located);
@@ -149,6 +165,7 @@ export function parseArgs(args) {
   const parsed = {
     publisher: process.env.JSONLVIEW_VSCODE_PUBLISHER?.trim(),
     version: process.env.JSONLVIEW_VSCODE_VERSION?.trim(),
+    target: process.env.JSONLVIEW_VSIX_TARGET?.trim(),
     code: process.env.JSONLVIEW_VSCODE_CODE_CMD?.trim(),
     vsix: undefined,
     out: undefined,
@@ -170,6 +187,7 @@ export function parseArgs(args) {
     if (value === undefined || value.startsWith('--')) throw new Error(`${key} requires a value`);
     if (key === '--publisher') parsed.publisher = value;
     else if (key === '--version') parsed.version = value;
+    else if (key === '--target') parsed.target = value;
     else if (key === '--code') parsed.code = value;
     else if (key === '--vsix') parsed.vsix = value;
     else if (key === '--out') parsed.out = value;
@@ -177,7 +195,20 @@ export function parseArgs(args) {
     else throw new Error(`unknown argument: ${key}`);
     index += 1;
   }
+  if (parsed.target !== undefined && !['open-vsx', 'marketplace'].includes(parsed.target)) {
+    throw new Error(`invalid extension release target: ${parsed.target}`);
+  }
   return parsed;
+}
+
+export function findInstalledTargetConflicts(installed, extensionId, extensionName) {
+  const alternateIds = new Set(Object.values(getReleaseTargets().extensions)
+    .map((target) => `${target.publisher}.${target.name}`.toLowerCase())
+    .filter((id) => id !== extensionId.toLowerCase()));
+  return installed.filter((entry) => entry.registered !== false
+    && entry.name.toLowerCase() !== extensionId.toLowerCase()
+    && (alternateIds.has(entry.name.toLowerCase())
+      || entry.name.toLowerCase().endsWith(`.${extensionName.toLowerCase()}`)));
 }
 
 async function resolveCodeRuntime(explicit) {
@@ -321,7 +352,7 @@ async function readCodeVersion(runtime) {
 
 async function digestBundles() {
   const result = {};
-  for (const name of ['dist/extension.cjs', 'dist/webview.js']) {
+  for (const name of ['dist/extension.cjs', 'dist/webview.js', 'dist/webview.css']) {
     const path = resolve(root, name);
     if (await isRegularFile(path)) result[name] = (await digestFile(path)).sha256;
   }
@@ -330,7 +361,7 @@ async function digestBundles() {
 
 async function digestBundlesAt(directory) {
   const result = {};
-  for (const name of ['dist/extension.cjs', 'dist/webview.js']) {
+  for (const name of ['dist/extension.cjs', 'dist/webview.js', 'dist/webview.css']) {
     const path = join(directory, name);
     if (await isRegularFile(path)) result[name] = (await digestFile(path)).sha256;
   }
