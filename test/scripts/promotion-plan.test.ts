@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { buildPromotionJoin, buildPromotionPlan, parseArgs } from '../../scripts/promotion-plan.mjs';
 // @ts-expect-error JavaScript release helper intentionally does not emit declarations.
 import { computeVsixPairSha256 } from '../../scripts/verify-vsix-targets.mjs';
+// @ts-expect-error JavaScript release gate intentionally does not emit declarations.
+import { projectVsixPairCheck } from '../../scripts/release-preflight.mjs';
 
 const source = {
   gitSha: 'a'.repeat(40),
@@ -25,9 +27,8 @@ function fixtures() {
     sharedPayload: { files: 89, nativeSha256: '1'.repeat(64), bundleSha256: '2'.repeat(64) },
     allowedIdentityDifferences: ['extension.vsixmanifest', 'extension/package.json'],
   };
-  const pairSha256 = computeVsixPairSha256(pair);
   return {
-    preflight: { ok: true, mode: 'public-release', checks: { git: { revision: source.gitSha, gitState: source.gitState, statusSha256: source.statusSha256, diffSha256: source.diffSha256, remoteConfigured: true }, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT', repository: 'github.com/starsumi/jsonlview' }, npmCandidate: { approvedName: '@sumi-labs/jsonl-view', integrity: true, clean: true, tarball: { bytes: 100, sha256: 'e'.repeat(64) } }, vsixCandidate: { integrity: true, actualBytes: 200, actualSha256: 'd'.repeat(64), target: { key: 'open-vsx', registry: 'open-vsx', extensionId: 'Sumi-Sophia.jsonl-view', displayName: 'JsonlView', preservesUpdateChain: true } }, vsixPair: { ...pair, pairSha256, selectedTarget: 'open-vsx', selected: pair.targets.openVsx }, nativeProvenance: { ok: true, committedBinaryChecked: true, contractEqual: true, behaviorEqual: true } }, failures: [] as Array<{ check: string }> },
+    preflight: { ok: true, mode: 'public-release', checks: { git: { revision: source.gitSha, gitState: source.gitState, statusSha256: source.statusSha256, diffSha256: source.diffSha256, remoteConfigured: true }, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT', repository: 'github.com/starsumi/jsonlview' }, npmCandidate: { approvedName: '@sumi-labs/jsonl-view', integrity: true, clean: true, tarball: { bytes: 100, sha256: 'e'.repeat(64) } }, vsixCandidate: { integrity: true, actualBytes: 200, actualSha256: 'd'.repeat(64), target: { key: 'open-vsx', registry: 'open-vsx', extensionId: 'Sumi-Sophia.jsonl-view', displayName: 'JsonlView', preservesUpdateChain: true } }, vsixPair: projectVsixPairCheck(pair, 'open-vsx'), nativeProvenance: { ok: true, committedBinaryChecked: true, contractEqual: true, behaviorEqual: true } }, failures: [] as Array<{ check: string }> },
     local: { source: { sha: source.gitSha, clean: true, statusSha256: source.statusSha256, diffSha256: source.diffSha256 }, candidate: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', sha256: 'd'.repeat(64), extensionId: 'Sumi-Sophia.jsonl-view' }, vscode: { status: 'installed', activeWindowReloaded: true, reloadRequired: false } },
     vsix: { source, package: { name: 'jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT' }, artifact: { bytes: 200, sha256: 'd'.repeat(64) } },
     npm: { source, package: { name: '@sumi-labs/jsonl-view', publisher: 'Sumi-Sophia', version: '0.1.10', private: false, license: 'MIT' }, tarball: { bytes: 100, sha256: 'e'.repeat(64) } },
