@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error JavaScript release helper intentionally does not emit declarations.
 import { loadReleaseTargets, validateReleaseTargets } from '../../scripts/release-targets.mjs';
 // @ts-expect-error JavaScript release helper intentionally does not emit declarations.
-import { verifyVsixTargetEvidence } from '../../scripts/verify-vsix-targets.mjs';
+import { computeVsixPairSha256, verifyVsixTargetEvidence } from '../../scripts/verify-vsix-targets.mjs';
 // @ts-expect-error JavaScript release helper intentionally does not emit declarations.
-import { booleanOrNull } from '../../scripts/prepare-npm-package.mjs';
+import { assertCanonicalNpmName, booleanOrNull } from '../../scripts/prepare-npm-package.mjs';
+// @ts-expect-error JavaScript release helper intentionally does not emit declarations.
+import { approvedNpmNameIssue } from '../../scripts/release-preflight.mjs';
 
 const sharedFiles = [
   { path: 'extension/dist/extension.cjs', bytes: 10, sha256: '1'.repeat(64) },
@@ -58,6 +60,14 @@ describe('release target contract', () => {
         'open-vsx': { ...contract.extensions['open-vsx'], registry: 'visual-studio-marketplace' },
       },
     })).toContain('extensions.open-vsx.registry must be open-vsx');
+    expect(validateReleaseTargets({
+      ...contract,
+      extensions: { ...contract.extensions, extra: contract.extensions.marketplace },
+    })).toContain('extensions keys must be exactly marketplace, open-vsx');
+    expect(() => assertCanonicalNpmName('@sumi-labs/jsonl-view')).not.toThrow();
+    expect(() => assertCanonicalNpmName('@other/jsonl-view')).toThrow(/release target contract/i);
+    expect(approvedNpmNameIssue('@sumi-labs/jsonl-view')).toBeUndefined();
+    expect(approvedNpmNameIssue('@other/jsonl-view')).toMatch(/release target contract/i);
   });
 
   it('rejects metadata drift outside the two permitted identity fields', async () => {
@@ -91,6 +101,15 @@ describe('release target contract', () => {
       marketplaceTarget: { key: 'marketplace', ...contract.extensions.marketplace },
     });
     expect(result).toMatchObject({ ok: true, failures: [] });
+    expect(result.pairSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.pairSha256).toBe(computeVsixPairSha256(result));
+    expect(computeVsixPairSha256({
+      ...result,
+      targets: {
+        ...result.targets,
+        marketplace: { ...result.targets.marketplace, sha256: '9'.repeat(64) },
+      },
+    })).not.toBe(result.pairSha256);
   });
 
   it('rejects shared payload drift and incorrect target identity', async () => {

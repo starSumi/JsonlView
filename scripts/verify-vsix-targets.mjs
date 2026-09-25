@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -50,7 +51,7 @@ export function verifyVsixTargetEvidence({ openVsx, marketplace }, { openVsxTarg
     }
   }
 
-  return {
+  const evidence = {
     schemaVersion: 1,
     ok: failures.length === 0,
     failures,
@@ -66,6 +67,26 @@ export function verifyVsixTargetEvidence({ openVsx, marketplace }, { openVsxTarg
     },
     allowedIdentityDifferences: [...IDENTITY_ENTRIES],
   };
+  return { ...evidence, pairSha256: computeVsixPairSha256(evidence) };
+}
+
+/** Return the exact cross-target evidence covered by the pair fingerprint. */
+export function canonicalVsixPairEvidence(value) {
+  return {
+    schemaVersion: value?.schemaVersion,
+    ok: value?.ok,
+    version: value?.version,
+    targets: value?.targets,
+    sharedPayload: value?.sharedPayload,
+    allowedIdentityDifferences: value?.allowedIdentityDifferences,
+  };
+}
+
+/** Bind both target identities and artifact digests into one stable fingerprint. */
+export function computeVsixPairSha256(value) {
+  return createHash('sha256')
+    .update(canonicalJson(canonicalVsixPairEvidence(value)))
+    .digest('hex');
 }
 
 function validateIdentity(identity, target, label, failures) {
@@ -123,7 +144,7 @@ function canonicalJson(value) {
   if (value !== null && typeof value === 'object') {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? 'null';
 }
 
 function normalizeVsixManifest(value, failures, label) {
@@ -147,12 +168,14 @@ function normalizeVsixManifest(value, failures, label) {
 function targetSummary(archive, target) {
   return {
     key: target?.key ?? null,
+    registry: target?.registry ?? null,
     extensionId: target === undefined ? null : `${target.publisher}.${target.name}`,
     name: archive?.identity?.package?.name ?? null,
     displayName: archive?.identity?.package?.displayName ?? null,
     publisher: archive?.identity?.package?.publisher ?? null,
     version: archive?.identity?.package?.version ?? null,
     sha256: archive?.artifact?.sha256 ?? null,
+    preservesUpdateChain: target?.preservesUpdateChain ?? null,
   };
 }
 

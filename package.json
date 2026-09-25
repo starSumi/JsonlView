@@ -157,6 +157,7 @@
     "discover:producers": "node scripts/discover-producer-surfaces.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
     "promotion:plan": "node scripts/promotion-plan.mjs",
+    "promotion:join": "node scripts/promotion-join.mjs",
     "sync:local": "node scripts/sync-local-extension.mjs",
     "package:npm": "node scripts/prepare-npm-package.mjs",
     "native:build": "node scripts/build-native.mjs",

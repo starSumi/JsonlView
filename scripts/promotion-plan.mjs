@@ -3,7 +3,8 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
 import { isApprovedPublicLicense } from './license-policy.mjs';
-import { getExtensionTarget } from './release-targets.mjs';
+import { getExtensionTarget, getReleaseTargets } from './release-targets.mjs';
+import { computeVsixPairSha256 } from './verify-vsix-targets.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const SHA256 = /^[0-9a-f]{64}$/i;
@@ -25,6 +26,7 @@ if (isMainModule()) await main();
  */
 export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded = false, createdAt = new Date().toISOString() }) {
   const blockers = [];
+  const canonicalNpmName = getReleaseTargets().npm.name;
   const preflightChecks = isRecord(preflight?.checks) ? preflight.checks : {};
   if (preflight?.mode !== 'public-release') {
     blockers.push(`release preflight mode is not public-release (observed ${String(preflight?.mode)})`);
@@ -96,6 +98,12 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
   } else if (npmName !== undefined && npmName !== approvedNpmName) {
     blockers.push('npm candidate name differs from the preflight approved package identity');
   }
+  if (npmName !== undefined && npmName !== canonicalNpmName) {
+    blockers.push('npm candidate name differs from the canonical release target contract');
+  }
+  if (approvedNpmName !== undefined && approvedNpmName !== canonicalNpmName) {
+    blockers.push('preflight approved npm name differs from the canonical release target contract');
+  }
   const extensionTargetKey = stringOrUndefined(extensionTarget?.key);
   let canonicalTarget;
   if (!['open-vsx', 'marketplace'].includes(extensionTargetKey)) {
@@ -129,7 +137,8 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
       || publisher !== canonicalTarget.publisher
       || String(extensionTarget?.registry) !== canonicalTarget.registry
       || String(extensionTarget?.extensionId).toLowerCase() !== expectedExtensionId.toLowerCase()
-      || String(extensionTarget?.displayName) !== canonicalTarget.displayName) {
+      || String(extensionTarget?.displayName) !== canonicalTarget.displayName
+      || extensionTarget?.preservesUpdateChain !== canonicalTarget.preservesUpdateChain) {
       blockers.push('preflight extension target differs from the canonical release target contract');
     }
   }
@@ -178,8 +187,14 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
   }
 
   const pairCheck = preflightChecks.vsixPair;
+  const pairSha256 = stringOrUndefined(pairCheck?.pairSha256);
   if (pairCheck?.ok !== true || pairCheck?.selectedTarget !== extensionTargetKey) {
     blockers.push('preflight does not contain valid paired-VSIX evidence for this target');
+  }
+  if (pairSha256 === undefined || !SHA256.test(pairSha256)) {
+    blockers.push('preflight paired-VSIX fingerprint is missing or malformed');
+  } else if (pairSha256.toLowerCase() !== computeVsixPairSha256(pairCheck)) {
+    blockers.push('preflight paired-VSIX fingerprint does not match its complete pair evidence');
   }
   if (vsixDigest !== undefined && String(pairCheck?.selected?.sha256).toLowerCase() !== vsixDigest.toLowerCase()) {
     blockers.push('paired-VSIX evidence does not bind the selected artifact digest');
@@ -211,6 +226,7 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
       extensionTarget: extensionTargetKey ?? null,
       vsixSha256: vsixDigest ?? localDigest ?? null,
       npmTarballSha256: npmTarballDigest ?? null,
+      vsixPairSha256: pairSha256?.toLowerCase() ?? null,
     },
     authorization: {
       required: true,
@@ -237,6 +253,68 @@ export function buildPromotionPlan({ preflight, local, vsix, npm, localReloaded 
         ? targetStatusObject(targetStatus, 'publish the Marketplace target VSIX and read back extension/version/digest')
         : notApplicableTarget('this plan is bound to the Open VSX target'),
     },
+  };
+}
+
+/** Join both target-specific plans before any public promotion can begin. */
+export function buildPromotionJoin({ openVsx, marketplace, createdAt = new Date().toISOString() }) {
+  const blockers = [];
+  for (const [key, plan] of [['open-vsx', openVsx], ['marketplace', marketplace]]) {
+    if (plan?.schemaVersion !== 2 || plan?.operation !== 'promotion-plan') blockers.push(`${key} input is not a version 2 promotion plan`);
+    if (plan?.readyForPromotion !== true) blockers.push(`${key} promotion plan is not green`);
+    if (plan?.candidate?.extensionTarget !== key) blockers.push(`${key} promotion plan targets ${String(plan?.candidate?.extensionTarget)}`);
+  }
+  const openPair = stringOrUndefined(openVsx?.candidate?.vsixPairSha256);
+  const marketplacePair = stringOrUndefined(marketplace?.candidate?.vsixPairSha256);
+  if (openPair === undefined || marketplacePair === undefined
+    || !SHA256.test(openPair) || !SHA256.test(marketplacePair)) {
+    blockers.push('promotion plans are missing valid paired-VSIX fingerprints');
+  } else if (openPair.toLowerCase() !== marketplacePair.toLowerCase()) {
+    blockers.push('promotion plans were produced from different VSIX pairs');
+  }
+  for (const [label, openValue, marketplaceValue] of [
+    ['source commit', openVsx?.source?.gitSha, marketplace?.source?.gitSha],
+    ['source status', openVsx?.source?.statusSha256, marketplace?.source?.statusSha256],
+    ['source diff', openVsx?.source?.diffSha256, marketplace?.source?.diffSha256],
+    ['version', openVsx?.candidate?.version, marketplace?.candidate?.version],
+    ['npm name', openVsx?.candidate?.npmName, marketplace?.candidate?.npmName],
+    ['npm tarball', openVsx?.candidate?.npmTarballSha256, marketplace?.candidate?.npmTarballSha256],
+  ]) {
+    if (typeof openValue !== 'string' || typeof marketplaceValue !== 'string'
+      || openValue.toLowerCase() !== marketplaceValue.toLowerCase()) {
+      blockers.push(`promotion plans have different ${label} evidence`);
+    }
+  }
+  return {
+    schemaVersion: 1,
+    operation: 'promotion-join',
+    createdAt,
+    readyForPromotion: blockers.length === 0,
+    blockers,
+    pairSha256: openPair?.toLowerCase() ?? marketplacePair?.toLowerCase() ?? null,
+    source: {
+      gitSha: stringOrUndefined(openVsx?.source?.gitSha) ?? null,
+      statusSha256: validDigestOrNull(openVsx?.source?.statusSha256),
+      diffSha256: validDigestOrNull(openVsx?.source?.diffSha256),
+    },
+    candidate: {
+      version: stringOrUndefined(openVsx?.candidate?.version) ?? null,
+      npmName: stringOrUndefined(openVsx?.candidate?.npmName) ?? null,
+      npmTarballSha256: validDigestOrNull(openVsx?.candidate?.npmTarballSha256),
+    },
+    targets: {
+      openVsx: summarizeJoinedPlan(openVsx),
+      marketplace: summarizeJoinedPlan(marketplace),
+    },
+  };
+}
+
+function summarizeJoinedPlan(plan) {
+  return {
+    extensionTarget: plan?.candidate?.extensionTarget ?? null,
+    version: plan?.candidate?.version ?? null,
+    vsixSha256: validDigestOrNull(plan?.candidate?.vsixSha256),
+    pairSha256: validDigestOrNull(plan?.candidate?.vsixPairSha256),
   };
 }
 

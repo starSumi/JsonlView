@@ -85,14 +85,27 @@ manifests and candidates belong outside the product checkout.
    Add `--local-reloaded` only when a human has just verified the active
    window. The resulting plan must say `readyForPromotion: true`; otherwise
    fix the listed blocker and regenerate it.
-6. With separate authorization for each target, publish the exact frozen
+6. Join the two green plans before any target is authorized. This proves they
+   came from the same exact VSIX pair rather than two independently valid but
+   incompatible pairs:
+
+   ```powershell
+   pnpm promotion:join -- `
+     --open-vsx <promotion-open-vsx.json> `
+     --marketplace <promotion-marketplace.json> `
+     --out <external>\promotion-join-<version>.json
+   ```
+
+   The join report must say `readyForPromotion: true` and expose one shared
+   `pairSha256`.
+7. With separate authorization for each target, publish the exact frozen
    candidate to GitHub, publish the exact npm tarball (`npm publish <candidate.tgz>`)
    rather than repacking its directory, and publish each exact VSIX only to its
    bound registry. Record each target as
    `pending`, `published`, `readback`, or `failed`; never collapse them into one
    success. Read back the exact ref/version and artifact integrity after every
    target. A successful npm publish does not prove GitHub or Open VSX changed.
-7. Read back the Git tag and release assets, confirm GitHub's `/releases/latest`
+8. Read back the Git tag and release assets, confirm GitHub's `/releases/latest`
    points to the new version, and verify the repository sidebar after an
    anonymous hard refresh. Then download each registry artifact and compare its
    digest with the frozen candidate.

@@ -10,10 +10,12 @@ import { compareNpmFileInventories, inspectNpmTarball } from './npm-tarball-inte
 import { assertOutsideTree, assertPathsDoNotOverlap } from './path-boundary.mjs';
 import { validateProjectLicense } from './license-policy.mjs';
 import { resolveNpmInvocation, resolvePnpmInvocation } from './package-manager-invocation.mjs';
+import { getReleaseTargets } from './release-targets.mjs';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
+const canonicalNpmName = getReleaseTargets().npm.name;
 
 if (isMainModule()) await main();
 
@@ -69,6 +71,7 @@ if (publicCandidate && options.tarball === undefined) {
 if (!options.name || !options.version) {
   throw new Error('Both --name and --version are required for a publish candidate.');
 }
+assertCanonicalNpmName(options.name);
 if (!/^(@[a-z0-9._~-]+\/)?[a-z0-9._~-]+$/.test(options.name)) {
   throw new Error(`Invalid npm package name: ${options.name}`);
 }
@@ -268,6 +271,12 @@ try {
 
 export function booleanOrNull(value) {
   return typeof value === 'boolean' ? value : null;
+}
+
+export function assertCanonicalNpmName(value) {
+  if (value !== canonicalNpmName) {
+    throw new Error(`npm package name must match the release target contract (${canonicalNpmName}).`);
+  }
 }
 
 export function parseArgs(args) {

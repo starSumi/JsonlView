@@ -10,8 +10,8 @@ import { isApprovedPublicLicense, validateProjectLicense } from './license-polic
 import { compareReleaseLegalInventories, inventorySourceLegalFiles, selectReleaseLegalInventory } from './release-legal-integrity.mjs';
 import { computeSourceManifest, validateProvenanceSourceBinding } from './verify-native-provenance.mjs';
 import { compareVsixArchiveIdentity, compareVsixArchiveIdentityEvidence, inspectVsixArchive } from './vsix-archive-integrity.mjs';
-import { getExtensionTarget, resolveExtensionTarget } from './release-targets.mjs';
-import { verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
+import { getExtensionTarget, getReleaseTargets, resolveExtensionTarget } from './release-targets.mjs';
+import { canonicalVsixPairEvidence, computeVsixPairSha256, verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -39,13 +39,11 @@ async function main() {
   failures = [];
   warnings = [];
   checks = {};
+  const canonicalNpmName = getReleaseTargets().npm.name;
 
   if (!options.public) fail('mode', 'release preflight requires --public; staging is not a release gate');
-  if (options.public && options.approvedNpmName === undefined) {
-    fail('npmIdentity', 'public release requires --approved-npm-name <exact npm package name> (or JSONLVIEW_APPROVED_NPM_NAME)');
-  } else if (options.approvedNpmName !== undefined && !PACKAGE_NAME_PATTERN.test(options.approvedNpmName)) {
-    fail('npmIdentity', 'approved npm package name must be a valid exact npm package name');
-  }
+  const npmIdentityIssue = approvedNpmNameIssue(options.approvedNpmName, options.public);
+  if (npmIdentityIssue !== undefined) fail('npmIdentity', npmIdentityIssue);
   if (options.public && options.npmTarball === undefined) {
     fail('npmIdentity', 'public release requires --npm-tarball <exact reviewed .tgz>');
   }
@@ -535,12 +533,18 @@ async function checkVsixPairEvidence(reportPath, currentArtifactPath, pairedArti
       ? verifyVsixTargetEvidence({ openVsx: current, marketplace: paired }, { openVsxTarget, marketplaceTarget })
       : verifyVsixTargetEvidence({ openVsx: paired, marketplace: current }, { openVsxTarget, marketplaceTarget });
     if (!evidence.ok) fail('vsixPair.equality', evidence.failures.join('; '));
-    if (pairEvidenceSignature(recorded) !== pairEvidenceSignature(evidence)) {
+    const recordedPairSha256 = typeof recorded?.pairSha256 === 'string' ? recorded.pairSha256.toLowerCase() : undefined;
+    const computedPairSha256 = computeVsixPairSha256(evidence);
+    if (recordedPairSha256 !== computedPairSha256
+      || pairEvidenceSignature(recorded) !== pairEvidenceSignature(evidence)) {
       fail('vsixPair.report', 'VSIX pair report does not match the exact supplied artifacts');
     }
     const selectedKey = selectedTarget === 'open-vsx' ? 'openVsx' : 'marketplace';
     checks.vsixPair = {
-      ok: evidence.ok && pairEvidenceSignature(recorded) === pairEvidenceSignature(evidence),
+      ok: evidence.ok
+        && recordedPairSha256 === computedPairSha256
+        && pairEvidenceSignature(recorded) === pairEvidenceSignature(evidence),
+      pairSha256: computedPairSha256,
       selectedTarget,
       selected: evidence.targets[selectedKey],
       targets: evidence.targets,
@@ -553,14 +557,7 @@ async function checkVsixPairEvidence(reportPath, currentArtifactPath, pairedArti
 }
 
 function pairEvidenceSignature(value) {
-  return JSON.stringify({
-    schemaVersion: value?.schemaVersion,
-    ok: value?.ok,
-    version: value?.version,
-    targets: value?.targets,
-    sharedPayload: value?.sharedPayload,
-    allowedIdentityDifferences: value?.allowedIdentityDifferences,
-  });
+  return JSON.stringify(canonicalVsixPairEvidence(value));
 }
 
 /** All supplied native digests must be valid and name the same binary. */
@@ -667,6 +664,18 @@ export function compareNpmCandidateIdentity(vsix, npm, approvedNpmName) {
     }
   }
   return issues;
+}
+
+export function approvedNpmNameIssue(value, required = true) {
+  const canonicalNpmName = getReleaseTargets().npm.name;
+  if (value === undefined) {
+    return required
+      ? 'public release requires --approved-npm-name <exact npm package name> (or JSONLVIEW_APPROVED_NPM_NAME)'
+      : undefined;
+  }
+  if (!PACKAGE_NAME_PATTERN.test(value)) return 'approved npm package name must be a valid exact npm package name';
+  if (value !== canonicalNpmName) return `approved npm package name must match the release target contract (${canonicalNpmName})`;
+  return undefined;
 }
 
 /**

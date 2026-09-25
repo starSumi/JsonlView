@@ -43,6 +43,11 @@ export function validateReleaseTargets(value) {
     'open-vsx': { registry: 'open-vsx', preservesUpdateChain: true },
     marketplace: { registry: 'visual-studio-marketplace', preservesUpdateChain: false },
   };
+  const actualTargetKeys = Object.keys(extensions).sort();
+  const expectedTargetKeys = Object.keys(expectedTargets).sort();
+  if (JSON.stringify(actualTargetKeys) !== JSON.stringify(expectedTargetKeys)) {
+    issues.push(`extensions keys must be exactly ${expectedTargetKeys.join(', ')}`);
+  }
   for (const [key, expected] of Object.entries(expectedTargets)) {
     const target = extensions[key];
     if (!isRecord(target)) {

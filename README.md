@@ -189,13 +189,14 @@ including its embedded identity and complete inventory, then re-inspects the
 exact VSIX artifact before it can pass.
 It never publishes or changes credentials.
 
-After the local and candidate manifests exist, `pnpm promotion:plan --
+After the local and candidate manifests exist, run `pnpm promotion:plan --
 --preflight <preflight.json> --local-manifest <local-sync.json>
---vsix-manifest <vsix-manifest.json> --npm-manifest <npm-manifest.json>` joins
-their identities and provenance into a target-separated, plan-only report. It
-requires an explicit window reload readback and leaves GitHub, npm, Open VSX,
-and Marketplace in independent authorization states; it never invokes a
-publisher or registry command.
+--vsix-manifest <vsix-manifest.json> --npm-manifest <npm-manifest.json>` once per
+target. Then run `pnpm promotion:join -- --open-vsx <open-plan>
+--marketplace <marketplace-plan>` to prove both plans share the exact same VSIX
+pair. The plan-only reports require an explicit window reload readback and leave
+GitHub, npm, Open VSX, and Marketplace in independent authorization states;
+they never invoke a publisher or registry command.
 
 The public coordinates are explicit because extension names are registry
 identities rather than product labels:
