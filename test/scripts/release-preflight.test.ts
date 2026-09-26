@@ -216,6 +216,7 @@ describe('release candidate integrity', () => {
       'extension/changelog.md',
       'extension/LICENSE.txt',
       'extension/THIRD-PARTY-NOTICES.txt',
+      'extension/images/jsonlview-icon.png',
       'extension/third_party/licenses/dependency.txt',
       'extension/private-notes.md',
     ])).toEqual(['extension/private-notes.md']);
