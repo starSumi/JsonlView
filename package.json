@@ -2,8 +2,9 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "Sumi-Sophia",
+  "icon": "images/jsonlview-icon.png",
   "private": false,
   "license": "MIT",
   "repository": {
@@ -21,6 +22,7 @@
     "native/jsonl-core/package.json",
     "README.md",
     "CHANGELOG.md",
+    "images/jsonlview-icon.png",
     "LICENSE.txt",
     "THIRD-PARTY-NOTICES.txt",
     "docs/acceleration-roadmap.md",

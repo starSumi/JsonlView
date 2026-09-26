@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-09-26
+
+- Add the light JsonlView product icon to the packaged extension so the
+  extension identity remains recognizable in supported registries and editor
+  surfaces.
+
 ## 0.2.1 - 2026-09-25
 
 - Preserve the existing Open VSX update identity as
