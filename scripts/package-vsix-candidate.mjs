@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 import { copyFrozenBundle, compareBundleInventories, inventoryFrozenBundle } from './bundle-integrity.mjs';
 import { compareVsixArchiveIdentity, inspectVsixArchive } from './vsix-archive-integrity.mjs';
-import { assertOutsideTree, assertPathsDoNotOverlap } from './path-boundary.mjs';
+import { assertOutsideTree, assertPathsDoNotOverlap, isWithin } from './path-boundary.mjs';
 import { resolveExtensionTarget } from './release-targets.mjs';
 
 const execFile = promisify(execFileCallback);
@@ -79,6 +79,18 @@ try {
   // the reviewed .vscodeignore so the two artifact policies cannot conflict.
   delete packageJson.files;
   await writeFile(resolve(staging, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
+  if (typeof packageJson.icon === 'string' && packageJson.icon.trim().length > 0) {
+    const iconPath = packageJson.icon.trim();
+    if (isAbsolute(iconPath)) throw new Error('VSIX icon path must be relative to the product checkout');
+    const sourceIcon = resolve(root, iconPath);
+    if (!isWithin(root, sourceIcon) || sourceIcon === root) {
+      throw new Error(`VSIX icon path must stay inside the product checkout: ${iconPath}`);
+    }
+    await assertRegularFile(sourceIcon, 'VSIX icon');
+    const stagedIcon = resolve(staging, iconPath);
+    await mkdir(dirname(stagedIcon), { recursive: true });
+    await cp(sourceIcon, stagedIcon);
+  }
   await mkdir(resolve(staging, 'dist'), { recursive: true });
   const stagedBundle = await copyFrozenBundle(frozenDist, resolve(staging, 'dist'));
   await mkdir(resolve(staging, 'native/jsonl-core'), { recursive: true });
