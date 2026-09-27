@@ -41,7 +41,7 @@ const pinnedWorkflowActions = [
   {
     file: '.github/workflows/ci.yml',
     action: 'pnpm/action-setup',
-    // v5 is an annotated tag; pin the peeled commit so GitHub receives an
+    // v6.1.0 is an annotated tag; pin the peeled commit so GitHub receives an
     // immutable commit reference rather than the tag object itself.
     sha: 'ea17c68df8912ef543352723c149a84f56e3d413',
   },
