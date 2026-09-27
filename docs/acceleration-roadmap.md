@@ -149,6 +149,13 @@ New physical formats implement the immutable record contract described in
 weaken JSONL framing. OTLP protobuf, regular trace JSON, compressed JSONL, and
 multiline text logs each need their own adapter and conformance corpus.
 
+The first OpenTelemetry increment is semantic, not physical: recognize and
+project `resourceMetrics` from OTLP File Exporter JSON Lines using the existing
+JSONL adapter and bounded-profile contract. Parquet stays deferred until a
+representative corpus demonstrates a columnar workload worth a second physical
+adapter; its reader must expose lazy row-group access, projection, cancellation,
+resource budgets, and stable source references before implementation begins.
+
 ## Adoption benchmark
 
 Every candidate records:

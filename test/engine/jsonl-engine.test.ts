@@ -131,7 +131,10 @@ describe('JsonlFileEngine indexing and hydration', () => {
     ]);
     const { engine } = await fixture(bytes, { readChunkBytes: 4 });
 
-    const page = await engine.getRows({ limit: 20 });
+    const page = await engine.getRows({
+      limit: 20,
+      columns: [{ id: 'summary', label: 'Summary', source: 'profile' }],
+    });
 
     expect(page.rows.map((row) => row.ref.parseState)).toEqual([
       'blank',
@@ -143,6 +146,14 @@ describe('JsonlFileEngine indexing and hydration', () => {
     ]);
     expect(page.rows[0]?.problems?.[0]?.code).toBe('BLANK_RECORD');
     expect(page.rows[1]?.problems?.[0]?.code).toBe('INVALID_JSON');
+    expect(page.rows[0]?.cells).toContainEqual(expect.objectContaining({
+      columnId: 'summary',
+      value: '[blank record]',
+    }));
+    expect(page.rows[1]?.cells).toContainEqual(expect.objectContaining({
+      columnId: 'summary',
+      value: expect.stringContaining('[invalid JSON]'),
+    }));
     expect(page.rows[4]?.problems?.[0]?.code).toBe('INVALID_UTF8');
     expect(page.rows[2]?.kind).toBe('integer');
     expect(page.rows[3]?.kind).toBe('string');

@@ -214,6 +214,32 @@ describe('workspace reducer', () => {
     ]);
   });
 
+  it('advances observed problem records from problem scans without regressing', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('OPENED', summary),
+    });
+    const page = {
+      items: [],
+      anchorOrdinal: '16',
+      hasBefore: false,
+      hasAfter: false,
+      indexedRecords: '16',
+      observedProblemRecords: '16',
+      complete: true,
+      scan: { examinedRecords: '16', examinedBytes: '160', cursorOrdinal: '16', direction: 'forward' as const },
+    };
+
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('PROBLEMS', page) });
+    expect(state.summary?.problemRecords).toBe('16');
+
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('PROBLEMS', { ...page, observedProblemRecords: '8' }),
+    });
+    expect(state.summary?.problemRecords).toBe('16');
+  });
+
   it('marks invalidated and recoverable-error states explicitly', () => {
     let state = createInitialState();
     state = workspaceReducer(state, {

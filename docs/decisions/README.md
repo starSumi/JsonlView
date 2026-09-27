@@ -18,6 +18,10 @@ Read these before changing a shared boundary:
 10. [ADR-010 development toolchain baseline](010-toolchain-baseline.md)
 11. [ADR-011 runtime topology and refactor shape](011-runtime-topology-and-refactor-shape.md)
 12. [ADR-012 registry extension identities](012-registry-extension-identities.md)
+13. [ADR-013 bounded mixed-code highlighting](013-bounded-mixed-code-highlighting.md)
+14. [ADR-014 large module boundary governance](014-large-module-boundary-governance.md)
+15. [ADR-015 curated release-note CI guard](015-changelog-ci-guard.md)
+16. [ADR-016 OTLP metrics and columnar format gates](016-otlp-metrics-and-columnar-format-gates.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

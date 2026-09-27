@@ -41,6 +41,20 @@ agent events, telemetry, and aggregate analysis.
 
 ![Claude Code Session insights](docs/assets/claude-code-insights.png)
 
+### Unified Diff - FileChange
+
+![JsonlView rendering a Codex FileChange unified diff with file headers, old and new line-number gutters, context, additions, removals, and the Wrap control](docs/assets/unified-diff-filechange.png)
+
+### Performance snapshot - synthetic 100k-record workload
+
+![Local engine benchmark on a synthetic 100,000-record mixed-agent JSONL fixture: median open 5.5 ms, first 100 rows 28.7 ms, complete indexing 124.4 ms, reverse page 9.9 ms, and 84.6 MiB maximum checkpoint RSS](docs/assets/performance-snapshot.svg)
+
+Seven sequential runs on Windows 11, Node 24.15.0, and an Intel Core i5-1235U
+used a 47.2 MB synthetic mixed-profile fixture with the native scanner and
+query disabled. Values are medians with observed min-max ranges; memory is the
+maximum of three RSS checkpoints, not continuous process sampling. This is a
+machine-specific development snapshot, not a release performance guarantee.
+
 The source file remains authoritative. JsonlView never edits it, executes its
 contents, or sends records over the network. File-backed resources are required
 in this release.

@@ -148,7 +148,7 @@ describe('structured agent event presentation', () => {
     expect(markup).toContain('<h2>Python</h2>');
     expect(markup).toContain('>Indent blocks.</blockquote>');
     expect(markup).toContain('>python</span>');
-    expect(markup).toContain('print(');
+    expect(markup).toContain('code-token-function">print</span>(');
     expect(markup).toContain('code-token-string');
     expect(markup).toContain('&quot;hello&quot;');
   });
@@ -481,6 +481,61 @@ describe('structured agent event presentation', () => {
     expect(markup).toContain('runtime_probe');
   });
 
+  it('renders exec_command arguments as shell with structured options', () => {
+    const command = `${'patch-line\n'.repeat(1_500)}*** End Patch`;
+    const serializedArguments = JSON.stringify({ cmd: command, workdir: 'E:/fixture' });
+    const model = buildAgentEventPresentation({
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'exec_command', arguments: serializedArguments },
+    }, {
+      profileId: 'codex-rollout', eventKind: 'tool_call', summary: 'exec command', evidence: [], confidence: 'source',
+    });
+
+    const section = model?.sections.find((candidate) => candidate.title === 'Arguments');
+    expect(section?.language).toBe('shell');
+    expect(section?.truncated).toBe(true);
+    expect(section?.copyText).toBe(serializedArguments);
+    expect(section?.functionCall?.name).toBe('exec_command');
+    expect(section?.functionCall?.command.code).toContain('patch-line');
+    expect(section?.functionCall?.options?.code).toContain('E:/fixture');
+    expect(section?.fullText).toContain('*** End Patch');
+
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, {
+      value: {
+        type: 'response_item',
+        payload: { type: 'function_call', name: 'exec_command', arguments: serializedArguments },
+      },
+      profile: {
+        profileId: 'codex-rollout', eventKind: 'tool_call', summary: 'exec command', evidence: [], confidence: 'source',
+      },
+    }));
+    expect(markup).toContain('Command');
+    expect(markup).toContain('Options');
+    expect(markup).toContain('Show full');
+  });
+
+  it('activates nested patch highlighting only for an explicit complete patch command', () => {
+    const command = "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: src/retry.ts\n@@\n-export const retry = false;\n+export const retry = true;\n*** End Patch";
+    const value = {
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd: command }) },
+    };
+    const profile = {
+      profileId: 'codex-rollout' as const,
+      eventKind: 'tool_call' as const,
+      actor: 'assistant' as const,
+      summary: 'patch',
+      evidence: [],
+      confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections.find((section) => section.title === 'Arguments')?.functionCall?.command.mode).toBe('patch');
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, { value, profile }));
+    expect(markup).toContain('code-token-patch-meta');
+    expect(markup).toContain('code-token-patch-add');
+    expect(markup).toContain('code-token-keyword');
+  });
+
   it('keeps structured shell function-call output readable with JSON detection and full copy', () => {
     const output = JSON.stringify({
       status: 'completed',
@@ -669,6 +724,19 @@ describe('structured agent event presentation', () => {
     }));
     expect(markup).toContain('Show full');
     expect(markup).toContain('[preview truncated]');
+  });
+
+  it('can auto-expand the first complete long section for a selected detail row', () => {
+    const longText = 'line\n'.repeat(2_500);
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, {
+      value: { type: 'message', role: 'developer', content: longText },
+      profile: { profileId: 'codex-rollout', eventKind: 'message', summary: 'message', evidence: [], confidence: 'source' },
+      autoExpandFirstFullSection: true,
+    }));
+
+    expect(markup).toContain('Show preview');
+    expect(markup).not.toContain('Show full');
+    expect(markup).toContain('class="event-section-header"');
   });
 
   it('bounds nested text extraction before materializing a very large array', () => {

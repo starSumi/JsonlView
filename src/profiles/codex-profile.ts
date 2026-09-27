@@ -151,7 +151,7 @@ const RESPONSE_ITEM_TYPES = new Set([
   'context_compaction',
 ]);
 
-const TOOL_CALL_TYPES = new Set(['function_call', 'custom_tool_call', 'local_shell_call']);
+const TOOL_CALL_TYPES = new Set(['function_call', 'custom_tool_call', 'local_shell_call', 'web_search_call']);
 const TOOL_RESULT_TYPES = new Set(['function_call_output', 'custom_tool_call_output', 'local_shell_call_output']);
 
 export class CodexRolloutProfile implements AgentProfile {
@@ -341,6 +341,18 @@ export class CodexRolloutProfile implements AgentProfile {
     } else if (itemType === 'reasoning') {
       projection = createProjection(this.id, 'reasoning', boundedSummary(extractText(content) ?? own(payload ?? {}, 'summary'), 'Reasoning'), eventPath, content !== undefined ? appendPath(basePath, 'content') : appendPath(basePath, 'summary'));
       setActor(projection, 'assistant', itemTypePath);
+    } else if (itemType === 'web_search_call') {
+      const action = own(payload ?? {}, 'action');
+      projection = createProjection(
+        this.id,
+        'tool_call',
+        boundedSummary(action ?? own(payload ?? {}, 'status'), 'Web search'),
+        eventPath,
+        action === undefined ? appendPath(basePath, 'status') : appendPath(basePath, 'action'),
+      );
+      setActor(projection, 'assistant', itemTypePath);
+      setStringField(projection, 'status', stringAt(payload, 'status'), appendPath(basePath, 'status'));
+      setStringField(projection, 'toolCallId', firstString(payload, ['call_id', 'id']), appendPath(basePath, firstPresentKey(payload, ['call_id', 'id']) ?? 'call_id'));
     } else if (itemType && TOOL_CALL_TYPES.has(itemType)) {
       const name = firstString(payload, ['name', 'tool_name']) ?? 'tool';
       projection = createProjection(this.id, 'tool_call', boundedSummary(own(payload ?? {}, 'arguments') ?? own(payload ?? {}, 'input'), `Tool ${name}`), eventPath, own(payload ?? {}, 'arguments') !== undefined ? appendPath(basePath, 'arguments') : appendPath(basePath, 'input'));

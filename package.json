@@ -151,6 +151,7 @@
     "benchmark:trend": "node scripts/benchmark-trend.mjs",
     "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
     "check:dependencies": "node scripts/check-dependency-freshness.mjs",
+    "check:changelog": "node scripts/check-changelog.mjs",
     "check:cargo-notices": "node scripts/check-cargo-notices.mjs",
     "generate:cargo-notices": "node scripts/generate-cargo-notices.mjs",
     "check:runtime-notices": "node scripts/check-runtime-notices.mjs",

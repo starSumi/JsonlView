@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatJavaScriptForDisplay, tokenizeCode } from '../../src/webview/code-syntax';
+import { formatJavaScriptForDisplay, tokenizeCode, tokenizePatch } from '../../src/webview/code-syntax';
 
 describe('bounded code syntax', () => {
   it('lexes common Python snippets without treating quoted comments as comments', () => {
@@ -15,6 +15,56 @@ describe('bounded code syntax', () => {
     expect(javascript.tokens.some((token) => token.kind === 'comment' && token.text === '/* note */')).toBe(true);
     const unknown = tokenizeCode('some <syntax> stays source', 'invented-language');
     expect(unknown.tokens.every((token) => token.kind === 'plain')).toBe(true);
+  });
+
+  it('distinguishes command families and useful symbol roles without changing source text', () => {
+    const typescript = 'interface RetryDecision { retry: boolean }\nconst result = await Promise.all(tasks.map(run));';
+    const result = tokenizeCode(typescript, 'typescript');
+    expect(result.tokens.some((token) => token.kind === 'type' && token.text === 'RetryDecision')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'function' && token.text === 'all')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'operator' && token.text.includes('='))).toBe(true);
+    expect(result.tokens.map((token) => token.text).join('')).toBe(typescript);
+
+    const powershell = tokenizeCode('$env:Path = $value | ForEach-Object { $_ }', 'powershell');
+    expect(powershell.tokens.filter((token) => token.kind === 'variable').map((token) => token.text)).toEqual([
+      '$env:Path', '$value', '$_',
+    ]);
+    expect(tokenizeCode('Get-Date | ForEach-Object { $_ }', 'powershell').tokens
+      .filter((token) => token.kind === 'command').map((token) => token.text)).toEqual(['Get-Date', 'ForEach-Object']);
+    expect(tokenizeCode("Write-Output 'x' 42; Get-Date; if ($true) { Get-ChildItem }", 'powershell').tokens
+      .filter((token) => token.kind === 'command').map((token) => token.text)).toEqual([
+      'Write-Output', 'Get-Date', 'Get-ChildItem',
+    ]);
+  });
+
+  it('highlights an explicit apply_patch envelope with per-file lexical languages', () => {
+    const source = "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: src/retry.ts\n@@\n-export function nextRetry(attempt: number) {\n+export function nextRetry(attempt: number) {\n*** End Patch";
+    const result = tokenizePatch(source);
+    expect(result.truncated).toBe(false);
+    expect(result.tokens.some((token) => token.kind === 'patch-meta' && token.text.includes('Update File'))).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'patch-remove')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'patch-add')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'keyword' && token.text === 'export')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'function' && token.text === 'nextRetry')).toBe(true);
+    expect(result.tokens.map((token) => token.text).join('')).toBe(source);
+  });
+
+  it('falls back to shell lexing when the patch envelope is incomplete', () => {
+    const result = tokenizePatch("apply_patch <<'PATCH'\n*** Begin Patch\n+const value = 1");
+    expect(result.tokens.some((token) => token.kind === 'patch-meta')).toBe(false);
+    expect(result.tokens.map((token) => token.text).join('')).toBe("apply_patch <<'PATCH'\n*** Begin Patch\n+const value = 1");
+  });
+
+  it('preserves CRLF patch bytes and bounds token explosion', () => {
+    const source = "apply_patch <<'PATCH'\r\n*** Begin Patch\r\n*** Update File: src/worker.ps1\r\n@@\r\n-Write-Output 'old'\r\n+Write-Output 'new'\r\n*** End Patch";
+    const patch = tokenizePatch(source);
+    expect(patch.tokens.map((token) => token.text).join('')).toBe(source);
+    expect(patch.tokens.some((token) => token.kind === 'patch-remove')).toBe(true);
+
+    const longSource = 'name + '.repeat(12_000);
+    const bounded = tokenizeCode(longSource, 'javascript', { maxTokens: 4 });
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.tokens.map((token) => token.text).join('')).toBe(longSource);
   });
 
   it('caps highlighting while retaining the complete source boundary', () => {

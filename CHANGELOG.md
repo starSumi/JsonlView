@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Restore vertical scrolling in Problems and distinguish problem-page entries
+  from distinct problem records observed during hydration.
+- Automatically request a bounded full-record load when an oversized record is
+  selected in an open detail drawer; keep the 16 MiB automatic ceiling, the
+  configured full-record limit, and the manual action for fallback.
+- Classify Codex `web_search_call` response items as assistant tool calls,
+  preserving their status and search action instead of labeling them `other`.
+- Add bounded lexical highlighting for Shell, PowerShell, JavaScript/TypeScript,
+  Python, Rust, and SQL; recognize explicit `apply_patch` envelopes and highlight
+  changed lines with their per-file language while preserving exact source text.
+- Add the Unified Diff `FileChange` screenshot to the product README examples.
+
 ## 0.2.2 - 2026-09-26
 
 - Add the light JsonlView product icon to the packaged extension so the
