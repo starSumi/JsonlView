@@ -46,8 +46,20 @@ describe('Cargo license notice inventory', () => {
     ])).rejects.toThrow(/no packaged license\/notice file and no reviewed override/);
   });
 
-  it('binds a napi-rs override to the crate VCS revision', async () => {
-    const packageRoot = await createPackage('napi', '3.12.4');
+  it.each([
+    ['napi', '3.12.4', '1492b220d5ad01807b2dcbd250e8383f9d738311'],
+    ['napi', '3.12.7', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
+    ['napi-build', '2.4.2', '31c27a1676a7c4b317f4e144e0a9cb94e8354143'],
+    ['napi-build', '2.4.4', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
+    ['napi-build', '2.5.0', '2763e12efc855748485129952a6ccb97ac991c06'],
+    ['napi-derive', '3.6.5', '1492b220d5ad01807b2dcbd250e8383f9d738311'],
+    ['napi-derive', '3.6.8', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
+    ['napi-derive-backend', '6.1.3', '31c27a1676a7c4b317f4e144e0a9cb94e8354143'],
+    ['napi-derive-backend', '6.1.4', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
+    ['napi-sys', '3.3.1', '31c27a1676a7c4b317f4e144e0a9cb94e8354143'],
+    ['napi-sys', '3.3.2', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
+  ])('binds %s@%s override to its reviewed VCS revision', async (name, version, revision) => {
+    const packageRoot = await createPackage(name, version);
     const overrideRoot = await createTemporaryDirectory('jsonl-view-license-override-');
     await writeFile(join(overrideRoot, 'napi-rs-LICENSE.txt'), 'Copyright (c) upstream\n', 'utf8');
     await writeFile(join(packageRoot, '.cargo_vcs_info.json'), JSON.stringify({
@@ -55,15 +67,23 @@ describe('Cargo license notice inventory', () => {
     }), 'utf8');
 
     await expect(collectLicenseInventory([
-      metadata(packageRoot, 'napi', '3.12.4', 'MIT'),
+      metadata(packageRoot, name, version, 'MIT'),
     ], { overrideDirectory: overrideRoot })).rejects.toThrow(/override revision does not match/);
 
     await writeFile(join(packageRoot, '.cargo_vcs_info.json'), JSON.stringify({
-      git: { sha1: '1492b220d5ad01807b2dcbd250e8383f9d738311' },
+      git: { sha1: revision },
     }), 'utf8');
     await expect(collectLicenseInventory([
-      metadata(packageRoot, 'napi', '3.12.4', 'MIT'),
+      metadata(packageRoot, name, version, 'MIT'),
     ], { overrideDirectory: overrideRoot })).rejects.toThrow(/override digest does not match/);
+  });
+
+  it('fails closed for unreviewed napi-rs crate versions', async () => {
+    const packageRoot = await createPackage('napi', '99.0.0');
+
+    await expect(collectLicenseInventory([
+      metadata(packageRoot, 'napi', '99.0.0', 'MIT'),
+    ])).rejects.toThrow(/no packaged license\/notice file and no reviewed override/);
   });
 });
 
