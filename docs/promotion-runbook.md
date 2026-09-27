@@ -101,10 +101,26 @@ manifests and candidates belong outside the product checkout.
 7. With separate authorization for each target, publish the exact frozen
    candidate to GitHub, publish the exact npm tarball (`npm publish <candidate.tgz>`)
    rather than repacking its directory, and publish each exact VSIX only to its
-   bound registry. Record each target as
-   `pending`, `published`, `readback`, or `failed`; never collapse them into one
-   success. Read back the exact ref/version and artifact integrity after every
-   target. A successful npm publish does not prove GitHub or Open VSX changed.
+   bound registry. For Visual Studio Marketplace, use the guarded adapter after
+   the Marketplace preflight and a fresh target-specific authorization:
+
+   ```powershell
+   $env:VSCE_PAT = '<short-lived-secret-in-process-environment>'
+   pnpm marketplace:publish -- --publish `
+     --vsix <marketplace.vsix> `
+     --provenance <vsix.provenance.json> `
+     --preflight <preflight-marketplace.json> `
+     --confirm-target 'Sumi-Sophia/jsonlview-data-studio@<version>' `
+     --out <external>\marketplace-publish.json
+   Remove-Item Env:VSCE_PAT
+   ```
+
+   The adapter uses `@vscode/vsce`, queries the public gallery before and after
+   the write, and never retries an ambiguous write automatically. Record each
+   target as `pending`, `published`, `readback`, or `failed`; never collapse
+   them into one success. Read back the exact ref/version and artifact
+   integrity after every target. A successful npm publish does not prove GitHub
+   or Open VSX changed.
 8. Read back the Git tag and release assets, confirm GitHub's `/releases/latest`
    points to the new version, and verify the repository sidebar after an
    anonymous hard refresh. Then download each registry artifact and compare its
@@ -122,6 +138,8 @@ source or candidate drift and emits no credentials or absolute checkout paths.
 The local sync command is the only routine write to the developer machine.
 Public promotion remains an explicit operator or protected-CI action because
 the targets have independent authentication, rollback, and readback semantics.
+The Marketplace-specific command and state machine are documented in
+[`docs/marketplace-publishing.md`](marketplace-publishing.md).
 
 Never push a release directly to an unprotected `main`. Never run a public
 command from a dirty development checkout, and never place
