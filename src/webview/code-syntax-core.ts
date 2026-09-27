@@ -32,6 +32,7 @@ export interface CodeSyntaxOptions {
 
 const MAX_FORMATTED_CHARS = 128 * 1024;
 const MAX_FORMAT_INDENT = 32;
+const FORMAT_OUTPUT_CHUNK_CHARS = 1_024;
 
 /**
  * Add readable line breaks to the small JavaScript snippets emitted by agent
@@ -40,12 +41,16 @@ const MAX_FORMAT_INDENT = 32;
  * available to the caller for Raw/Copy.
  */
 export function formatJavaScriptForDisplay(source: string): string {
-  if (!source || source.includes('\n')) {
+  if (!source || source.length > MAX_FORMATTED_CHARS) return source;
+  if (source.includes('\n')) {
     return source.replace(/\r\n?/g, '\n');
   }
-  if (source.length > MAX_FORMATTED_CHARS) return source;
 
-  let output = '';
+  const outputChunks: string[] = [];
+  let outputChunk = '';
+  let outputLength = 0;
+  let lastCharacter = '';
+  let atLineStart = true;
   let indent = 0;
   let parenDepth = 0;
   let braceDepth = 0;
@@ -54,36 +59,52 @@ export function formatJavaScriptForDisplay(source: string): string {
   let blockComment = false;
   let escaped = false;
   let pendingSpace = false;
+  let overflow = false;
+
+  const append = (text: string): void => {
+    if (!text || overflow) return;
+    if (outputLength + text.length > MAX_FORMATTED_CHARS) {
+      overflow = true;
+      return;
+    }
+    outputChunk += text;
+    outputLength += text.length;
+    lastCharacter = text.at(-1) ?? lastCharacter;
+    atLineStart = lastCharacter === '\n';
+    if (outputChunk.length >= FORMAT_OUTPUT_CHUNK_CHARS) {
+      outputChunks.push(outputChunk);
+      outputChunk = '';
+    }
+  };
 
   const writeIndent = (): void => {
     if (pendingSpace) {
-      output += ' ';
+      append(' ');
       pendingSpace = false;
     }
-    if (output.length === 0 || output.endsWith('\n')) {
-      output += '  '.repeat(Math.min(MAX_FORMAT_INDENT, Math.max(0, indent)));
+    if (atLineStart) {
+      append('  '.repeat(Math.min(MAX_FORMAT_INDENT, Math.max(0, indent))));
     }
   };
   const newline = (): void => {
     pendingSpace = false;
-    if (!output.endsWith('\n')) output += '\n';
+    if (!atLineStart) append('\n');
   };
-  for (let index = 0; index < source.length; index += 1) {
-    if (output.length + MAX_FORMAT_INDENT * 2 + 2 > MAX_FORMATTED_CHARS) return source;
+  for (let index = 0; index < source.length && !overflow; index += 1) {
     const current = source[index] ?? '';
     const next = source[index + 1] ?? '';
 
     if (lineComment) {
       writeIndent();
-      output += current;
+      append(current);
       if (current === '\n') lineComment = false;
       continue;
     }
     if (blockComment) {
       writeIndent();
-      output += current;
+      append(current);
       if (current === '*' && next === '/') {
-        output += next;
+        append(next);
         index += 1;
         blockComment = false;
       }
@@ -91,7 +112,7 @@ export function formatJavaScriptForDisplay(source: string): string {
     }
     if (quote) {
       writeIndent();
-      output += current;
+      append(current);
       if (escaped) escaped = false;
       else if (current === '\\') escaped = true;
       else if (current === quote) quote = undefined;
@@ -99,21 +120,21 @@ export function formatJavaScriptForDisplay(source: string): string {
     }
     if (current === '/' && next === '/') {
       writeIndent();
-      output += '//';
+      append('//');
       index += 1;
       lineComment = true;
       continue;
     }
     if (current === '/' && next === '*') {
       writeIndent();
-      output += '/*';
+      append('/*');
       index += 1;
       blockComment = true;
       continue;
     }
     if (current === '"' || current === "'" || current === '`') {
       writeIndent();
-      output += current;
+      append(current);
       quote = current;
       escaped = false;
       continue;
@@ -121,7 +142,7 @@ export function formatJavaScriptForDisplay(source: string): string {
 
     if (current === '{') {
       writeIndent();
-      output += '{';
+      append('{');
       braceDepth += 1;
       if (next !== '}') {
         indent += 1;
@@ -130,10 +151,10 @@ export function formatJavaScriptForDisplay(source: string): string {
       continue;
     }
     if (current === '}') {
-      if (!output.endsWith('\n')) newline();
+      if (!atLineStart) newline();
       indent = Math.max(0, indent - 1);
       writeIndent();
-      output += '}';
+      append('}');
       braceDepth = Math.max(0, braceDepth - 1);
       const after = next;
       if (after !== ';' && after !== ',' && after !== ')' && after !== ']' && after !== '.') newline();
@@ -141,35 +162,35 @@ export function formatJavaScriptForDisplay(source: string): string {
     }
     if (current === '(') {
       writeIndent();
-      output += current;
+      append(current);
       parenDepth += 1;
       continue;
     }
     if (current === ')') {
       writeIndent();
-      output += current;
+      append(current);
       parenDepth = Math.max(0, parenDepth - 1);
       continue;
     }
     if (current === '[') {
       writeIndent();
-      output += current;
+      append(current);
       continue;
     }
     if (current === ']') {
       writeIndent();
-      output += current;
+      append(current);
       continue;
     }
     if (current === ';' && parenDepth === 0) {
       writeIndent();
-      output += ';';
+      append(';');
       newline();
       continue;
     }
     if (current === ',' && braceDepth > 0) {
       writeIndent();
-      output += ',';
+      append(',');
       newline();
       continue;
     }
@@ -178,16 +199,16 @@ export function formatJavaScriptForDisplay(source: string): string {
       continue;
     }
     if (/\s/.test(current)) {
-      const last = output.at(-1);
-      if (output.length > 0 && last !== ' ' && last !== '\n') pendingSpace = true;
+      if (outputLength > 0 && lastCharacter !== ' ' && lastCharacter !== '\n') pendingSpace = true;
       continue;
     }
     writeIndent();
-    output += current;
+    append(current);
   }
 
-  if (output.length > MAX_FORMATTED_CHARS) return source;
-  return output.trimEnd();
+  if (overflow) return source;
+  if (outputChunk) outputChunks.push(outputChunk);
+  return outputChunks.join('').trimEnd();
 }
 
 export const DEFAULT_MAX_CHARS = 128 * 1024;

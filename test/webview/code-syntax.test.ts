@@ -93,12 +93,27 @@ describe('bounded code syntax', () => {
     expect(formatted).not.toContain('\\n');
   });
 
-  it('falls back to the bounded source for pathologically deep JavaScript input', () => {
+  it('falls back to the source when formatted output exceeds its hard budget', () => {
     const source = `${'{'.repeat(10_000)}${'}'.repeat(10_000)}`;
     expect(formatJavaScriptForDisplay(source)).toBe(source);
   });
 
-  it('formats repeated closing braces without rescanning prior output', () => {
+  it('bounds high-expansion input and preserves larger multiline source unchanged', () => {
+    const highExpansion = '{'.repeat(2_000);
+    const highExpansionFormatted = formatJavaScriptForDisplay(highExpansion);
+    expect(highExpansionFormatted.length).toBeLessThanOrEqual(128 * 1024);
+    expect(highExpansionFormatted.length).toBeGreaterThan(highExpansion.length * 50);
+
+    const underBudget = '{'.repeat(1_000);
+    const formatted = formatJavaScriptForDisplay(underBudget);
+    expect(formatted.length).toBeLessThanOrEqual(128 * 1024);
+    expect(formatted.length).toBeGreaterThan(underBudget.length * 50);
+
+    const multiline = 'x\r\n'.repeat(128 * 1024);
+    expect(formatJavaScriptForDisplay(multiline)).toBe(multiline);
+  });
+
+  it('formats repeated closing braces with bounded linear accumulation', () => {
     const formatted = formatJavaScriptForDisplay('x }'.repeat(10_000));
     expect(formatted).toHaveLength(39_999);
     expect(formatted.startsWith('x\n}\nx\n}')).toBe(true);

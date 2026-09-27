@@ -37,10 +37,13 @@ existing character and token budgets; and Raw/Copy remain authoritative.
 
 ## Probe
 
-Keep scanner behavior linear in visible input, cap output at 128 KiB and 12,000
-tokens, preserve exact text across CRLF and truncation, test incomplete patch
-fallback, and verify shell/PowerShell/TypeScript roles plus nested patch files.
-Revisit only with representative fixture and host frame/memory evidence.
+Keep scanner behavior linear in visible input, cap syntax scanning at 128 KiB
+and 12,000 tokens, and preserve source unchanged when the JavaScript display
+formatter input exceeds its 128 KiB transformation budget. The outer structured
+preview retains its separate 256 KiB source budget. Preserve exact text across
+CRLF and truncation, test incomplete patch fallback, and verify
+shell/PowerShell/TypeScript roles plus nested patch files. Revisit only with
+representative fixture and host frame/memory evidence.
 
 ## Decision
 
