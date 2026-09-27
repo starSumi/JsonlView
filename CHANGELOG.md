@@ -9,6 +9,8 @@
   configured full-record limit, and the manual action for fallback.
 - Classify Codex `web_search_call` response items as assistant tool calls,
   preserving their status and search action instead of labeling them `other`.
+- Bound serialized tool-argument decoding to the syntax-preview budget and keep
+  oversized values on the existing generic preview path.
 - Add bounded lexical highlighting for Shell, PowerShell, JavaScript/TypeScript,
   Python, Rust, and SQL; recognize explicit `apply_patch` envelopes and highlight
   changed lines with their per-file language while preserving exact source text.

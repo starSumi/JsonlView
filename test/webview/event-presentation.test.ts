@@ -514,6 +514,21 @@ describe('structured agent event presentation', () => {
     expect(markup).toContain('Show full');
   });
 
+  it('keeps oversized serialized command arguments on the bounded generic preview', () => {
+    const serializedArguments = JSON.stringify({ cmd: 'x'.repeat(128 * 1024), workdir: 'E:/fixture' });
+    const model = buildAgentEventPresentation({
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'exec_command', arguments: serializedArguments },
+    }, {
+      profileId: 'codex-rollout', eventKind: 'tool_call', summary: 'large exec command', evidence: [], confidence: 'source',
+    });
+
+    const section = model?.sections.find((candidate) => candidate.title === 'Arguments');
+    expect(section?.functionCall).toBeUndefined();
+    expect(section?.truncated).toBe(true);
+    expect(section?.code?.length).toBeLessThan(8_100);
+  });
+
   it('activates nested patch highlighting only for an explicit complete patch command', () => {
     const command = "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: src/retry.ts\n@@\n-export const retry = false;\n+export const retry = true;\n*** End Patch";
     const value = {

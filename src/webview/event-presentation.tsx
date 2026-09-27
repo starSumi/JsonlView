@@ -12,6 +12,7 @@ import { CopyButton } from './copy-button';
 import { stringifyJsonBounded } from './json-syntax';
 import { classifyContent, ContentView, inferCodeLanguage, type ContentMode } from './content-view';
 import { formatJavaScriptForDisplay, HighlightedCode } from './code-syntax';
+import { DEFAULT_MAX_CHARS } from './code-syntax-core';
 import { DiffView } from './diff-view';
 
 const MAX_TEXT = 8_000;
@@ -462,6 +463,7 @@ function decodeSerializedJsonValue(value: unknown): unknown {
 
   for (let depth = 0; depth < 3; depth += 1) {
     if (typeof current !== 'string') return current;
+    if (current.length > DEFAULT_MAX_CHARS) return original;
     const trimmed = current.trim();
     if (!trimmed || !(trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"'))) return original;
     try {
