@@ -49,6 +49,15 @@ describe('bounded code syntax', () => {
     expect(result.tokens.map((token) => token.text).join('')).toBe(source);
   });
 
+  it('highlights added file contents without requiring a unified-diff hunk', () => {
+    const source = "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: src/new-file.ts\n+export const answer = 42;\n*** End Patch";
+    const result = tokenizePatch(source);
+    expect(result.tokens.some((token) => token.kind === 'patch-add')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'keyword' && token.text === 'export')).toBe(true);
+    expect(result.tokens.some((token) => token.kind === 'keyword' && token.text === 'const')).toBe(true);
+    expect(result.tokens.map((token) => token.text).join('')).toBe(source);
+  });
+
   it('falls back to shell lexing when the patch envelope is incomplete', () => {
     const result = tokenizePatch("apply_patch <<'PATCH'\n*** Begin Patch\n+const value = 1");
     expect(result.tokens.some((token) => token.kind === 'patch-meta')).toBe(false);

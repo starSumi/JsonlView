@@ -98,8 +98,9 @@ export function tokenizePatch(source: string, options: CodeSyntaxOptions = {}): 
       inHunk = false;
       emit('patch-meta', line.text);
     } else if (inPatch && /^\*\*\* (?:Update|Add|Delete) File: /.test(line.text)) {
+      const isAddedFile = line.text.startsWith('*** Add File: ');
       language = languageForPath(line.text.replace(/^\*\*\* (?:Update|Add|Delete) File: /, ''));
-      inHunk = false;
+      inHunk = isAddedFile;
       emit('patch-meta', line.text);
     } else if (inPatch && line.text.startsWith('@@')) {
       inHunk = true;
