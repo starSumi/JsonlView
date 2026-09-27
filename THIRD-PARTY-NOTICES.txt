@@ -173,11 +173,11 @@ the crate's `.cargo_vcs_info.json` revision.
 - `libc@0.2.189` — License: MIT OR Apache-2.0 — Files: `libc-0.2.189-LICENSE-APACHE.txt`, `libc-0.2.189-LICENSE-MIT.txt`
 - `libloading@0.9.0` — License: ISC — Files: `libloading-0.9.0-LICENSE.txt`
 - `memchr@2.8.3` — License: Unlicense OR MIT — Files: `memchr-2.8.3-COPYING.txt`, `memchr-2.8.3-LICENSE-MIT.txt`
-- `napi@3.12.4` — License: MIT — Files: `napi-3.12.4-napi-rs-LICENSE.txt`; reviewed upstream 1492b220d5ad01807b2dcbd250e8383f9d738311
-- `napi-build@2.4.2` — License: MIT — Files: `napi-build-2.4.2-napi-rs-LICENSE.txt`; reviewed upstream 31c27a1676a7c4b317f4e144e0a9cb94e8354143
-- `napi-derive@3.6.5` — License: MIT — Files: `napi-derive-3.6.5-napi-rs-LICENSE.txt`; reviewed upstream 1492b220d5ad01807b2dcbd250e8383f9d738311
-- `napi-derive-backend@6.1.3` — License: MIT — Files: `napi-derive-backend-6.1.3-napi-rs-LICENSE.txt`; reviewed upstream 31c27a1676a7c4b317f4e144e0a9cb94e8354143
-- `napi-sys@3.3.1` — License: MIT — Files: `napi-sys-3.3.1-napi-rs-LICENSE.txt`; reviewed upstream 31c27a1676a7c4b317f4e144e0a9cb94e8354143
+- `napi@3.12.7` — License: MIT — Files: `napi-3.12.7-napi-rs-LICENSE.txt`; reviewed upstream 38162bb0eb324ae24b402982bad3d4ef3f24c90a
+- `napi-build@2.5.0` — License: MIT — Files: `napi-build-2.5.0-napi-rs-LICENSE.txt`; reviewed upstream 2763e12efc855748485129952a6ccb97ac991c06
+- `napi-derive@3.6.8` — License: MIT — Files: `napi-derive-3.6.8-napi-rs-LICENSE.txt`; reviewed upstream 38162bb0eb324ae24b402982bad3d4ef3f24c90a
+- `napi-derive-backend@6.1.4` — License: MIT — Files: `napi-derive-backend-6.1.4-napi-rs-LICENSE.txt`; reviewed upstream 38162bb0eb324ae24b402982bad3d4ef3f24c90a
+- `napi-sys@3.3.2` — License: MIT — Files: `napi-sys-3.3.2-napi-rs-LICENSE.txt`; reviewed upstream 38162bb0eb324ae24b402982bad3d4ef3f24c90a
 - `nohash-hasher@0.2.0` — License: Apache-2.0 OR MIT — Files: `nohash-hasher-0.2.0-LICENSE-APACHE.txt`, `nohash-hasher-0.2.0-LICENSE-MIT.txt`
 - `pin-project-lite@0.2.17` — License: Apache-2.0 OR MIT — Files: `pin-project-lite-0.2.17-LICENSE-APACHE.txt`, `pin-project-lite-0.2.17-LICENSE-MIT.txt`
 - `proc-macro2@1.0.107` — License: MIT OR Apache-2.0 — Files: `proc-macro2-1.0.107-LICENSE-APACHE.txt`, `proc-macro2-1.0.107-LICENSE-MIT.txt`
