@@ -198,6 +198,12 @@ pair. The plan-only reports require an explicit window reload readback and leave
 GitHub, npm, Open VSX, and Marketplace in independent authorization states;
 they never invoke a publisher or registry command.
 
+For the guarded Visual Studio Marketplace path, see
+[`docs/marketplace-publishing.md`](docs/marketplace-publishing.md). It keeps
+the default operation read-only, requires exact release evidence for a write,
+and performs public version readback without claiming that public metadata
+proves an uploaded artifact digest.
+
 The public coordinates are explicit because extension names are registry
 identities rather than product labels:
 
