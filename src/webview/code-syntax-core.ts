@@ -30,6 +30,9 @@ export interface CodeSyntaxOptions {
   maxTokens?: number;
 }
 
+const MAX_FORMATTED_CHARS = 128 * 1024;
+const MAX_FORMAT_INDENT = 32;
+
 /**
  * Add readable line breaks to the small JavaScript snippets emitted by agent
  * tool calls. This is a display-only lexical pass: strings, comments, and
@@ -40,6 +43,7 @@ export function formatJavaScriptForDisplay(source: string): string {
   if (!source || source.includes('\n')) {
     return source.replace(/\r\n?/g, '\n');
   }
+  if (source.length > MAX_FORMATTED_CHARS) return source;
 
   let output = '';
   let indent = 0;
@@ -49,22 +53,23 @@ export function formatJavaScriptForDisplay(source: string): string {
   let lineComment = false;
   let blockComment = false;
   let escaped = false;
+  let pendingSpace = false;
 
   const writeIndent = (): void => {
-    if (output.length === 0 || output.endsWith('\n')) output += '  '.repeat(Math.max(0, indent));
+    if (pendingSpace) {
+      output += ' ';
+      pendingSpace = false;
+    }
+    if (output.length === 0 || output.endsWith('\n')) {
+      output += '  '.repeat(Math.min(MAX_FORMAT_INDENT, Math.max(0, indent)));
+    }
   };
   const newline = (): void => {
-    output = output.replace(/[ \t]+$/g, '');
+    pendingSpace = false;
     if (!output.endsWith('\n')) output += '\n';
   };
-  const nextNonWhitespace = (index: number): string | undefined => {
-    for (let cursor = index; cursor < source.length; cursor += 1) {
-      if (!/\s/.test(source[cursor] ?? '')) return source[cursor];
-    }
-    return undefined;
-  };
-
   for (let index = 0; index < source.length; index += 1) {
+    if (output.length + MAX_FORMAT_INDENT * 2 + 2 > MAX_FORMATTED_CHARS) return source;
     const current = source[index] ?? '';
     const next = source[index + 1] ?? '';
 
@@ -118,7 +123,7 @@ export function formatJavaScriptForDisplay(source: string): string {
       writeIndent();
       output += '{';
       braceDepth += 1;
-      if (nextNonWhitespace(index + 1) !== '}') {
+      if (next !== '}') {
         indent += 1;
         newline();
       }
@@ -130,7 +135,7 @@ export function formatJavaScriptForDisplay(source: string): string {
       writeIndent();
       output += '}';
       braceDepth = Math.max(0, braceDepth - 1);
-      const after = nextNonWhitespace(index + 1);
+      const after = next;
       if (after !== ';' && after !== ',' && after !== ')' && after !== ']' && after !== '.') newline();
       continue;
     }
@@ -174,13 +179,14 @@ export function formatJavaScriptForDisplay(source: string): string {
     }
     if (/\s/.test(current)) {
       const last = output.at(-1);
-      if (output.length > 0 && last !== ' ' && last !== '\n') output += ' ';
+      if (output.length > 0 && last !== ' ' && last !== '\n') pendingSpace = true;
       continue;
     }
     writeIndent();
     output += current;
   }
 
+  if (output.length > MAX_FORMATTED_CHARS) return source;
   return output.trimEnd();
 }
 

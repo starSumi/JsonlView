@@ -92,4 +92,16 @@ describe('bounded code syntax', () => {
     expect(formatted).toContain('text(r.output);');
     expect(formatted).not.toContain('\\n');
   });
+
+  it('falls back to the bounded source for pathologically deep JavaScript input', () => {
+    const source = `${'{'.repeat(10_000)}${'}'.repeat(10_000)}`;
+    expect(formatJavaScriptForDisplay(source)).toBe(source);
+  });
+
+  it('formats repeated closing braces without rescanning prior output', () => {
+    const formatted = formatJavaScriptForDisplay('x }'.repeat(10_000));
+    expect(formatted).toHaveLength(39_999);
+    expect(formatted.startsWith('x\n}\nx\n}')).toBe(true);
+    expect(formatted.endsWith('x\n}')).toBe(true);
+  });
 });

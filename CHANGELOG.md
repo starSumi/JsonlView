@@ -14,6 +14,8 @@
 - Add bounded lexical highlighting for Shell, PowerShell, JavaScript/TypeScript,
   Python, Rust, and SQL; recognize explicit `apply_patch` envelopes and highlight
   changed lines with their per-file language while preserving exact source text.
+- Bound display-only JavaScript formatting depth and output, falling back to the
+  source for pathological input so nested tool payloads cannot amplify memory use.
 - Add the Unified Diff `FileChange` screenshot to the product README examples.
 - Use a PNG for the performance showcase so VSIX packaging accepts the README image.
 
