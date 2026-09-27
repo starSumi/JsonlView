@@ -178,11 +178,13 @@ Markdown-capable agent message. History display remains ordinary text, and
 arbitrary application fields named `text` are not promoted to rich content.
 
 An OpenTelemetry Protocol File Exporter line can contain `resourceLogs`,
-`resourceSpans`, or `resourceMetrics` with multiple nested signal records. In
-v0.1 the profile recognizes non-empty `resourceLogs` and `resourceSpans`; a
-`resourceMetrics`-only envelope remains Generic JSONL. Every envelope remains
-one physical row and receives a bounded summary. The viewer does not pretend
-nested signals have independent source offsets.
+`resourceSpans`, or `resourceMetrics` with multiple nested signal records. The
+current profile recognizes non-empty `resourceLogs` and `resourceSpans`; a
+`resourceMetrics`-only envelope remains Generic JSONL. The next scoped semantic
+slice is bounded metrics recognition and projection over this same JSONL
+adapter. Every envelope remains one physical row and receives a bounded
+summary. The viewer does not pretend nested signals have independent source
+offsets.
 
 ## Not supported by the current adapter
 
@@ -194,6 +196,11 @@ nested signals have independent source offsets.
 | OTLP protobuf/gRPC capture | binary protobuf and transport framing | OTLP decoder with versioned protobuf schemas |
 | `.jsonl.gz` / `.jsonl.bz2` | compressed offsets are not random-access record offsets | decompression/index layer with separate compressed and logical coordinates |
 | CSV, Parquet, SQLite | different schemas and access models | dedicated mature reader per format |
+
+Parquet is not an alternate encoding of JSONL: it needs a columnar adapter with
+row-group/column-chunk access, projection, cancellation, and source-reference
+contracts. It remains deferred until representative user data and a benchmark
+show a concrete workload that the JSONL adapter cannot serve acceptably.
 
 Adding one of these formats must not be implemented by weakening the JSONL
 framing rules. It should provide the same immutable record contract to the

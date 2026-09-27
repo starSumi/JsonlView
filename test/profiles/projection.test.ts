@@ -47,6 +47,31 @@ describe('Agent profile projection', () => {
     expect(row.evidence).toContainEqual({ field: 'actor', path: { tokens: [{ kind: 'key', value: 'role' }] } });
   });
 
+  it('classifies response-item web searches as tool calls with status evidence', () => {
+    const registry = new AgentProfileRegistry();
+    const row = registry.project('codex-rollout', {
+      value: {
+        timestamp: '2026-09-25T19:08:00.481Z',
+        type: 'response_item',
+        payload: {
+          type: 'web_search_call',
+          id: 'web-search-redacted',
+          status: 'completed',
+          action: { type: 'search', query: 'publisher namespace verification' },
+        },
+      },
+    }, context);
+
+    expect(row).toMatchObject({
+      eventKind: 'tool_call',
+      actor: 'assistant',
+      status: 'completed',
+      toolCallId: 'web-search-redacted',
+      messageId: 'web-search-redacted',
+    });
+    expect(row.summary).toBe('Web search: search');
+  });
+
   it('treats Codex v1 task lifecycle aliases as a turn, not a sub-agent', () => {
     const registry = new AgentProfileRegistry();
     const started = registry.project('codex-rollout', {

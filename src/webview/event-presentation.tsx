@@ -12,6 +12,7 @@ import { CopyButton } from './copy-button';
 import { stringifyJsonBounded } from './json-syntax';
 import { classifyContent, ContentView, inferCodeLanguage, type ContentMode } from './content-view';
 import { formatJavaScriptForDisplay, HighlightedCode } from './code-syntax';
+import { DEFAULT_MAX_CHARS } from './code-syntax-core';
 import { DiffView } from './diff-view';
 
 const MAX_TEXT = 8_000;
@@ -29,6 +30,20 @@ interface EventObject {
   [key: string]: unknown;
 }
 
+interface CodeSectionValue {
+  code: string;
+  fullCode?: string;
+  truncated: boolean;
+  previewOnly: boolean;
+  mode?: 'code' | 'patch';
+}
+
+interface FunctionCallView {
+  name: string;
+  command: CodeSectionValue;
+  options?: CodeSectionValue;
+}
+
 export interface EventPresentationSection {
   title: string;
   text?: string;
@@ -42,6 +57,7 @@ export interface EventPresentationSection {
   previewOnly?: boolean;
   contentMode?: ContentMode;
   codeLanguage?: string;
+  functionCall?: FunctionCallView;
 }
 
 export interface AgentEventPresentationModel {
@@ -176,13 +192,6 @@ function codeOf(value: unknown): string | undefined {
   return result.text;
 }
 
-interface CodeSectionValue {
-  code: string;
-  fullCode?: string;
-  truncated: boolean;
-  previewOnly: boolean;
-}
-
 function codeSectionValue(value: unknown): CodeSectionValue | undefined {
   if (value === undefined) return undefined;
   if (typeof value === 'string') {
@@ -196,13 +205,20 @@ function codeSectionValue(value: unknown): CodeSectionValue | undefined {
       previewOnly,
     };
   }
-  const result = stringifyJsonBounded(value, { maxChars: MAX_TEXT, maxNodes: 500, maxDepth: 10, maxChildren: 80 });
+  const result = stringifyJsonBounded(value, {
+    maxChars: MAX_TEXT,
+    maxNodes: 500,
+    maxDepth: 10,
+    maxChildren: 80,
+    maxStringChars: 2_048,
+  });
   const expanded = result.truncated
     ? stringifyJsonBounded(value, {
       maxChars: MAX_EXPANDED_STRUCTURED_TEXT,
       maxNodes: 10_000,
       maxDepth: 32,
       maxChildren: MAX_TEXT_ITEMS,
+      maxStringChars: MAX_EXPANDED_STRUCTURED_TEXT,
     })
     : result;
   return {
@@ -423,6 +439,7 @@ function addCodeCandidate(
   title: string,
   value: unknown,
   language?: string,
+  copyText?: string,
 ): void {
   if (value === undefined || sections.some((section) => section.title === title)) return;
   const rendered = codeSectionValue(value);
@@ -431,11 +448,72 @@ function addCodeCandidate(
       title,
       code: rendered.code,
       ...(rendered.fullCode === undefined ? {} : { fullText: rendered.fullCode }),
+      ...(copyText === undefined ? {} : { copyText }),
       truncated: rendered.truncated,
       previewOnly: rendered.previewOnly,
       ...(language ? { language } : {}),
     });
   }
+}
+
+function decodeSerializedJsonValue(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const original = value;
+  let current: unknown = value;
+
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (typeof current !== 'string') return current;
+    if (current.length > DEFAULT_MAX_CHARS) return original;
+    const trimmed = current.trim();
+    if (!trimmed || !(trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"'))) return original;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (parsed !== null && typeof parsed === 'object') return parsed;
+      if (typeof parsed === 'string' && parsed !== current) {
+        current = parsed;
+        continue;
+      }
+    } catch {
+      return original;
+    }
+    return original;
+  }
+
+  return original;
+}
+
+function addExecCommandView(
+  section: EventPresentationSection,
+  name: string | undefined,
+  argumentsValue: unknown,
+): void {
+  if (name !== 'exec_command') return;
+  const argumentsObject = objectOf(argumentsValue);
+  if (!argumentsObject || typeof argumentsObject.cmd !== 'string') return;
+  const command = codeSectionValue(argumentsObject.cmd);
+  if (!command) return;
+  if (/^\s*apply_patch(?:\s|$)[\s\S]*(?:^|\r?\n)\*\*\* Begin Patch\r?$/m.test(argumentsObject.cmd)) {
+    command.mode = 'patch';
+  }
+
+  const options: EventObject = {};
+  for (const key in argumentsObject) {
+    if (Object.hasOwn(argumentsObject, key) && key !== 'cmd') options[key] = argumentsObject[key];
+  }
+  const optionsValue = Object.keys(options).length > 0 ? codeSectionValue(options) : undefined;
+
+  section.code = command.code;
+  if (command.fullCode === undefined) delete section.fullText;
+  else section.fullText = command.fullCode;
+  section.truncated = command.truncated;
+  section.previewOnly = command.previewOnly;
+  section.language = 'shell';
+  section.codeWrap = true;
+  section.functionCall = {
+    name,
+    command,
+    ...(optionsValue ? { options: optionsValue } : {}),
+  };
 }
 
 function shellQuoteForDisplay(value: string): string {
@@ -938,9 +1016,20 @@ function codexResponseItemSections(
     case 'function_call_output':
       addOutputCandidate(sections, 'Tool result', own(item, 'output'));
       break;
-    case 'function_call':
-      addCodeCandidate(sections, 'Arguments', own(item, 'arguments'), 'json');
+    case 'function_call': {
+      const rawArguments = own(item, 'arguments');
+      const decodedArguments = decodeSerializedJsonValue(rawArguments);
+      addCodeCandidate(
+        sections,
+        'Arguments',
+        decodedArguments,
+        'json',
+        typeof rawArguments === 'string' ? rawArguments : undefined,
+      );
+      const argumentsSection = sections.find((section) => section.title === 'Arguments');
+      if (argumentsSection) addExecCommandView(argumentsSection, valueLabel(own(item, 'name')), decodedArguments);
       break;
+    }
     case 'mcp_tool_call_output':
       addCodeCandidate(sections, 'Tool result', own(item, 'output'), 'json');
       break;
@@ -1180,11 +1269,58 @@ export function buildAgentEventPresentation(
 interface AgentEventPresentationProps {
   value: unknown;
   profile?: AgentRowProjection | undefined;
+  autoExpandFirstFullSection?: boolean;
 }
 
-export function AgentEventPresentation({ value, profile }: AgentEventPresentationProps): React.JSX.Element | null {
+function FunctionCallArgumentsView({
+  view,
+  expanded,
+}: {
+  view: FunctionCallView;
+  expanded: boolean;
+}): React.JSX.Element {
+  const command = expanded ? view.command.fullCode ?? view.command.code : view.command.code;
+  return (
+    <div className="event-function-call-view">
+      <div className="event-function-call-label">Command</div>
+      <div className="event-code-language">
+        <HighlightedCode
+          source={command}
+          language="shell"
+          {...(view.command.mode ? { mode: view.command.mode } : {})}
+          ariaLabel={`${view.name} command`}
+          className="is-wrapped"
+        />
+      </div>
+      {view.options ? (
+        <div className="event-function-call-options">
+          <div className="event-function-call-label">Options</div>
+          <ContentView
+            text={view.options.code}
+            ariaLabel={`${view.name} options`}
+            defaultMode="json"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function AgentEventPresentation({ value, profile, autoExpandFirstFullSection = false }: AgentEventPresentationProps): React.JSX.Element | null {
   const model = useMemo(() => buildAgentEventPresentation(value, profile), [profile, value]);
-  const [expandedSections, setExpandedSections] = React.useState<ReadonlySet<number>>(() => new Set());
+  const automaticSectionIndex = autoExpandFirstFullSection && model
+    ? model.sections.findIndex((section) => section.truncated === true && section.fullText !== undefined)
+    : -1;
+  const [expandedSections, setExpandedSections] = React.useState<ReadonlySet<number>>(
+    () => automaticSectionIndex >= 0 ? new Set([automaticSectionIndex]) : new Set(),
+  );
+  React.useEffect(() => {
+    if (automaticSectionIndex < 0) return;
+    setExpandedSections((current) => {
+      if (current.size > 0 || current.has(automaticSectionIndex)) return current;
+      return new Set([automaticSectionIndex]);
+    });
+  }, [automaticSectionIndex]);
   if (!model) return null;
   return (
     <section className="event-presentation" aria-label="Structured event view">
@@ -1205,25 +1341,27 @@ export function AgentEventPresentation({ value, profile }: AgentEventPresentatio
           <section className="event-section" key={`${section.title}:${index}`}>
             <div className="event-section-header">
               <h3>{section.title}</h3>
-              <CopyButton
-                text={section.copyText ?? section.fullText ?? section.text ?? section.code ?? ''}
-                label={`Copy ${section.title}${section.previewOnly ? ' preview' : ''}`}
-              />
+              <div className="event-section-actions">
+                {section.truncated && section.fullText !== undefined ? (
+                  <button
+                    type="button"
+                    className="event-section-action"
+                    onClick={() => setExpandedSections((current) => {
+                      const next = new Set(current);
+                      if (next.has(index)) next.delete(index);
+                      else next.add(index);
+                      return next;
+                    })}
+                  >
+                    {expandedSections.has(index) ? 'Show preview' : 'Show full'}
+                  </button>
+                ) : null}
+                <CopyButton
+                  text={section.copyText ?? section.fullText ?? section.text ?? section.code ?? ''}
+                  label={`Copy ${section.title}${section.previewOnly ? ' preview' : ''}`}
+                />
+              </div>
             </div>
-            {section.truncated && section.fullText !== undefined ? (
-              <button
-                type="button"
-                className="event-section-action"
-                onClick={() => setExpandedSections((current) => {
-                  const next = new Set(current);
-                  if (next.has(index)) next.delete(index);
-                  else next.add(index);
-                  return next;
-                })}
-              >
-                {expandedSections.has(index) ? 'Show preview' : 'Show full'}
-              </button>
-            ) : null}
             {section.previewOnly ? <div className="content-budget-notice" role="status">Preview limited by the record hydration budget; the complete value remains available in the Raw view when the source is complete.</div> : null}
             {section.text !== undefined ? (
               <ContentView
@@ -1235,7 +1373,12 @@ export function AgentEventPresentation({ value, profile }: AgentEventPresentatio
                 {...(section.codeLanguage ? { codeLanguage: section.codeLanguage } : {})}
               />
             ) : null}
-            {section.code !== undefined ? (
+            {section.functionCall ? (
+              <FunctionCallArgumentsView
+                view={section.functionCall}
+                expanded={expandedSections.has(index)}
+              />
+            ) : section.code !== undefined ? (
               section.language === 'diff'
                 ? <DiffView
                     key={`diff-code:${section.code}`}

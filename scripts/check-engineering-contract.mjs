@@ -24,6 +24,10 @@ const adrFiles = [
   '010-toolchain-baseline.md',
   '011-runtime-topology-and-refactor-shape.md',
   '012-registry-extension-identities.md',
+  '013-bounded-mixed-code-highlighting.md',
+  '014-large-module-boundary-governance.md',
+  '015-changelog-ci-guard.md',
+  '016-otlp-metrics-and-columnar-format-gates.md',
 ];
 const adrFields = [
   '## Pressure',
@@ -133,11 +137,11 @@ for (const pin of pinnedWorkflowActions) {
 }
 
 const packageJson = JSON.parse(await text('package.json'));
-for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'check:contract', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
+for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'check:contract', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
   if (typeof packageJson.scripts?.[script] !== 'string') failures.push(`package.json missing script: ${script}`);
 }
 
-for (const helper of ['scripts/npm-tarball-integrity.mjs', 'scripts/vsix-archive-integrity.mjs', 'scripts/verify-candidate-pair.mjs', 'scripts/verify-vsix-targets.mjs', 'scripts/release-targets.mjs', 'scripts/promotion-join.mjs', 'scripts/license-policy.mjs']) {
+for (const helper of ['scripts/npm-tarball-integrity.mjs', 'scripts/vsix-archive-integrity.mjs', 'scripts/verify-candidate-pair.mjs', 'scripts/verify-vsix-targets.mjs', 'scripts/release-targets.mjs', 'scripts/promotion-join.mjs', 'scripts/license-policy.mjs', 'scripts/check-changelog.mjs']) {
   if (!(await exists(helper))) failures.push(`release helper is missing: ${helper}`);
 }
 

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="470" viewBox="0 0 1040 470" role="img" aria-labelledby="title description">
+  <title id="title">JsonlView local engine performance snapshot</title>
+  <desc id="description">Seven runs over one synthetic mixed-agent JSONL file containing 100,000 records and 47.2 megabytes. Median timings are 5.5 milliseconds to open, 28.7 milliseconds for the first 100 rows, 124.4 milliseconds to finish indexing, and 9.9 milliseconds for a reverse page. Maximum sampled checkpoint RSS is 84.6 mebibytes.</desc>
+  <rect width="1040" height="470" rx="20" fill="#f5f8fc"/>
+  <rect x="1" y="1" width="1038" height="468" rx="19" fill="none" stroke="#d8e2ef" stroke-width="2"/>
+  <text x="40" y="45" fill="#4274a8" font-family="Segoe UI, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8">ENGINE SNAPSHOT</text>
+  <text x="40" y="82" fill="#1c3048" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="650">100k records. Measured locally.</text>
+  <text x="40" y="108" fill="#60738b" font-family="Segoe UI, Arial, sans-serif" font-size="14">Synthetic mixed-agent JSONL · 7 sequential runs · median timing and observed range</text>
+
+  <text x="40" y="157" fill="#73849a" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1">OPERATION</text>
+  <text x="420" y="157" fill="#73849a" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1">RELATIVE TIME · 0–180 MS</text>
+  <text x="884" y="157" fill="#73849a" font-family="Segoe UI, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1">MEDIAN · RANGE</text>
+  <line x1="40" y1="170" x2="1000" y2="170" stroke="#dce5ef"/>
+
+  <text x="40" y="207" fill="#30445e" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="600">Open file</text>
+  <rect x="420" y="188" width="420" height="14" rx="7" fill="#e6edf5"/>
+  <rect x="420" y="188" width="13" height="14" rx="7" fill="#13a6a0"/>
+  <text x="884" y="207" fill="#1c3048" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">5.5 ms</text>
+  <text x="948" y="207" fill="#72839a" font-family="Segoe UI, Arial, sans-serif" font-size="12">4.3–8.6</text>
+
+  <text x="40" y="257" fill="#30445e" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="600">First 100 rows</text>
+  <rect x="420" y="238" width="420" height="14" rx="7" fill="#e6edf5"/>
+  <rect x="420" y="238" width="67" height="14" rx="7" fill="#3786d9"/>
+  <text x="884" y="257" fill="#1c3048" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">28.7 ms</text>
+  <text x="948" y="257" fill="#72839a" font-family="Segoe UI, Arial, sans-serif" font-size="12">25.9–46.0</text>
+
+  <text x="40" y="307" fill="#30445e" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="600">Finish indexing</text>
+  <rect x="420" y="288" width="420" height="14" rx="7" fill="#e6edf5"/>
+  <rect x="420" y="288" width="290" height="14" rx="7" fill="#7259d6"/>
+  <text x="884" y="307" fill="#1c3048" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">124.4 ms</text>
+  <text x="965" y="307" fill="#72839a" font-family="Segoe UI, Arial, sans-serif" font-size="12">113.7–186.0</text>
+
+  <text x="40" y="357" fill="#30445e" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="600">Reverse page</text>
+  <rect x="420" y="338" width="420" height="14" rx="7" fill="#e6edf5"/>
+  <rect x="420" y="338" width="23" height="14" rx="7" fill="#cf4aa4"/>
+  <text x="884" y="357" fill="#1c3048" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="700">9.9 ms</text>
+  <text x="948" y="357" fill="#72839a" font-family="Segoe UI, Arial, sans-serif" font-size="12">7.7–13.8</text>
+
+  <rect x="40" y="389" width="960" height="1" fill="#dce5ef"/>
+  <circle cx="53" cy="420" r="7" fill="#13a6a0"/>
+  <text x="70" y="425" fill="#30445e" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">84.6 MiB</text>
+  <text x="140" y="425" fill="#72839a" font-family="Segoe UI, Arial, sans-serif" font-size="13">maximum checkpoint RSS · sampled at open, first page, and completed index</text>
+  <text x="40" y="453" fill="#8998aa" font-family="Segoe UI, Arial, sans-serif" font-size="11">Node 24.15 · Windows 11 · Intel Core i5-1235U · scanner off · query off · synthetic fixture SHA-256 8930c05084c6…80c7</text>
+</svg>

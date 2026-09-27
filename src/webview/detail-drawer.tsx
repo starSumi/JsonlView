@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Braces, Code2, Database, GitBranch, LoaderCircle, X } from 'lucide-react';
 import type { RecordDetail } from '../shared/types';
+import { AUTOMATIC_FULL_RECORD_LIMIT_BYTES } from './full-record-intent';
 import { formatBytes } from './format';
 import { CopyButton } from './copy-button';
 import { RawJsonView } from './json-raw';
@@ -19,6 +20,7 @@ interface DetailDrawerProps {
 }
 
 function UnavailableRecordView({ detail, loading, onRequestFull }: { detail: RecordDetail; loading: boolean; onRequestFull: () => void }): React.JSX.Element {
+  const automaticFullLimitMiB = AUTOMATIC_FULL_RECORD_LIMIT_BYTES / (1024 * 1024);
   const previewMessage = detail.rawComplete
     ? 'The record could not be parsed into a structured value.'
     : 'Only a bounded source preview is available; the structured value was not hydrated.';
@@ -33,7 +35,11 @@ function UnavailableRecordView({ detail, loading, onRequestFull }: { detail: Rec
           <button type="button" className="event-section-action" disabled={loading} onClick={onRequestFull}>
             {loading ? 'Loading full record...' : 'Show full record'}
           </button>
-          <span>Automatic reads use <code>jsonlView.hydration.maxBytes</code>; explicit full reads are bounded by <code>jsonlView.hydration.fullMaxBytes</code>.</span>
+          <span>
+            The initial source preview uses <code>jsonlView.hydration.maxBytes</code>.
+            Opening a selected truncated record automatically tries a one-record full load up to {automaticFullLimitMiB} MiB.
+            The <code>jsonlView.hydration.fullMaxBytes</code> limit still applies; use Show full record for a manual request.
+          </span>
         </>
       ) : null}
     </div>
@@ -94,8 +100,10 @@ export function DetailDrawer({ detail, loading, activeTab, onTabChange, onReques
         {detail && activeTab === 'tree' ? (
           <>
             <AgentEventPresentation
+              key={`${detail.ref.generation}:${detail.ref.ordinal}`}
               value={detail.value}
               profile={detail.profile}
+              autoExpandFirstFullSection
             />
             {detail.value !== undefined
               ? <JsonTree key={`${detail.ref.generation}:${detail.ref.ordinal}`} value={detail.value} />

@@ -1579,6 +1579,7 @@ export class JsonlFileEngine {
     columns: ColumnSpec[],
     profile?: AgentRowProjection,
   ): RowProjection {
+    const genericSummary = summaryForRecord(hydrated, this.options.rowPreviewCharacters);
     const cells = columns.flatMap((column): CellProjection[] => {
       if (column.source === 'system' && column.id === '$ordinal') {
         const ordinal = hydrated.internal.ordinal;
@@ -1588,6 +1589,9 @@ export class JsonlFileEngine {
       }
       if (column.source === 'profile') {
         if (profile === undefined) {
+          if (column.id === 'summary' || column.id === 'message') {
+            return [cellForValue(column.id, genericSummary, this.options.rowPreviewCharacters)];
+          }
           return [{ columnId: column.id }];
         }
         const value = Object.hasOwn(profile, column.id)
@@ -1605,7 +1609,6 @@ export class JsonlFileEngine {
       if (!resolved.exists) return [{ columnId: column.id }];
       return [cellForValue(column.id, resolved.value, this.options.rowPreviewCharacters)];
     });
-    const genericSummary = summaryForRecord(hydrated, this.options.rowPreviewCharacters);
 
     return {
       ref: hydrated.ref,

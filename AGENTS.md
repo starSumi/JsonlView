@@ -76,6 +76,15 @@ When a change touches a language, runtime, dependency, public format, security
 boundary, or performance claim, consult primary current sources and record the
 compatibility and maintenance trade-off in `docs/decisions/`.
 
+## Release Notes
+
+Keep consumer-facing release notes curated in `CHANGELOG.md` under
+`## Unreleased`; do not generate them directly from commit subjects. CI runs
+`pnpm check:changelog` and requires a new bullet when `src/` or
+`native/jsonl-core/src/` changes. Tests, harness files, and documentation-only
+changes do not trigger the guard. This is an omission check, not release
+automation or publication authorization.
+
 ## Completion Levels
 
 Report the highest level reached; do not collapse them into one `done` state:

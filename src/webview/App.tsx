@@ -24,6 +24,9 @@ import type {
   RowSort,
 } from '../shared/types';
 import { DetailDrawer } from './detail-drawer';
+import {
+  shouldAutomaticallyHydrateSelectedRecord,
+} from './full-record-intent';
 import { deferIdle } from './idle';
 import { InsightsView } from './insights-view';
 import { formatBytes, visibleColumns } from './format';
@@ -53,6 +56,7 @@ import {
   type ViewportIdentity,
 } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
+import { profileOptionList } from './profile-options';
 import { parseFilterLiteral, predicateForFilter } from './query';
 import {
   createInitialState,
@@ -174,17 +178,6 @@ function fileLabel(uri: string | undefined): string {
   }
 }
 
-function profileOptions(
-  current: string | undefined,
-  suggestions: Array<{ id: string; displayName: string }>,
-): Array<{ id: string; displayName: string }> {
-  const options = new Map<string, string>();
-  options.set('generic', 'Generic JSONL');
-  if (current) options.set(current, current === 'generic' ? 'Generic JSONL' : current);
-  for (const suggestion of suggestions) options.set(suggestion.id, suggestion.displayName);
-  return [...options].map(([id, displayName]) => ({ id, displayName }));
-}
-
 interface StatusStripProps {
   filename: string;
   indexedBytes: string;
@@ -213,7 +206,7 @@ function StatusStrip(props: StatusStripProps): React.JSX.Element {
       >
         <CircleAlert size={13} aria-hidden />
         <span>{props.problemRecords}</span>
-        <span className="status-scope">observed</span>
+        <span className="status-scope">{props.problemRecords === '1' ? 'record' : 'records'} observed</span>
       </span>
       <span className="status-spacer" />
       <span className="status-phase">
@@ -302,6 +295,7 @@ export function App(): React.JSX.Element {
   const pendingViewportRef = useRef<PendingViewportIntent | undefined>(undefined);
   const rebuildViewportRef = useRef<RebuildViewportIntent | undefined>(undefined);
   const restoreViewportRef = useRef<RestoreViewportIntent | undefined>(undefined);
+  const automaticFullDetailKeyRef = useRef<string | undefined>(undefined);
 
   const setPageInput = useCallback((value: string): void => {
     pageInputRef.current = value;
@@ -581,6 +575,7 @@ export function App(): React.JSX.Element {
 
       const currentQuery = queryRef.current;
       const currentFollowMode = followModeRef.current;
+      const firstOpenedSession = message.type === 'OPENED' && acceptedSessionRef.current === undefined;
       const openedGenerationChanged = message.type === 'OPENED'
         && (
           acceptedSessionRef.current === undefined
@@ -749,7 +744,7 @@ export function App(): React.JSX.Element {
         };
       const priorViewport: ViewportIdentity | undefined = savedViewport ?? pendingIdentity ?? rebuildIdentity;
       const openedRows = message.type === 'OPENED'
-        ? rowsOptionsAfterOpened(priorViewport, message.payload.snapshot, currentFollowMode)
+        ? rowsOptionsAfterOpened(firstOpenedSession ? undefined : priorViewport, message.payload.snapshot, currentFollowMode)
         : undefined;
       const rebuildChangedGeneration = message.type === 'OPENED'
         && priorViewport !== undefined
@@ -1048,7 +1043,10 @@ export function App(): React.JSX.Element {
   }, [finishCancelled]);
 
   const summary = state.summary;
-  const options = profileOptions(summary?.profileId, summary?.profileSuggestions ?? []);
+  const profileOptions = profileOptionList(
+    summary?.profileId,
+    summary?.profileSuggestions ?? [],
+  );
   const baseColumns = useMemo(
     () => state.columns.length > 0 ? state.columns : fallbackColumns(state.rows),
     [state.columns, state.rows],
@@ -1067,6 +1065,32 @@ export function App(): React.JSX.Element {
       ...(problem.ref?.ordinal === undefined ? {} : { ordinal: problem.ref.ordinal }),
     }));
   const drawerOpen = Boolean(state.detail || state.pending.detail);
+
+  useEffect(() => {
+    const detail = state.detail;
+    if (detail === undefined || state.selectedOrdinal !== detail.ref.ordinal) {
+      automaticFullDetailKeyRef.current = undefined;
+      return;
+    }
+    if (
+      state.invalidationReason !== undefined
+      || invalidationRef.current !== undefined
+      || !shouldAutomaticallyHydrateSelectedRecord(
+        detail,
+        state.selectedOrdinal,
+        drawerOpen,
+        Boolean(state.pending.detail),
+      )
+    ) {
+      return;
+    }
+
+    const key = `${detail.ref.generation}:${detail.ref.ordinal}`;
+    if (automaticFullDetailKeyRef.current === key) return;
+    automaticFullDetailKeyRef.current = key;
+    requestDetail(detail.ref, true);
+  }, [drawerOpen, requestDetail, state.detail, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
+
   const filename = fileLabel(summary?.snapshot.uri ?? document.body.dataset.uri);
   const workspaceWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
   const displayedDetailWidth = workspaceWidth > 900
@@ -1351,14 +1375,23 @@ export function App(): React.JSX.Element {
           <span>{filename}</span>
         </div>
         <label className="compact-field profile-field">
-          <span>Profile</span>
-          <select
-            value={summary?.profileId ?? 'generic'}
-            disabled={!summary || state.invalidationReason !== undefined || Boolean(state.pending.profile)}
-            onChange={(event) => setProfile(event.target.value)}
-          >
-            {options.map((option) => <option value={option.id} key={option.id}>{option.displayName}</option>)}
-          </select>
+          <span className="profile-label">Profile</span>
+          <span className="profile-control">
+            <select
+              value={summary?.profileId ?? 'generic'}
+              disabled={!summary || state.invalidationReason !== undefined || Boolean(state.pending.profile)}
+              onChange={(event) => setProfile(event.target.value)}
+            >
+              {profileOptions.options.map((option) => (
+                <option value={option.id} key={option.id}>{option.displayName}</option>
+              ))}
+            </select>
+            {profileOptions.suggested ? (
+              <span className="profile-suggestion" title={`Suggested for this file: ${profileOptions.suggested.displayName}`}>
+                Suggested for this file: {profileOptions.suggested.displayName}
+              </span>
+            ) : null}
+          </span>
         </label>
         <label className="follow-toggle" title="Follow appended records">
             <input
@@ -1497,9 +1530,10 @@ export function App(): React.JSX.Element {
               {count !== undefined ? (
                 <span
                   className="tab-count"
-                  title={id === 'problems' ? 'Problem entries in the current visible page; the status strip is an observed problem-record count' : undefined}
+                  title={id === 'problems' ? 'Problem entries in the current scan page; the status strip counts distinct problem records observed so far' : undefined}
                 >
                   {count}
+                  {id === 'problems' ? <span className="tab-count-unit">entries</span> : null}
                 </span>
               ) : null}
             </button>
@@ -1661,7 +1695,10 @@ export function App(): React.JSX.Element {
               onTabChange={(tab) => dispatch({ type: 'SET_DETAIL_TAB', tab })}
               onRequestFull={() => {
                 const ref = stateRef.current.detail?.ref;
-                if (ref !== undefined) requestDetail(ref, true);
+                if (ref !== undefined) {
+                  automaticFullDetailKeyRef.current = `${ref.generation}:${ref.ordinal}`;
+                  requestDetail(ref, true);
+                }
               }}
               onClose={() => {
                 finishCancelled('detail', clientRef.current.cancel('detail'));

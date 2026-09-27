@@ -322,14 +322,23 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending,
         error: undefined,
       };
-    case 'PROBLEMS':
+    case 'PROBLEMS': {
       if (state.invalidationReason !== undefined) return { ...state, pending };
+      const observedProblemRecords = message.payload.observedProblemRecords;
+      const currentProblemRecords = state.summary?.problemRecords ?? '0';
+      const problemRecords = BigInt(observedProblemRecords) > BigInt(currentProblemRecords)
+        ? observedProblemRecords
+        : currentProblemRecords;
       return {
         ...state,
         problems: message.payload,
+        summary: state.summary
+          ? { ...state.summary, problemRecords }
+          : state.summary,
         pending,
         error: undefined,
       };
+    }
     case 'SCHEMA':
       if (state.invalidationReason !== undefined) return { ...state, pending };
       return {

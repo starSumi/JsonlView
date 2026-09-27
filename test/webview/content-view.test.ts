@@ -93,7 +93,7 @@ describe('bounded event content renderer', () => {
   it('only closes a fenced block with a matching marker of sufficient length', () => {
     const source = '````python\nprint("still code")\n~~~\n````';
     const markup = renderToStaticMarkup(React.createElement(ContentView, { text: source }));
-    expect(markup).toContain('print(');
+    expect(markup).toMatch(/code-token-function">print<\/span>\(/);
     expect(markup).toContain('code-token-string');
     expect(markup).toContain('&quot;still code&quot;');
     expect(markup).toContain('~~~');
