@@ -47,7 +47,7 @@ agent events, telemetry, and aggregate analysis.
 
 ### Performance snapshot - synthetic 100k-record workload
 
-![Local engine benchmark on a synthetic 100,000-record mixed-agent JSONL fixture: median open 5.5 ms, first 100 rows 28.7 ms, complete indexing 124.4 ms, reverse page 9.9 ms, and 84.6 MiB maximum checkpoint RSS](docs/assets/performance-snapshot.svg)
+![Local engine benchmark on a synthetic 100,000-record mixed-agent JSONL fixture: median open 5.5 ms, first 100 rows 28.7 ms, complete indexing 124.4 ms, reverse page 9.9 ms, and 84.6 MiB maximum checkpoint RSS](docs/assets/performance-snapshot.png)
 
 Seven sequential runs on Windows 11, Node 24.15.0, and an Intel Core i5-1235U
 used a 47.2 MB synthetic mixed-profile fixture with the native scanner and

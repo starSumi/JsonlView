@@ -13,6 +13,7 @@
   Python, Rust, and SQL; recognize explicit `apply_patch` envelopes and highlight
   changed lines with their per-file language while preserving exact source text.
 - Add the Unified Diff `FileChange` screenshot to the product README examples.
+- Use a PNG for the performance showcase so VSIX packaging accepts the README image.
 
 ## 0.2.2 - 2026-09-26
 
