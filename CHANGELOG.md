@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 0.2.3 - 2026-09-28
+
 - Restore vertical scrolling in Problems and distinguish problem-page entries
   from distinct problem records observed during hydration.
 - Automatically request a bounded full-record load when an oversized record is
