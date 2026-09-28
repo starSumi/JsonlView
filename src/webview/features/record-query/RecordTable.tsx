@@ -84,12 +84,14 @@ export function RecordTable({
 
   useEffect(() => {
     if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
-  }, [selectedIndex, virtualizer]);
+  }, [selectedIndex, selectedOrdinal, virtualizer]);
 
   const selectIndex = (index: number): void => {
     if (loading) return;
     const row = rows[index];
-    if (row) onSelect(row.ref);
+    if (!row) return;
+    virtualizer.scrollToIndex(index, { align: 'auto' });
+    onSelect(row.ref);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {

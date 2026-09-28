@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-No changes yet.
+- Reveal the selected record after a page change even when its page-local index
+  stays the same, so returning to the first page does not retain a stale scroll
+  position.
+- Reveal keyboard-selected records even when the selection has not changed, so
+  Home returns to the first row after scrolling away from it.
 
 ## 0.2.3 - 2026-09-28
 
