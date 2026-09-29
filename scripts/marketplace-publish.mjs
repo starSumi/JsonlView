@@ -1,13 +1,15 @@
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { basename, dirname, resolve } from 'node:path';
+import { open, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { publishVSIX } from '@vscode/vsce';
 import { inspectVsixArchive } from './vsix-archive-integrity.mjs';
 import { normalizeMarketplaceUrl, pollGalleryVersion, queryGallery } from './marketplace-gallery.mjs';
+import { getExtensionTarget } from './release-targets.mjs';
+import { assertOutsideTree, assertPathsDoNotOverlap } from './path-boundary.mjs';
 
 const root = resolve(import.meta.dirname, '..');
-const DEFAULT_PUBLISHER = 'Sumi-Sophia';
-const DEFAULT_EXTENSION_NAME = 'jsonlview-data-studio';
+const MARKETPLACE_TARGET = getExtensionTarget('marketplace');
+const OFFICIAL_MARKETPLACE_URL = 'https://marketplace.visualstudio.com';
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_INTERVAL_MS = 10_000;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
@@ -18,34 +20,40 @@ if (isMainModule()) await main().catch((error) => {
 });
 
 export function parseArgs(args) {
+  if (process.env.JSONLVIEW_MARKETPLACE_PUBLISHER?.trim() && process.env.JSONLVIEW_MARKETPLACE_PUBLISHER.trim() !== MARKETPLACE_TARGET.publisher) {
+    throw new Error('JSONLVIEW_MARKETPLACE_PUBLISHER cannot override the pinned Marketplace identity');
+  }
+  if (process.env.JSONLVIEW_MARKETPLACE_EXTENSION_NAME?.trim() && process.env.JSONLVIEW_MARKETPLACE_EXTENSION_NAME.trim() !== MARKETPLACE_TARGET.name) {
+    throw new Error('JSONLVIEW_MARKETPLACE_EXTENSION_NAME cannot override the pinned Marketplace identity');
+  }
   const parsed = {
     mode: 'plan',
     vsix: undefined,
     provenance: undefined,
     preflight: undefined,
-    publisher: process.env.JSONLVIEW_MARKETPLACE_PUBLISHER?.trim() || DEFAULT_PUBLISHER,
-    extensionName: process.env.JSONLVIEW_MARKETPLACE_EXTENSION_NAME?.trim() || DEFAULT_EXTENSION_NAME,
-    marketplaceUrl: process.env.VSCE_MARKETPLACE_URL?.trim() || 'https://marketplace.visualstudio.com',
+    publisher: MARKETPLACE_TARGET.publisher,
+    extensionName: MARKETPLACE_TARGET.name,
+    marketplaceUrl: process.env.VSCE_MARKETPLACE_URL?.trim() || OFFICIAL_MARKETPLACE_URL,
     confirmTarget: undefined,
     out: undefined,
     timeoutMs: parseBoundedNumber(process.env.JSONLVIEW_MARKETPLACE_READBACK_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 5_000, 900_000),
     intervalMs: parseBoundedNumber(process.env.JSONLVIEW_MARKETPLACE_READBACK_INTERVAL_MS, DEFAULT_INTERVAL_MS, 1_000, 60_000),
   };
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
+  const options = args[0] === '--' ? args.slice(1) : args;
+  for (let index = 0; index < options.length; index += 1) {
+    const arg = options[index];
     if (arg === '--publish') parsed.mode = 'publish';
-    else if (arg === '--vsix') parsed.vsix = nextValue(args, ++index, arg);
-    else if (arg === '--provenance') parsed.provenance = nextValue(args, ++index, arg);
-    else if (arg === '--preflight') parsed.preflight = nextValue(args, ++index, arg);
-    else if (arg === '--publisher') parsed.publisher = nextValue(args, ++index, arg);
-    else if (arg === '--extension-name') parsed.extensionName = nextValue(args, ++index, arg);
-    else if (arg === '--marketplace-url') parsed.marketplaceUrl = nextValue(args, ++index, arg);
-    else if (arg === '--confirm-target') parsed.confirmTarget = nextValue(args, ++index, arg);
-    else if (arg === '--out') parsed.out = nextValue(args, ++index, arg);
-    else if (arg === '--timeout-ms') parsed.timeoutMs = parseBoundedNumber(nextValue(args, ++index, arg), DEFAULT_TIMEOUT_MS, 5_000, 900_000);
-    else if (arg === '--interval-ms') parsed.intervalMs = parseBoundedNumber(nextValue(args, ++index, arg), DEFAULT_INTERVAL_MS, 1_000, 60_000);
+    else if (arg === '--vsix') parsed.vsix = nextValue(options, ++index, arg);
+    else if (arg === '--provenance') parsed.provenance = nextValue(options, ++index, arg);
+    else if (arg === '--preflight') parsed.preflight = nextValue(options, ++index, arg);
+    else if (arg === '--publisher' || arg === '--extension-name') throw new Error('Marketplace identity is pinned in config/release-targets.json and cannot be overridden');
+    else if (arg === '--marketplace-url') parsed.marketplaceUrl = nextValue(options, ++index, arg);
+    else if (arg === '--confirm-target') parsed.confirmTarget = nextValue(options, ++index, arg);
+    else if (arg === '--out') parsed.out = nextValue(options, ++index, arg);
+    else if (arg === '--timeout-ms') parsed.timeoutMs = parseBoundedNumber(nextValue(options, ++index, arg), DEFAULT_TIMEOUT_MS, 5_000, 900_000);
+    else if (arg === '--interval-ms') parsed.intervalMs = parseBoundedNumber(nextValue(options, ++index, arg), DEFAULT_INTERVAL_MS, 1_000, 60_000);
     else if (arg === '--pat') throw new Error('PATs must come from VSCE_PAT, never from command-line arguments');
-    else if (arg === '--') continue;
+    else if (arg === '--') throw new Error('Unexpected argument separator');
     else throw new Error(`Unknown argument: ${arg}`);
   }
   if (parsed.vsix === undefined) throw new Error('--vsix <exact .vsix> is required');
@@ -53,7 +61,52 @@ export function parseArgs(args) {
   if (parsed.mode === 'publish' && (parsed.provenance === undefined || parsed.preflight === undefined)) {
     throw new Error('--publish requires both --provenance and --preflight');
   }
+  if (parsed.mode === 'publish' && parsed.out === undefined) {
+    throw new Error('--publish requires --out <new external report path>');
+  }
+  if (parsed.mode === 'publish' && normalizeMarketplaceUrl(parsed.marketplaceUrl) !== OFFICIAL_MARKETPLACE_URL) {
+    throw new Error('Marketplace publication readback requires the official Marketplace URL');
+  }
+  if (parsed.mode === 'publish' && process.env.VSCE_MARKETPLACE_URL !== undefined
+    && normalizeMarketplaceUrl(process.env.VSCE_MARKETPLACE_URL) !== OFFICIAL_MARKETPLACE_URL) {
+    throw new Error('VSCE_MARKETPLACE_URL must point to the official Marketplace before publication');
+  }
   return parsed;
+}
+
+export function planReady(options) {
+  return options.provenance !== undefined && options.preflight !== undefined
+    && normalizeMarketplaceUrl(options.marketplaceUrl) === OFFICIAL_MARKETPLACE_URL;
+}
+
+export function galleryReadbackStatus(versionPresent) {
+  return versionPresent ? 'version-visible-unverified' : 'ambiguous';
+}
+
+export async function postPublishReadback(report, options, poll = pollGalleryVersion) {
+  try {
+    const after = await poll({
+      marketplaceUrl: options.marketplaceUrl,
+      publisher: report.target.publisher,
+      name: report.target.extensionName,
+      version: report.target.version,
+      timeoutMs: options.timeoutMs,
+      intervalMs: options.intervalMs,
+    });
+    report.galleryAfter = buildGalleryStatus(after, report.target.version);
+    return {
+      status: galleryReadbackStatus(report.galleryAfter.versionPresent),
+      issues: report.galleryAfter.versionPresent
+        ? ['Public version visibility does not verify the uploaded artifact digest. Download and compare the registry artifact before confirming publication.']
+        : ['Publish returned, but the exact version was not visible before the readback deadline.'],
+    };
+  } catch (error) {
+    report.galleryReadbackError = safeError(error);
+    return {
+      status: 'ambiguous',
+      issues: ['Publish returned, but Gallery readback failed. Do not retry without inspecting the public Gallery and exact artifact.'],
+    };
+  }
 }
 
 export function buildTarget(publisher, extensionName, version) {
@@ -68,6 +121,9 @@ export function buildTarget(publisher, extensionName, version) {
 
 export function validateArchive(archive, target) {
   const issues = [];
+  if (target?.publisher !== MARKETPLACE_TARGET.publisher || target?.extensionName !== MARKETPLACE_TARGET.name || target?.extensionId !== MARKETPLACE_TARGET.publisher + '.' + MARKETPLACE_TARGET.name) {
+    issues.push('Marketplace target differs from pinned release identity');
+  }
   const identities = [archive?.identity?.package, archive?.identity?.vsixManifest];
   for (const [index, identity] of identities.entries()) {
     const label = index === 0 ? 'extension/package.json' : 'extension.vsixmanifest';
@@ -124,7 +180,11 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const marketplaceUrl = normalizeMarketplaceUrl(options.marketplaceUrl);
   const archivePath = resolve(options.vsix);
-  assertExternalPath(archivePath, 'VSIX');
+  const reportInputs = [archivePath,
+    ...(options.provenance === undefined ? [] : [resolve(options.provenance)]),
+    ...(options.preflight === undefined ? [] : [resolve(options.preflight)])];
+  if (options.out !== undefined) await assertReportOutput(options.out, reportInputs);
+  await assertOutsideTree(root, archivePath, 'VSIX');
   const archive = await inspectVsixArchive(archivePath);
   const target = buildTarget(options.publisher, options.extensionName, archive.identity.package.version);
   const report = {
@@ -137,50 +197,126 @@ async function main() {
     writeAttempted: false,
     retryPolicy: 'No automatic retry after a write error; query the public gallery and review the evidence first.',
   };
+  let reservedReport;
+  const finishReport = (status, issues) => finish(report, status, issues, options.out, reportInputs, reservedReport);
   if (options.provenance !== undefined) {
-    assertExternalPath(resolve(options.provenance), 'provenance');
+    await assertOutsideTree(root, resolve(options.provenance), 'provenance');
     report.preconditions.provenance = validateProvenance(await readJson(options.provenance), archive, target);
   }
   if (options.preflight !== undefined) {
-    assertExternalPath(resolve(options.preflight), 'preflight');
+    await assertOutsideTree(root, resolve(options.preflight), 'preflight');
     report.preconditions.preflight = validatePreflight(await readJson(options.preflight), archive, target);
   }
   const issues = Object.values(report.preconditions).flat();
-  if (issues.length > 0) return finish(report, 'blocked', issues, options.out);
+  if (issues.length > 0) return finishReport('blocked', issues);
+
+  if (options.mode === 'plan' && !planReady(options)) {
+    return finishReport('diagnostic', ['A release-ready plan requires the official Marketplace URL, provenance, and preflight evidence.']);
+  }
 
   const before = buildGalleryStatus(await queryGallery({ marketplaceUrl, publisher: target.publisher, name: target.extensionName }), target.version);
   report.galleryBefore = before;
-  if (before.versionPresent) return finish(report, 'already-present', ['The exact version already exists; public metadata cannot prove artifact digest, so no republish was attempted.'], options.out);
-  if (options.mode === 'plan') return finish(report, 'ready-for-authorization', [], options.out);
+  if (before.versionPresent) return finishReport('already-present', ['The exact version already exists; public metadata cannot prove artifact digest, so no republish was attempted.']);
+  if (options.mode === 'plan') return finishReport('ready-for-authorization', []);
   const pat = process.env.VSCE_PAT?.trim();
-  if (!pat) return finish(report, 'blocked', ['VSCE_PAT is required for --publish and is never accepted as a CLI argument.'], options.out);
-  if (options.confirmTarget !== target.confirmation) return finish(report, 'blocked', [`--confirm-target must exactly equal ${target.confirmation}`], options.out);
+  if (!pat) return finishReport('blocked', ['VSCE_PAT is required for --publish and is never accepted as a CLI argument.']);
+  if (options.confirmTarget !== target.confirmation) return finishReport('blocked', [`--confirm-target must exactly equal ${target.confirmation}`]);
 
-  report.writeAttempted = true;
+  let publishOutcome;
   try {
-    await publishVSIX(archivePath, { pat, skipDuplicate: false });
+    publishOutcome = await publishWithReservation(archivePath, pat, options.out, reportInputs, report);
+    reservedReport = publishOutcome.reportHandle;
   } catch (error) {
+    report.reportReservationError = safeError(error);
+    return finish(report, 'blocked', ['Report could not be reserved before publication; no upload was attempted.'], undefined);
+  }
+  if (publishOutcome.error !== undefined) {
     const observed = await safeQuery({ marketplaceUrl, publisher: target.publisher, name: target.extensionName, version: target.version });
     report.galleryAfterError = observed;
-    const status = observed?.versionPresent ? 'published-readback' : 'ambiguous';
-    return finish(report, status, [safeError(error).message], options.out);
+    const status = galleryReadbackStatus(observed?.versionPresent);
+    return finishReport(status, [safeError(publishOutcome.error).message, ...(observed?.versionPresent ? ['Public version visibility does not verify the uploaded artifact digest.'] : [])]);
   }
-  const after = await pollGalleryVersion({ marketplaceUrl, publisher: target.publisher, name: target.extensionName, version: target.version, timeoutMs: options.timeoutMs, intervalMs: options.intervalMs });
-  report.galleryAfter = buildGalleryStatus(after, target.version);
-  return finish(report, report.galleryAfter.versionPresent ? 'published-readback' : 'ambiguous', report.galleryAfter.versionPresent ? [] : ['Publish returned, but the exact version was not visible before the readback deadline.'], options.out);
+  report.writeReturned = true;
+  const readback = await postPublishReadback(report, { ...options, marketplaceUrl });
+  return finishReport(readback.status, readback.issues);
 }
 
-async function finish(report, status, issues, outputPath) {
-  const result = { ...report, status, ok: !['blocked', 'ambiguous'].includes(status), issues };
+export async function assertReportOutput(outputPath, inputPaths = []) {
+  const path = await assertOutsideTree(root, resolve(outputPath), 'report');
+  for (const inputPath of inputPaths) {
+    assertPathsDoNotOverlap(path, resolve(inputPath), 'Report output cannot overlap VSIX, provenance, or preflight input');
+  }
+  return path;
+}
+
+export async function reservePublishReport(outputPath, inputPaths, report) {
+  const path = await assertReportOutput(outputPath, inputPaths);
+  await mkdir(dirname(path), { recursive: true });
+  await assertReportOutput(path, inputPaths);
+  const handle = await open(path, 'wx');
+  try {
+    await writeReservedReport(handle, {
+      ...report,
+      status: 'write-outcome-unknown',
+      ok: false,
+      writeAttempted: true,
+      issues: ['An upload may have started. Inspect the public Gallery before any retry.'],
+    });
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+export async function publishWithReservation(archivePath, pat, outputPath, inputPaths, report, publish = publishVSIX) {
+  const reportHandle = await reservePublishReport(outputPath, inputPaths, report);
+  report.writeAttempted = true;
+  try {
+    await publish(archivePath, { pat, skipDuplicate: false });
+    return { reportHandle };
+  } catch (error) {
+    return { reportHandle, error };
+  }
+}
+
+export async function finish(report, status, issues, outputPath, inputPaths = [], reservedReport) {
+  const result = { ...report, status, ok: status === 'ready-for-authorization', issues };
   if (outputPath !== undefined) {
-    const path = resolve(outputPath);
-    assertExternalPath(path, 'report');
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+    try {
+      if (reservedReport !== undefined) {
+        try {
+          await writeReservedReport(reservedReport, result);
+        } finally {
+          await reservedReport.close();
+        }
+      } else {
+        const path = await assertReportOutput(outputPath, inputPaths);
+        await mkdir(dirname(path), { recursive: true });
+        await assertReportOutput(path, inputPaths);
+        await writeFile(path, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+      }
+    } catch (error) {
+      result.reportWriteError = safeError(error);
+      result.ok = false;
+      result.issues = [...result.issues, 'Report could not be saved; retain this terminal output and do not retry a write.'];
+    }
   }
   console.log(JSON.stringify(result, null, 2));
   if (!result.ok) process.exitCode = 1;
   return result;
+}
+
+async function writeReservedReport(handle, report) {
+  const contents = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  let written = 0;
+  while (written < contents.length) {
+    const result = await handle.write(contents, written, contents.length - written, written);
+    if (result.bytesWritten === 0) throw new Error('Report write made no progress');
+    written += result.bytesWritten;
+  }
+  await handle.truncate(contents.length);
+  await handle.sync();
 }
 
 async function safeQuery(input) {
@@ -196,13 +332,6 @@ async function readJson(path) {
     return JSON.parse(await readFile(resolve(path), 'utf8'));
   } catch (error) {
     throw new Error(`Cannot read JSON evidence ${basename(path)}: ${errorMessage(error)}`);
-  }
-}
-
-function assertExternalPath(path, label) {
-  const relativePath = relative(root, path);
-  if (relativePath === '' || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))) {
-    throw new Error(`${label} must be outside the product checkout`);
   }
 }
 
