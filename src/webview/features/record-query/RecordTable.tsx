@@ -33,6 +33,8 @@ export interface RecordTableProps {
   onColumnOrderChange: (order: string[]) => void;
 }
 
+const GRID_HEADER_HEIGHT = 30;
+
 export function RecordTable({
   rows,
   columns,
@@ -51,9 +53,12 @@ export function RecordTable({
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 30,
     overscan: 10,
+    scrollMargin: GRID_HEADER_HEIGHT,
+    scrollPaddingStart: GRID_HEADER_HEIGHT,
     getItemKey: (index) => rows[index]?.ref.ordinal ?? index,
   });
   const selectedIndex = rows.findIndex((row) => row.ref.ordinal === selectedOrdinal);
+  const selectedGeneration = rows[selectedIndex]?.ref.generation;
   const template = useMemo(() => columnGridTemplate(columns, columnWidths), [columnWidths, columns]);
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | undefined>(undefined);
   const dragColumnRef = useRef<string | undefined>(undefined);
@@ -84,7 +89,7 @@ export function RecordTable({
 
   useEffect(() => {
     if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
-  }, [selectedIndex, selectedOrdinal, virtualizer]);
+  }, [selectedIndex, selectedOrdinal, selectedGeneration, virtualizer]);
 
   const selectIndex = (index: number): void => {
     if (loading) return;
@@ -132,7 +137,7 @@ export function RecordTable({
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="data-grid-header" role="row" style={{ gridTemplateColumns: template }}>
+      <div className="data-grid-header" role="row" style={{ gridTemplateColumns: template, height: GRID_HEADER_HEIGHT }}>
         {columns.map((column) => (
           <div
             className="data-grid-heading"
@@ -238,7 +243,7 @@ export function RecordTable({
               aria-rowindex={item.index + 1}
               aria-selected={selected}
               key={row.ref.ordinal}
-              style={{ gridTemplateColumns: template, height: item.size, transform: `translateY(${item.start}px)` }}
+              style={{ gridTemplateColumns: template, height: item.size, transform: `translateY(${item.start - GRID_HEADER_HEIGHT}px)` }}
               onClick={() => { if (!loading) onSelect(row.ref); }}
               onDoubleClick={() => { if (!loading) onSelect(row.ref); }}
             >

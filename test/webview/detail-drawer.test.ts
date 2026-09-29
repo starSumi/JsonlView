@@ -22,6 +22,23 @@ function detail(parseState: RecordDetail['ref']['parseState'], rawComplete: bool
 }
 
 describe('detail drawer unavailable record states', () => {
+  it('shows a selected unavailable record instead of a loading drawer', () => {
+    const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
+      loading: false,
+      blockedOrdinal: '302',
+      activeTab: 'tree',
+      onTabChange: () => undefined,
+      onRequestFull: () => undefined,
+      onClose: () => undefined,
+    }));
+
+    expect(markup).toContain('Record #302 unavailable');
+    expect(markup).toContain('Select Rebuild');
+    expect(markup).not.toContain('Loading record');
+    expect(markup).not.toContain('aria-label="Detail views"');
+    expect(markup).toContain('aria-label="Close detail"');
+  });
+
   it('does not render a fake JSON tree when structured hydration is unavailable', () => {
     for (const parseState of ['oversized', 'invalid_json', 'blank', 'encoding_error'] as const) {
       const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
@@ -53,6 +70,44 @@ describe('detail drawer unavailable record states', () => {
     expect(markup).toContain('jsonlView.hydration.maxBytes');
     expect(markup).toContain('Show full record');
     expect(markup).toContain('jsonlView.hydration.fullMaxBytes');
+  });
+
+  it('does not offer a stale full-record request after destructive invalidation', () => {
+    const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
+      detail: detail('oversized', false),
+      loading: false,
+      readBlocked: true,
+      activeTab: 'tree',
+      onTabChange: () => undefined,
+      onRequestFull: () => undefined,
+      onClose: () => undefined,
+    }));
+
+    expect(markup).toContain('select Rebuild before requesting the full record');
+    expect(markup).not.toContain('Show full record');
+    expect(markup).toContain('cached detail from generation generation-1');
+    expect(markup).toContain('Copy cached snapshot preview (source changed)');
+  });
+
+  it('labels hydrated structured detail as an old snapshot while keeping it inspectable', () => {
+    const cached = detail('valid', true);
+    cached.value = { message: 'old content' };
+    cached.problems = [];
+    const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
+      detail: cached,
+      loading: false,
+      readBlocked: true,
+      activeTab: 'tree',
+      onTabChange: () => undefined,
+      onRequestFull: () => undefined,
+      onClose: () => undefined,
+    }));
+
+    expect(markup).toContain('Source changed. Showing cached detail from generation generation-1');
+    expect(markup).toContain('not the current file');
+    expect(markup).toContain('Copy uses this old snapshot');
+    expect(markup).toContain('Copy cached snapshot preview (source changed)');
+    expect(markup).toContain('role="tree"');
   });
 
   it('keeps a legitimate null JSON value in the structured tree', () => {

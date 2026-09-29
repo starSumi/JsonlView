@@ -57,6 +57,21 @@ current epoch (or the same epoch and generation); other responses must match the
 active epoch. Legacy envelopes without an epoch remain generation-bound for
 backward compatibility.
 
+With Follow off, a verified append keeps the old generation interactive for
+read-only row queries and detail hydration. In-flight reads stay correlated
+rather than being cancelled on each append hint. Each read rechecks the old
+byte range against its stable fingerprint; it never adopts new records until
+Rebuild.
+An append notice stays visible without blocking the workspace. Truncate,
+replace, delete, and unknown changes keep the existing page visible but block
+new disk reads; selecting another record displays an explicit unavailable
+state. Already-hydrated detail may remain visible as a read-only cached view;
+its drawer labels the old generation and makes clear that copying captures the
+old preview rather than current file content. Full-record hydration remains
+blocked until Rebuild. A destructive classification cannot be downgraded by a later append
+hint for the same generation; a transient unknown may recover after a verified
+append classification.
+
 ## Evidence
 
 `src/engine/jsonl-engine.ts`, `src/extension/` controllers, follow policy tests,
@@ -65,6 +80,11 @@ conservative: a positional file handle is not an immutable filesystem
 snapshot, so a moving writer is never silently treated as append-only. The
 large-file stable-resync path is explicitly a replacement snapshot, not an
 append claim; metadata races that cannot be reconciled remain `unknown`.
+Host mutation smoke uses a unique synthetic fixture created exclusively by
+that run and retains the original creation handle for append, truncate, and
+same-size rewrite. It never reopens a caller-provided path for writing. A
+replaced fixture path fails host identity checks rather than writing to the
+replacement inode; link count alone is not treated as a race-free guard.
 
 ## Boundary
 

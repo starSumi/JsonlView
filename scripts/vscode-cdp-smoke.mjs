@@ -1,17 +1,37 @@
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
+import { assertOutsideTree } from './path-boundary.mjs';
+import { createMutableSyntheticFixture } from './synthetic-cdp-fixture.mjs';
 
 const port = Number(process.argv[2] ?? '9337');
-const outputDirectory = resolve(process.argv[3] ?? artifactDirectory('cdp-smoke'));
+const outputBaseDirectory = resolve(process.argv[3] ?? artifactDirectory('cdp-smoke'));
 const inspectOnly = process.argv.includes('--inspect-only');
 const exercise = process.argv.includes('--exercise');
 const wide = process.argv.includes('--wide');
 const leaveInsights = process.argv.includes('--leave-insights');
-const followFileIndex = process.argv.indexOf('--follow-file');
-const followFile = followFileIndex >= 0 ? resolve(process.argv[followFileIndex + 1] ?? '') : undefined;
+const syntheticChangeIndex = process.argv.indexOf('--synthetic-change');
+const syntheticChange = syntheticChangeIndex === -1 ? undefined : process.argv[syntheticChangeIndex + 1];
+const settleMilliseconds = Number(process.env.JSONLVIEW_CDP_SETTLE_MS ?? '12000');
 const baseUrl = `http://127.0.0.1:${String(port)}`;
-let followUsed = false;
+
+if (!Number.isSafeInteger(settleMilliseconds) || settleMilliseconds < 0) {
+  throw new Error('JSONLVIEW_CDP_SETTLE_MS must be a non-negative safe integer.');
+}
+
+if (process.argv.some((argument) => ['--follow-file', '--append-file', '--change-file', '--change-kind'].includes(argument))) {
+  throw new Error('File mutation modes using a supplied path are disabled.');
+}
+if (syntheticChangeIndex !== -1 && !['append', 'truncate', 'rewrite'].includes(syntheticChange)) {
+  throw new Error('--synthetic-change requires append, truncate, or rewrite.');
+}
+await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
+await mkdir(outputBaseDirectory, { recursive: true });
+await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
+const outputDirectory = await mkdtemp(join(outputBaseDirectory, 'cdp-run-'));
+const ownedFixture = syntheticChange === undefined ? undefined
+  : await createMutableSyntheticFixture(outputDirectory, 250);
 
 class CdpClient {
   #nextId = 0;
@@ -281,69 +301,6 @@ async function inspectTarget(target, index) {
       exerciseResult = exercised.result.value;
     }
 
-    let followResult = null;
-    if (followFile && exerciseResult && !followUsed) {
-      followUsed = true;
-      const enabled = await client.send('Runtime.evaluate', {
-        expression: `(() => {
-          let inspected = document;
-          for (let depth = 0; depth < 3; depth += 1) {
-            const child = inspected.querySelector('iframe')?.contentDocument;
-            if (!child?.body) break;
-            inspected = child;
-          }
-          const input = inspected.querySelector('.follow-toggle input');
-          if (!input) return null;
-          if (!input.checked) input.click();
-          return {
-            checked: input.checked,
-            rowCount: inspected.querySelectorAll('.data-grid-row').length,
-            status: inspected.querySelector('.status-strip')?.innerText ?? '',
-          };
-        })()`,
-        returnByValue: true,
-      });
-      await delay(250);
-      await appendFile(followFile, `${JSON.stringify({
-        timestamp: new Date().toISOString(),
-        type: 'event_msg',
-        payload: { type: 'follow_smoke', message: 'appended during CDP smoke' },
-      })}\n`);
-      const sampled = await client.send('Runtime.evaluate', {
-        expression: `(async () => {
-          let inspected = document;
-          for (let depth = 0; depth < 3; depth += 1) {
-            const child = inspected.querySelector('iframe')?.contentDocument;
-            if (!child?.body) break;
-            inspected = child;
-          }
-          const view = inspected.defaultView;
-          const samples = [];
-          for (let attempt = 0; attempt < 120; attempt += 1) {
-            samples.push({
-              rowCount: inspected.querySelectorAll('.data-grid-row').length,
-              empty: Boolean(inspected.querySelector('.empty-state')),
-              busy: inspected.querySelector('.data-grid-scroll')?.getAttribute('aria-busy') ?? null,
-              status: inspected.querySelector('.status-strip')?.innerText ?? '',
-            });
-            await new Promise((resolveWait) => view.setTimeout(resolveWait, 25));
-          }
-          return {
-            samples: samples.length,
-            minimumRows: Math.min(...samples.map((sample) => sample.rowCount)),
-            maximumRows: Math.max(...samples.map((sample) => sample.rowCount)),
-            zeroRowSamples: samples.filter((sample) => sample.rowCount === 0).length,
-            emptyStateSamples: samples.filter((sample) => sample.empty).length,
-            busySamples: samples.filter((sample) => sample.busy === 'true').length,
-            finalStatus: samples.at(-1)?.status ?? '',
-          };
-        })()`,
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      followResult = { enabled: enabled.result.value, sampled: sampled.result.value };
-    }
-
     const evaluation = await client.send('Runtime.evaluate', {
       expression: `(() => {
         let inspected = document;
@@ -422,13 +379,12 @@ async function inspectTarget(target, index) {
     if (target.type === 'page') {
       const screenshot = await client.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
       screenshotPath = resolve(outputDirectory, `target-${String(index)}-${target.type}.png`);
-      await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+      await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'), { flag: 'wx' });
     }
     return {
       target: { id: target.id, type: target.type, title: target.title, url: target.url },
       inspection: evaluation.result.value,
       exercise: exerciseResult,
-      follow: followResult,
       screenshotPath,
     };
   } finally {
@@ -436,7 +392,59 @@ async function inspectTarget(target, index) {
   }
 }
 
-await mkdir(outputDirectory, { recursive: true });
+function isOwnedFixtureUri(uri, fixture) {
+  try {
+    return resolve(fileURLToPath(uri)).toLowerCase() === resolve(fixture).toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+async function sampleSyntheticView(target, action) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  await client.open();
+  try {
+    const sampled = await client.send('Runtime.evaluate', {
+      expression: `(() => {
+        let inspected = document;
+        for (let depth = 0; depth < 3; depth += 1) {
+          const child = inspected.querySelector('iframe')?.contentDocument;
+          if (!child?.body) break;
+          inspected = child;
+        }
+        if (!inspected.querySelector('.app-shell')) return null;
+        if (${JSON.stringify(action)} === 'select') inspected.querySelectorAll('.data-grid-row')[1]?.click();
+        if (${JSON.stringify(action)} === 'rebuild') {
+          (inspected.querySelector('.snapshot-update button')
+            ?? inspected.querySelector('.invalidated-banner button'))?.click();
+        }
+        return {
+          uri: inspected.body?.dataset.uri ?? null,
+          indexedRecords: Number.parseInt(inspected.querySelector('.status-records')?.textContent ?? '', 10),
+          pending: Boolean(inspected.querySelector('.snapshot-update')),
+          blocked: Boolean(inspected.querySelector('.invalidated-banner')),
+          detail: inspected.querySelector('.detail-drawer')?.innerText ?? null,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    return sampled.result.value;
+  } finally {
+    client.close();
+  }
+}
+
+async function waitForSyntheticView(target, predicate) {
+  let latest;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    latest = await sampleSyntheticView(target);
+    if (predicate(latest)) return latest;
+    await delay(100);
+  }
+  return latest;
+}
+
+try {
 const initialTargets = await targets();
 const workbench = initialTargets.find((target) => target.type === 'page' && target.url.includes('workbench.html'));
 if (!workbench) throw new Error('VS Code workbench target was not found.');
@@ -469,7 +477,23 @@ if (wide) {
   }
 }
 
-if (!inspectOnly) {
+if (ownedFixture) {
+  const workbenchClient = new CdpClient(workbench.webSocketDebuggerUrl);
+  await workbenchClient.open();
+  try {
+    await key(workbenchClient, 'Escape', 'Escape', 27);
+    await key(workbenchClient, 'p', 'KeyP', 80, 2);
+    await delay(350);
+    await workbenchClient.send('Input.insertText', { text: ownedFixture.fixture });
+    await delay(500);
+    await key(workbenchClient, 'Enter', 'Enter', 13);
+    await delay(900);
+  } finally {
+    workbenchClient.close();
+  }
+}
+
+if (!inspectOnly && !ownedFixture) {
   const workbenchClient = new CdpClient(workbench.webSocketDebuggerUrl);
   await workbenchClient.open();
   try {
@@ -483,14 +507,34 @@ if (!inspectOnly) {
     await delay(300);
     await key(workbenchClient, 'Escape', 'Escape', 27);
     await delay(250);
-    await delay(250);
-    const viewOpened = await clickElement(workbenchClient, `document.querySelector('.menubar-menu-button[aria-label="View"]')`);
-    if (!viewOpened) throw new Error('VS Code View menu was not visible.');
-    await delay(300);
-    const paletteOpened = await clickElement(workbenchClient, `[
-      ...document.querySelectorAll('.monaco-menu .action-menu-item')
-    ].find((candidate) => candidate.textContent?.includes('Command Palette'))`);
-    if (!paletteOpened) throw new Error('VS Code Command Palette menu item was not visible.');
+    let paletteOpened = false;
+    for (let attempt = 0; attempt < 20 && !paletteOpened; attempt += 1) {
+      await key(workbenchClient, 'P', 'KeyP', 80, 2 | 8);
+      await delay(250);
+      const paletteState = await workbenchClient.send('Runtime.evaluate', {
+        expression: `(() => {
+          const element = document.querySelector('.quick-input-widget');
+          const rect = element?.getBoundingClientRect();
+          return Boolean(rect && rect.width > 0 && rect.height > 0);
+        })()`,
+        returnByValue: true,
+      });
+      paletteOpened = paletteState.result.value === true;
+      if (!paletteOpened) await key(workbenchClient, 'Escape', 'Escape', 27);
+      if (!paletteOpened) await delay(250);
+    }
+    if (!paletteOpened) {
+      for (let attempt = 0; attempt < 20 && !paletteOpened; attempt += 1) {
+        await key(workbenchClient, 'Escape', 'Escape', 27);
+        await clickElement(workbenchClient, `document.querySelector('.menubar-menu-button[aria-label="View"]')`);
+        await delay(300);
+        paletteOpened = await clickElement(workbenchClient, `[
+          ...document.querySelectorAll('.monaco-menu .action-menu-item')
+        ].find((candidate) => candidate.textContent?.includes('Command Palette'))`);
+        if (!paletteOpened) await delay(250);
+      }
+    }
+    if (!paletteOpened) throw new Error('VS Code Command Palette was not visible.');
     await delay(500);
     await workbenchClient.send('Input.insertText', { text: 'JsonlView: Open as Data Studio' });
     await delay(500);
@@ -503,7 +547,7 @@ if (!inspectOnly) {
   }
 }
 
-await delay(12_000);
+await delay(settleMilliseconds);
 const currentTargets = await targets();
 const inspectable = currentTargets.filter((target) =>
   target.webSocketDebuggerUrl
@@ -517,10 +561,52 @@ for (let index = 0; index < inspectable.length; index += 1) {
   inspections.push(await inspectTarget(inspectable[index], index));
 }
 
+let changeResult = null;
+if (ownedFixture) {
+  const inspectedFixture = inspections.find((entry) =>
+    isOwnedFixtureUri(entry.inspection?.bodyDataset?.uri, ownedFixture.fixture));
+  if (!inspectedFixture) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
+  const target = inspectable.find((entry) => entry.id === inspectedFixture.target.id);
+  const before = await waitForSyntheticView(target, (sample) => sample?.indexedRecords === 250);
+  if (before?.indexedRecords !== 250 || before.pending || before.blocked) {
+    throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
+  }
+  await ownedFixture.change(syntheticChange);
+  const after = await waitForSyntheticView(target, (sample) =>
+    syntheticChange === 'append' ? sample?.pending === true : sample?.blocked === true);
+  await sampleSyntheticView(target, 'select');
+  await delay(350);
+  const selected = await sampleSyntheticView(target);
+  if (after?.pending || after?.blocked) await sampleSyntheticView(target, 'rebuild');
+  const expectedRows = syntheticChange === 'append' ? 251 : syntheticChange === 'truncate' ? 0 : 250;
+  const rebuilt = await waitForSyntheticView(target, (sample) =>
+    sample?.indexedRecords === expectedRows && !sample.pending && !sample.blocked);
+  const selectedCorrectly = syntheticChange === 'append'
+    ? selected?.detail?.includes('Record #1') && !selected.detail.includes('unavailable')
+    : selected?.detail?.includes('Record #1 unavailable');
+  changeResult = {
+    kind: syntheticChange,
+    fixture: ownedFixture.fixture,
+    before,
+    after,
+    selected,
+    rebuilt,
+    pass: before.indexedRecords === 250 && after?.indexedRecords === 250
+      && (syntheticChange === 'append' ? after.pending && !after.blocked : after.blocked)
+      && selectedCorrectly && rebuilt?.indexedRecords === expectedRows && !rebuilt.pending && !rebuilt.blocked,
+  };
+}
+
 const result = {
   port,
+  outputDirectory,
   targetCount: currentTargets.length,
   inspections,
+  ...(changeResult === null ? {} : { change: changeResult }),
 };
-await writeFile(resolve(outputDirectory, 'result.json'), JSON.stringify(result, null, 2));
+await writeFile(resolve(outputDirectory, 'result.json'), JSON.stringify(result, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(result, null, 2));
+if (changeResult !== null && !changeResult.pass) process.exitCode = 1;
+} finally {
+  await ownedFixture?.close();
+}

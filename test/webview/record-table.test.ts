@@ -1,6 +1,7 @@
 import type React from 'react';
 import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { RowProjection } from '../../src/shared/types';
 import { RecordTable, type RecordTableProps } from '../../src/webview/features/record-query/RecordTable';
 
@@ -10,7 +11,7 @@ const virtualizer = vi.hoisted(() => ({
   getVirtualItems: () => [],
 }));
 
-vi.mock('@tanstack/react-virtual', () => ({ useVirtualizer: () => virtualizer }));
+vi.mock('@tanstack/react-virtual', () => ({ useVirtualizer: vi.fn(() => virtualizer) }));
 vi.mock('react', async (importOriginal) => ({
   ...await importOriginal<typeof import('react')>(),
   useEffect: vi.fn(),
@@ -40,6 +41,14 @@ function render(overrides: Partial<RecordTableProps> = {}) {
 describe('record table selection visibility', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('accounts for the sticky header in virtual rows and scroll targets', () => {
+    render();
+    expect(vi.mocked(useVirtualizer)).toHaveBeenCalledWith(expect.objectContaining({
+      scrollMargin: 30,
+      scrollPaddingStart: 30,
+    }));
+  });
+
   it('reveals a different physical record at the same page-local index', () => {
     const { rows } = render();
     const previousDependencies = vi.mocked(useEffect).mock.calls.at(-1)![1];
@@ -50,6 +59,20 @@ describe('record table selection visibility', () => {
     const [reveal, nextDependencies] = vi.mocked(useEffect).mock.calls.at(-1)!;
     expect(nextDependencies).not.toEqual(previousDependencies);
     expect(nextDependencies).toContain('20');
+    reveal();
+    expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
+  });
+
+  it('reveals a replacement generation at the same ordinal and index', () => {
+    const { rows } = render();
+    const previousDependencies = vi.mocked(useEffect).mock.calls.at(-1)![1];
+    const replacementRows = rows.map((row) => ({
+      ...row, ref: { ...row.ref, generation: 'g2' },
+    }));
+    render({ rows: replacementRows });
+    const [reveal, nextDependencies] = vi.mocked(useEffect).mock.calls.at(-1)!;
+    expect(nextDependencies).not.toEqual(previousDependencies);
+    expect(nextDependencies).toContain('g2');
     reveal();
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });

@@ -58,34 +58,43 @@ select:focus-visible,
   width: 100%;
   height: 100%;
   min-width: 0;
+  container: workspace / inline-size;
   background: var(--vscode-editor-background);
 }
 
-.toolbar {
+.workspace-header {
   z-index: 6;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  min-height: 42px;
-  padding: 6px 10px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 4px 10px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
 }
 
-.toolbar-identity {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 120px;
-  max-width: 240px;
-  font-weight: 600;
+.toolbar {
+  display: contents;
 }
 
-.toolbar-identity span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.toolbar-context {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+}
+
+.toolbar-context-mark {
+  padding: 1px 5px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 16px;
 }
 
 .compact-field {
@@ -97,34 +106,39 @@ select:focus-visible,
 }
 
 .profile-field {
-  align-items: flex-start;
+  align-items: center;
+  min-width: 0;
 }
 
 .profile-label {
-  padding-top: 6px;
+  padding-top: 0;
 }
 
 .profile-control {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 5px;
   min-width: 0;
 }
 
 .profile-suggestion {
-  display: block;
-  max-width: 150px;
+  display: inline-flex;
+  align-items: center;
+  max-width: 72px;
   overflow: hidden;
+  padding: 0 4px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
   color: var(--vscode-descriptionForeground);
   font-size: 10px;
-  line-height: 14px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .compact-field select {
   width: 150px;
-  height: 28px;
+  height: 26px;
   padding: 0 24px 0 7px;
   border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border));
   border-radius: 3px;
@@ -136,7 +150,7 @@ select:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: 26px;
   color: var(--vscode-foreground);
   white-space: nowrap;
 }
@@ -156,7 +170,7 @@ select:focus-visible,
   gap: 6px;
   min-width: 160px;
   max-width: 560px;
-  height: 28px;
+  height: 26px;
   padding: 0 6px;
   border: 1px solid var(--vscode-input-border, transparent);
   border-radius: 3px;
@@ -341,33 +355,20 @@ select:focus-visible,
 
 .status-strip {
   display: flex;
-  flex: 0 0 28px;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--vscode-panel-border);
   color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .status-strip > span {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   white-space: nowrap;
-}
-
-.status-file {
-  min-width: 80px;
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.status-file svg {
-  flex: 0 0 auto;
 }
 
 .status-valid {
@@ -384,12 +385,33 @@ select:focus-visible,
   font-weight: 400;
 }
 
-.status-spacer {
-  flex: 1;
-}
-
 .status-phase {
   text-transform: capitalize;
+}
+
+.snapshot-update {
+  padding: 1px 6px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 12px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.snapshot-update-compact {
+  display: none;
+}
+
+.snapshot-update button {
+  min-height: 24px;
+  padding: 0 2px;
+  border: 0;
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+  cursor: pointer;
+}
+
+.snapshot-update button:hover {
+  text-decoration: underline;
 }
 
 .progress-track {
@@ -458,7 +480,7 @@ select:focus-visible,
 .workspace-tabs,
 .detail-tabs {
   display: flex;
-  flex: 0 0 34px;
+  flex: 0 0 32px;
   align-items: stretch;
   gap: 2px;
   padding: 0 8px;
@@ -594,7 +616,6 @@ body.is-resizing-detail {
   position: sticky;
   z-index: 4;
   top: 0;
-  height: 30px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
 }
@@ -1092,6 +1113,14 @@ body.is-resizing-column * {
 .detail-subtitle {
   margin-top: 3px;
   color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.detail-stale {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-editorWarning-foreground);
+  background: var(--vscode-textBlockQuote-background, transparent);
   font-size: 11px;
 }
 
@@ -2380,35 +2409,9 @@ body.is-resizing-column * {
     display: none;
   }
 
-  .status-strip > span:nth-of-type(4),
-  .status-strip > span:nth-of-type(5) {
-    display: none;
-  }
 }
 
 @media (max-width: 680px) {
-  .toolbar {
-    flex-wrap: wrap;
-  }
-
-  .toolbar-identity {
-    max-width: 180px;
-  }
-
-  .profile-label,
-  .profile-suggestion,
-  .status-strip > span:nth-of-type(2),
-  .status-strip > span:nth-of-type(3),
-  .progress-track {
-    display: none;
-  }
-
-  .search-box {
-    order: 4;
-    flex-basis: calc(100% - 16px);
-    max-width: none;
-  }
-
   .workspace-tabs {
     overflow-x: auto;
   }
@@ -2420,5 +2423,93 @@ body.is-resizing-column * {
 
   .detail-drawer {
     width: 100%;
+  }
+}
+
+@container workspace (max-width: 1250px) {
+  .profile-suggestion,
+  .status-strip > .status-valid,
+  .status-strip > .progress-track {
+    display: none;
+  }
+}
+
+@container workspace (max-width: 1050px) {
+  .toolbar-context,
+  .profile-label,
+  .status-strip > .status-bytes {
+    display: none;
+  }
+
+  .compact-field select {
+    width: 132px;
+  }
+}
+
+@container workspace (max-width: 720px) {
+  .workspace-header {
+    flex-wrap: wrap;
+    column-gap: 6px;
+    row-gap: 4px;
+    padding: 4px 8px;
+  }
+
+  .workspace-header::before {
+    order: 1;
+    flex-basis: 100%;
+    height: 0;
+    content: '';
+  }
+
+  .toolbar > .search-box {
+    order: 2;
+    flex: 1 1 160px;
+    max-width: none;
+  }
+
+  .status-strip {
+    order: 3;
+    gap: 6px;
+  }
+
+  .status-problems .status-scope {
+    display: none;
+  }
+}
+
+@container workspace (max-width: 520px) {
+  .profile-field {
+    flex: 0 1 116px;
+  }
+
+  .profile-control,
+  .profile-control select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .follow-toggle {
+    justify-content: center;
+    min-width: 28px;
+  }
+
+  .follow-toggle span,
+  .status-phase[data-complete='true'],
+  .status-problems[data-empty='true'] {
+    display: none;
+  }
+
+  .toolbar > .search-box {
+    min-width: 120px;
+  }
+}
+
+@container workspace (max-width: 460px) {
+  .snapshot-update-label {
+    display: none;
+  }
+
+  .snapshot-update-compact {
+    display: inline;
   }
 }

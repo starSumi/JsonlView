@@ -4,11 +4,8 @@ import {
   AlertTriangle,
   BarChart3,
   Braces,
-  Check,
   CircleAlert,
   Columns3,
-  FileJson2,
-  LoaderCircle,
   RefreshCw,
   Table2,
   ArrowDownUp,
@@ -29,7 +26,7 @@ import {
 } from './full-record-intent';
 import { deferIdle } from './idle';
 import { InsightsView } from './insights-view';
-import { formatBytes, visibleColumns } from './format';
+import { visibleColumns } from './format';
 import {
   buildRecordQueryRequest,
   canRequestSortedPage,
@@ -58,8 +55,11 @@ import {
 import { VsCodeMessageClient } from './protocol-client';
 import { profileOptionList } from './profile-options';
 import { parseFilterLiteral, predicateForFilter } from './query';
+import { WorkspaceHeader } from './workspace-header';
 import {
+  canReadSnapshot,
   createInitialState,
+  nextInvalidationReason,
   reconcileProfileQueryState,
   selectProblems,
   selectTimelineRows,
@@ -165,59 +165,6 @@ function bodySession(): { documentId: string; generation: string; epoch?: number
       ? { epoch: parsedEpoch }
       : {}),
   };
-}
-
-function fileLabel(uri: string | undefined): string {
-  if (!uri) return 'JSONL document';
-  try {
-    const parsed = new URL(uri);
-    const path = decodeURIComponent(parsed.pathname);
-    return path.split('/').filter(Boolean).at(-1) ?? uri;
-  } catch {
-    return uri.split(/[\\/]/).at(-1) ?? uri;
-  }
-}
-
-interface StatusStripProps {
-  filename: string;
-  indexedBytes: string;
-  sizeBytes: string;
-  indexedRecords: string;
-  validRecords: string;
-  problemRecords: string;
-  complete: boolean;
-  phase: string;
-}
-
-function StatusStrip(props: StatusStripProps): React.JSX.Element {
-  const indexed = Number(props.indexedBytes);
-  const size = Number(props.sizeBytes);
-  const progress = size > 0 && Number.isFinite(indexed) ? Math.min(100, (indexed / size) * 100) : 0;
-  return (
-    <div className="status-strip" role="status" aria-live="polite">
-      <span className="status-file" title={props.filename}><FileJson2 size={14} aria-hidden />{props.filename}</span>
-      <span>{props.indexedRecords} rows</span>
-      <span>{formatBytes(props.indexedBytes)} / {formatBytes(props.sizeBytes)}</span>
-      <span className="status-valid"><Check size={13} aria-hidden />{props.validRecords}</span>
-      <span
-        className={props.problemRecords === '0' ? '' : 'status-problem'}
-        title="Problem records observed during hydration for this document generation; this is not a complete-file total"
-        aria-label={`${props.problemRecords} problem records observed during hydration; not a complete-file total`}
-      >
-        <CircleAlert size={13} aria-hidden />
-        <span>{props.problemRecords}</span>
-        <span className="status-scope">{props.problemRecords === '1' ? 'record' : 'records'} observed</span>
-      </span>
-      <span className="status-spacer" />
-      <span className="status-phase">
-        {!props.complete ? <LoaderCircle size={13} className="spin" aria-hidden /> : null}
-        {props.phase}
-      </span>
-      <span className="progress-track" aria-label={`${progress.toFixed(0)}% indexed`}>
-        <span style={{ width: `${progress}%` }} />
-      </span>
-    </div>
-  );
 }
 
 const tabs: Array<{
@@ -343,7 +290,7 @@ export function App(): React.JSX.Element {
   ): void => {
     const client = clientRef.current;
     if (
-      invalidationRef.current !== undefined
+      !canReadSnapshot(invalidationRef.current)
       && metadata.allowWhileInvalidated !== true
     ) return;
     if (metadata.restoreAfterRebuild !== true && metadata.supersedesRestore !== false) {
@@ -417,7 +364,7 @@ export function App(): React.JSX.Element {
   }, []);
 
   const requestSchema = useCallback((): void => {
-    if (invalidationRef.current !== undefined) return;
+    if (!canReadSnapshot(invalidationRef.current)) return;
     const client = clientRef.current;
     finishCancelled('schema', client.cancel('schema'));
     const request = client.send('GET_SCHEMA', { offset: 0, limit: SCHEMA_PAGE_SIZE });
@@ -428,7 +375,7 @@ export function App(): React.JSX.Element {
     anchorOrdinal?: string;
     direction?: 'forward' | 'backward';
   }): void => {
-    if (invalidationRef.current !== undefined) return;
+    if (!canReadSnapshot(invalidationRef.current)) return;
     const client = clientRef.current;
     finishCancelled('problems', client.cancel('problems'));
     const request = client.send('GET_PROBLEMS', {
@@ -443,7 +390,7 @@ export function App(): React.JSX.Element {
     dimension?: InsightDimension;
     query?: string;
   }): void => {
-    if (invalidationRef.current !== undefined) return;
+    if (!canReadSnapshot(invalidationRef.current)) return;
     const client = clientRef.current;
     finishCancelled('insights', client.cancel('insights'));
     const dimension = options?.dimension ?? stateRef.current.insightDimension;
@@ -456,10 +403,10 @@ export function App(): React.JSX.Element {
   }, [finishCancelled]);
 
   const requestDetail = useCallback((ref: RecordRef, full = false): void => {
-    if (invalidationRef.current !== undefined) return;
     const client = clientRef.current;
     finishCancelled('detail', client.cancel('detail'));
     dispatch({ type: 'SELECT_ROW', ordinal: ref.ordinal });
+    if (!canReadSnapshot(invalidationRef.current)) return;
     const request = client.send('GET_DETAIL', { ref, ...(full ? { full: true } : {}) });
     dispatch({ type: 'REQUEST_SENT', request });
   }, [finishCancelled]);
@@ -558,7 +505,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (
-      state.invalidationReason === undefined
+      canReadSnapshot(state.invalidationReason)
       && state.activeTab === 'problems'
       && state.summary
       && !state.problems
@@ -591,7 +538,7 @@ export function App(): React.JSX.Element {
         // Set the barrier before any cancellation dispatch. React state is
         // asynchronous, while message handlers can be re-entered by a
         // synchronous control event in the same turn.
-        invalidationRef.current = message.payload.reason;
+        invalidationRef.current = nextInvalidationReason(invalidationRef.current, message.payload.reason);
       } else if (message.type === 'OPENED' && openedGenerationChanged) {
         // Only a genuinely new snapshot can clear the stale-source barrier.
         // Same-generation OPENED broadcasts must remain blocked.
@@ -625,6 +572,14 @@ export function App(): React.JSX.Element {
       }
 
       if (message.type === 'SOURCE_INVALIDATED') {
+        if (invalidationRef.current === 'append') {
+          for (const kind of ['profile', 'follow'] as const) {
+            finishCancelled(kind, clientRef.current.cancel(kind));
+          }
+          dispatch({ type: 'MESSAGE_RECEIVED', message });
+          return;
+        }
+        dispatch({ type: 'MESSAGE_RECEIVED', message });
         // Stop all work against the stale generation, but leave the saved
         // viewport cursor intact so the next explicit rebuild can restore it.
         pageInputFocusedRef.current = false;
@@ -637,10 +592,9 @@ export function App(): React.JSX.Element {
         // The in-flight rebuild belongs to the invalidated generation. Do not
         // let its captured page/query intent survive a second source change.
         rebuildViewportRef.current = undefined;
-        for (const kind of ['rows', 'detail', 'schema', 'insights', 'profile', 'follow'] as const) {
+        for (const kind of ['rows', 'problems', 'detail', 'schema', 'insights', 'profile', 'follow'] as const) {
           finishCancelled(kind, clientRef.current.cancel(kind));
         }
-        dispatch({ type: 'MESSAGE_RECEIVED', message });
         return;
       }
 
@@ -1006,7 +960,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (
-      state.invalidationReason === undefined
+      canReadSnapshot(state.invalidationReason)
       && state.activeTab === 'schema'
       && state.summary
       && state.schema.length === 0
@@ -1018,7 +972,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (
-      state.invalidationReason === undefined
+      canReadSnapshot(state.invalidationReason)
       && state.activeTab === 'insights'
       && state.summary
       && !state.insights
@@ -1033,7 +987,9 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && (stateRef.current.detail || stateRef.current.pending.detail)) {
+      if (event.key === 'Escape' && (
+        stateRef.current.detail || stateRef.current.pending.detail || stateRef.current.blockedDetailOrdinal
+      )) {
         finishCancelled('detail', clientRef.current.cancel('detail'));
         dispatch({ type: 'CLOSE_DETAIL' });
       }
@@ -1064,7 +1020,7 @@ export function App(): React.JSX.Element {
       ...problem,
       ...(problem.ref?.ordinal === undefined ? {} : { ordinal: problem.ref.ordinal }),
     }));
-  const drawerOpen = Boolean(state.detail || state.pending.detail);
+  const drawerOpen = Boolean(state.detail || state.pending.detail || state.blockedDetailOrdinal);
 
   useEffect(() => {
     const detail = state.detail;
@@ -1073,8 +1029,8 @@ export function App(): React.JSX.Element {
       return;
     }
     if (
-      state.invalidationReason !== undefined
-      || invalidationRef.current !== undefined
+      !canReadSnapshot(state.invalidationReason)
+      || !canReadSnapshot(invalidationRef.current)
       || !shouldAutomaticallyHydrateSelectedRecord(
         detail,
         state.selectedOrdinal,
@@ -1091,7 +1047,6 @@ export function App(): React.JSX.Element {
     requestDetail(detail.ref, true);
   }, [drawerOpen, requestDetail, state.detail, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
 
-  const filename = fileLabel(summary?.snapshot.uri ?? document.body.dataset.uri);
   const workspaceWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
   const displayedDetailWidth = workspaceWidth > 900
     ? clampDetailWidth(state.detailWidth, workspaceWidth)
@@ -1248,7 +1203,7 @@ export function App(): React.JSX.Element {
   const jumpToPage = (): void => {
     // Do not normalize or clear a draft while the source barrier is active;
     // the disabled field may still dispatch a trailing blur event.
-    if (invalidationRef.current !== undefined) return;
+    if (!canReadSnapshot(invalidationRef.current)) return;
     // Focus/blur is not a navigation intent. This is important for a partial
     // sorted page whose display page can still be "1" at offsets such as 3.
     if (!pageInputDirtyRef.current) return;
@@ -1369,15 +1324,26 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="app-shell">
-      <header className="toolbar">
-        <div className="toolbar-identity" title={summary?.snapshot.uri ?? filename}>
-          <FileJson2 size={16} aria-hidden />
-          <span>{filename}</span>
+      <WorkspaceHeader
+        indexedBytes={summary?.indexedBytes ?? '0'}
+        sizeBytes={summary?.snapshot.sizeBytes ?? '0'}
+        indexedRecords={summary?.indexedRecords ?? '0'}
+        validRecords={summary?.validRecords ?? '0'}
+        problemRecords={summary?.problemRecords ?? '0'}
+        complete={summary?.indexingComplete ?? false}
+        phase={state.invalidationReason === 'append' ? 'snapshot' : state.phase}
+        appendPending={state.invalidationReason === 'append'}
+        rebuildBusy={Boolean(state.pending.rebuild)}
+        onRebuild={rebuild}
+      >
+        <div className="toolbar-context" title="File identity is provided by the VS Code editor tab" aria-label="JSONL workspace">
+          <span className="toolbar-context-mark" aria-hidden>JSONL</span>
         </div>
         <label className="compact-field profile-field">
           <span className="profile-label">Profile</span>
           <span className="profile-control">
             <select
+              aria-label="Profile"
               value={summary?.profileId ?? 'generic'}
               disabled={!summary || state.invalidationReason !== undefined || Boolean(state.pending.profile)}
               onChange={(event) => setProfile(event.target.value)}
@@ -1387,14 +1353,20 @@ export function App(): React.JSX.Element {
               ))}
             </select>
             {profileOptions.suggested ? (
-              <span className="profile-suggestion" title={`Suggested for this file: ${profileOptions.suggested.displayName}`}>
-                Suggested for this file: {profileOptions.suggested.displayName}
+              <span
+                className="profile-suggestion"
+                role="note"
+                title={`Suggested for this file: ${profileOptions.suggested.displayName}`}
+                aria-label={`Suggested profile: ${profileOptions.suggested.displayName}`}
+              >
+                Suggested
               </span>
             ) : null}
           </span>
         </label>
         <label className="follow-toggle" title="Follow appended records">
             <input
+              aria-label="Follow appended records"
               type="checkbox"
               checked={state.followMode}
               disabled={!summary || state.invalidationReason !== undefined || Boolean(state.pending.follow)}
@@ -1404,7 +1376,7 @@ export function App(): React.JSX.Element {
         </label>
         <RecordQueryControls
           query={state.query}
-          searchDisabled={!summary || state.invalidationReason !== undefined}
+          searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
           onSearchSubmit={() => {
             const query = queryRef.current;
             if (state.activeTab === 'insights') requestInsights({ query });
@@ -1449,16 +1421,18 @@ export function App(): React.JSX.Element {
           onFilterSubmit={submitStructuredFilter}
           onFilterClear={() => applyFilter(undefined)}
         />
-        <button
-          type="button"
-          className="icon-button"
-          title="Rebuild index"
-          aria-label="Rebuild index"
-          disabled={!summary || Boolean(state.pending.rebuild)}
-          onClick={rebuild}
-        >
-          <RefreshCw size={15} className={state.pending.rebuild ? 'spin' : ''} aria-hidden />
-        </button>
+        {state.invalidationReason === undefined ? (
+          <button
+            type="button"
+            className="icon-button rebuild-action"
+            title="Rebuild index"
+            aria-label="Rebuild index"
+            disabled={!summary || Boolean(state.pending.rebuild)}
+            onClick={rebuild}
+          >
+            <RefreshCw size={15} className={state.pending.rebuild ? 'spin' : ''} aria-hidden />
+          </button>
+        ) : null}
         <details className="columns-menu">
           <summary className="icon-button" title="Choose columns" aria-label="Choose columns">
             <Columns3 size={15} aria-hidden />
@@ -1481,24 +1455,13 @@ export function App(): React.JSX.Element {
             ))}
           </div>
         </details>
-      </header>
+      </WorkspaceHeader>
 
-      <StatusStrip
-        filename={filename}
-        indexedBytes={summary?.indexedBytes ?? '0'}
-        sizeBytes={summary?.snapshot.sizeBytes ?? '0'}
-        indexedRecords={summary?.indexedRecords ?? '0'}
-        validRecords={summary?.validRecords ?? '0'}
-        problemRecords={summary?.problemRecords ?? '0'}
-        complete={summary?.indexingComplete ?? false}
-        phase={state.phase}
-      />
-
-      {state.invalidationReason !== undefined ? (
+      {state.invalidationReason !== undefined && state.invalidationReason !== 'append' ? (
         <div className="workspace-banner invalidated-banner" role="alert">
           <AlertTriangle size={15} aria-hidden />
           <span>Source changed ({state.invalidationReason ?? 'unknown'}). This view is a stale snapshot.</span>
-          <button type="button" onClick={rebuild}><RefreshCw size={14} aria-hidden />Rebuild</button>
+          <button type="button" disabled={Boolean(state.pending.rebuild)} onClick={rebuild}><RefreshCw size={14} aria-hidden />Rebuild</button>
         </div>
       ) : null}
       {state.error ? (
@@ -1584,7 +1547,7 @@ export function App(): React.JSX.Element {
                   <span>Group by</span>
                   <select
                     value={state.insightDimension}
-                    disabled={state.invalidationReason !== undefined || Boolean(state.pending.insights)}
+                    disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.insights)}
                     onChange={(event) => {
                       const dimension = event.target.value as InsightDimension;
                       dispatch({ type: 'SET_INSIGHT_DIMENSION', dimension });
@@ -1611,7 +1574,7 @@ export function App(): React.JSX.Element {
                   className="icon-button"
                   title="Refresh aggregates"
                   aria-label="Refresh aggregates"
-                  disabled={state.invalidationReason !== undefined || Boolean(state.pending.insights)}
+                  disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.insights)}
                   onClick={() => requestInsights()}
                 >
                   <RefreshCw size={14} className={state.pending.insights ? 'spin' : ''} aria-hidden />
@@ -1628,7 +1591,7 @@ export function App(): React.JSX.Element {
           <RecordPager
             visible={showPageControls}
             busy={Boolean(state.pending.rows)}
-            invalidated={state.invalidationReason !== undefined}
+            invalidated={!canReadSnapshot(state.invalidationReason)}
             hasBefore={state.page?.hasBefore === true}
             canAdvance={canAdvancePage}
             pageInput={pageInput}
@@ -1691,6 +1654,8 @@ export function App(): React.JSX.Element {
             <DetailDrawer
               detail={state.detail}
               loading={Boolean(state.pending.detail)}
+              readBlocked={!canReadSnapshot(state.invalidationReason)}
+              blockedOrdinal={state.blockedDetailOrdinal}
               activeTab={state.detailTab}
               onTabChange={(tab) => dispatch({ type: 'SET_DETAIL_TAB', tab })}
               onRequestFull={() => {

@@ -775,6 +775,7 @@ describe('JsonlFileEngine querying and pagination', () => {
 describe('JsonlFileEngine refresh classification and lifecycle', () => {
   it('classifies an append without adopting bytes outside the open snapshot', async () => {
     const { engine, path } = await fixture('{"a":1}\n');
+    const original = (await engine.getRows({ limit: 10 })).rows[0]!.ref;
     await appendFile(path, '{"a":2}\n');
 
     expect(await engine.classifyRefresh()).toMatchObject({ kind: 'append' });
@@ -782,6 +783,31 @@ describe('JsonlFileEngine refresh classification and lifecycle', () => {
     expect(page.rows).toHaveLength(1);
     expect(page.totalRecords).toBe('1');
     expect(page.rows[0]?.genericSummary).toBe('{"a":1}');
+    expect((await engine.getDetail(original)).value).toEqual({ a: 1 });
+
+    await writeFile(path, '{"a":3}\n{"a":2}\n');
+    await expect(engine.getDetail(original)).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+  });
+
+  it('blocks an unverified append after a large snapshot defers its original fingerprint', async () => {
+    const { engine, path } = await fixture('{"value":true}\n'.repeat(600_000));
+    expect(engine.canValidateOriginalSnapshot).toBe(false);
+    await appendFile(path, '{"value":false}\n');
+
+    expect(await engine.classifyRefresh()).toMatchObject({ kind: 'unknown' });
+    await expect(engine.getRows({ limit: 1 })).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+  });
+
+  it('keeps a large snapshot readable after establishing its baseline before an append', async () => {
+    const { engine, path } = await fixture('{"value":true}\n'.repeat(600_000));
+    expect(engine.canValidateOriginalSnapshot).toBe(false);
+    expect(await engine.classifyRefresh()).toMatchObject({ kind: 'unchanged' });
+    expect(engine.canValidateOriginalSnapshot).toBe(true);
+    await appendFile(path, '{"value":false}\n');
+
+    expect(await engine.classifyRefresh()).toMatchObject({ kind: 'append' });
+    const page = await engine.getRows({ limit: 1 });
+    expect(page.rows[0]?.genericSummary).toBe('{"value":true}');
   });
 
   it('rejects an equal-length rewrite even when no filesystem watcher runs', async () => {

@@ -2,11 +2,19 @@
 
 ## Unreleased
 
+- Replace the repeated file name with a compact responsive workspace header
+  that keeps controls, record metrics, update state, and progress visible as
+  the editor narrows.
+- Keep verified append snapshots readable for row selection, details, search,
+  and paging without Rebuild; show an update indicator and explain when a
+  rewritten source prevents loading another record.
 - Reveal the selected record after a page change even when its page-local index
   stays the same, so returning to the first page does not retain a stale scroll
   position.
 - Reveal keyboard-selected records even when the selection has not changed, so
   Home returns to the first row after scrolling away from it.
+- Keep keyboard-selected rows fully visible below the sticky header and reveal
+  a selected row again when the source generation changes.
 
 ## 0.2.3 - 2026-09-28
 

@@ -61,7 +61,21 @@ export interface WorkspaceState {
   columnOrder: string[];
   pending: Partial<Record<RequestKind, RequestState>>;
   invalidationReason?: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' | undefined;
+  blockedDetailOrdinal?: string | undefined;
   error?: WorkspaceError | undefined;
+}
+
+export function canReadSnapshot(reason: WorkspaceState['invalidationReason']): boolean {
+  return reason === undefined || reason === 'append';
+}
+
+export function nextInvalidationReason(
+  current: WorkspaceState['invalidationReason'],
+  observed: NonNullable<WorkspaceState['invalidationReason']>,
+): NonNullable<WorkspaceState['invalidationReason']> {
+  return observed === 'append' && (current === 'truncate' || current === 'replace' || current === 'delete')
+    ? current
+    : observed;
 }
 
 export interface PersistedWorkspaceState {
@@ -271,11 +285,12 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         insights: generationChanged ? undefined : state.insights,
         pending: generationChanged ? {} : pending,
         invalidationReason: undefined,
+        blockedDetailOrdinal: undefined,
         error: undefined,
       };
     }
     case 'ROWS': {
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       const selectedOrdinal = state.followMode
         ? message.payload.rows.at(-1)?.ref.ordinal
         : state.selectedOrdinal && message.payload.rows.some(
@@ -288,7 +303,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         : normalizeSortOffset(message.payload.sortOffset);
       return {
         ...state,
-        phase: state.summary?.indexingComplete === false ? 'loading' : 'ready',
+        phase: state.invalidationReason === 'append'
+          ? 'invalidated'
+          : state.summary?.indexingComplete === false ? 'loading' : 'ready',
         rows: message.payload.rows,
         columns: message.payload.columns,
         page: {
@@ -303,6 +320,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         },
         selectedOrdinal,
         detail: state.detail?.ref.ordinal === selectedOrdinal ? state.detail : undefined,
+        blockedDetailOrdinal: state.blockedDetailOrdinal === selectedOrdinal ? state.blockedDetailOrdinal : undefined,
         columnVisibility: reconcileVisibility(message.payload.columns, state.columnVisibility),
         columnOrder: reconcileColumnOrder(message.payload.columns, state.columnOrder),
         sortOffset,
@@ -314,16 +332,17 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     }
     case 'DETAIL':
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       return {
         ...state,
         detail: message.payload,
         selectedOrdinal: message.payload.ref.ordinal,
+        blockedDetailOrdinal: undefined,
         pending,
         error: undefined,
       };
     case 'PROBLEMS': {
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       const observedProblemRecords = message.payload.observedProblemRecords;
       const currentProblemRecords = state.summary?.problemRecords ?? '0';
       const problemRecords = BigInt(observedProblemRecords) > BigInt(currentProblemRecords)
@@ -340,7 +359,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     }
     case 'SCHEMA':
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       return {
         ...state,
         schema: message.payload.fields,
@@ -350,7 +369,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         error: undefined,
       };
     case 'INSIGHTS':
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       return {
         ...state,
         insights: message.payload,
@@ -390,18 +409,26 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         insights: undefined,
       };
     }
-    case 'SOURCE_INVALIDATED':
+    case 'SOURCE_INVALIDATED': {
+      const reason = nextInvalidationReason(state.invalidationReason, message.payload.reason);
       return {
         ...state,
         phase: 'invalidated',
-        invalidationReason: message.payload.reason,
-        pending: {},
+        invalidationReason: reason,
+        blockedDetailOrdinal: !canReadSnapshot(reason) && state.pending.detail !== undefined
+          ? state.selectedOrdinal
+          : state.blockedDetailOrdinal,
+        pending: reason === 'append' ? pending : {},
       };
+    }
     case 'ERROR':
       if (state.invalidationReason !== undefined) {
         return {
           ...state,
           phase: 'invalidated',
+          blockedDetailOrdinal: state.pending.detail?.id === message.requestId && state.detail === undefined
+            ? state.selectedOrdinal
+            : state.blockedDetailOrdinal,
           error: message.payload,
           pending,
         };
@@ -491,9 +518,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         selectedOrdinal: action.ordinal,
         detail: state.detail?.ref.ordinal === action.ordinal ? state.detail : undefined,
+        blockedDetailOrdinal: !canReadSnapshot(state.invalidationReason)
+          && action.ordinal !== undefined
+          && state.detail?.ref.ordinal !== action.ordinal
+          ? action.ordinal
+          : undefined,
       };
     case 'CLOSE_DETAIL':
-      return { ...state, detail: undefined };
+      return { ...state, detail: undefined, blockedDetailOrdinal: undefined };
     case 'DISMISS_ERROR':
       if (state.invalidationReason !== undefined) {
         return { ...state, error: undefined, phase: 'invalidated' };
