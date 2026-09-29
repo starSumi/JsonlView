@@ -43,6 +43,14 @@ Pin Node `24.15.0` and pnpm `10.26.0` in Volta and CI. Document Node `22.12.0`
 as the minimum development runtime. Do not add a runtime engine claim for the
 extension host; VS Code compatibility remains controlled by `engines.vscode`.
 
+For the publishing toolchain, resolve Ajv's transitive `fast-uri` to `3.1.7`
+in the frozen lockfile. Ajv's `^3.0.1` constraint admits this patch, which
+addresses GHSA-qw65-cvwx-89v3 and GHSA-58mr-gqgx-xq4g in the previous
+`3.1.6` resolution. Resolve Cheerio's transitive `undici` to `7.29.1` under
+its `^7.19.0` constraint to address GHSA-3wwx-pv8p-q78v in `7.29.0`.
+Both fixes remain in the development/publishing toolchain; no application
+runtime dependency or override is added.
+
 ## Evidence
 
 The isolated upgrade probe passed frozen install, 38 test files (311 passing,
