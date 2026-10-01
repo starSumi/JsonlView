@@ -36,7 +36,7 @@ jobs:
         env:
           MAINTENANCE_REPORT_DIR: ${{ runner.temp }}/jsonlview-maintenance
         run: node scripts/check-dependency-freshness.mjs --out "$MAINTENANCE_REPORT_DIR/dependency-freshness.json"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: jsonlview-dependency-freshness-${{ github.run_number }}
@@ -82,7 +82,7 @@ jobs:
         run: |
           node scripts/benchmark-trend.mjs --out "$BENCHMARK_RECHECK" --history "$BENCHMARK_HISTORY_FILE" --no-append
           node --input-type=module -e "import { readFile } from 'node:fs/promises'; const report = JSON.parse(await readFile(process.env.BENCHMARK_RECHECK, 'utf8')); if (report.comparison !== 'comparable') { console.error(JSON.stringify({ comparison: report.comparison, history: report.history }, null, 2)); process.exit(1); }"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: jsonlview-benchmark-trend-${{ github.run_number }}
