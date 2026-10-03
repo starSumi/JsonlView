@@ -22,6 +22,7 @@ Read these before changing a shared boundary:
 14. [ADR-014 large module boundary governance](014-large-module-boundary-governance.md)
 15. [ADR-015 curated release-note CI guard](015-changelog-ci-guard.md)
 16. [ADR-016 OTLP metrics and columnar format gates](016-otlp-metrics-and-columnar-format-gates.md)
+17. [ADR-017 physical order paging and incomplete results](017-physical-order-paging.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

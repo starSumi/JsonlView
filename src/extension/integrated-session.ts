@@ -13,6 +13,7 @@ import type {
   RowScanBudget,
   ScanTruncationReason,
 } from '../shared/types';
+import { MAX_TABLE_COLUMNS } from '../shared/types';
 import { CategoricalAggregator, TimeBucketAggregator } from '../aggregation';
 import {
   JsonlEngineError,
@@ -155,6 +156,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
   }
 
   public async getRows(request: RowsRequest, signal: AbortSignal): Promise<RowPage> {
+    const enricher = this.createEnricher();
     const page = await this.engine.getRows({
       ...(request.anchorOrdinal === undefined ? {} : { anchorOrdinal: request.anchorOrdinal }),
       ...(request.direction === undefined ? {} : { direction: request.direction }),
@@ -163,7 +165,10 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       ...(request.sort === undefined ? {} : { sort: request.sort }),
       ...(request.sortOffset === undefined ? {} : { sortOffset: request.sortOffset }),
       ...(request.scanBudget === undefined ? {} : { scanBudget: request.scanBudget }),
-      enricher: this.createEnricher(),
+      ...(request.columns === undefined ? {} : {
+        columns: mergeRequestedColumns(enricher.columns ?? [], request.columns),
+      }),
+      enricher,
       generation: this.engine.snapshot.generation,
       signal,
     });
@@ -790,6 +795,18 @@ function appendDetectionSample(
     parseState: record.parseState,
     sourcePathHint,
   });
+}
+
+function mergeRequestedColumns(profile: readonly ColumnSpec[], requested: readonly ColumnSpec[]): ColumnSpec[] {
+  const columns: ColumnSpec[] = [];
+  const seen = new Set<string>();
+  for (const column of [...profile, ...requested]) {
+    if (seen.has(column.id)) continue;
+    seen.add(column.id);
+    columns.push(column);
+    if (columns.length >= MAX_TABLE_COLUMNS) break;
+  }
+  return columns;
 }
 
 function profileColumns(profileId: string): readonly ColumnSpec[] {

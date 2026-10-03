@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { keyPath, type ColumnSpec } from '../../src/shared/types';
+import { MAX_TABLE_COLUMNS, keyPath, type ColumnSpec, type FieldStats } from '../../src/shared/types';
 import {
   buildRecordQueryRequest,
+  buildStructuredFilter,
   canRequestSortedPage,
   createFilterScanBudget,
   isPhysicalOrdinalSort,
+  recordColumnCandidates,
+  selectedRecordColumns,
   textPredicate,
 } from '../../src/webview/features/record-query';
 import { rowsOptionsAfterEmptyRebuild } from '../../src/webview/paging';
@@ -16,7 +19,91 @@ const columns: ColumnSpec[] = [{
   path: keyPath('status'),
 }];
 
+const nestedPath = keyPath('message', 'role');
+const nestedField: FieldStats = {
+  path: nestedPath,
+  displayPath: '$.message.role',
+  seenRecords: '1',
+  validRecordsObserved: '1',
+  kinds: { string: '1' },
+  missingRecords: '0',
+  nullRecords: '0',
+  examples: ['assistant'],
+  firstSeenOrdinal: '0',
+  lastSeenOrdinal: '0',
+  confidence: 'sampled',
+};
+
 describe('record-query vertical slice', () => {
+  it('offers nested schema leaves and keeps explicit visibility within the column cap', () => {
+    const nestedId = JSON.stringify(nestedPath.tokens);
+    const malformed: ColumnSpec = { id: 'not-a-path', label: 'Invalid', source: 'record', path: keyPath('other') };
+    const candidates = recordColumnCandidates([...columns, malformed], [nestedField]);
+    expect(candidates.map((column) => column.id)).toEqual([columns[0]!.id, nestedId]);
+
+    expect(selectedRecordColumns(columns, [nestedField], {
+      [columns[0]!.id]: false,
+      [nestedId]: true,
+    })?.map((column) => column.id)).toEqual([nestedId]);
+
+    const crowded: ColumnSpec[] = Array.from({ length: MAX_TABLE_COLUMNS - 1 }, (_, index) => ({
+      id: 'profile-' + index,
+      label: 'Profile ' + index,
+      source: 'profile',
+    }));
+    expect(selectedRecordColumns([...crowded, ...columns], [nestedField], {
+      [nestedId]: true,
+    })?.map((column) => column.id)).toEqual([columns[0]!.id]);
+  });
+
+  it('builds only supported structured filters with captured source and path', () => {
+    expect(buildStructuredFilter({
+      columnId: columns[0]!.id,
+      operator: 'contains',
+      value: 'error',
+      caseSensitive: true,
+      selectedColumn: columns[0],
+      filterColumns: columns,
+    })).toEqual({
+      columnId: columns[0]!.id,
+      operator: 'contains',
+      source: 'record',
+      path: keyPath('status'),
+      value: 'error',
+      caseSensitive: true,
+    });
+
+    expect(buildStructuredFilter({
+      columnId: columns[0]!.id,
+      operator: 'contains',
+      value: '42',
+      caseSensitive: false,
+      selectedColumn: columns[0],
+      filterColumns: columns,
+    })).toBeUndefined();
+    expect(buildStructuredFilter({
+      columnId: columns[0]!.id,
+      operator: 'kind_is',
+      value: 'unexpected',
+      caseSensitive: false,
+      selectedColumn: columns[0],
+      filterColumns: columns,
+    })).toBeUndefined();
+    expect(buildStructuredFilter({
+      columnId: columns[0]!.id,
+      operator: 'exists',
+      value: 'ignored',
+      caseSensitive: false,
+      selectedColumn: columns[0],
+      filterColumns: columns,
+    })).toEqual({
+      columnId: columns[0]!.id,
+      operator: 'exists',
+      source: 'record',
+      path: keyPath('status'),
+    });
+  });
+
   it('builds a bounded filtered rows request without changing the IPC payload shape', () => {
     const payload = buildRecordQueryRequest({
       limit: 100,

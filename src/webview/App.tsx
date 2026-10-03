@@ -8,18 +8,18 @@ import {
   Columns3,
   RefreshCw,
   Table2,
-  ArrowDownUp,
   X,
 } from 'lucide-react';
 import type {
   ColumnSpec,
   InsightDimension,
-  JsonKind,
   RecordRef,
   RowFilter,
   RowFilterOperator,
   RowSort,
+  SortDirection,
 } from '../shared/types';
+import { MAX_TABLE_COLUMNS } from '../shared/types';
 import { DetailDrawer } from './detail-drawer';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -29,11 +29,15 @@ import { InsightsView } from './insights-view';
 import { visibleColumns } from './format';
 import {
   buildRecordQueryRequest,
+  buildStructuredFilter,
   canRequestSortedPage,
   formatScanLimit,
   RecordPager,
+  recordColumnCandidates,
   RecordQueryBanner,
   RecordQueryControls,
+  SCHEMA_PAGE_SIZE,
+  selectedRecordColumns,
   textPredicate,
 } from './features/record-query';
 import {
@@ -54,8 +58,8 @@ import {
 } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
 import { profileOptionList } from './profile-options';
-import { parseFilterLiteral, predicateForFilter } from './query';
 import { WorkspaceHeader } from './workspace-header';
+import { useLightDismiss } from './use-light-dismiss';
 import {
   canReadSnapshot,
   createInitialState,
@@ -93,8 +97,6 @@ const PAGE_SIZE = Number.isSafeInteger(configuredPageSize)
 // Keep logical sorted paging inside the engine's bounded retained window.
 // This is a protocol guard as well as a UX guard: the engine rejects a page
 // whose `sortOffset + limit` exceeds this value.
-const SCHEMA_PAGE_SIZE = 250;
-
 interface ViewportCursor {
   documentId: string;
   generation: string;
@@ -109,6 +111,7 @@ interface RowsRequestOptions {
   sort?: RowSort;
   sortOffset?: string;
   filterColumns?: readonly ColumnSpec[];
+  columns?: readonly ColumnSpec[];
 }
 
 interface RowsRequestMetadata {
@@ -195,7 +198,11 @@ const filterOperators: Array<{ value: RowFilterOperator; label: string; needsVal
 ];
 
 export function App(): React.JSX.Element {
-  const restored = useMemo(() => vscode.getState(), []);
+  const restored = useMemo(() => {
+    const saved = vscode.getState();
+    const direction = document.body.dataset.rowOrder === 'desc' ? 'desc' : 'asc';
+    return { ...saved, sortDirection: direction } satisfies PersistedWorkspaceState;
+  }, []);
   const [state, dispatch] = useReducer(
     workspaceReducer,
     restored,
@@ -207,21 +214,25 @@ export function App(): React.JSX.Element {
   const clientRef = useRef(new VsCodeMessageClient(vscode, bodySession()));
   const startedRef = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const columnsMenuRef = useRef<HTMLDetailsElement>(null);
+  useLightDismiss(columnsMenuRef);
   const pageInputRef = useRef('1');
   const pageInputDirtyRef = useRef(false);
   const pageInputFocusedRef = useRef(false);
   const pageInputRequestRef = useRef<string | undefined>(undefined);
   const queryRef = useRef(restored?.query ?? '');
   const filterRef = useRef<RowFilter | undefined>(restored?.filter);
-  const sortRef = useRef<RowSort | undefined>(restored?.sort);
-  const sortOffsetRef = useRef(restored?.sort === undefined ? '0' : normalizeSortOffset(restored.sortOffset));
+  const sortRef = useRef<RowSort | undefined>(state.sort);
+  const sortDirectionRef = useRef<SortDirection>(state.sortDirection);
+  const indexingCompleteRef = useRef(false);
+  const sortOffsetRef = useRef(state.sort === undefined ? '0' : normalizeSortOffset(state.sortOffset));
   const sortOffsetHistoryRef = useRef(
-    restored?.sort === undefined
+    state.sort === undefined
       ? []
       : normalizeSortOffsetHistory(restored.sortOffsetHistory, sortOffsetRef.current),
   );
   const sortPageRef = useRef(
-    restored?.sort === undefined
+    state.sort === undefined
       ? '1'
       : normalizeSortPage(restored.sortPage, sortOffsetRef.current, PAGE_SIZE),
   );
@@ -243,6 +254,9 @@ export function App(): React.JSX.Element {
   const rebuildViewportRef = useRef<RebuildViewportIntent | undefined>(undefined);
   const restoreViewportRef = useRef<RestoreViewportIntent | undefined>(undefined);
   const automaticFullDetailKeyRef = useRef<string | undefined>(undefined);
+  const schemaRequestKeyRef = useRef('');
+  const schemaRequestIdRef = useRef('');
+  const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
 
   const setPageInput = useCallback((value: string): void => {
     pageInputRef.current = value;
@@ -309,7 +323,7 @@ export function App(): React.JSX.Element {
     const query = options?.query ?? queryRef.current;
     const preserveOnRebuild = metadata.preserveOnRebuild ?? options !== undefined;
     const restoreAfterRebuild = metadata.restoreAfterRebuild === true;
-    const sort = options?.sort ?? sortRef.current;
+    const sort = indexingCompleteRef.current ? options?.sort ?? sortRef.current : undefined;
     const sortOffset = sort === undefined
       ? undefined
       : options?.sortOffset ?? sortOffsetRef.current;
@@ -317,10 +331,20 @@ export function App(): React.JSX.Element {
       ?? (stateRef.current.columns.length > 0
         ? stateRef.current.columns
         : fallbackColumns(stateRef.current.rows));
+    const columns = options?.columns ?? (
+      stateRef.current.summary?.snapshot.generation === client.session.generation
+        ? selectedRecordColumns(
+          stateRef.current.columns,
+          stateRef.current.schema,
+          stateRef.current.columnVisibility,
+        )
+        : undefined
+    );
     const payload = buildRecordQueryRequest({
       limit: PAGE_SIZE,
       query,
       filterColumns,
+      ...(columns === undefined ? {} : { columns }),
       ...(filterRef.current === undefined ? {} : { filter: filterRef.current }),
       ...(options?.anchorOrdinal === undefined ? {} : { anchorOrdinal: options.anchorOrdinal }),
       ...(options?.direction === undefined ? {} : { direction: options.direction }),
@@ -368,6 +392,8 @@ export function App(): React.JSX.Element {
     const client = clientRef.current;
     finishCancelled('schema', client.cancel('schema'));
     const request = client.send('GET_SCHEMA', { offset: 0, limit: SCHEMA_PAGE_SIZE });
+    schemaRequestIdRef.current = request.id;
+    setSchemaLoadFailed(false);
     dispatch({ type: 'REQUEST_SENT', request });
   }, [finishCancelled]);
 
@@ -427,6 +453,21 @@ export function App(): React.JSX.Element {
     dispatch({ type: 'SET_SORT', sort });
     requestRows({ sortOffset: '0' });
   }, [requestRows]);
+
+  const setSortDirection = useCallback((direction: SortDirection): void => {
+    if (
+      !indexingCompleteRef.current
+      || stateRef.current.invalidationReason !== undefined
+      || stateRef.current.pending.rebuild !== undefined
+      || stateRef.current.pending.order !== undefined
+    ) return;
+    if (direction === sortDirectionRef.current && (
+      direction === 'asc' ? sortRef.current === undefined : sortRef.current?.columnId === '__ordinal'
+        && sortRef.current.direction === 'desc'
+    )) return;
+    const request = clientRef.current.send('SET_ROW_ORDER', { direction });
+    dispatch({ type: 'REQUEST_SENT', request });
+  }, [setSort]);
 
   const applyFilter = useCallback((filter: RowFilter | undefined): void => {
     filterRef.current = filter;
@@ -545,11 +586,30 @@ export function App(): React.JSX.Element {
         invalidationRef.current = undefined;
       }
       if (message.type === 'OPENED') {
+        if (openedGenerationChanged) setSchemaLoadFailed(false);
+        indexingCompleteRef.current = message.payload.indexingComplete;
         acceptedSessionRef.current = {
           documentId: message.payload.snapshot.documentId,
           generation: message.payload.snapshot.generation,
           ...(message.payload.snapshot.epoch === undefined ? {} : { epoch: message.payload.snapshot.epoch }),
         };
+        if (openedGenerationChanged && (sortRef.current === undefined || sortRef.current.columnId === '__ordinal')) {
+          const nextSort: RowSort | undefined = sortDirectionRef.current === 'desc'
+            && message.payload.indexingComplete
+            ? { columnId: '__ordinal', direction: 'desc' }
+            : undefined;
+          if (sortRef.current?.direction !== nextSort?.direction) {
+            sortRef.current = nextSort;
+            sortOffsetRef.current = '0';
+            sortOffsetHistoryRef.current = [];
+            sortPageRef.current = '1';
+            dispatch({ type: 'SET_SORT', sort: nextSort });
+          }
+        }
+      }
+      if (message.type === 'INDEX_PROGRESS'
+        && acceptedSessionRef.current?.generation === message.generation) {
+        indexingCompleteRef.current = message.payload.indexingComplete;
       }
       const profileQuery = message.type === 'PROFILE_CHANGED'
         && invalidationRef.current === undefined
@@ -679,6 +739,11 @@ export function App(): React.JSX.Element {
           }
           pendingViewportRef.current = undefined;
         }
+      }
+      if (message.type === 'SCHEMA' && message.requestId === schemaRequestIdRef.current) {
+        setSchemaLoadFailed(false);
+      } else if (message.type === 'ERROR' && message.requestId === schemaRequestIdRef.current) {
+        setSchemaLoadFailed(true);
       }
 
       const savedViewport = viewportCursorRef.current;
@@ -855,6 +920,15 @@ export function App(): React.JSX.Element {
         ) {
           requestRestoreFallback(restore, message.payload.indexedRecords, undefined);
         }
+        if (
+          message.payload.indexingComplete
+          && sortDirectionRef.current === 'desc'
+          && sortRef.current === undefined
+          && invalidationRef.current === undefined
+          && acceptedSessionRef.current?.generation === message.generation
+        ) {
+          setSort({ columnId: '__ordinal', direction: 'desc' });
+        }
       }
       if (
         message.type === 'OPENED'
@@ -935,6 +1009,16 @@ export function App(): React.JSX.Element {
       ) {
         rebuildViewportRef.current = undefined;
       }
+      if (message.type === 'ROW_ORDER_CHANGED') {
+        // Commit the local view only after the extension has persisted the
+        // preference. A failed globalState write therefore cannot leave the
+        // table and the stored order diverged.
+        sortDirectionRef.current = message.payload.direction;
+        dispatch({ type: 'SET_SORT_DIRECTION', direction: message.payload.direction });
+        setSort(message.payload.direction === 'desc'
+          ? { columnId: '__ordinal', direction: 'desc' }
+          : undefined);
+      }
       if (
         message.type === 'OPENED'
         && currentFollowMode
@@ -948,7 +1032,7 @@ export function App(): React.JSX.Element {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [requestRows]);
+  }, [requestRows, setSort]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -959,16 +1043,28 @@ export function App(): React.JSX.Element {
   }, [restored]);
 
   useEffect(() => {
-    if (
-      canReadSnapshot(state.invalidationReason)
-      && state.activeTab === 'schema'
-      && state.summary
-      && state.schema.length === 0
-      && !state.pending.schema
-    ) {
-      requestSchema();
-    }
-  }, [requestSchema, state.activeTab, state.invalidationReason, state.pending.schema, state.schema.length, state.summary]);
+    const summary = state.summary;
+    if (!summary || !canReadSnapshot(state.invalidationReason) || state.pending.schema) return;
+    const stage = summary.indexingComplete ? 'complete' : state.columns.length > 0 ? 'rows' : 'open';
+    const key = `${summary.snapshot.generation}:${stage}`;
+    if (schemaRequestKeyRef.current === key) return;
+    schemaRequestKeyRef.current = key;
+    requestSchema();
+  }, [requestSchema, state.columns.length, state.invalidationReason, state.pending.schema, state.summary]);
+
+  useEffect(() => {
+    if (!state.page || state.pending.rows || !state.summary
+      || !canReadSnapshot(state.invalidationReason)
+      || state.summary.snapshot.generation !== clientRef.current.session.generation) return;
+    const selected = selectedRecordColumns(state.columns, state.schema, state.columnVisibility);
+    if (!selected?.some((column) => state.columnVisibility[column.id] === true
+      && !state.columns.some((current) => current.id === column.id))) return;
+    const viewport = sortRef.current === undefined
+      ? rowsOptionsAfterRebuild(viewportCursorRef.current?.firstVisibleOrdinal, followModeRef.current)
+      : { sortOffset: sortOffsetRef.current };
+    requestRows({ ...viewport, columns: selected }, { preserveOnRebuild: true });
+  }, [requestRows, state.columnVisibility, state.columns, state.invalidationReason,
+    state.page, state.pending.rows, state.schema, state.summary]);
 
   useEffect(() => {
     if (
@@ -1006,6 +1102,21 @@ export function App(): React.JSX.Element {
   const baseColumns = useMemo(
     () => state.columns.length > 0 ? state.columns : fallbackColumns(state.rows),
     [state.columns, state.rows],
+  );
+  const recordCandidates = useMemo(
+    () => recordColumnCandidates(baseColumns, state.schema),
+    [baseColumns, state.schema],
+  );
+  const selectedRecordIds = new Set(
+    selectedRecordColumns(baseColumns, state.schema, state.columnVisibility)?.map((column) => column.id) ?? [],
+  );
+  const availableColumns = [
+    ...baseColumns.filter((column) => column.id !== '__ordinal' && column.id !== '$ordinal' && column.source !== 'record'),
+    ...recordCandidates,
+  ];
+  const recordColumnLimit = Math.max(
+    0,
+    MAX_TABLE_COLUMNS - baseColumns.filter((column) => column.source === 'profile').length,
   );
   const filterableColumns = useMemo(
     () => baseColumns.filter((column) => column.id !== '__ordinal' && column.id !== '$ordinal'),
@@ -1076,27 +1187,15 @@ export function App(): React.JSX.Element {
   }, [availableFilterOperators, filterOperator]);
 
   const submitStructuredFilter = (): void => {
-    if (!filterColumnId) return;
-    const needsValue = !['exists', 'is_null'].includes(filterOperator);
-    const literal = parseFilterLiteral(filterValue);
-    const kindValue = filterValue.trim();
-    const filterBase: RowFilter = {
+    const filter = buildStructuredFilter({
       columnId: filterColumnId,
       operator: filterOperator,
-      ...(selectedFilterColumn?.source === 'profile'
-        ? { source: 'profile' as const }
-        : selectedFilterColumn?.path === undefined
-          ? {}
-          : { source: 'record' as const, path: selectedFilterColumn.path }),
-      ...(needsValue ? { value: literal } : {}),
-      ...(filterOperator === 'contains' || filterOperator === 'starts_with' || filterOperator === 'ends_with'
-        ? { caseSensitive: filterCaseSensitive }
-        : {}),
-    };
-    const filter: RowFilter = filterOperator === 'kind_is' && kindValue.length > 0
-      ? { ...filterBase, kind: kindValue as JsonKind }
-      : filterBase;
-    if (predicateForFilter(filter, filterableColumns) === undefined) return;
+      value: filterValue,
+      caseSensitive: filterCaseSensitive,
+      selectedColumn: selectedFilterColumn,
+      filterColumns: filterableColumns,
+    });
+    if (filter === undefined) return;
     applyFilter(filter);
   };
 
@@ -1116,7 +1215,17 @@ export function App(): React.JSX.Element {
     finishCancelled('follow', clientRef.current.cancel('follow'));
     const request = clientRef.current.send('SET_FOLLOW_MODE', { enabled });
     dispatch({ type: 'REQUEST_SENT', request });
-    if (enabled) requestRows({ direction: 'backward' });
+    if (enabled) {
+      if (sortRef.current?.columnId === '__ordinal' && sortRef.current.direction === 'desc') {
+        sortOffsetRef.current = '0';
+        sortOffsetHistoryRef.current = [];
+        sortPageRef.current = '1';
+        dispatch({ type: 'SET_SORT_OFFSET', offset: '0', history: [], page: '1' });
+        requestRows({ sortOffset: '0' });
+      } else {
+        requestRows({ direction: 'backward' });
+      }
+    }
   };
 
   const selectProblem = (ordinal: string): void => {
@@ -1377,6 +1486,19 @@ export function App(): React.JSX.Element {
         <RecordQueryControls
           query={state.query}
           searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
+          sortDirection={state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc'}
+           descendingDisabled={summary?.indexingComplete !== true
+             || state.invalidationReason !== undefined
+             || Boolean(state.pending.rebuild)
+             || Boolean(state.pending.order)}
+           descendingDisabledReason={state.invalidationReason !== undefined
+             ? 'Rebuild the changed source before reversing row order'
+             : state.pending.rebuild
+               ? 'Rebuilding the index'
+               : state.pending.order
+                 ? 'Saving the row order preference'
+                 : 'Indexing the file before reverse order is available'}
+          onSortDirectionChange={setSortDirection}
           onSearchSubmit={() => {
             const query = queryRef.current;
             if (state.activeTab === 'insights') requestInsights({ query });
@@ -1433,26 +1555,41 @@ export function App(): React.JSX.Element {
             <RefreshCw size={15} className={state.pending.rebuild ? 'spin' : ''} aria-hidden />
           </button>
         ) : null}
-        <details className="columns-menu">
+        <details ref={columnsMenuRef} className="columns-menu">
           <summary className="icon-button" title="Choose columns" aria-label="Choose columns">
             <Columns3 size={15} aria-hidden />
           </summary>
           <div className="columns-popover">
-            {[{ id: '__ordinal', label: '#' }, ...baseColumns].map((column) => (
-              <label key={column.id}>
+            {schemaLoadFailed ? (
+              <button type="button" onClick={requestSchema}>Retry fields</button>
+            ) : null}
+            {([{ id: '__ordinal', label: '#', source: 'system' }, ...availableColumns] as ColumnSpec[]).map((column) => {
+              const record = column.source === 'record';
+              const checked = column.id === '__ordinal'
+                || (record
+                  ? selectedRecordIds.has(column.id)
+                  : state.columnVisibility[column.id] !== false);
+              const limitReached = record && !checked && selectedRecordIds.size >= recordColumnLimit;
+              return <label key={column.id} title={limitReached ? `Up to ${recordColumnLimit} record fields can be shown at once` : undefined}>
                 <input
                   type="checkbox"
-                  disabled={column.id === '__ordinal'}
-                  checked={state.columnVisibility[column.id] !== false}
-                  onChange={(event) => dispatch({
-                    type: 'SET_COLUMN_VISIBILITY',
-                    columnId: column.id,
-                    visible: event.target.checked,
-                  })}
+                  disabled={column.id === '__ordinal' || limitReached}
+                  checked={checked}
+                  onChange={(event) => {
+                    const visible = event.target.checked;
+                    dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
+                    if (!record) return;
+                    const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
+                    const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
+                    const viewport = sortRef.current === undefined
+                      ? rowsOptionsAfterRebuild(viewportCursorRef.current?.firstVisibleOrdinal, followModeRef.current)
+                      : { sortOffset: sortOffsetRef.current };
+                    requestRows({ ...viewport, columns }, { preserveOnRebuild: true });
+                  }}
                 />
                 <span title={column.label}>{column.label}</span>
-              </label>
-            ))}
+              </label>;
+            })}
           </div>
         </details>
       </WorkspaceHeader>
@@ -1519,8 +1656,7 @@ export function App(): React.JSX.Element {
               onSelect={requestDetail}
               columnWidths={state.columnWidths}
               onColumnWidthChange={setColumnWidth}
-              sort={state.sort}
-              onSortChange={setSort}
+              sort={state.sort ?? { columnId: '__ordinal', direction: 'asc' }}
               onColumnOrderChange={setColumnOrder}
             />
           ) : null}

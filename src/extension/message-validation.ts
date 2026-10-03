@@ -1,11 +1,13 @@
 import {
   PROTOCOL_VERSION,
+  type ColumnSpec,
   type FieldPath,
   type Predicate,
   type RecordRef,
   type RowScanBudget,
   type WebviewRequest,
 } from '../shared/types';
+import { MAX_TABLE_COLUMNS } from '../shared/types';
 
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_QUERY_DEPTH = 16;
@@ -84,6 +86,8 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
       if (
         sortOffset !== undefined
         && isRowSort(value.payload.sort)
+        && value.payload.sort.columnId !== '__ordinal'
+        && value.payload.sort.columnId !== '$ordinal'
         && typeof sortOffset === 'string'
         && BigInt(sortOffset) + BigInt(Number(limit)) > 2_048n
       ) {
@@ -97,6 +101,9 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
         if (!isPredicate(value.payload.predicate, 0, budget)) {
           return failure('Invalid or over-budget query predicate.');
         }
+      }
+      if (value.payload.columns !== undefined && !isRecordColumns(value.payload.columns)) {
+        return failure('Invalid or over-budget table columns.');
       }
       break;
     }
@@ -161,6 +168,11 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
         return failure('Follow mode must be boolean.');
       }
       break;
+    case 'SET_ROW_ORDER':
+      if (value.payload.direction !== 'asc' && value.payload.direction !== 'desc') {
+        return failure('Row order must be ascending or descending.');
+      }
+      break;
     case 'CANCEL':
       if (!isBoundedString(value.payload.targetRequestId, MAX_REQUEST_ID_LENGTH)) {
         return failure('Cancellation target is required.');
@@ -179,6 +191,25 @@ function isRowSort(value: unknown): value is { columnId: string; direction: 'asc
   return isObject(value)
     && isBoundedString(value.columnId, 256)
     && (value.direction === 'asc' || value.direction === 'desc');
+}
+
+function isRecordColumns(value: unknown): value is ColumnSpec[] {
+  return Array.isArray(value)
+    && value.length <= MAX_TABLE_COLUMNS
+    && value.every((column) => (
+      isObject(column)
+      && isBoundedString(column.id, 256)
+      && isBoundedString(column.label, 256)
+      && column.source === 'record'
+      && isFieldPath(column.path)
+      && column.id === JSON.stringify(column.path.tokens)
+      && (column.width === undefined || (
+        typeof column.width === 'number'
+        && Number.isFinite(column.width)
+        && column.width >= 1
+        && column.width <= 2_000
+      ))
+    ));
 }
 
 function isPredicate(value: unknown, depth: number, budget: { nodes: number }): value is Predicate {

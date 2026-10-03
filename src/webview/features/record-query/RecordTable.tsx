@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, Braces, GripVertical, LoaderCircle } from 'lucide-react';
+import { Braces, GripVertical, LoaderCircle } from 'lucide-react';
 import type { ColumnSpec, RecordRef, RowProjection, RowSort } from '../../../shared/types';
 import { columnGridTemplate, getColumnText, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from '../../format';
 
@@ -29,7 +29,6 @@ export interface RecordTableProps {
   columnWidths: Record<string, number>;
   onColumnWidthChange: (columnId: string, width: number | undefined) => void;
   sort?: RowSort | undefined;
-  onSortChange: (sort: RowSort | undefined) => void;
   onColumnOrderChange: (order: string[]) => void;
 }
 
@@ -44,7 +43,6 @@ export function RecordTable({
   columnWidths,
   onColumnWidthChange,
   sort,
-  onSortChange,
   onColumnOrderChange,
 }: RecordTableProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -144,7 +142,7 @@ export function RecordTable({
             role="columnheader"
             key={column.id}
             title={column.label}
-            aria-sort={sort?.columnId === column.id ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+            aria-sort={sort?.columnId === column.id ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
             draggable={column.id !== '__ordinal'}
             onDragStart={(event) => {
               if (column.id === '__ordinal') {
@@ -177,22 +175,7 @@ export function RecordTable({
             onDragEnd={() => { dragColumnRef.current = undefined; }}
           >
             {column.id !== '__ordinal' ? <GripVertical size={11} className="column-drag-handle" aria-hidden /> : null}
-            <button
-              type="button"
-              className="data-grid-sort"
-              aria-label={`Sort by ${column.label}`}
-              title={`Sort by ${column.label}`}
-              onClick={() => {
-                if (sort?.columnId !== column.id) onSortChange({ columnId: column.id, direction: 'asc' });
-                else if (sort.direction === 'asc') onSortChange({ columnId: column.id, direction: 'desc' });
-                else onSortChange(undefined);
-              }}
-            >
-              <span className="data-grid-heading-label">{column.label}</span>
-              {sort?.columnId === column.id
-                ? (sort.direction === 'asc' ? <ArrowUp size={12} aria-hidden /> : <ArrowDown size={12} aria-hidden />)
-                : <ArrowDown size={11} className="sort-muted" aria-hidden />}
-            </button>
+            <span className="data-grid-heading-label">{column.label}</span>
             <button
               type="button"
               className="column-resizer"

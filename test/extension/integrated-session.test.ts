@@ -7,6 +7,9 @@ import {
   type IntegratedSessionOptions,
 } from '../../src/extension/integrated-session';
 import type { FollowRecoveryIdentity } from '../../src/extension/follow-recovery';
+import { DocumentController } from '../../src/extension/document-controller';
+import { PROTOCOL_VERSION, type ExtensionMessage } from '../../src/shared/types';
+import { keyPath, MAX_TABLE_COLUMNS, type ColumnSpec } from '../../src/shared/types';
 import {
   otelFixture,
   softwareEngineeringAgentFixture,
@@ -122,6 +125,39 @@ describe('IntegratedJsonlSession', () => {
     ]);
     expect(page.rows[2]?.cells.find((cell) => cell.columnId === 'summary')?.value).toBe('assistant message: hello');
     expect(page.rows.every((row) => row.genericSummary.length > 0)).toBe(true);
+  });
+
+  it('projects selected nested record fields alongside semantic profile columns without duplicates', async () => {
+    const { session } = await openFixture(codexRecords);
+    const path = keyPath('payload', 'session_id');
+    const column: ColumnSpec = {
+      id: JSON.stringify(path.tokens), label: '$.payload.session_id', path, source: 'record',
+    };
+
+    const page = await session.getRows({ limit: 4, columns: [column, column] }, new AbortController().signal);
+
+    expect(page.columns.slice(0, 6).map((entry) => entry.id)).toEqual([
+      'eventKind', 'timestamp', 'actor', 'summary', 'status', 'model',
+    ]);
+    expect(page.columns.slice(6)).toEqual([column]);
+    expect(page.rows[0]?.cells.find((cell) => cell.columnId === column.id)?.value).toBe('session-1');
+    expect(page.rows[1]?.cells.find((cell) => cell.columnId === column.id)?.value).toBeUndefined();
+  });
+
+  it('bounds the combined semantic and requested record columns to the table limit', async () => {
+    const { session } = await openFixture(codexRecords);
+    const requested: ColumnSpec[] = Array.from({ length: MAX_TABLE_COLUMNS }, (_, index) => {
+      const path = keyPath('payload', `field${String(index)}`);
+      return { id: JSON.stringify(path.tokens), label: `$.payload.field${String(index)}`, path, source: 'record' };
+    });
+
+    const page = await session.getRows({ limit: 1, columns: requested }, new AbortController().signal);
+
+    expect(page.columns).toHaveLength(MAX_TABLE_COLUMNS);
+    expect(page.columns.slice(0, 6).map((column) => column.source)).toEqual(Array(6).fill('profile'));
+    expect(page.columns.slice(6).map((column) => column.id)).toEqual(
+      requested.slice(0, MAX_TABLE_COLUMNS - 6).map((column) => column.id),
+    );
   });
 
   it('uses a trusted Codex auxiliary path to select the matching surface profile', async () => {
@@ -364,3 +400,50 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
     await new Promise<void>((resolve) => setTimeout(resolve, 5));
   }
 }
+
+describe('physical ordinal paging through the host contract', () => {
+  it.each([
+    ['__ordinal', 'asc'],
+    ['__ordinal', 'desc'],
+    ['$ordinal', 'asc'],
+    ['$ordinal', 'desc'],
+  ])('routes a %s %s page past the field-sort window', async (columnId, direction) => {
+    const { session } = await openFixture(
+      Array.from({ length: 2_050 }, (_, ordinal) => ({ ordinal })),
+      { autoDetectProfiles: false },
+    );
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => { messages.push(message); return true; },
+    });
+    const { documentId, generation } = session.getSummary().snapshot;
+    try {
+      await controller.handleMessage({
+        protocolVersion: PROTOCOL_VERSION,
+        documentId,
+        generation,
+        requestId: 'physical-page',
+        type: 'GET_ROWS',
+        payload: { limit: 20, sort: { columnId, direction }, sortOffset: '2040' },
+      });
+      const response = messages.find((message) => message.type === 'ROWS');
+      expect(response?.payload.rows.map((row) => row.ref.ordinal)).toEqual(
+        Array.from({ length: 10 }, (_, index) => String(direction === 'asc' ? 2_040 + index : 9 - index)),
+      );
+      expect(messages.some((message) => message.type === 'ERROR')).toBe(false);
+
+      messages.length = 0;
+      await controller.handleMessage({
+        protocolVersion: PROTOCOL_VERSION,
+        documentId,
+        generation,
+        requestId: 'field-page',
+        type: 'GET_ROWS',
+        payload: { limit: 20, sort: { columnId: 'ordinal', direction }, sortOffset: '2040' },
+      });
+      expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'INVALID_REQUEST' } });
+    } finally {
+      controller.dispose();
+    }
+  });
+});

@@ -271,6 +271,14 @@ export function createNewlineScanner(options: CreateNewlineScannerOptions = {}):
       }
       if (activeMode === 'node') return scanNode(chunk);
 
+      // A peer packaged/default scanner may have fused the process-wide native
+      // path since this instance activated it. Re-check before every native
+      // call so an already-active instance cannot bypass the process fuse.
+      if (processFuseEligible && processNativeFuseReason !== undefined) {
+        disableNative(`native scanner process fuse is active: ${processNativeFuseReason}`);
+        return scanNode(chunk);
+      }
+
       const binding = nativeBinding ?? probeNative();
       if (binding === undefined) return scanNode(chunk);
 

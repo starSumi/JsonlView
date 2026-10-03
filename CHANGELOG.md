@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Switch the table between forward and reverse record order and restore the
+  selected order when reopening the view. Keep the controls disabled with an
+  explanation while indexing or rebuilding.
+- Select nested object fields such as `$.message.role` as table columns.
+- Continue reverse paging beyond 2,048 rows. When a filtered physical-order
+  scan reaches its allowance, offer Next only for further matches already
+  found in the examined range and keep the partial-result notice visible.
+- Close the column and filter menus when clicking or moving focus outside them,
+  or pressing Escape; Escape returns focus to the menu control.
+- Fall back to the Node scanner after a packaged native scanner failure and
+  avoid retrying the failed native scanner in the same extension-host process.
 - Replace the repeated file name with a compact responsive workspace header
   that keeps controls, record metrics, update state, and progress visible as
   the editor narrows.

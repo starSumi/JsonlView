@@ -24,7 +24,7 @@ describe('getWebviewHtml', () => {
       with: ({ path }: { path: string }) => ({ toString: () => `vscode-extension://${path}` }),
     };
 
-    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot, 250);
+    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot, 250, 'desc');
 
     expect(html).toContain("default-src 'none'");
     expect(html).toContain("style-src-elem vscode-webview://unit-test");
@@ -34,5 +34,6 @@ describe('getWebviewHtml', () => {
     expect(html).toContain('data-generation="generation&quot;unsafe"');
     expect(html).not.toContain('data-uri="file:///fixture.jsonl?value=<unsafe>"');
     expect(html).toContain('data-page-size="250"');
+    expect(html).toContain('data-row-order="desc"');
   });
 });

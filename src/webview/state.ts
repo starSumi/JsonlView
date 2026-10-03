@@ -12,6 +12,7 @@ import type {
   RowPage,
   RowProjection,
   RowSort,
+  SortDirection,
 } from '../shared/types';
 import { normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage } from './paging';
 import { DEFAULT_DETAIL_WIDTH } from './split-pane';
@@ -19,7 +20,7 @@ import { DEFAULT_DETAIL_WIDTH } from './split-pane';
 export type WorkspaceTab = 'table' | 'timeline' | 'schema' | 'problems' | 'insights';
 export type DetailTab = 'tree' | 'raw' | 'derived' | 'bytes';
 export type WorkspacePhase = 'booting' | 'loading' | 'ready' | 'invalidated' | 'degraded' | 'error';
-export type RequestKind = 'ready' | 'rows' | 'problems' | 'detail' | 'schema' | 'insights' | 'profile' | 'follow' | 'rebuild';
+export type RequestKind = 'ready' | 'rows' | 'problems' | 'detail' | 'schema' | 'insights' | 'profile' | 'follow' | 'order' | 'rebuild';
 
 export interface RequestState {
   id: string;
@@ -52,6 +53,7 @@ export interface WorkspaceState {
   query: string;
   filter?: RowFilter | undefined;
   sort?: RowSort | undefined;
+  sortDirection: SortDirection;
   sortOffset: string;
   sortOffsetHistory: string[];
   sortPage: string;
@@ -85,6 +87,7 @@ export interface PersistedWorkspaceState {
   query?: string;
   filter?: RowFilter | undefined;
   sort?: RowSort | undefined;
+  sortDirection?: SortDirection;
   sortOffset?: string;
   sortOffsetHistory?: string[];
   sortPage?: string;
@@ -106,6 +109,7 @@ export type WorkspaceAction =
   | { type: 'SET_QUERY'; query: string }
   | { type: 'SET_FILTER'; filter?: RowFilter | undefined }
   | { type: 'SET_SORT'; sort?: RowSort | undefined }
+  | { type: 'SET_SORT_DIRECTION'; direction: SortDirection }
   | { type: 'SET_SORT_OFFSET'; offset: string; history: string[]; page: string }
   | { type: 'SET_FOLLOW_MODE'; enabled: boolean }
   | { type: 'SET_COLUMN_VISIBILITY'; columnId: string; visible: boolean }
@@ -116,7 +120,13 @@ export type WorkspaceAction =
   | { type: 'DISMISS_ERROR' };
 
 export function createInitialState(restored?: PersistedWorkspaceState, pageSize = 100): WorkspaceState {
-  const sortOffset = restored?.sort === undefined ? '0' : normalizeSortOffset(restored.sortOffset);
+  const sortDirection = restored?.sortDirection === 'asc' || restored?.sortDirection === 'desc'
+    ? restored.sortDirection
+    : restored?.sort?.direction === 'desc' ? 'desc' : 'asc';
+  const sort = restored?.sortDirection === undefined
+    ? restored?.sort
+    : sortDirection === 'desc' ? { columnId: '__ordinal', direction: 'desc' as const } : undefined;
+  const sortOffset = sort === undefined ? '0' : normalizeSortOffset(restored?.sortOffset);
   return {
     phase: 'booting',
     rows: [],
@@ -130,14 +140,15 @@ export function createInitialState(restored?: PersistedWorkspaceState, pageSize 
     detailWidth: restored?.detailWidth ?? DEFAULT_DETAIL_WIDTH,
     query: restored?.query ?? '',
     filter: restored?.filter,
-    sort: restored?.sort,
+    sort,
+    sortDirection,
     sortOffset,
-    sortOffsetHistory: restored?.sort === undefined
+    sortOffsetHistory: sort === undefined
       ? []
-      : normalizeSortOffsetHistory(restored.sortOffsetHistory, sortOffset),
-    sortPage: restored?.sort === undefined
+      : normalizeSortOffsetHistory(restored?.sortOffsetHistory, sortOffset),
+    sortPage: sort === undefined
       ? '1'
-      : normalizeSortPage(restored.sortPage, sortOffset, pageSize),
+      : normalizeSortPage(restored?.sortPage, sortOffset, pageSize),
     followMode: restored?.followMode ?? false,
     columnVisibility: restored?.columnVisibility ?? {},
     columnWidths: restored?.columnWidths ?? {},
@@ -163,7 +174,7 @@ function reconcileVisibility(
   columns: ColumnSpec[],
   current: Record<string, boolean>,
 ): Record<string, boolean> {
-  const next: Record<string, boolean> = { __ordinal: current.__ordinal ?? true };
+  const next: Record<string, boolean> = { ...current, __ordinal: true };
   for (const column of columns) {
     next[column.id] = current[column.id] ?? true;
   }
@@ -409,6 +420,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         insights: undefined,
       };
     }
+    case 'ROW_ORDER_CHANGED':
+      return { ...state, pending };
     case 'SOURCE_INVALIDATED': {
       const reason = nextInvalidationReason(state.invalidationReason, message.payload.reason);
       return {
@@ -476,6 +489,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, filter: action.filter, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
     case 'SET_SORT':
       return { ...state, sort: action.sort, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
+    case 'SET_SORT_DIRECTION':
+      return { ...state, sortDirection: action.direction };
     case 'SET_SORT_OFFSET': {
       const sortOffset = normalizeSortOffset(action.offset);
       return {
@@ -561,6 +576,7 @@ export function toPersistedState(state: WorkspaceState): PersistedWorkspaceState
     query: state.query,
     ...(state.filter === undefined ? {} : { filter: state.filter }),
     ...(state.sort === undefined ? {} : { sort: state.sort }),
+    sortDirection: state.sortDirection,
     sortOffset: state.sortOffset,
     sortOffsetHistory: state.sortOffsetHistory,
     sortPage: state.sortPage,

@@ -1,4 +1,5 @@
-import type { CellProjection, ColumnSpec, JsonKind, RowProjection } from '../shared/types';
+import { MAX_TABLE_COLUMNS } from '../shared/types';
+import type { CellProjection, ColumnSpec, FieldStats, JsonKind, RowProjection } from '../shared/types';
 
 export interface TreePreviewRow {
   path: string;
@@ -16,6 +17,30 @@ export const ORDINAL_COLUMN: ColumnSpec = {
 
 export const MIN_COLUMN_WIDTH = 96;
 export const MAX_COLUMN_WIDTH = 720;
+const MAX_SCHEMA_COLUMN_CANDIDATES = 250;
+
+export function schemaRecordColumns(fields: readonly FieldStats[], limit = MAX_TABLE_COLUMNS): ColumnSpec[] {
+  const maxColumns = Number.isSafeInteger(limit)
+    ? Math.max(0, Math.min(limit, MAX_SCHEMA_COLUMN_CANDIDATES))
+    : MAX_TABLE_COLUMNS;
+  const columns: ColumnSpec[] = [];
+  const seen = new Set<string>();
+  for (const field of fields) {
+    if (columns.length >= maxColumns) break;
+    const tokens = field.path.tokens;
+    // The root value describes the whole record; it is not a selectable
+    // field projection and cannot be addressed as a table cell column.
+    if (tokens.length === 0) continue;
+    if (tokens.length > 32 || !tokens.every((token) => token.kind === 'key'
+      ? typeof token.value === 'string' && token.value.length > 0 && token.value.length <= 1024
+      : token.kind === 'index' && Number.isSafeInteger(token.value) && Number(token.value) >= 0)) continue;
+    const id = JSON.stringify(tokens);
+    if (id.length > 256 || field.displayPath.length === 0 || field.displayPath.length > 256 || seen.has(id)) continue;
+    seen.add(id);
+    columns.push({ id, label: field.displayPath, path: field.path, source: 'record' });
+  }
+  return columns;
+}
 
 export function formatBytes(value: string): string {
   const bytes = Number(value);

@@ -485,6 +485,34 @@ describe('workspace reducer', () => {
     expect(toPersistedState(state).detailWidth).toBe(704);
   });
 
+  it('restores physical row-order preference independently from an ascending preview', () => {
+    let state = createInitialState({ sortDirection: 'desc' });
+    expect(state.sort).toEqual({ columnId: '__ordinal', direction: 'desc' });
+    state = workspaceReducer(state, { type: 'SET_SORT', sort: undefined });
+    expect(state.sortDirection).toBe('desc');
+    expect(toPersistedState(state).sortDirection).toBe('desc');
+
+    state = workspaceReducer(state, { type: 'SET_SORT_DIRECTION', direction: 'asc' });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROW_ORDER_CHANGED', { direction: 'desc' }),
+    });
+    expect(state.sortDirection).toBe('asc');
+  });
+
+  it('retains a hidden schema field after the next projected page omits it', () => {
+    let state = createInitialState();
+    const column = { id: JSON.stringify([{ kind: 'key', value: 'message' }, { kind: 'key', value: 'role' }]), label: '$.message.role', source: 'record' as const };
+    state = workspaceReducer(state, { type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible: false });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '2', hasBefore: false, hasAfter: false, indexedRecords: '3',
+      }),
+    });
+    expect(state.columnVisibility[column.id]).toBe(false);
+  });
+
   it('stores bounded insight results and clears them when the dimension changes', () => {
     let state = createInitialState();
     state = workspaceReducer(state, {

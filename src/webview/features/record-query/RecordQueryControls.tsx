@@ -1,6 +1,7 @@
-import React from 'react';
-import { Filter, Search, X } from 'lucide-react';
-import type { ColumnSpec, RowFilterOperator } from '../../../shared/types';
+import React, { useRef } from 'react';
+import { ArrowDown, ArrowUp, Filter, Search, X } from 'lucide-react';
+import type { ColumnSpec, RowFilterOperator, SortDirection } from '../../../shared/types';
+import { useLightDismiss } from '../../use-light-dismiss';
 
 export interface FilterOperatorOption {
   value: RowFilterOperator;
@@ -11,6 +12,10 @@ export interface FilterOperatorOption {
 export interface RecordQueryControlsProps {
   query: string;
   searchDisabled: boolean;
+  sortDirection: SortDirection;
+  descendingDisabled: boolean;
+  descendingDisabledReason: string;
+  onSortDirectionChange: (direction: SortDirection) => void;
   onSearchSubmit: () => void;
   onSearchChange: (query: string) => void;
   onSearchClear: () => void;
@@ -32,6 +37,10 @@ export interface RecordQueryControlsProps {
 export function RecordQueryControls({
   query,
   searchDisabled,
+  sortDirection,
+  descendingDisabled,
+  descendingDisabledReason,
+  onSortDirectionChange,
   onSearchSubmit,
   onSearchChange,
   onSearchClear,
@@ -49,6 +58,8 @@ export function RecordQueryControls({
   onFilterSubmit,
   onFilterClear,
 }: RecordQueryControlsProps): React.JSX.Element {
+  const filterMenuRef = useRef<HTMLDetailsElement>(null);
+  useLightDismiss(filterMenuRef);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
 
@@ -76,7 +87,45 @@ export function RecordQueryControls({
           </button>
         ) : null}
       </form>
-      <details className="filter-menu">
+      <div
+        className="row-order-control"
+        role="group"
+        aria-label="Record order"
+        title={descendingDisabled ? descendingDisabledReason : undefined}
+      >
+        <button
+          type="button"
+          className="icon-button"
+          title={descendingDisabled ? descendingDisabledReason : 'First line first'}
+          aria-label="First line first"
+          aria-pressed={sortDirection === 'asc'}
+          aria-description={descendingDisabled ? descendingDisabledReason : undefined}
+          disabled={descendingDisabled}
+          onClick={() => onSortDirectionChange('asc')}
+        >
+          <ArrowUp size={15} aria-hidden />
+        </button>
+        <span
+          className="row-order-option"
+          title={descendingDisabled ? descendingDisabledReason : 'Last line first'}
+          tabIndex={descendingDisabled ? 0 : undefined}
+          role={descendingDisabled ? 'note' : undefined}
+          aria-label={descendingDisabled ? descendingDisabledReason : undefined}
+        >
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Last line first"
+            aria-pressed={sortDirection === 'desc'}
+            aria-description={descendingDisabled ? descendingDisabledReason : undefined}
+            disabled={descendingDisabled}
+            onClick={() => onSortDirectionChange('desc')}
+          >
+            <ArrowDown size={15} aria-hidden />
+          </button>
+        </span>
+      </div>
+      <details className="filter-menu" ref={filterMenuRef}>
         <summary className={`icon-button${filterActive ? ' is-active' : ''}`} title="Filter records" aria-label="Filter records">
           <Filter size={15} aria-hidden />
         </summary>

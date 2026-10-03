@@ -218,6 +218,43 @@ select:focus-visible,
   flex-basis: 20px;
 }
 
+.row-order-control {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 28px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.row-order-control > .icon-button,
+.row-order-option > .icon-button {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
+
+.row-order-control .icon-button[aria-pressed='true'] {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.row-order-control .icon-button:disabled {
+  opacity: 0.45;
+}
+
+.row-order-option {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border-left: 1px solid var(--vscode-panel-border);
+}
+
+.row-order-option:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
 .icon-button:hover:not(:disabled),
 .search-clear:hover,
 .columns-menu[open] > summary,
@@ -2465,6 +2502,10 @@ body.is-resizing-column * {
     order: 2;
     flex: 1 1 160px;
     max-width: none;
+  }
+
+  .toolbar > .row-order-control {
+    order: 2;
   }
 
   .status-strip {

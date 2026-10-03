@@ -189,6 +189,9 @@ export interface ColumnSpec {
   width?: number;
 }
 
+/** Maximum number of explicit table fields carried by one rows request. */
+export const MAX_TABLE_COLUMNS = 64;
+
 export interface RowPage {
   rows: RowProjection[];
   columns: ColumnSpec[];
@@ -323,6 +326,8 @@ export type WebviewRequest =
     direction?: 'forward' | 'backward';
     limit: number;
     predicate?: Predicate;
+    /** Bounded record fields requested for the table projection. */
+    columns?: ColumnSpec[];
     sort?: RowSort;
     sortOffset?: string;
     scanBudget?: RowScanBudget;
@@ -338,6 +343,7 @@ export type WebviewRequest =
   | ProtocolEnvelope<'GET_INSIGHTS', { dimension: InsightDimension; predicate?: Predicate }>
   | ProtocolEnvelope<'SET_PROFILE', { profileId: string }>
   | ProtocolEnvelope<'SET_FOLLOW_MODE', { enabled: boolean }>
+  | ProtocolEnvelope<'SET_ROW_ORDER', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'CANCEL', { targetRequestId: string }>
   | ProtocolEnvelope<'REBUILD_INDEX', Record<string, never>>;
 
@@ -350,6 +356,7 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'INSIGHTS', InsightSummary>
   | ProtocolEnvelope<'INDEX_PROGRESS', DocumentSummary>
   | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; columns: ColumnSpec[] }>
+  | ProtocolEnvelope<'ROW_ORDER_CHANGED', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>
   | ProtocolEnvelope<'ERROR', { code: string; message: string; recoverable: boolean }>;
 

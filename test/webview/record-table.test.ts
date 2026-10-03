@@ -29,13 +29,13 @@ function render(overrides: Partial<RecordTableProps> = {}) {
   }));
   const element = RecordTable({
     rows, columns: [], selectedOrdinal: '0', loading: false, onSelect,
-    columnWidths: {}, onColumnWidthChange: vi.fn(), onSortChange: vi.fn(),
+    columnWidths: {}, onColumnWidthChange: vi.fn(),
     onColumnOrderChange: vi.fn(), ...overrides,
   }) as React.ReactElement<React.HTMLAttributes<HTMLDivElement>>;
   const press = (key: string): void => {
     element.props.onKeyDown?.({ key, preventDefault: vi.fn() } as unknown as React.KeyboardEvent<HTMLDivElement>);
   };
-  return { press, onSelect, rows };
+  return { element, press, onSelect, rows };
 }
 
 describe('record table selection visibility', () => {
@@ -47,6 +47,27 @@ describe('record table selection visibility', () => {
       scrollMargin: 30,
       scrollPaddingStart: 30,
     }));
+  });
+
+  it('announces the active row order without per-column sort buttons', () => {
+    type HeaderElement = React.ReactElement<{
+      children: HeaderElement[];
+      className?: string;
+      'aria-sort'?: string;
+    }>;
+    const { element } = render({
+      columns: [
+        { id: '__ordinal', label: '#', source: 'system' },
+        { id: 'status', label: 'Status', source: 'profile' },
+      ],
+      sort: { columnId: '__ordinal', direction: 'desc' },
+    });
+    const [header] = element.props.children as HeaderElement[];
+    const headings = header!.props.children;
+    expect(headings.map((heading) => heading.props['aria-sort'])).toEqual(['descending', undefined]);
+    for (const heading of headings) {
+      expect(heading.props.children.some((child) => child?.props.className === 'data-grid-sort')).toBe(false);
+    }
   });
 
   it('reveals a different physical record at the same page-local index', () => {

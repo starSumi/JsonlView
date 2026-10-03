@@ -19,6 +19,29 @@ describe('webview message validation', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts nested record columns but rejects forged and oversized projections', () => {
+    const path = { tokens: [{ kind: 'key', value: 'message' }, { kind: 'key', value: 'role' }] };
+    const column = { id: JSON.stringify(path.tokens), label: '$.message.role', path, source: 'record' };
+    expect(validateWebviewRequest(envelope('GET_ROWS', { limit: 20, columns: [column] })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      columns: [{ ...column, id: 'profile.status' }],
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      columns: [{ ...column, source: 'profile' }],
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      columns: Array.from({ length: 65 }, () => column),
+    })).ok).toBe(false);
+  });
+
+  it('accepts only the two physical row-order preferences', () => {
+    expect(validateWebviewRequest(envelope('SET_ROW_ORDER', { direction: 'desc' })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('SET_ROW_ORDER', { direction: 'random' })).ok).toBe(false);
+  });
+
   it('accepts bounded sorted rows and rejects an offset without sort', () => {
     expect(validateWebviewRequest(envelope('GET_ROWS', {
       limit: 100,
@@ -35,6 +58,32 @@ describe('webview message validation', () => {
       sortOffset: '2000',
     })).ok).toBe(false);
   });
+
+  it.each([
+    ['__ordinal', 'asc'],
+    ['__ordinal', 'desc'],
+    ['$ordinal', 'asc'],
+    ['$ordinal', 'desc'],
+  ])('accepts physical ordinal %s %s pages beyond the field-sort window', (columnId, direction) => {
+    for (const sortOffset of ['2000', '100000', '9007199254740993']) {
+      expect(validateWebviewRequest(envelope('GET_ROWS', {
+        limit: 100,
+        sort: { columnId, direction },
+        sortOffset,
+      })).ok).toBe(true);
+    }
+  });
+
+  it.each(['-1', '1.5', '02000', '2e3', 2000])(
+    'rejects malformed physical ordinal offset %s',
+    (sortOffset) => {
+      expect(validateWebviewRequest(envelope('GET_ROWS', {
+        limit: 100,
+        sort: { columnId: '__ordinal', direction: 'desc' },
+        sortOffset,
+      })).ok).toBe(false);
+    },
+  );
 
   it('accepts bounded scan allowances and rejects unsafe combinations', () => {
     expect(validateWebviewRequest(envelope('GET_ROWS', {

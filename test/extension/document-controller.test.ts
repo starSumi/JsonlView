@@ -107,6 +107,24 @@ describe('document controller', () => {
     expect(messages[0]?.type).toBe('OPENED');
   });
 
+  it('acknowledges a saved row-order preference only after the extension hook completes', async () => {
+    const messages: ExtensionMessage[] = [];
+    const saved: string[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => {
+        messages.push(message);
+        return true;
+      },
+    }, {
+      onRowOrderChanged: async (direction) => { saved.push(direction); },
+    });
+
+    await controller.handleMessage(request('SET_ROW_ORDER', { direction: 'desc' }));
+
+    expect(saved).toEqual(['desc']);
+    expect(messages[0]).toMatchObject({ type: 'ROW_ORDER_CHANGED', payload: { direction: 'desc' } });
+  });
+
   it('uses READY as a same-document re-handshake after generation changes', async () => {
     const messages: ExtensionMessage[] = [];
     const controller = new DocumentController(fakeSession(), {
@@ -125,6 +143,41 @@ describe('document controller', () => {
       generation: 'generation',
       payload: { snapshot: { generation: 'generation' } },
     });
+  });
+
+  it('waits for persisted row order before acknowledging it', async () => {
+    const messages: ExtensionMessage[] = [];
+    let release: () => void = () => undefined;
+    const persisted = new Promise<void>((resolve) => { release = resolve; });
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { onRowOrderChanged: async () => persisted });
+    try {
+      const pending = controller.handleMessage(request('SET_ROW_ORDER', { direction: 'desc' }));
+      await Promise.resolve();
+      expect(messages).toEqual([]);
+      release();
+      await pending;
+      expect(messages[0]).toMatchObject({ type: 'ROW_ORDER_CHANGED', payload: { direction: 'desc' } });
+    } finally {
+      release();
+      controller.dispose();
+    }
+  });
+
+  it('does not acknowledge row order when persistence fails', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { onRowOrderChanged: async () => { throw new Error('synthetic persistence failure'); } });
+    try {
+      await controller.handleMessage(request('SET_ROW_ORDER', { direction: 'desc' }));
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.type).toBe('ERROR');
+      expect(messages.some((message) => message.type === 'ROW_ORDER_CHANGED')).toBe(false);
+    } finally {
+      controller.dispose();
+    }
   });
 
   it('rejects a stale generation before invoking the session', async () => {
