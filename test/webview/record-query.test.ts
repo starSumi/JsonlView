@@ -35,6 +35,35 @@ const nestedField: FieldStats = {
 };
 
 describe('record-query vertical slice', () => {
+  it('keeps the default projection when schema arrives before the first row columns', () => {
+    const selected = selectedRecordColumns([], [nestedField], { __ordinal: true });
+    expect(selected).toBeUndefined();
+    const request = buildRecordQueryRequest({
+      limit: 100,
+      filterColumns: [],
+      ...(selected === undefined ? {} : { columns: selected }),
+      sort: { columnId: '__ordinal', direction: 'desc' },
+    });
+    expect(request).not.toHaveProperty('columns');
+    expect(request.sort).toEqual({ columnId: '__ordinal', direction: 'desc' });
+  });
+
+  it('keeps an explicit all-hidden projection while columns are being restored', () => {
+    const selected = selectedRecordColumns([], [nestedField], {
+      __ordinal: true,
+      [JSON.stringify(nestedPath.tokens)]: false,
+    });
+    expect(selected).toEqual([]);
+    expect(buildRecordQueryRequest({ limit: 100, filterColumns: [], columns: selected! }))
+      .toHaveProperty('columns', []);
+  });
+
+  it('requests saved nested selections before the first row columns arrive', () => {
+    const nestedId = JSON.stringify(nestedPath.tokens);
+    expect(selectedRecordColumns([], [nestedField], { [nestedId]: true })
+      ?.map((column) => column.id)).toEqual([nestedId]);
+  });
+
   it('offers nested schema leaves and keeps explicit visibility within the column cap', () => {
     const nestedId = JSON.stringify(nestedPath.tokens);
     const malformed: ColumnSpec = { id: 'not-a-path', label: 'Invalid', source: 'record', path: keyPath('other') };

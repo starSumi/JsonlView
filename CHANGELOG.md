@@ -6,6 +6,8 @@
   selected order when reopening the view. Keep the controls disabled with an
   explanation while indexing or rebuilding.
 - Select nested object fields such as `$.message.role` as table columns.
+- Keep the default table columns when opening a view in reverse order before
+  its first row projection is available.
 - Continue reverse paging beyond 2,048 rows. When a filtered physical-order
   scan reaches its allowance, offer Next only for further matches already
   found in the examined range and keep the partial-result notice visible.

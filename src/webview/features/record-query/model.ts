@@ -65,6 +65,11 @@ export function selectedRecordColumns(
   const currentRecords = new Set(columns.filter((column) => column.source === 'record').map((column) => column.id));
   const candidates = recordColumnCandidates(columns, schema);
   if (candidates.length === 0) return undefined;
+  // Schema may arrive before the initial row projection. No record selection
+  // exists yet in that state; sending [] would hide the engine's defaults.
+  // Explicit false selections still represent the user's all-hidden choice.
+  if (currentRecords.size === 0
+    && !candidates.some((column) => visibility[column.id] !== undefined)) return undefined;
   const profileCount = columns.filter((column) => column.source === 'profile').length;
   return candidates.filter((column) => visibility[column.id] === true
     || (visibility[column.id] !== false && currentRecords.has(column.id)))
