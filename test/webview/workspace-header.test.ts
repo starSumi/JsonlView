@@ -67,4 +67,12 @@ describe('workspace header status', () => {
     expect(markup).toContain('0 problem records observed during hydration; not a complete-file total');
     expect(markup).not.toContain('class="status-metric status-problems status-problem"');
   });
+
+  it('exposes numeric, bounded indexing progress for assistive technology', () => {
+    expect(render()).toContain('role="progressbar" aria-label="50% indexed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"');
+    expect(render({ indexedBytes: '-10' })).toContain('aria-valuenow="0"');
+    expect(render({ indexedBytes: '2000' })).toContain('aria-valuenow="100"');
+    expect(render({ sizeBytes: 'Infinity' })).toContain('aria-valuenow="0"');
+    expect(render({ sizeBytes: '0' })).toContain('aria-valuenow="0"');
+  });
 });

@@ -300,8 +300,10 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   width: 220px;
+  max-width: calc(100vw - 16px);
   max-height: 320px;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 5px;
   border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
   border-radius: 4px;
@@ -338,11 +340,24 @@ select:focus-visible,
   flex-direction: column;
   gap: 8px;
   width: 260px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100dvh - 16px));
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: 10px;
   border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
   border-radius: 4px;
   box-shadow: 0 4px 12px var(--vscode-widget-shadow);
   background: var(--vscode-menu-background);
+}
+
+.filter-fields {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .filter-popover label:not(.filter-check) {
@@ -379,6 +394,7 @@ select:focus-visible,
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .filter-actions button {
@@ -616,6 +632,19 @@ body.is-resizing-detail {
   overflow: hidden;
 }
 
+.workspace-tab-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-tab-panel[hidden] {
+  display: none;
+}
+
 .problems-view {
   display: flex;
   flex: 1 1 auto;
@@ -673,6 +702,11 @@ body.is-resizing-detail {
   color: var(--vscode-descriptionForeground);
   font-size: 12px;
   font-weight: 600;
+}
+
+.data-grid-scroll:focus-within .is-active-cell {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
 }
 
 .data-grid-sort {
@@ -1123,6 +1157,25 @@ body.is-resizing-column * {
   min-height: 0;
   flex-direction: column;
   background: var(--vscode-editor-background);
+}
+
+.detail-backdrop {
+  position: fixed;
+  z-index: 8;
+  inset: 0;
+  background: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+}
+
+.detail-drawer.is-modal {
+  position: absolute;
+  z-index: 9;
+  inset: 0 0 0 auto;
+  width: min(520px, 92vw);
+  box-shadow: -5px 0 16px var(--vscode-widget-shadow);
+}
+
+.detail-tab-panel[hidden] {
+  display: none;
 }
 
 .detail-header {
@@ -2459,6 +2512,10 @@ body.is-resizing-column * {
   }
 
   .detail-drawer {
+    width: 100%;
+  }
+
+  .detail-drawer.is-modal {
     width: 100%;
   }
 }

@@ -22,6 +22,32 @@ function detail(parseState: RecordDetail['ref']['parseState'], rawComplete: bool
 }
 
 describe('detail drawer unavailable record states', () => {
+  it('connects manual detail tabs to mounted panels and one selected tab stop', () => {
+    const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
+      detail: detail('valid', true), loading: false, activeTab: 'raw',
+      onTabChange: () => undefined, onRequestFull: () => undefined, onClose: () => undefined,
+    }));
+    expect(markup).toContain('role="tablist" aria-orientation="horizontal"');
+    expect(markup.match(/role="tab"/g)).toHaveLength(4);
+    expect(markup.match(/role="tabpanel"/g)).toHaveLength(4);
+    expect(markup.match(/hidden=""/g)).toHaveLength(3);
+    expect(markup).toMatch(/id="record-detail-views-tab-raw" aria-controls="record-detail-views-panel-raw" aria-selected="true" tabindex="0"/);
+    expect(markup).toMatch(/role="tabpanel" id="record-detail-views-panel-raw" aria-labelledby="record-detail-views-tab-raw" tabindex="0"/);
+  });
+
+  it('uses labeled modal markup and a backdrop only for the narrow presentation', () => {
+    const props = { loading: true, activeTab: 'tree' as const,
+      onTabChange: () => undefined, onRequestFull: () => undefined, onClose: () => undefined };
+    const narrow = renderToStaticMarkup(React.createElement(DetailDrawer, { ...props, id: 'synthetic-detail', modal: true }));
+    expect(narrow).toContain('class="detail-backdrop" aria-hidden="true"');
+    expect(narrow).toContain('role="dialog" aria-modal="true" aria-labelledby="synthetic-detail-title"');
+    expect(narrow).toContain('id="synthetic-detail-title" class="detail-title" tabindex="-1"');
+    const wide = renderToStaticMarkup(React.createElement(DetailDrawer, props));
+    expect(wide).not.toContain('role="dialog"');
+    expect(wide).not.toContain('aria-modal=');
+    expect(wide).not.toContain('detail-backdrop');
+  });
+
   it('shows a selected unavailable record instead of a loading drawer', () => {
     const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
       loading: false,

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { Braces, Code2, Database, GitBranch, LoaderCircle, X } from 'lucide-react';
 import type { RecordDetail } from '../shared/types';
 import { AUTOMATIC_FULL_RECORD_LIMIT_BYTES } from './full-record-intent';
@@ -9,8 +9,12 @@ import { JsonCode, stringifyJsonBounded } from './json-syntax';
 import { JsonTree } from './json-tree';
 import { AgentEventPresentation } from './event-presentation';
 import type { DetailTab } from './state';
+import { useManualTabs } from './use-manual-tabs';
+import { useModalFocus } from './use-modal-focus';
 
 interface DetailDrawerProps {
+  id?: string;
+  modal?: boolean;
   detail?: RecordDetail | undefined;
   loading: boolean;
   readBlocked?: boolean;
@@ -61,17 +65,26 @@ const detailTabs: Array<{
   { id: 'bytes', label: 'Bytes', icon: Database },
 ];
 
-export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onClose }: DetailDrawerProps): React.JSX.Element {
+export function DetailDrawer({ id = 'record-detail', modal = false, detail, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onClose }: DetailDrawerProps): React.JSX.Element {
+  const drawerRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLDivElement>(null);
+  const tabs = useManualTabs({ ids: detailTabs.map((tab) => tab.id), activeId: activeTab,
+    onActivate: onTabChange, idPrefix: `${id}-views` });
+  useModalFocus({ modal, dialogRef: drawerRef, initialFocusRef: titleRef, onClose });
   const derived = useMemo(
     () => detail?.profile ? stringifyJsonBounded(detail.profile) : undefined,
     [detail?.profile],
   );
 
   return (
-    <aside className="detail-drawer" aria-label="Record detail">
+    <>
+    {modal ? <div className="detail-backdrop" aria-hidden="true" /> : null}
+    <aside ref={drawerRef} id={id} className={`detail-drawer${modal ? ' is-modal' : ''}`}
+      role={modal ? 'dialog' : undefined} aria-modal={modal || undefined}
+      aria-labelledby={modal ? `${id}-title` : undefined} aria-label="Record detail" tabIndex={-1}>
       <header className="detail-header">
         <div>
-          <div className="detail-title">Record {detail ? `#${detail.ref.ordinal}` : blockedOrdinal ? `#${blockedOrdinal}` : ''}</div>
+          <div ref={titleRef} id={`${id}-title`} className="detail-title" tabIndex={-1}>Record {detail ? `#${detail.ref.ordinal}` : blockedOrdinal ? `#${blockedOrdinal}` : ''}</div>
           <div className="detail-subtitle">
             {detail ? `${formatBytes(detail.ref.contentByteLength)} · ${detail.ref.parseState}` : blockedOrdinal ? 'Source changed' : 'Loading'}
           </div>
@@ -88,14 +101,13 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
           Source changed. Showing cached detail from generation {detail.ref.generation}, not the current file. Copy uses this old snapshot; select Rebuild to refresh.
         </div>
       ) : null}
-      {detail || !blockedOrdinal ? <nav className="detail-tabs" aria-label="Detail views">
+      {detail || !blockedOrdinal ? <nav {...tabs.tabListProps} className="detail-tabs" aria-label="Detail views">
         {detailTabs.map(({ id, label, icon: Icon }) => (
           <button
             type="button"
             className={activeTab === id ? 'is-active' : ''}
-            aria-selected={activeTab === id}
+            {...tabs.getTabProps(id)}
             key={id}
-            onClick={() => onTabChange(id)}
           >
             <Icon size={14} aria-hidden />
             {label}
@@ -112,7 +124,9 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
         {loading && !detail ? (
           <div className="detail-loading"><LoaderCircle size={18} aria-hidden /> Loading record</div>
         ) : null}
-        {detail && activeTab === 'tree' ? (
+        {detail || !blockedOrdinal ? detailTabs.map(({ id: tabId }) => (
+          <div key={tabId} className="detail-tab-panel" {...tabs.getPanelProps(tabId)}>
+        {detail && activeTab === tabId && tabId === 'tree' ? (
           <>
             <AgentEventPresentation
               key={`${detail.ref.generation}:${detail.ref.ordinal}`}
@@ -125,7 +139,7 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
               : <UnavailableRecordView detail={detail} loading={loading} readBlocked={readBlocked} onRequestFull={onRequestFull} />}
           </>
         ) : null}
-        {detail && activeTab === 'raw' ? (
+        {detail && activeTab === tabId && tabId === 'raw' ? (
           <div className="code-pane">
             <RawJsonView
               key={`${detail.ref.generation}:${detail.ref.ordinal}`}
@@ -135,7 +149,7 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
             />
           </div>
         ) : null}
-        {detail && activeTab === 'derived' ? (
+        {detail && activeTab === tabId && tabId === 'derived' ? (
           detail.profile && derived
             ? <div className="code-pane">
                 {derived.truncated ? <div className="bounded-notice">Derived JSON was bounded for display</div> : null}
@@ -143,7 +157,7 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
               </div>
             : <div className="detail-empty">No semantic projection for this record.</div>
         ) : null}
-        {detail && activeTab === 'bytes' ? (
+        {detail && activeTab === tabId && tabId === 'bytes' ? (
           <dl className="byte-facts">
             <dt>Ordinal</dt><dd>{detail.ref.ordinal}</dd>
             <dt>Start</dt><dd>{detail.ref.byteStart}</dd>
@@ -154,6 +168,8 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
             <dt>Generation</dt><dd>{detail.ref.generation}</dd>
           </dl>
         ) : null}
+          </div>
+        )) : null}
         {detail?.problems.length ? (
           <section className="detail-problems" aria-label="Record problems">
             {detail.problems.map((problem, index) => (
@@ -166,5 +182,6 @@ export function DetailDrawer({ detail, loading, readBlocked = false, blockedOrdi
         ) : null}
       </div>
     </aside>
+    </>
   );
 }

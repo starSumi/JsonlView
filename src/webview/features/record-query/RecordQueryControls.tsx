@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { ArrowDown, ArrowUp, Filter, Search, X } from 'lucide-react';
 import type { ColumnSpec, RowFilterOperator, SortDirection } from '../../../shared/types';
 import { useLightDismiss } from '../../use-light-dismiss';
+import { useViewportPopover } from '../../use-viewport-popover';
 
 export interface FilterOperatorOption {
   value: RowFilterOperator;
@@ -60,6 +61,7 @@ export function RecordQueryControls({
 }: RecordQueryControlsProps): React.JSX.Element {
   const filterMenuRef = useRef<HTMLDetailsElement>(null);
   useLightDismiss(filterMenuRef);
+  useViewportPopover(filterMenuRef);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
 
@@ -136,6 +138,7 @@ export function RecordQueryControls({
             onFilterSubmit();
           }}
         >
+          <div className="filter-fields">
           <label>
             <span>Field</span>
             <select
@@ -169,6 +172,7 @@ export function RecordQueryControls({
               <span>Case sensitive</span>
             </label>
           ) : null}
+          </div>
           <div className="filter-actions">
             <button type="submit" disabled={!filterColumnId || filterableColumns.length === 0}>Apply</button>
             <button type="button" onClick={onFilterClear} disabled={!filterActive}>Clear</button>

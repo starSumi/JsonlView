@@ -49,4 +49,12 @@ describe('record order controls', () => {
     expect(markup).toMatch(/aria-label="First line first" aria-pressed="true"/);
     expect(markup).toMatch(/aria-label="First line first" aria-pressed="true" aria-description="Available when indexing completes" disabled=""/);
   });
+
+  it('preserves native details disclosure with scrollable fields and reachable actions', () => {
+    const markup = render({ filterActive: true, filterableColumns: [{ id: 'status', label: 'Status', source: 'profile' }], filterColumnId: 'status' });
+    expect(markup).toContain('<details class="filter-menu"><summary');
+    expect(markup).toContain('class="filter-fields"');
+    expect(markup).toMatch(/<\/div><div class="filter-actions"><button type="submit">Apply<\/button><button type="button">Clear/);
+    expect(markup).not.toContain('role="menu"');
+  });
 });

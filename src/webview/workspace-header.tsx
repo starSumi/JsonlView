@@ -19,7 +19,8 @@ export interface WorkspaceHeaderProps {
 export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): React.JSX.Element {
   const indexed = Number(status.indexedBytes);
   const size = Number(status.sizeBytes);
-  const progress = size > 0 && Number.isFinite(indexed) ? Math.min(100, (indexed / size) * 100) : 0;
+  const progress = size > 0 && Number.isFinite(size) && Number.isFinite(indexed)
+    ? Math.max(0, Math.min(100, (indexed / size) * 100)) : 0;
 
   return (
     <header className="workspace-header" aria-label="Workspace controls and status">
@@ -49,7 +50,9 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
           {!status.complete ? <LoaderCircle size={13} className="spin" aria-hidden /> : null}
           {status.phase}
         </span>
-        <span className="progress-track" aria-label={`${progress.toFixed(0)}% indexed`}>
+        <span className="progress-track" role="progressbar" aria-label={`${progress.toFixed(0)}% indexed`}
+          aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}
+          aria-valuetext={`${Math.round(progress)}% indexed`}>
           <span style={{ width: `${progress}%` }} />
         </span>
       </div>

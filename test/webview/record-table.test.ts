@@ -1,20 +1,38 @@
 import type React from 'react';
 import { useEffect } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { RowProjection } from '../../src/shared/types';
 import { RecordTable, type RecordTableProps } from '../../src/webview/features/record-query/RecordTable';
+import { gridCellId, type GridCell } from '../../src/webview/use-grid-focus';
+
+const gridState = vi.hoisted(() => ({
+  cell: undefined as GridCell | undefined,
+  items: [0, 1].map((index) => ({ index, key: index, start: 30 + index * 30, size: 30 })),
+}));
 
 const virtualizer = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
   getTotalSize: () => 60,
-  getVirtualItems: () => [],
+  getVirtualItems: () => gridState.items,
 }));
 
-vi.mock('@tanstack/react-virtual', () => ({ useVirtualizer: vi.fn(() => virtualizer) }));
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: vi.fn(() => virtualizer),
+  defaultRangeExtractor: (range: { startIndex: number; endIndex: number; overscan: number; count: number }) => {
+    const start = Math.max(0, range.startIndex - range.overscan);
+    const end = Math.min(range.count - 1, range.endIndex + range.overscan);
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  },
+}));
 vi.mock('react', async (importOriginal) => ({
   ...await importOriginal<typeof import('react')>(),
   useEffect: vi.fn(),
+  useLayoutEffect: vi.fn(),
+  useState: <Value>(initial?: Value): [Value | undefined, ReturnType<typeof vi.fn>] => [
+    initial === undefined ? gridState.cell as Value : initial, vi.fn(),
+  ],
   useMemo: <Value>(factory: () => Value): Value => factory(),
   useRef: <Value>(current: Value): { current: Value } => ({ current }),
 }));
@@ -28,18 +46,24 @@ function render(overrides: Partial<RecordTableProps> = {}) {
     genericSummary: 'Synthetic record',
   }));
   const element = RecordTable({
-    rows, columns: [], selectedOrdinal: '0', loading: false, onSelect,
+    sessionId: 'synthetic-document', rows,
+    columns: [{ id: '__ordinal', label: '#', source: 'system' }, { id: 'status', label: 'Status', source: 'profile' }],
+    selectedOrdinal: '0', loading: false, onSelect,
     columnWidths: {}, onColumnWidthChange: vi.fn(),
     onColumnOrderChange: vi.fn(), ...overrides,
   }) as React.ReactElement<React.HTMLAttributes<HTMLDivElement>>;
-  const press = (key: string): void => {
-    element.props.onKeyDown?.({ key, preventDefault: vi.fn() } as unknown as React.KeyboardEvent<HTMLDivElement>);
+  const press = (key: string, ctrlKey = false): void => {
+    element.props.onKeyDown?.({ key, ctrlKey, preventDefault: vi.fn() } as unknown as React.KeyboardEvent<HTMLDivElement>);
   };
   return { element, press, onSelect, rows };
 }
 
 describe('record table selection visibility', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    gridState.cell = undefined;
+    gridState.items = [0, 1].map((index) => ({ index, key: index, start: 30 + index * 30, size: 30 }));
+  });
 
   it('accounts for the sticky header in virtual rows and scroll targets', () => {
     render();
@@ -98,27 +122,29 @@ describe('record table selection visibility', () => {
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });
 
-  it('reveals the first row on Home even when it is already selected', () => {
-    const { press, onSelect, rows } = render();
+  it('moves Home to the first column without activating a record', () => {
+    const { press, onSelect } = render();
     press('Home');
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
-    expect(onSelect).toHaveBeenCalledWith(rows[0]!.ref);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('reveals the last row on End even when it is already selected', () => {
-    const { press, onSelect, rows } = render({ selectedOrdinal: '1' });
-    press('End');
+  it('moves control End across the page without activating a record', () => {
+    const { press, onSelect } = render({ selectedOrdinal: '1' });
+    press('End', true);
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(1, { align: 'auto' });
-    expect(onSelect).toHaveBeenCalledWith(rows[1]!.ref);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('reveals a repeated selection with Enter and clamps arrow keys', () => {
+  it('opens a record only on explicit Enter or Space, while arrows move focus', () => {
     const { press, onSelect } = render();
     press('Enter');
     press('ArrowUp');
     press('ArrowDown');
-    expect(virtualizer.scrollToIndex.mock.calls.map(([index]) => index)).toEqual([0, 0, 1]);
-    expect(onSelect).toHaveBeenCalledTimes(3);
+    expect(virtualizer.scrollToIndex.mock.calls.map(([index]) => index)).toEqual([0, 0]);
+    expect(onSelect).toHaveBeenCalledOnce();
+    render().press(' ');
+    expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });
 
   it('does not navigate while a replacement page is loading', () => {
@@ -133,5 +159,55 @@ describe('record table selection visibility', () => {
     render().press('Tab');
     render({ rows: [] }).press('Home');
     expect(virtualizer.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it('announces header-inclusive row indexes and one grid Tab stop', () => {
+    const { element } = render();
+    const markup = renderToStaticMarkup(element);
+    expect(markup).toContain('aria-rowcount="3" aria-colcount="2"');
+    expect(markup).toContain('role="row" aria-rowindex="1"');
+    expect(markup).toContain('role="row" aria-rowindex="2"');
+    expect(markup).toContain('role="row" aria-rowindex="3"');
+    expect(markup.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(markup.match(/role="separator" tabindex="-1" aria-orientation="vertical" aria-controls=/g)).toHaveLength(2);
+    expect(markup).toContain('aria-valuetext="160 pixels wide"');
+  });
+
+  it('references only mounted cells and adds at most the active row to the virtual range', () => {
+    gridState.cell = { kind: 'data', sessionId: 'synthetic-document', generation: 'g1', ordinal: '0', columnId: 'status' };
+    const markup = renderToStaticMarkup(render().element);
+    const id = gridCellId('synthetic-document', 'g1', '0', 'status');
+    expect(markup).toContain(`aria-activedescendant="${id}"`);
+    expect(markup).toContain(`id="${id}"`);
+    const options = vi.mocked(useVirtualizer).mock.calls.at(-1)![0];
+    expect(options.rangeExtractor?.({ startIndex: 1, endIndex: 1, overscan: 0, count: 2 })).toEqual([0, 1]);
+    gridState.items = [];
+    expect(renderToStaticMarkup(render().element)).not.toContain('aria-activedescendant=');
+  });
+
+  it('does not announce stale data focus after a page or generation replacement', () => {
+    gridState.cell = { kind: 'data', sessionId: 'synthetic-document', generation: 'old', ordinal: '0', columnId: 'status' };
+    expect(renderToStaticMarkup(render().element)).not.toContain('aria-activedescendant=');
+  });
+
+  it('enters the header separator explicitly and keeps resize keys separate from grid navigation', () => {
+    gridState.cell = { kind: 'header', columnId: '__ordinal' };
+    const onColumnWidthChange = vi.fn();
+    const { element, press, onSelect } = render({ onColumnWidthChange, columnWidths: { __ordinal: 64 } });
+    type ResizeProps = React.ButtonHTMLAttributes<HTMLButtonElement> & { ref: (button: HTMLButtonElement) => void };
+    type Heading = React.ReactElement<{ children: Array<React.ReactElement<ResizeProps>> }>;
+    const [header] = element.props.children as React.ReactElement<{ children: Heading[] }>[];
+    const resizer = header!.props.children[0]!.props.children.find((child) => child?.props.className === 'column-resizer')!;
+    const focus = vi.fn();
+    resizer.props.ref({ focus } as unknown as HTMLButtonElement);
+    press('Enter');
+    expect(focus).toHaveBeenCalledOnce();
+    expect(onSelect).not.toHaveBeenCalled();
+    const resize = (key: string): void => resizer.props.onKeyDown?.({ key, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.KeyboardEvent<HTMLButtonElement>);
+    resize('ArrowLeft');
+    resize('ArrowRight');
+    resize('Home');
+    resize('ArrowDown');
+    expect(onColumnWidthChange.mock.calls).toEqual([['__ordinal', 64], ['__ordinal', 80]]);
   });
 });
