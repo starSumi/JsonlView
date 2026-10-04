@@ -108,6 +108,19 @@ describe('row query recovery policy', () => {
       .toEqual({ kind: 'stop' });
   });
 
+  it('retains the completed request while waiting so later progress cannot retry identical options', () => {
+    const waiting = planEmptyRestore({ ...emptyInput, indexingComplete: false, totalRecords: undefined });
+    if (waiting.kind !== 'wait-index') throw new Error('Expected pending indexing');
+    expect(waiting.restore.requestedOptions).toEqual(emptyInput.requestedOptions);
+    expect(planEmptyRestore({ ...emptyInput, restore: waiting.restore,
+      requestedOptions: undefined, totalRecords: '1000' })).toEqual({ kind: 'stop' });
+    const sorted = planEmptyRestore({ ...emptyInput, indexingComplete: false, totalRecords: undefined,
+      requestedOptions: { sortOffset: '900' } });
+    if (sorted.kind !== 'wait-index') throw new Error('Expected pending sorted indexing');
+    expect(planEmptyRestore({ ...emptyInput, restore: sorted.restore,
+      requestedOptions: undefined, totalRecords: '1000' })).toEqual({ kind: 'stop' });
+  });
+
   it('uses a filtered tail and trusts sorted matched counts only when complete', () => {
     expect(planEmptyRestore({ ...emptyInput, query: 'match', restore: { ...restore, query: 'match' } }))
       .toMatchObject({ kind: 'retry', options: { direction: 'backward' } });

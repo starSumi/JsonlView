@@ -46,6 +46,7 @@ export interface RestoreViewportIntent extends AcceptedSnapshotIdentity {
   readonly firstVisibleOrdinal?: string;
   readonly pageText: string;
   readonly phase: RestoreViewportPhase;
+  readonly requestedOptions?: RecoveryRowsOptions;
 }
 
 function copyOptions(options: RecoveryRowsOptions): RecoveryRowsOptions {
@@ -192,13 +193,15 @@ export function planEmptyRestore(input: {
   readonly scanTruncated?: boolean;
 }): EmptyRestoreDecision {
   const restore = input.restore;
+  const requested = input.requestedOptions ?? restore.requestedOptions;
   if (input.invalidated || input.followMode || restore.query !== input.query
     || snapshotIdentityChanged(restore, input.session) || restore.phase === 'retrying') {
     return { kind: 'stop' };
   }
   // Partial index progress is not a source-size or matched-count authority.
   if (!input.indexingComplete && input.totalRecords === undefined) {
-    return { kind: 'wait-index', restore: { ...restore, phase: 'waiting-index' } };
+    return { kind: 'wait-index', restore: { ...restore, phase: 'waiting-index',
+      ...(requested === undefined ? {} : { requestedOptions: copyOptions(requested) }) } };
   }
   const fallback = rowsOptionsAfterEmptyRebuild(
     restore.firstVisibleOrdinal,
@@ -206,7 +209,7 @@ export function planEmptyRestore(input: {
     input.pageSize,
     input.totalRecords,
     restore.query,
-    input.requestedOptions?.sortOffset,
+    requested?.sortOffset,
     input.matchedRecords,
     input.scanTruncated,
   );
@@ -215,7 +218,6 @@ export function planEmptyRestore(input: {
       ? { kind: 'wait-index', restore: { ...restore, phase: 'waiting-index' } }
       : { kind: 'stop' };
   }
-  const requested = input.requestedOptions;
   if (input.totalRecords === '0' || (requested !== undefined
     && requested.anchorOrdinal === fallback.anchorOrdinal
     && requested.direction === fallback.direction
