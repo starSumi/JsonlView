@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Navigate table cells and view tabs with the keyboard without opening a
+  record until Enter or Space. Keep focus inside narrow-screen record details
+  and return it when closing them.
+- Keep column and filter menus within short or narrow editor viewports.
+- Retain page recovery parameters while indexing finishes, avoiding repeated
+  empty-page requests after rebuilding.
 - Clear stale records when a replacement snapshot opens and prevent Follow
   from retaining another document's records.
 - Switch the table between forward and reverse record order and restore the

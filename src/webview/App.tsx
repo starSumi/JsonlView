@@ -28,7 +28,6 @@ import { deferIdle } from './idle';
 import { InsightsView } from './insights-view';
 import { visibleColumns } from './format';
 import {
-  buildRecordQueryRequest,
   buildStructuredFilter,
   canRequestSortedPage,
   formatScanLimit,
@@ -40,32 +39,20 @@ import {
   selectedRecordColumns,
   textPredicate,
 } from './features/record-query';
-import {
-  advanceSortPage,
-  anchorForPage,
-  normalizeSortOffset,
-  normalizeSortOffsetHistory,
-  normalizeSortPage,
-  pageFromOrdinal,
-  pageFromSortOffset,
-  previousSortPage,
-  rowsOptionsAfterOpened,
-  rowsOptionsAfterEmptyRebuild,
-  rowsOptionsAfterRebuild,
-  rowsOptionsAfterOpenedRequest,
-  rowsOptionsForViewport,
-  type ViewportIdentity,
-} from './paging';
+import type { ViewportIdentity } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
+import { RowQueryController, type RowsRequestMetadata, type RowsRequestOptions } from './row-query-controller';
 import { snapshotIdentityChanged } from './snapshot-identity';
 import { profileOptionList } from './profile-options';
 import { WorkspaceHeader } from './workspace-header';
 import { useLightDismiss } from './use-light-dismiss';
+import { useManualTabs } from './use-manual-tabs';
+import { useNarrowViewport } from './use-modal-focus';
+import { useViewportPopover } from './use-viewport-popover';
 import {
   canReadSnapshot,
   createInitialState,
   nextInvalidationReason,
-  reconcileProfileQueryState,
   selectProblems,
   selectTimelineRows,
   toPersistedState,
@@ -85,6 +72,7 @@ import { RecordTable } from './features/record-query';
 import {
   clampDetailWidth,
   DEFAULT_DETAIL_WIDTH,
+  detailWidthValueText,
   MIN_DETAIL_WIDTH,
   MIN_PRIMARY_WIDTH,
   resizedDetailWidth,
@@ -95,68 +83,6 @@ const configuredPageSize = Number(document.body.dataset.pageSize ?? '100');
 const PAGE_SIZE = Number.isSafeInteger(configuredPageSize)
   ? Math.min(500, Math.max(20, configuredPageSize))
   : 100;
-// Keep logical sorted paging inside the engine's bounded retained window.
-// This is a protocol guard as well as a UX guard: the engine rejects a page
-// whose `sortOffset + limit` exceeds this value.
-interface ViewportCursor {
-  documentId: string;
-  generation: string;
-  query: string;
-  firstVisibleOrdinal?: string;
-}
-
-interface RowsRequestOptions {
-  anchorOrdinal?: string;
-  direction?: 'forward' | 'backward';
-  query?: string;
-  sort?: RowSort;
-  sortOffset?: string;
-  filterColumns?: readonly ColumnSpec[];
-  columns?: readonly ColumnSpec[];
-}
-
-interface RowsRequestMetadata {
-  preserveOnRebuild?: boolean;
-  restoreAfterRebuild?: boolean;
-  restorePhase?: RestoreViewportPhase;
-  supersedesRestore?: boolean;
-  allowWhileInvalidated?: boolean;
-  pageInputSubmission?: boolean;
-}
-
-type RestoreViewportPhase = 'initial' | 'waiting-index' | 'retrying';
-
-interface PendingViewportIntent {
-  requestId: string;
-  documentId: string;
-  generation: string;
-  query: string;
-  options: RowsRequestOptions;
-  preserveOnRebuild: boolean;
-  restoreAfterRebuild: boolean;
-}
-
-interface RebuildViewportIntent {
-  requestId: string;
-  documentId: string;
-  generation: string;
-  query: string;
-  viewportQuery: string;
-  firstVisibleOrdinal?: string;
-  pageText: string;
-  options: RowsRequestOptions;
-}
-
-interface RestoreViewportIntent {
-  documentId: string;
-  generation: string;
-  query: string;
-  requestId: string;
-  firstVisibleOrdinal?: string;
-  pageText: string;
-  phase: RestoreViewportPhase;
-}
-
 const vscode = acquireVsCodeApi<PersistedWorkspaceState>();
 
 function bodySession(): { documentId: string; generation: string; epoch?: number } {
@@ -217,27 +143,16 @@ export function App(): React.JSX.Element {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const columnsMenuRef = useRef<HTMLDetailsElement>(null);
   useLightDismiss(columnsMenuRef);
-  const pageInputRef = useRef('1');
-  const pageInputDirtyRef = useRef(false);
-  const pageInputFocusedRef = useRef(false);
-  const pageInputRequestRef = useRef<string | undefined>(undefined);
-  const queryRef = useRef(restored?.query ?? '');
-  const filterRef = useRef<RowFilter | undefined>(restored?.filter);
-  const sortRef = useRef<RowSort | undefined>(state.sort);
-  const sortDirectionRef = useRef<SortDirection>(state.sortDirection);
+  useViewportPopover(columnsMenuRef);
+  const narrowViewport = useNarrowViewport();
+  const drawerId = 'record-detail';
+  const workspaceTabs = useManualTabs({
+    ids: tabs.map((tab) => tab.id),
+    activeId: state.activeTab,
+    onActivate: (tab) => dispatch({ type: 'SET_ACTIVE_TAB', tab }),
+    idPrefix: 'workspace-views',
+  });
   const indexingCompleteRef = useRef(false);
-  const sortOffsetRef = useRef(state.sort === undefined ? '0' : normalizeSortOffset(state.sortOffset));
-  const sortOffsetHistoryRef = useRef(
-    state.sort === undefined
-      ? []
-      : normalizeSortOffsetHistory(restored.sortOffsetHistory, sortOffsetRef.current),
-  );
-  const sortPageRef = useRef(
-    state.sort === undefined
-      ? '1'
-      : normalizeSortPage(restored.sortPage, sortOffsetRef.current, PAGE_SIZE),
-  );
-  const columnsRef = useRef<readonly ColumnSpec[]>([]);
   const [filterColumnId, setFilterColumnId] = React.useState(restored?.filter?.columnId ?? '');
   const [filterOperator, setFilterOperator] = React.useState<RowFilterOperator>(restored?.filter?.operator ?? 'contains');
   const [filterValue, setFilterValue] = React.useState(
@@ -250,19 +165,10 @@ export function App(): React.JSX.Element {
   // effect can lag behind a burst of OPENED/SOURCE_INVALIDATED messages, so a
   // same-generation OPENED must not accidentally clear the stale barrier.
   const acceptedSessionRef = useRef<ViewportIdentity | undefined>(undefined);
-  const viewportCursorRef = useRef<ViewportCursor | undefined>(undefined);
-  const pendingViewportRef = useRef<PendingViewportIntent | undefined>(undefined);
-  const rebuildViewportRef = useRef<RebuildViewportIntent | undefined>(undefined);
-  const restoreViewportRef = useRef<RestoreViewportIntent | undefined>(undefined);
   const automaticFullDetailKeyRef = useRef<string | undefined>(undefined);
   const schemaRequestKeyRef = useRef('');
   const schemaRequestIdRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
-
-  const setPageInput = useCallback((value: string): void => {
-    pageInputRef.current = value;
-    setPageInputState(value);
-  }, []);
 
   useEffect(() => {
     stateRef.current = state;
@@ -282,100 +188,37 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener('pagehide', flushPersistedState);
   }, []);
 
-  useEffect(() => {
-    // Keep the user's page input visible while a generation-changing rebuild
-    // temporarily clears rows. The next successful page response reconciles it
-    // to the restored first ordinal.
-    if (state.rows.length > 0 && !pageInputDirtyRef.current && !pageInputFocusedRef.current) {
-      if (sortRef.current !== undefined) {
-        setPageInput(sortPageRef.current);
-      } else {
-        setPageInput(pageFromOrdinal(state.rows[0]?.ref.ordinal, PAGE_SIZE));
-      }
-    }
-  }, [state.rows]);
-
   const finishCancelled = useCallback((kind: RequestKind, ids: string[]): void => {
     for (const requestId of ids) dispatch({ type: 'REQUEST_FINISHED', kind, requestId });
   }, []);
 
-  const requestRows = useCallback((
-    options?: RowsRequestOptions,
-    metadata: RowsRequestMetadata = {},
-  ): void => {
-    const client = clientRef.current;
-    if (
-      !canReadSnapshot(invalidationRef.current)
-      && metadata.allowWhileInvalidated !== true
-    ) return;
-    if (metadata.restoreAfterRebuild !== true && metadata.supersedesRestore !== false) {
-      // A new user/refresh request supersedes any pending empty-page recovery;
-      // late INDEX_PROGRESS must never resurrect its old cursor.
-      restoreViewportRef.current = undefined;
+  const cancelReadRequests = useCallback((): void => {
+    for (const kind of ['rows', 'problems', 'detail', 'schema', 'insights'] as const) {
+      finishCancelled(kind, clientRef.current.cancel(kind));
     }
-    // A submitted page request may be superseded by a newer rows request
-    // (search, profile, follow, or another page jump). Its response can no
-    // longer reconcile the input, so release the submission barrier now.
-    if (pageInputRequestRef.current !== undefined) {
-      pageInputRequestRef.current = undefined;
-      pageInputDirtyRef.current = false;
-    }
-    finishCancelled('rows', client.cancel('rows'));
-    const query = options?.query ?? queryRef.current;
-    const preserveOnRebuild = metadata.preserveOnRebuild ?? options !== undefined;
-    const restoreAfterRebuild = metadata.restoreAfterRebuild === true;
-    const sort = indexingCompleteRef.current ? options?.sort ?? sortRef.current : undefined;
-    const sortOffset = sort === undefined
-      ? undefined
-      : options?.sortOffset ?? sortOffsetRef.current;
-    const filterColumns = options?.filterColumns
-      ?? (stateRef.current.columns.length > 0
-        ? stateRef.current.columns
-        : fallbackColumns(stateRef.current.rows));
-    const columns = options?.columns ?? (
-      stateRef.current.summary?.snapshot.generation === client.session.generation
-        ? selectedRecordColumns(
-          stateRef.current.columns,
-          stateRef.current.schema,
-          stateRef.current.columnVisibility,
-        )
-        : undefined
-    );
-    const payload = buildRecordQueryRequest({
-      limit: PAGE_SIZE,
-      query,
-      filterColumns,
-      ...(columns === undefined ? {} : { columns }),
-      ...(filterRef.current === undefined ? {} : { filter: filterRef.current }),
-      ...(options?.anchorOrdinal === undefined ? {} : { anchorOrdinal: options.anchorOrdinal }),
-      ...(options?.direction === undefined ? {} : { direction: options.direction }),
-      ...(sort === undefined ? {} : { sort }),
-      ...(sortOffset === undefined ? {} : { sortOffset }),
-    });
-    const request = client.send('GET_ROWS', payload);
-    if (metadata.pageInputSubmission === true) pageInputRequestRef.current = request.id;
-    if (metadata.restoreAfterRebuild === true && restoreViewportRef.current !== undefined) {
-      restoreViewportRef.current.requestId = request.id;
-      restoreViewportRef.current.phase = metadata.restorePhase ?? 'initial';
-    }
-    pendingViewportRef.current = {
-      requestId: request.id,
-      documentId: client.session.documentId,
-      generation: client.session.generation,
-      query,
-      preserveOnRebuild,
-      restoreAfterRebuild,
-      options: {
-        ...(options?.anchorOrdinal === undefined ? {} : { anchorOrdinal: options.anchorOrdinal }),
-        ...(options?.direction === undefined ? {} : { direction: options.direction }),
-        ...(sort === undefined ? {} : {
-          sort,
-          ...(sortOffset === undefined ? {} : { sortOffset }),
-        }),
-      },
-    };
-    dispatch({ type: 'REQUEST_SENT', request });
   }, [finishCancelled]);
+
+  const queryControllerRef = useRef<RowQueryController | undefined>(undefined);
+  if (queryControllerRef.current === undefined) {
+    queryControllerRef.current = new RowQueryController({
+      client: clientRef.current,
+      getContext: () => ({
+        workspace: stateRef.current,
+        session: clientRef.current.session,
+        invalidationReason: invalidationRef.current,
+        indexingComplete: indexingCompleteRef.current,
+        followMode: followModeRef.current,
+      }),
+      dispatch,
+      cancelReadRequests,
+      onPageInputChange: setPageInputState,
+      fallbackColumns,
+    }, state, PAGE_SIZE);
+  }
+  const queryController = queryControllerRef.current;
+  const requestRows = useCallback((options?: RowsRequestOptions, metadata: RowsRequestMetadata = {}): void => {
+    queryController.requestRows(options, metadata);
+  }, [queryController]);
 
   useEffect(() => {
     const clampToViewport = (): void => {
@@ -421,7 +264,7 @@ export function App(): React.JSX.Element {
     const client = clientRef.current;
     finishCancelled('insights', client.cancel('insights'));
     const dimension = options?.dimension ?? stateRef.current.insightDimension;
-    const predicate = textPredicate(options?.query ?? queryRef.current);
+    const predicate = textPredicate(options?.query ?? queryController.query);
     const request = client.send('GET_INSIGHTS', {
       dimension,
       ...(predicate ? { predicate } : {}),
@@ -447,103 +290,20 @@ export function App(): React.JSX.Element {
   }, []);
 
   const setSort = useCallback((sort: RowSort | undefined): void => {
-    sortRef.current = sort;
-    sortOffsetRef.current = '0';
-    sortOffsetHistoryRef.current = [];
-    sortPageRef.current = '1';
-    dispatch({ type: 'SET_SORT', sort });
-    requestRows({ sortOffset: '0' });
-  }, [requestRows]);
+    queryController.changeSort(sort);
+  }, [queryController]);
 
   const setSortDirection = useCallback((direction: SortDirection): void => {
-    if (
-      !indexingCompleteRef.current
-      || stateRef.current.invalidationReason !== undefined
-      || stateRef.current.pending.rebuild !== undefined
-      || stateRef.current.pending.order !== undefined
-    ) return;
-    if (direction === sortDirectionRef.current && (
-      direction === 'asc' ? sortRef.current === undefined : sortRef.current?.columnId === '__ordinal'
-        && sortRef.current.direction === 'desc'
-    )) return;
-    const request = clientRef.current.send('SET_ROW_ORDER', { direction });
-    dispatch({ type: 'REQUEST_SENT', request });
-  }, [setSort]);
+    queryController.requestRowOrder(direction);
+  }, [queryController]);
 
   const applyFilter = useCallback((filter: RowFilter | undefined): void => {
-    filterRef.current = filter;
-    sortOffsetRef.current = '0';
-    sortOffsetHistoryRef.current = [];
-    sortPageRef.current = '1';
-    dispatch({ type: 'SET_FILTER', filter });
-    requestRows({ sortOffset: '0' });
-  }, [requestRows]);
-
+    queryController.applyFilter(filter);
+  }, [queryController]);
 
   const rebuild = useCallback((): void => {
-    const client = clientRef.current;
-    const current = stateRef.current;
-    // A fresh rebuild supersedes any recovery attempt from the prior
-    // generation, including one waiting for background indexing to finish.
-    restoreViewportRef.current = undefined;
-    const saved = viewportCursorRef.current;
-    const pending = pendingViewportRef.current;
-    const savedBelongsToSession = saved?.documentId === client.session.documentId
-      && saved.generation === client.session.generation;
-    const currentQuery = queryRef.current;
-    const currentFollowMode = followModeRef.current;
-    const viewportQuery = savedBelongsToSession ? saved?.query ?? currentQuery : currentQuery;
-    const queryMatchesViewport = viewportQuery === currentQuery;
-    const pendingMatchesSession = pending?.documentId === client.session.documentId
-      && pending.generation === client.session.generation
-      && pending.query === currentQuery
-      && pending.preserveOnRebuild;
-    const firstVisibleOrdinal = queryMatchesViewport && savedBelongsToSession
-      ? saved.firstVisibleOrdinal
-      : current.rows[0]?.ref.ordinal;
-    const effectiveFirstVisibleOrdinal = queryMatchesViewport ? firstVisibleOrdinal : undefined;
-    const effectivePageInput = queryMatchesViewport ? pageInputRef.current : '1';
-    // Rebuild supersedes a submitted page request. Preserve an unsubmitted
-    // draft (its request ref is already empty), but do not leave a cancelled
-    // submission permanently marking the input dirty.
-    if (pageInputRequestRef.current !== undefined) {
-      pageInputRequestRef.current = undefined;
-      pageInputDirtyRef.current = false;
-    }
-    for (const kind of ['rows', 'problems', 'detail', 'schema', 'insights'] as const) {
-      const cancelled = client.cancel(kind);
-      finishCancelled(kind, cancelled);
-      if (kind === 'rows' && pending?.requestId !== undefined && cancelled.includes(pending.requestId)) {
-        pendingViewportRef.current = undefined;
-      }
-    }
-    // The response may have completed just before cancel() and still be
-    // represented by the local intent. It belongs to the old generation in
-    // either case, so never let it compete with the captured rebuild intent.
-    if (pendingMatchesSession) pendingViewportRef.current = undefined;
-    const request = client.send('REBUILD_INDEX', {});
-    // Capture the intent at click time. A pending GET_ROWS may be cancelled
-    // above, and React state can be cleared by OPENED before the new page is
-    // requested, so the rebuild response cannot reconstruct this reliably.
-    rebuildViewportRef.current = {
-      requestId: request.id,
-      documentId: client.session.documentId,
-      generation: client.session.generation,
-      query: currentQuery,
-      viewportQuery,
-      ...(effectiveFirstVisibleOrdinal === undefined
-        ? {} : { firstVisibleOrdinal: effectiveFirstVisibleOrdinal }),
-      pageText: effectivePageInput,
-      options: rowsOptionsForViewport(
-        effectiveFirstVisibleOrdinal,
-        effectivePageInput,
-        PAGE_SIZE,
-        currentFollowMode,
-        pendingMatchesSession ? pending?.options : undefined,
-      ),
-    };
-    dispatch({ type: 'REQUEST_SENT', request });
-  }, [finishCancelled]);
+    queryController.rebuild();
+  }, [queryController]);
 
   useEffect(() => {
     if (
@@ -561,22 +321,13 @@ export function App(): React.JSX.Element {
     const onMessage = (event: MessageEvent<unknown>): void => {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
-
-      const currentQuery = queryRef.current;
       const currentFollowMode = followModeRef.current;
       const firstOpenedSession = message.type === 'OPENED' && acceptedSessionRef.current === undefined;
       const openedGenerationChanged = message.type === 'OPENED'
         && snapshotIdentityChanged(acceptedSessionRef.current, message.payload.snapshot);
       if (message.type === 'SOURCE_INVALIDATED') {
-        // Set the barrier before any cancellation dispatch. React state is
-        // asynchronous, while message handlers can be re-entered by a
-        // synchronous control event in the same turn.
         invalidationRef.current = nextInvalidationReason(invalidationRef.current, message.payload.reason);
-      } else if (message.type === 'OPENED' && openedGenerationChanged) {
-        // Only a genuinely new snapshot can clear the stale-source barrier.
-        // Same-generation OPENED broadcasts must remain blocked.
-        invalidationRef.current = undefined;
-      }
+      } else if (openedGenerationChanged) invalidationRef.current = undefined;
       if (message.type === 'OPENED') {
         if (openedGenerationChanged) setSchemaLoadFailed(false);
         indexingCompleteRef.current = message.payload.indexingComplete;
@@ -585,446 +336,34 @@ export function App(): React.JSX.Element {
           generation: message.payload.snapshot.generation,
           ...(message.payload.snapshot.epoch === undefined ? {} : { epoch: message.payload.snapshot.epoch }),
         };
-        if (openedGenerationChanged && (sortRef.current === undefined || sortRef.current.columnId === '__ordinal')) {
-          const nextSort: RowSort | undefined = sortDirectionRef.current === 'desc'
-            && message.payload.indexingComplete
-            ? { columnId: '__ordinal', direction: 'desc' }
-            : undefined;
-          if (sortRef.current?.direction !== nextSort?.direction) {
-            sortRef.current = nextSort;
-            sortOffsetRef.current = '0';
-            sortOffsetHistoryRef.current = [];
-            sortPageRef.current = '1';
-            dispatch({ type: 'SET_SORT', sort: nextSort });
-          }
-        }
-      }
-      if (message.type === 'INDEX_PROGRESS'
+      } else if (message.type === 'INDEX_PROGRESS'
         && acceptedSessionRef.current?.generation === message.generation) {
         indexingCompleteRef.current = message.payload.indexingComplete;
       }
-      const profileQuery = message.type === 'PROFILE_CHANGED'
-        && invalidationRef.current === undefined
-        ? reconcileProfileQueryState(
-          sortRef.current,
-          filterRef.current,
-          columnsRef.current,
-          message.payload.columns,
-        )
-        : undefined;
-      if (profileQuery !== undefined && message.type === 'PROFILE_CHANGED') {
-        // React state commits after this handler. Update request-owned refs now
-        // so the profile refresh cannot reuse a removed profile field.
-        sortRef.current = profileQuery.sort;
-        filterRef.current = profileQuery.filter;
-        sortOffsetRef.current = '0';
-        sortOffsetHistoryRef.current = [];
-        sortPageRef.current = '1';
-        columnsRef.current = message.payload.columns;
-      }
-
-      if (message.type === 'SOURCE_INVALIDATED') {
-        if (invalidationRef.current === 'append') {
-          for (const kind of ['profile', 'follow'] as const) {
-            finishCancelled(kind, clientRef.current.cancel(kind));
-          }
-          dispatch({ type: 'MESSAGE_RECEIVED', message });
-          return;
-        }
-        dispatch({ type: 'MESSAGE_RECEIVED', message });
-        // Stop all work against the stale generation, but leave the saved
-        // viewport cursor intact so the next explicit rebuild can restore it.
-        pageInputFocusedRef.current = false;
-        if (pageInputRequestRef.current !== undefined) {
-          pageInputRequestRef.current = undefined;
-          pageInputDirtyRef.current = false;
-        }
-        restoreViewportRef.current = undefined;
-        pendingViewportRef.current = undefined;
-        // The in-flight rebuild belongs to the invalidated generation. Do not
-        // let its captured page/query intent survive a second source change.
-        rebuildViewportRef.current = undefined;
-        for (const kind of ['rows', 'problems', 'detail', 'schema', 'insights', 'profile', 'follow'] as const) {
-          finishCancelled(kind, clientRef.current.cancel(kind));
-        }
-        return;
-      }
-
-      let restoredRowsIntent: RestoreViewportIntent | undefined;
-      let restoredRowsOptions: RowsRequestOptions | undefined;
-
-      if (
-        message.type === 'ERROR'
-        && pendingViewportRef.current?.requestId === message.requestId
-        && pendingViewportRef.current.restoreAfterRebuild
-      ) {
-        restoreViewportRef.current = undefined;
-        pendingViewportRef.current = undefined;
-      }
-      if (message.type === 'ERROR' && pageInputRequestRef.current === message.requestId) {
-        // An error completes the submitted intent just like a successful
-        // ROWS response. A newer unsubmitted draft has already cleared the
-        // request ref and is therefore left untouched.
-        pageInputRequestRef.current = undefined;
-        pageInputDirtyRef.current = false;
-      }
-
-      // Record the viewport from the response itself rather than from React
-      // state. This also covers the command-palette rebuild path, whose
-      // broadcast OPENED message has an empty request id.
-      if (message.type === 'ROWS') {
-        columnsRef.current = message.payload.columns;
-        if (message.payload.sortOffset !== undefined) {
-          const responseOffset = normalizeSortOffset(message.payload.sortOffset);
-          if (responseOffset !== sortOffsetRef.current) {
-            sortOffsetHistoryRef.current = [];
-            sortPageRef.current = pageFromSortOffset(responseOffset, PAGE_SIZE);
-            dispatch({
-              type: 'SET_SORT_OFFSET',
-              offset: responseOffset,
-              history: [],
-              page: sortPageRef.current,
-            });
-          }
-          sortOffsetRef.current = responseOffset;
-        }
-        const pendingViewport = pendingViewportRef.current;
-        const restoreViewport = restoreViewportRef.current;
-        if (
-          pendingViewport?.requestId === message.requestId
-          && pendingViewport.restoreAfterRebuild
-          && restoreViewport?.documentId === message.documentId
-          && restoreViewport.generation === message.generation
-          && restoreViewport.requestId === message.requestId
-        ) {
-          restoredRowsIntent = restoreViewport;
-          restoredRowsOptions = pendingViewport.options;
-        }
-        const previousViewport = viewportCursorRef.current;
-        const responseQuery = pendingViewport?.requestId === message.requestId
-          ? pendingViewport.query
-          : currentQuery;
-        // An empty continuation page is still a viewport result. Keep the
-        // last non-empty first row for rebuild recovery when the query did not
-        // change; otherwise a later source update would silently fall back to
-        // page one. A genuinely new query must start with a fresh cursor.
-        const sameViewport = previousViewport?.documentId === message.documentId
-          && previousViewport.generation === message.generation
-          && previousViewport.query === responseQuery;
-        const firstVisibleOrdinal = message.payload.rows[0]?.ref.ordinal
-          ?? (sameViewport ? previousViewport?.firstVisibleOrdinal : undefined);
-        viewportCursorRef.current = {
-          documentId: message.documentId,
-          generation: message.generation,
-          query: responseQuery,
-          ...(firstVisibleOrdinal === undefined
-            ? {}
-            : { firstVisibleOrdinal }),
-        };
-        if (pendingViewport?.requestId === message.requestId) {
-          if (pageInputRequestRef.current === message.requestId) {
-            // A page draft is committed only by the response to the request
-            // created from that draft. Background/profile rows must not erase
-            // an unsubmitted value.
-            pageInputDirtyRef.current = false;
-            pageInputRequestRef.current = undefined;
-          }
-          pendingViewportRef.current = undefined;
-        }
-      }
+      const followUp = queryController.handleAcceptedMessage(message, { firstOpenedSession, openedGenerationChanged });
       if (message.type === 'SCHEMA' && message.requestId === schemaRequestIdRef.current) {
         setSchemaLoadFailed(false);
       } else if (message.type === 'ERROR' && message.requestId === schemaRequestIdRef.current) {
         setSchemaLoadFailed(true);
       }
-
-      const savedViewport = viewportCursorRef.current;
-      const pendingViewport = pendingViewportRef.current;
-      const rebuildIntent = rebuildViewportRef.current;
-      const pendingIdentity: ViewportIdentity | undefined = pendingViewport === undefined
-        ? undefined
-        : {
-          documentId: pendingViewport.documentId,
-          generation: pendingViewport.generation,
-        };
-      const rebuildIdentity: ViewportIdentity | undefined = rebuildIntent === undefined
-        ? undefined
-        : {
-          documentId: rebuildIntent.documentId,
-          generation: rebuildIntent.generation,
-        };
-      const priorViewport: ViewportIdentity | undefined = savedViewport ?? pendingIdentity ?? rebuildIdentity;
-      const openedRows = message.type === 'OPENED'
-        ? rowsOptionsAfterOpened(firstOpenedSession ? undefined : priorViewport, message.payload.snapshot, currentFollowMode)
-        : undefined;
-      const rebuildChangedGeneration = message.type === 'OPENED'
-        && priorViewport !== undefined
-        && priorViewport.documentId === message.documentId
-        && priorViewport.generation !== message.payload.snapshot.generation;
-      const pendingRebuildIntent = rebuildChangedGeneration
-        && pendingViewport !== undefined
-        && pendingViewport.preserveOnRebuild
-        && pendingViewport.documentId === message.documentId
-        && pendingViewport.generation !== message.payload.snapshot.generation
-        ? pendingViewport
-        : undefined;
-      const manualRebuildIntent = rebuildChangedGeneration
-        && rebuildIntent !== undefined
-        && rebuildIntent.documentId === message.documentId
-        && rebuildIntent.generation !== message.payload.snapshot.generation
-        ? rebuildIntent
-        : undefined;
-      const candidateViewportQuery = pendingRebuildIntent?.query
-        ?? manualRebuildIntent?.viewportQuery
-        ?? savedViewport?.query;
-      const queryMatchesViewport = candidateViewportQuery === undefined
-        || candidateViewportQuery === currentQuery;
-      const resumeRows = rebuildChangedGeneration && !currentFollowMode
-        ? queryMatchesViewport
-          ? pendingRebuildIntent?.options
-            ?? manualRebuildIntent?.options
-            ?? rowsOptionsAfterRebuild(savedViewport?.firstVisibleOrdinal, false)
-          : {}
-        : undefined;
-      const candidateQuery = pendingRebuildIntent?.query
-        ?? manualRebuildIntent?.query
-        ?? savedViewport?.query;
-      const resumeQuery = rebuildChangedGeneration && candidateQuery === currentQuery
-        ? candidateQuery
-        : undefined;
-      if (rebuildChangedGeneration) {
-        // Any page submission belongs to the retired generation. Release its
-        // request marker so a missing/cancelled old response cannot keep the
-        // page input dirty forever; an unsubmitted draft has no marker and is
-        // intentionally preserved.
-        if (pageInputRequestRef.current !== undefined) {
-          pageInputRequestRef.current = undefined;
-          pageInputDirtyRef.current = false;
-        }
-        if (!currentFollowMode) {
-          const capturedFirstVisibleOrdinal = manualRebuildIntent?.firstVisibleOrdinal
-            ?? (queryMatchesViewport ? savedViewport?.firstVisibleOrdinal : undefined);
-          const capturedPageText = manualRebuildIntent?.pageText
-            ?? (queryMatchesViewport ? pageInputRef.current : '1');
-          restoreViewportRef.current = {
-            documentId: message.documentId,
-            generation: message.payload.snapshot.generation,
-            query: currentQuery,
-            ...(capturedFirstVisibleOrdinal === undefined
-              ? {} : { firstVisibleOrdinal: capturedFirstVisibleOrdinal }),
-            pageText: capturedPageText,
-            requestId: '',
-            phase: 'initial',
-          };
-        } else {
-          restoreViewportRef.current = undefined;
-        }
-        // Consume the old-generation cursor before issuing the replacement
-        // request. A duplicate OPENED for the new generation then leaves the
-        // in-flight request alone instead of starting from page one again.
-        viewportCursorRef.current = undefined;
-        pendingViewportRef.current = undefined;
-        rebuildViewportRef.current = undefined;
-      }
       dispatch({ type: 'MESSAGE_RECEIVED', message });
-      const requestRestoreFallback = (
-        restore: RestoreViewportIntent,
-        totalRecords: string | undefined,
-        requestedOptions: RowsRequestOptions | undefined,
-        matchedRecords?: string,
-        scanTruncated = false,
-      ): void => {
-        if (invalidationRef.current !== undefined) {
-          restoreViewportRef.current = undefined;
-          return;
-        }
-        if (restore.query !== queryRef.current) {
-          // The search box is editable before submission. A pending recovery
-          // must never replace a user's newer draft query.
-          restoreViewportRef.current = undefined;
-          return;
-        }
-        if (restore.phase === 'retrying') {
-          // One bounded retry is enough to cover a shrinking file. A second
-          // empty response is a legitimate no-match query or another source
-          // change, so stop rather than looping.
-          restoreViewportRef.current = undefined;
-          return;
-        }
-        const fallback = rowsOptionsAfterEmptyRebuild(
-          restore.firstVisibleOrdinal,
-          restore.pageText,
-          PAGE_SIZE,
-          totalRecords,
-          restore.query,
-          requestedOptions?.sortOffset,
-          matchedRecords,
-          scanTruncated,
-        );
-        if (fallback === undefined) {
-          if (totalRecords === undefined) restore.phase = 'waiting-index';
-          else restoreViewportRef.current = undefined;
-          return;
-        }
-        if (totalRecords === '0' || (
-          requestedOptions !== undefined
-          && requestedOptions.anchorOrdinal === fallback.anchorOrdinal
-          && requestedOptions.direction === fallback.direction
-          && requestedOptions.sortOffset === fallback.sortOffset
-        )) {
-          restoreViewportRef.current = undefined;
-          return;
-        }
-        restore.phase = 'retrying';
-        requestRows(
-          {
-            ...fallback,
-            ...(restore.query.trim() ? { query: restore.query } : {}),
-          },
-          {
-            preserveOnRebuild: true,
-            restoreAfterRebuild: true,
-            restorePhase: 'retrying',
-            supersedesRestore: false,
-          },
-        );
-      };
-      if (message.type === 'ROWS' && restoredRowsIntent !== undefined) {
-        if (message.payload.rows.length > 0) {
-          restoreViewportRef.current = undefined;
+      if (message.type === 'SOURCE_INVALIDATED') {
+        if (invalidationRef.current === 'append') {
+          for (const kind of ['profile', 'follow'] as const) finishCancelled(kind, clientRef.current.cancel(kind));
         } else {
-          requestRestoreFallback(
-            restoredRowsIntent,
-            message.payload.totalRecords,
-            restoredRowsOptions,
-            message.payload.matchedRecords,
-            message.payload.scan?.truncatedReason !== undefined,
-          );
-        }
-      } else if (message.type === 'INDEX_PROGRESS') {
-        const restore = restoreViewportRef.current;
-        if (
-          restore !== undefined
-          && restore.documentId === message.documentId
-          && restore.generation === message.generation
-          && restore.phase === 'waiting-index'
-          && message.payload.indexingComplete
-        ) {
-          requestRestoreFallback(restore, message.payload.indexedRecords, undefined);
-        }
-        if (
-          message.payload.indexingComplete
-          && sortDirectionRef.current === 'desc'
-          && sortRef.current === undefined
-          && invalidationRef.current === undefined
-          && acceptedSessionRef.current?.generation === message.generation
-        ) {
-          setSort({ columnId: '__ordinal', direction: 'desc' });
+          cancelReadRequests();
+          for (const kind of ['profile', 'follow'] as const) finishCancelled(kind, clientRef.current.cancel(kind));
         }
       }
-      if (
-        message.type === 'OPENED'
-        && openedRows !== undefined
-        && (invalidationRef.current === undefined || rebuildChangedGeneration)
-      ) {
-        const openedRequestOptions: RowsRequestOptions = {
-          ...rowsOptionsAfterOpenedRequest(
-            openedRows,
-            resumeRows,
-            currentFollowMode,
-          ),
-          ...(resumeQuery === undefined ? {} : { query: resumeQuery }),
-        };
-        if (rebuildChangedGeneration && !currentFollowMode) {
-          const restore = restoreViewportRef.current;
-          if (restore !== undefined) {
-            restore.query = resumeQuery ?? currentQuery;
-            restore.phase = 'initial';
-          }
-        }
-        requestRows(
-          openedRequestOptions,
-          rebuildChangedGeneration
-            ? {
-              preserveOnRebuild: true,
-              restoreAfterRebuild: !currentFollowMode,
-              restorePhase: 'initial',
-              supersedesRestore: false,
-              allowWhileInvalidated: true,
-            }
-            : { allowWhileInvalidated: true },
-        );
-      } else if (message.type === 'PROFILE_CHANGED') {
-        const restore = restoreViewportRef.current;
-        const pendingRestore = pendingViewportRef.current?.restoreAfterRebuild === true
-          && restore !== undefined;
-        // A restoring row request may have captured the old profile query.
-        // Replace it while retaining the physical rebuild cursor; a recovery
-        // that is merely waiting for more index progress remains untouched.
-        if (invalidationRef.current === undefined && (restore === undefined || pendingRestore)) {
-          const profileRefresh = pendingRestore && !currentFollowMode
-            ? rowsOptionsForViewport(
-              restore.firstVisibleOrdinal,
-              restore.pageText,
-              PAGE_SIZE,
-              false,
-            )
-            : rowsOptionsAfterRebuild(
-              viewportCursorRef.current?.firstVisibleOrdinal,
-              currentFollowMode,
-            );
-          requestRows(
-            {
-              ...profileRefresh,
-              ...(currentQuery.trim() ? { query: currentQuery } : {}),
-              filterColumns: message.payload.columns,
-              ...(profileQuery?.sort === undefined ? {} : { sortOffset: '0' }),
-            },
-            pendingRestore
-              ? {
-                preserveOnRebuild: true,
-                restoreAfterRebuild: true,
-                restorePhase: restore.phase === 'retrying' ? 'retrying' : 'initial',
-                supersedesRestore: false,
-              }
-              : { preserveOnRebuild: true },
-          );
-        }
-      } else if (
-        message.type === 'ERROR'
-        && pendingViewportRef.current?.requestId === message.requestId
-      ) {
-        pendingViewportRef.current = undefined;
-      } else if (
-        message.type === 'ERROR'
-        && rebuildViewportRef.current?.requestId === message.requestId
-      ) {
-        rebuildViewportRef.current = undefined;
-      }
-      if (message.type === 'ROW_ORDER_CHANGED') {
-        // Commit the local view only after the extension has persisted the
-        // preference. A failed globalState write therefore cannot leave the
-        // table and the stored order diverged.
-        sortDirectionRef.current = message.payload.direction;
-        dispatch({ type: 'SET_SORT_DIRECTION', direction: message.payload.direction });
-        setSort(message.payload.direction === 'desc'
-          ? { columnId: '__ordinal', direction: 'desc' }
-          : undefined);
-      }
-      if (
-        message.type === 'OPENED'
-        && currentFollowMode
-        // Restore Follow once for the first/new snapshot. Duplicate
-        // same-generation OPENED broadcasts must not enqueue another toggle.
-        && openedGenerationChanged
-      ) {
+      followUp();
+      if (message.type === 'OPENED' && currentFollowMode && openedGenerationChanged) {
         const request = clientRef.current.send('SET_FOLLOW_MODE', { enabled: true });
         dispatch({ type: 'REQUEST_SENT', request });
       }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [requestRows, setSort]);
+  }, [cancelReadRequests, finishCancelled, queryController]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -1051,9 +390,7 @@ export function App(): React.JSX.Element {
     const selected = selectedRecordColumns(state.columns, state.schema, state.columnVisibility);
     if (!selected?.some((column) => state.columnVisibility[column.id] === true
       && !state.columns.some((current) => current.id === column.id))) return;
-    const viewport = sortRef.current === undefined
-      ? rowsOptionsAfterRebuild(viewportCursorRef.current?.firstVisibleOrdinal, followModeRef.current)
-      : { sortOffset: sortOffsetRef.current };
+    const viewport = queryController.currentViewportOptions();
     requestRows({ ...viewport, columns: selected }, { preserveOnRebuild: true });
   }, [requestRows, state.columnVisibility, state.columns, state.invalidationReason,
     state.page, state.pending.rows, state.schema, state.summary]);
@@ -1193,7 +530,7 @@ export function App(): React.JSX.Element {
 
   const setProfile = (profileId: string): void => {
     if (invalidationRef.current !== undefined) return;
-    restoreViewportRef.current = undefined;
+    queryController.abandonRestore();
     finishCancelled('profile', clientRef.current.cancel('profile'));
     const request = clientRef.current.send('SET_PROFILE', { profileId });
     dispatch({ type: 'REQUEST_SENT', request });
@@ -1201,23 +538,13 @@ export function App(): React.JSX.Element {
 
   const setFollow = (enabled: boolean): void => {
     if (invalidationRef.current !== undefined) return;
-    restoreViewportRef.current = undefined;
+    queryController.abandonRestore();
     followModeRef.current = enabled;
     dispatch({ type: 'SET_FOLLOW_MODE', enabled });
     finishCancelled('follow', clientRef.current.cancel('follow'));
     const request = clientRef.current.send('SET_FOLLOW_MODE', { enabled });
     dispatch({ type: 'REQUEST_SENT', request });
-    if (enabled) {
-      if (sortRef.current?.columnId === '__ordinal' && sortRef.current.direction === 'desc') {
-        sortOffsetRef.current = '0';
-        sortOffsetHistoryRef.current = [];
-        sortPageRef.current = '1';
-        dispatch({ type: 'SET_SORT_OFFSET', offset: '0', history: [], page: '1' });
-        requestRows({ sortOffset: '0' });
-      } else {
-        requestRows({ direction: 'backward' });
-      }
-    }
+    if (enabled) queryController.requestFollowRows();
   };
 
   const selectProblem = (ordinal: string): void => {
@@ -1239,113 +566,9 @@ export function App(): React.JSX.Element {
     });
   }, [requestProblems]);
 
-  const nextPage = (): void => {
-    if (sortRef.current !== undefined) {
-      const currentOffset = normalizeSortOffset(sortOffsetRef.current);
-      const offset = BigInt(currentOffset);
-      let nextOffset: bigint;
-      try {
-        nextOffset = state.page?.sortNextOffset === undefined
-          ? offset + BigInt(PAGE_SIZE)
-          : BigInt(state.page.sortNextOffset);
-      } catch {
-        nextOffset = offset + BigInt(PAGE_SIZE);
-      }
-      if (nextOffset <= offset) return;
-      if (!canRequestSortedPage(sortRef.current, nextOffset, PAGE_SIZE)) return;
-      const next = nextOffset.toString();
-      const position = advanceSortPage(
-        sortOffsetHistoryRef.current,
-        currentOffset,
-        sortPageRef.current,
-        next,
-        PAGE_SIZE,
-      );
-      sortOffsetHistoryRef.current = position.history;
-      sortOffsetRef.current = position.offset;
-      sortPageRef.current = position.page;
-      dispatch({ type: 'SET_SORT_OFFSET', ...position });
-      setPageInput(position.page);
-      requestRows({ sortOffset: position.offset });
-      return;
-    }
-    const scanCursor = state.page?.scan?.truncatedReason
-      && state.page.scan.direction === 'forward'
-      ? state.page.scan.cursorOrdinal
-      : undefined;
-    const anchorOrdinal = scanCursor ?? state.rows.at(-1)?.ref.ordinal ?? state.page?.anchorOrdinal;
-    if (anchorOrdinal) requestRows({ anchorOrdinal, direction: 'forward' });
-  };
-
-  const previousPage = (): void => {
-    if (sortRef.current !== undefined) {
-      const previous = previousSortPage(
-        sortOffsetHistoryRef.current,
-        sortOffsetRef.current,
-        sortPageRef.current,
-        PAGE_SIZE,
-      );
-      sortOffsetHistoryRef.current = previous.history;
-      sortOffsetRef.current = previous.offset;
-      sortPageRef.current = previous.page;
-      dispatch({ type: 'SET_SORT_OFFSET', ...previous });
-      setPageInput(previous.page);
-      requestRows({ sortOffset: previous.offset });
-      return;
-    }
-    const scanCursor = state.page?.scan?.truncatedReason
-      && state.page.scan.direction === 'backward'
-      ? state.page.scan.cursorOrdinal
-      : undefined;
-    const anchorOrdinal = scanCursor ?? state.rows[0]?.ref.ordinal ?? state.page?.anchorOrdinal;
-    if (anchorOrdinal) requestRows({ anchorOrdinal, direction: 'backward' });
-  };
-
-  const jumpToPage = (): void => {
-    // Do not normalize or clear a draft while the source barrier is active;
-    // the disabled field may still dispatch a trailing blur event.
-    if (!canReadSnapshot(invalidationRef.current)) return;
-    // Focus/blur is not a navigation intent. This is important for a partial
-    // sorted page whose display page can still be "1" at offsets such as 3.
-    if (!pageInputDirtyRef.current) return;
-    const value = pageInputRef.current.trim();
-    if (sortRef.current !== undefined) {
-      let page: bigint;
-      try { page = BigInt(value); } catch { page = 0n; }
-      const offset = page > 0n ? (page - 1n) * BigInt(PAGE_SIZE) : -1n;
-      if (
-        page < 1n
-        || offset < 0n
-        || !canRequestSortedPage(sortRef.current, offset, PAGE_SIZE)
-      ) {
-        pageInputDirtyRef.current = false;
-        setPageInput(sortPageRef.current);
-        return;
-      }
-      const offsetText = offset.toString();
-      const pageText = page.toString();
-      sortOffsetHistoryRef.current = [];
-      sortOffsetRef.current = offsetText;
-      sortPageRef.current = pageText;
-      dispatch({ type: 'SET_SORT_OFFSET', offset: offsetText, history: [], page: pageText });
-      requestRows({ sortOffset: offsetText }, { pageInputSubmission: true });
-      return;
-    }
-    const anchorOrdinal = anchorForPage(value, PAGE_SIZE);
-    if (anchorOrdinal === undefined && value !== '1') {
-      pageInputDirtyRef.current = false;
-      pageInputRequestRef.current = undefined;
-      setPageInput(pageFromOrdinal(state.rows[0]?.ref.ordinal, PAGE_SIZE));
-      return;
-    }
-    // An explicit jump to page one is still a viewport intent. Preserve the
-    // empty options object so a concurrent rebuild does not fall back to an
-    // older page cursor.
-    requestRows(
-      anchorOrdinal === undefined ? {} : { anchorOrdinal, direction: 'forward' },
-      { pageInputSubmission: true },
-    );
-  };
+  const nextPage = (): void => queryController.nextPage();
+  const previousPage = (): void => queryController.previousPage();
+  const jumpToPage = (): void => queryController.submitPageInput();
 
   const pageRange = state.rows.length > 0
     ? `Rows #${state.rows[0]?.ref.ordinal}-#${state.rows.at(-1)?.ref.ordinal}`
@@ -1369,7 +592,7 @@ export function App(): React.JSX.Element {
           const nextOffset = state.page?.sortNextOffset === undefined
             ? offset + BigInt(PAGE_SIZE)
             : BigInt(state.page.sortNextOffset);
-           return canRequestSortedPage(sortRef.current, nextOffset, PAGE_SIZE);
+           return canRequestSortedPage(queryController.sort, nextOffset, PAGE_SIZE);
         } catch {
           return false;
         }
@@ -1492,32 +715,13 @@ export function App(): React.JSX.Element {
                  : 'Indexing the file before reverse order is available'}
           onSortDirectionChange={setSortDirection}
           onSearchSubmit={() => {
-            const query = queryRef.current;
+            const query = queryController.query;
             if (state.activeTab === 'insights') requestInsights({ query });
             else requestRows({ query });
           }}
-          onSearchChange={(query) => {
-            queryRef.current = query;
-            sortOffsetRef.current = '0';
-            sortOffsetHistoryRef.current = [];
-            sortPageRef.current = '1';
-            if (pageInputRequestRef.current !== undefined) {
-              pageInputRequestRef.current = undefined;
-              pageInputDirtyRef.current = false;
-            }
-            if (restoreViewportRef.current?.query !== query) restoreViewportRef.current = undefined;
-            dispatch({ type: 'SET_QUERY', query });
-          }}
+          onSearchChange={(query) => queryController.editQuery(query)}
           onSearchClear={() => {
-            queryRef.current = '';
-            sortOffsetRef.current = '0';
-            sortOffsetHistoryRef.current = [];
-            sortPageRef.current = '1';
-            if (pageInputRequestRef.current !== undefined) {
-              pageInputRequestRef.current = undefined;
-              pageInputDirtyRef.current = false;
-            }
-            dispatch({ type: 'SET_QUERY', query: '' });
+            queryController.editQuery('');
             if (state.activeTab === 'insights') requestInsights({ query: '' });
             else requestRows({ query: '' });
           }}
@@ -1573,9 +777,7 @@ export function App(): React.JSX.Element {
                     if (!record) return;
                     const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
                     const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
-                    const viewport = sortRef.current === undefined
-                      ? rowsOptionsAfterRebuild(viewportCursorRef.current?.firstVisibleOrdinal, followModeRef.current)
-                      : { sortOffset: sortOffsetRef.current };
+                    const viewport = queryController.currentViewportOptions();
                     requestRows({ ...viewport, columns }, { preserveOnRebuild: true });
                   }}
                 />
@@ -1606,16 +808,15 @@ export function App(): React.JSX.Element {
       ) : null}
       <RecordQueryBanner scan={state.page?.scan} sort={state.sort} />
 
-      <nav className="workspace-tabs" aria-label="Workspace views">
+      <nav {...workspaceTabs.tabListProps} className="workspace-tabs" aria-label="Workspace views">
         {tabs.map(({ id, label, icon: Icon }) => {
           const count = id === 'timeline' ? timelineRows.length : id === 'problems' ? problemEntries.length : undefined;
           return (
             <button
               type="button"
               className={state.activeTab === id ? 'is-active' : ''}
-              aria-selected={state.activeTab === id}
+              {...workspaceTabs.getTabProps(id)}
               key={id}
-              onClick={() => dispatch({ type: 'SET_ACTIVE_TAB', tab: id })}
             >
               <Icon size={14} aria-hidden />
               {label}
@@ -1639,8 +840,10 @@ export function App(): React.JSX.Element {
         style={workspaceStyle}
       >
         <section className="workspace-primary" aria-label={`${state.activeTab} view`}>
+          <div {...workspaceTabs.getPanelProps('table')} className="workspace-tab-panel">
           {state.activeTab === 'table' ? (
             <RecordTable
+              sessionId={clientRef.current.session.documentId}
               rows={state.rows}
               columns={tableColumns}
               selectedOrdinal={state.selectedOrdinal}
@@ -1652,12 +855,18 @@ export function App(): React.JSX.Element {
               onColumnOrderChange={setColumnOrder}
             />
           ) : null}
+          </div>
+          <div {...workspaceTabs.getPanelProps('timeline')} className="workspace-tab-panel">
           {state.activeTab === 'timeline' ? (
             <TimelineView rows={timelineRows} selectedOrdinal={state.selectedOrdinal} onSelect={requestDetail} />
           ) : null}
+          </div>
+          <div {...workspaceTabs.getPanelProps('schema')} className="workspace-tab-panel">
           {state.activeTab === 'schema' ? (
             <SchemaView fields={state.schema} total={state.schemaTotal} loading={Boolean(state.pending.schema)} />
           ) : null}
+          </div>
+          <div {...workspaceTabs.getPanelProps('problems')} className="workspace-tab-panel">
           {state.activeTab === 'problems' ? (
             <ProblemsView
               problems={problemEntries}
@@ -1668,6 +877,8 @@ export function App(): React.JSX.Element {
               loading={Boolean(state.pending.problems)}
             />
           ) : null}
+          </div>
+          <div {...workspaceTabs.getPanelProps('insights')} className="workspace-tab-panel">
           {state.activeTab === 'insights' ? (
             <div className="insights-shell">
               <div className="insights-toolbar">
@@ -1716,6 +927,7 @@ export function App(): React.JSX.Element {
               />
             </div>
           ) : null}
+          </div>
           <RecordPager
             visible={showPageControls}
             busy={Boolean(state.pending.rows)}
@@ -1727,23 +939,8 @@ export function App(): React.JSX.Element {
             onPrevious={previousPage}
             onNext={nextPage}
             onJump={jumpToPage}
-            onInputFocus={() => {
-              pageInputFocusedRef.current = true;
-            }}
-            onInputChange={(value) => {
-              const submittedPageRequest = pageInputRequestRef.current;
-              pageInputRequestRef.current = undefined;
-              if (
-                submittedPageRequest !== undefined
-                && pendingViewportRef.current?.requestId === submittedPageRequest
-              ) {
-                pendingViewportRef.current = undefined;
-              }
-              rebuildViewportRef.current = undefined;
-              pageInputDirtyRef.current = true;
-              restoreViewportRef.current = undefined;
-              setPageInput(value);
-            }}
+            onInputFocus={() => queryController.focusPageInput(true)}
+            onInputChange={(value) => queryController.editPageInput(value)}
             onInputKeyDown={(event) => {
               event.stopPropagation();
               if (event.key === 'Enter') {
@@ -1752,24 +949,26 @@ export function App(): React.JSX.Element {
               }
             }}
             onInputBlur={() => {
-              pageInputFocusedRef.current = false;
+              queryController.focusPageInput(false);
               jumpToPage();
             }}
           />
         </section>
         {drawerOpen ? (
           <>
-            <div
+            {!narrowViewport ? <div
               className="detail-splitter"
               role="separator"
               aria-label="Resize record detail"
               aria-orientation="vertical"
+              aria-controls={drawerId}
               aria-valuemin={MIN_DETAIL_WIDTH}
               aria-valuemax={Math.max(
                 MIN_DETAIL_WIDTH,
                 workspaceWidth - MIN_PRIMARY_WIDTH - SPLITTER_WIDTH,
               )}
               aria-valuenow={displayedDetailWidth}
+              aria-valuetext={detailWidthValueText(displayedDetailWidth)}
               tabIndex={0}
               title="Drag to resize detail"
               onPointerDown={resizeDetailFromPointer}
@@ -1778,8 +977,10 @@ export function App(): React.JSX.Element {
                 const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
                 dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(DEFAULT_DETAIL_WIDTH, containerWidth) });
               }}
-            />
+            /> : null}
             <DetailDrawer
+              id={drawerId}
+              modal={narrowViewport}
               detail={state.detail}
               loading={Boolean(state.pending.detail)}
               readBlocked={!canReadSnapshot(state.invalidationReason)}
