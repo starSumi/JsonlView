@@ -92,4 +92,3 @@ more than one row. Preserve admission and cancellation characterization first.
 Reverse the controller/App or UI commits independently, retaining tests and
 review evidence. A source change invalidates dependent artifact, review and
 installed-host acceptance. The snapshot correction has its separate ADR.
-
