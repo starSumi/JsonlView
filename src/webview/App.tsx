@@ -57,6 +57,7 @@ import {
   type ViewportIdentity,
 } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
+import { snapshotIdentityChanged } from './snapshot-identity';
 import { profileOptionList } from './profile-options';
 import { WorkspaceHeader } from './workspace-header';
 import { useLightDismiss } from './use-light-dismiss';
@@ -565,16 +566,7 @@ export function App(): React.JSX.Element {
       const currentFollowMode = followModeRef.current;
       const firstOpenedSession = message.type === 'OPENED' && acceptedSessionRef.current === undefined;
       const openedGenerationChanged = message.type === 'OPENED'
-        && (
-          acceptedSessionRef.current === undefined
-          || acceptedSessionRef.current.documentId !== message.payload.snapshot.documentId
-          || acceptedSessionRef.current.generation !== message.payload.snapshot.generation
-          || (
-            acceptedSessionRef.current.epoch !== undefined
-            && message.payload.snapshot.epoch !== undefined
-            && acceptedSessionRef.current.epoch !== message.payload.snapshot.epoch
-          )
-        );
+        && snapshotIdentityChanged(acceptedSessionRef.current, message.payload.snapshot);
       if (message.type === 'SOURCE_INVALIDATED') {
         // Set the barrier before any cancellation dispatch. React state is
         // asynchronous, while message handlers can be re-entered by a

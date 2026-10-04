@@ -16,6 +16,7 @@ import type {
 } from '../shared/types';
 import { normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage } from './paging';
 import { DEFAULT_DETAIL_WIDTH } from './split-pane';
+import { snapshotIdentityChanged } from './snapshot-identity';
 
 export type WorkspaceTab = 'table' | 'timeline' | 'schema' | 'problems' | 'insights';
 export type DetailTab = 'tree' | 'raw' | 'derived' | 'bytes';
@@ -274,27 +275,27 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
   const pending = completeRequest(state.pending, message.requestId);
   switch (message.type) {
     case 'OPENED': {
-      const generationChanged = state.summary?.snapshot.generation !== message.payload.snapshot.generation;
-      // A source invalidation is terminal for the current generation. Only a
-      // genuinely new snapshot can clear the stale-source barrier; a late
-      // same-generation OPENED must not hide it.
-      if (state.invalidationReason !== undefined && !generationChanged) return { ...state, pending };
-      const preserveFollowViewport = generationChanged && state.followMode && state.rows.length > 0;
+      const snapshotChanged = snapshotIdentityChanged(state.summary?.snapshot, message.payload.snapshot);
+      // Only an accepted new snapshot can clear the stale-source barrier.
+      // Repeated OPENED broadcasts must not hide destructive invalidation.
+      if (state.invalidationReason !== undefined && !snapshotChanged) return { ...state, pending };
+      const preserveFollowViewport = snapshotChanged && state.followMode && state.rows.length > 0
+        && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
       return {
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
         summary: message.payload,
-        rows: generationChanged && !preserveFollowViewport ? [] : state.rows,
-        columns: generationChanged && !preserveFollowViewport ? [] : state.columns,
-        page: generationChanged && !preserveFollowViewport ? undefined : state.page,
-        problems: generationChanged ? undefined : state.problems,
-        selectedOrdinal: generationChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
-        detail: generationChanged ? undefined : state.detail,
-        schema: generationChanged ? [] : state.schema,
-        schemaTotal: generationChanged ? 0 : state.schemaTotal,
-        schemaComplete: generationChanged ? false : state.schemaComplete,
-        insights: generationChanged ? undefined : state.insights,
-        pending: generationChanged ? {} : pending,
+        rows: snapshotChanged && !preserveFollowViewport ? [] : state.rows,
+        columns: snapshotChanged && !preserveFollowViewport ? [] : state.columns,
+        page: snapshotChanged && !preserveFollowViewport ? undefined : state.page,
+        problems: snapshotChanged ? undefined : state.problems,
+        selectedOrdinal: snapshotChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
+        detail: snapshotChanged ? undefined : state.detail,
+        schema: snapshotChanged ? [] : state.schema,
+        schemaTotal: snapshotChanged ? 0 : state.schemaTotal,
+        schemaComplete: snapshotChanged ? false : state.schemaComplete,
+        insights: snapshotChanged ? undefined : state.insights,
+        pending: snapshotChanged ? {} : pending,
         invalidationReason: undefined,
         blockedDetailOrdinal: undefined,
         error: undefined,

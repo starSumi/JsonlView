@@ -81,6 +81,54 @@ const rows: RowProjection[] = [
 ];
 
 describe('workspace reducer', () => {
+  it.each([false, true])('replaces stale projections on a same-generation newer epoch (invalidated=%s)', (invalidated) => {
+    const initialSummary = { ...summary, snapshot: { ...summary.snapshot, epoch: 1 } };
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('OPENED', initialSummary), epoch: 1 },
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { id: 'old-detail', kind: 'detail' } });
+    if (invalidated) state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'replace' }),
+    });
+
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, epoch: 2 } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('OPENED', nextSummary), epoch: 2 },
+    });
+    expect(state.summary?.snapshot.epoch).toBe(2);
+    expect(state.invalidationReason).toBeUndefined();
+    expect(state.rows).toEqual([]);
+    expect(state.selectedOrdinal).toBeUndefined();
+    expect(state.pending).toEqual({});
+    expect(state.phase).toBe('ready');
+  });
+
+  it('clears the Follow viewport when the document changes even if its generation matches', () => {
+    let state = workspaceReducer(createInitialState({ followMode: true }), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, documentId: 'other-document' } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('OPENED', nextSummary), documentId: 'other-document' },
+    });
+    expect(state.rows).toEqual([]);
+    expect(state.page).toBeUndefined();
+    expect(state.selectedOrdinal).toBeUndefined();
+    expect(state.summary?.snapshot.documentId).toBe('other-document');
+  });
+
   it('resets generation-bound projections when a new document generation opens', () => {
     let state = createInitialState();
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
