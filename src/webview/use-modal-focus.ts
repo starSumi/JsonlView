@@ -113,7 +113,8 @@ export function useModalFocus({ modal, dialogRef, initialFocusRef, onClose }: {
       // Resizing to a wide aside keeps the user's focus in its content.
       if (!modalRef.current && dialog.isConnected) return;
       const fallback = document.querySelector<HTMLElement>('[role="grid"], .workspace-tabs [aria-selected="true"]');
-      const target = opener?.isConnected && opener !== document.body && !opener.matches(':disabled')
+      // A closing dialog's descendants can still be connected during layout cleanup.
+      const target = opener?.isConnected && !dialog.contains(opener) && opener !== document.body && !opener.matches(':disabled')
         && opener.getClientRects().length > 0 && !opener.closest('[hidden], [inert]')
         ? opener : fallback;
       if (target?.isConnected && !target.closest('[hidden], [inert]')) target.focus({ preventScroll: true });
