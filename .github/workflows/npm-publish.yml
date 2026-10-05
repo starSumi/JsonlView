@@ -1,0 +1,291 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Choose a new package publication or an explicit dist-tag promotion"
+        required: true
+        default: publish
+        type: choice
+        options:
+          - publish
+          - promote
+      dist_tag:
+        description: "Distribution tag for the publication or promotion"
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - beta
+          - next
+          - canary
+      version:
+        description: "Existing semver version for promote; ignored by publish"
+        required: false
+        type: string
+      evidence_run_id:
+        description: "Prior successful npm publication run containing the public preflight evidence; required for promote"
+        required: false
+        type: string
+      evidence_artifact:
+        description: "Exact Actions artifact name from evidence_run_id; required for promote"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    environment: npm-publish
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout the reviewed main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.26.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Require green CI and CodeQL for this revision
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $checks = (gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA/check-runs?per_page=100" | ConvertFrom-Json).check_runs
+          $required = @('quality', 'native-windows', 'Analyze JavaScript and TypeScript (javascript-typescript)')
+          foreach ($name in $required) {
+            $matches = @($checks | Where-Object { $_.name -eq $name -and $_.conclusion -eq 'success' })
+            if ($matches.Count -eq 0) { throw "Required successful check is missing for $env:GITHUB_SHA - $name" }
+          }
+
+      - name: Run release checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm check:contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm test:coverage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm check:changelog -- --base (git rev-parse "$env:GITHUB_SHA^") --head "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm check:cargo-notices
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm check:runtime-notices
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:fmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the frozen Windows candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:RUNNER_TEMP 'jsonlview-npm-native'
+          $targetDir = Join-Path $env:RUNNER_TEMP 'jsonlview-npm-cargo-target'
+          $distDir = Join-Path $env:RUNNER_TEMP 'jsonlview-npm-dist'
+          $reportDir = Join-Path $env:RUNNER_TEMP 'jsonlview-npm-release'
+          New-Item -ItemType Directory -Force -Path $buildDir, $targetDir, $reportDir | Out-Null
+
+          $env:JSONLVIEW_NATIVE_OUTPUT_DIR = $buildDir
+          $env:JSONLVIEW_NATIVE_TARGET_DIR = $targetDir
+          pnpm native:build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath (Join-Path $buildDir 'jsonl_core.win32-x64-msvc.node') -PathType Leaf)) {
+            throw 'Native build did not produce the expected Windows addon.'
+          }
+
+          $env:JSONLVIEW_DIST_OUTPUT = $distDir
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- native/jsonl-core/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          "JSONLVIEW_NATIVE_BUILD_DIR=$buildDir" >> $env:GITHUB_ENV
+          "JSONLVIEW_DIST_BUILD_DIR=$distDir" >> $env:GITHUB_ENV
+          "JSONLVIEW_NPM_REPORT_DIR=$reportDir" >> $env:GITHUB_ENV
+
+      - name: Verify native provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/verify-native-addon.mjs --addon (Join-Path $env:JSONLVIEW_NATIVE_BUILD_DIR 'jsonl_core.win32-x64-msvc.node')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-native-provenance.mjs --candidate "$env:JSONLVIEW_NATIVE_BUILD_DIR" --out (Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'provenance.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Prepare the public npm candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $targets = Get-Content config/release-targets.json -Raw | ConvertFrom-Json
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $npmName = [string]$targets.npm.name
+          $version = [string]$package.version
+          $stage = Join-Path $env:RUNNER_TEMP 'jsonlview-npm-stage'
+          $manifest = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'npm-manifest.json'
+          $tarball = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'jsonl-view-npm.tgz'
+          $openVsx = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'open-vsx.vsix'
+          $marketplace = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'marketplace.vsix'
+          $openManifest = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'open-vsx-manifest.json'
+          $marketplaceManifest = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'marketplace-manifest.json'
+          $pairReport = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'vsix-pair.json'
+          node scripts/prepare-npm-package.mjs --public --name "$npmName" --version "$version" --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --output "$stage" --manifest "$manifest" --tarball "$tarball"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-vsix-candidate.mjs --target open-vsx --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$openVsx" --manifest "$openManifest"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-vsix-candidate.mjs --target marketplace --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$marketplace" --manifest "$marketplaceManifest"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-vsix-targets.mjs --open-vsx "$openVsx" --marketplace "$marketplace" --out "$pairReport"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($target in @('open-vsx', 'marketplace')) {
+            $targetManifest = if ($target -eq 'open-vsx') { $openManifest } else { $marketplaceManifest }
+            $targetArtifact = if ($target -eq 'open-vsx') { $openVsx } else { $marketplace }
+            $pairedArtifact = if ($target -eq 'open-vsx') { $marketplace } else { $openVsx }
+            $preflight = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR "preflight-$target.json"
+            pnpm release:preflight -- --public --approved-npm-name "$npmName" --vsix-target "$target" --vsix-pair-report "$pairReport" --paired-vsix-artifact "$pairedArtifact" --provenance (Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'provenance.json') --npm-manifest "$manifest" --npm-candidate "$stage" --npm-tarball "$tarball" --vsix-manifest "$targetManifest" --vsix-artifact "$targetArtifact" --out "$preflight"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          "JSONLVIEW_NPM_NAME=$npmName" >> $env:GITHUB_ENV
+          "JSONLVIEW_NPM_VERSION=$version" >> $env:GITHUB_ENV
+          "JSONLVIEW_NPM_TARBALL=$tarball" >> $env:GITHUB_ENV
+
+      - name: Publish the exact reviewed tarball
+        shell: pwsh
+        env:
+          NPM_DIST_TAG: ${{ inputs.dist_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:NPM_DIST_TAG -eq 'latest' -and $env:JSONLVIEW_NPM_VERSION.Contains('-')) {
+            throw 'Prerelease versions must not be published under latest.'
+          }
+          npm publish "$env:JSONLVIEW_NPM_TARBALL" --registry=https://registry.npmjs.org --access public --tag "$env:NPM_DIST_TAG" --provenance
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm view "$env:JSONLVIEW_NPM_NAME@$env:JSONLVIEW_NPM_VERSION" version --registry=https://registry.npmjs.org
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tags = (npm view "$env:JSONLVIEW_NPM_NAME" dist-tags --json --registry=https://registry.npmjs.org | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tagMap = $tags | ConvertFrom-Json
+          if ([string]$tagMap.($env:NPM_DIST_TAG) -ne $env:JSONLVIEW_NPM_VERSION) {
+            throw "Registry readback did not point $env:NPM_DIST_TAG to $env:JSONLVIEW_NPM_VERSION."
+          }
+
+      - name: Retain non-secret release evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jsonlview-npm-release-${{ github.run_number }}
+          path: ${{ runner.temp }}/jsonlview-npm-release/
+          if-no-files-found: warn
+          retention-days: 30
+
+  promote:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'promote'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Download the reviewed preflight evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          EVIDENCE_ARTIFACT: ${{ inputs.evidence_artifact }}
+        run: |
+          set -euo pipefail
+          test -n "$EVIDENCE_RUN_ID"
+          test -n "$EVIDENCE_ARTIFACT"
+          mkdir -p evidence
+          gh run download "$EVIDENCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$EVIDENCE_ARTIFACT" --dir evidence
+
+      - name: Verify the evidence is bound to this revision and version
+        env:
+          NPM_VERSION: ${{ inputs.version }}
+          NPM_NAME: '@sumi-labs/jsonl-view'
+        run: |
+          set -euo pipefail
+          NPM_VERSION="$NPM_VERSION" NPM_NAME="$NPM_NAME" node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const expectedSha = process.env.GITHUB_SHA;
+          const expectedVersion = process.env.NPM_VERSION;
+          const expectedName = process.env.NPM_NAME;
+          if (!expectedVersion) throw new Error('promote requires a version');
+          for (const target of ['open-vsx', 'marketplace']) {
+            const report = JSON.parse(await readFile('evidence/preflight-' + target + '.json', 'utf8'));
+            if (report.ok !== true || report.mode !== 'public-release') throw new Error('preflight-' + target + ' is not green');
+            if (report.checks?.git?.revision !== expectedSha) throw new Error('preflight-' + target + ' is not bound to this commit');
+            if (report.checks?.npmCandidate?.package?.name !== expectedName) throw new Error('preflight-' + target + ' has the wrong npm package');
+            if (report.checks?.npmCandidate?.package?.version !== expectedVersion) throw new Error('preflight-' + target + ' has the wrong npm version');
+          }
+          console.log(JSON.stringify({ ok: true, revision: expectedSha, package: expectedName, version: expectedVersion }));
+          NODE
+
+      - name: Validate the existing version
+        env:
+          NPM_VERSION: ${{ inputs.version }}
+          NPM_DIST_TAG: ${{ inputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          test -n "$NPM_VERSION"
+          node --input-type=module -e 'const v=process.env.NPM_VERSION; if (!/^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}(?:-[0-9A-Za-z.-]+)?$/.test(v)) process.exit(1)'
+          npm view "@sumi-labs/jsonl-view@$NPM_VERSION" version --registry=https://registry.npmjs.org
+
+      - name: Promote the exact version to the selected dist-tag
+        env:
+          NPM_VERSION: ${{ inputs.version }}
+          NPM_DIST_TAG: ${{ inputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          npm dist-tag add "@sumi-labs/jsonl-view@$NPM_VERSION" "$NPM_DIST_TAG" --registry=https://registry.npmjs.org
+          tags="$(npm view @sumi-labs/jsonl-view dist-tags --json --registry=https://registry.npmjs.org)"
+          export TAGS_JSON="$tags"
+          node --input-type=module -e 'const tags=JSON.parse(process.env.TAGS_JSON); if (tags[process.env.NPM_DIST_TAG] !== process.env.NPM_VERSION) process.exit(1)'
