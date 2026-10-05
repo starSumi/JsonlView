@@ -6,6 +6,7 @@ export {
   formatScanLimit,
   isPhysicalOrdinalSort,
   recordColumnCandidates,
+  recordColumnOptions,
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
   SORT_WINDOW_LIMIT,

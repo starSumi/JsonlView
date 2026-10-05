@@ -57,6 +57,13 @@ export function recordColumnCandidates(columns: readonly ColumnSpec[], schema: r
   return [...candidates.values()];
 }
 
+export function recordColumnOptions(columns: readonly ColumnSpec[], schema: readonly FieldStats[]): ColumnSpec[] {
+  return [
+    ...columns.filter((column) => column.id !== '__ordinal' && column.id !== '$ordinal' && column.source !== 'record'),
+    ...recordColumnCandidates(columns, schema),
+  ];
+}
+
 export function selectedRecordColumns(
   columns: readonly ColumnSpec[],
   schema: readonly FieldStats[],

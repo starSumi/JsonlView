@@ -32,7 +32,7 @@ import {
   canRequestSortedPage,
   formatScanLimit,
   RecordPager,
-  recordColumnCandidates,
+  recordColumnOptions,
   RecordQueryBanner,
   RecordQueryControls,
   SCHEMA_PAGE_SIZE,
@@ -432,25 +432,18 @@ export function App(): React.JSX.Element {
     () => state.columns.length > 0 ? state.columns : fallbackColumns(state.rows),
     [state.columns, state.rows],
   );
-  const recordCandidates = useMemo(
-    () => recordColumnCandidates(baseColumns, state.schema),
-    [baseColumns, state.schema],
-  );
   const selectedRecordIds = new Set(
     selectedRecordColumns(baseColumns, state.schema, state.columnVisibility)?.map((column) => column.id) ?? [],
   );
-  const availableColumns = [
-    ...baseColumns.filter((column) => column.id !== '__ordinal' && column.id !== '$ordinal' && column.source !== 'record'),
-    ...recordCandidates,
-  ];
+  const availableColumns = useMemo(
+    () => recordColumnOptions(baseColumns, state.schema),
+    [baseColumns, state.schema],
+  );
   const recordColumnLimit = Math.max(
     0,
     MAX_TABLE_COLUMNS - baseColumns.filter((column) => column.source === 'profile').length,
   );
-  const filterableColumns = useMemo(
-    () => baseColumns.filter((column) => column.id !== '__ordinal' && column.id !== '$ordinal'),
-    [baseColumns],
-  );
+  const filterableColumns = availableColumns;
   const tableColumns = visibleColumns(baseColumns, state.columnVisibility, state.columnOrder);
   const timelineRows = selectTimelineRows(state);
   const problems = selectProblems(state);

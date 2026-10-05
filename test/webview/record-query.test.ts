@@ -7,6 +7,7 @@ import {
   createFilterScanBudget,
   isPhysicalOrdinalSort,
   recordColumnCandidates,
+  recordColumnOptions,
   selectedRecordColumns,
   textPredicate,
 } from '../../src/webview/features/record-query';
@@ -83,6 +84,34 @@ describe('record-query vertical slice', () => {
     expect(selectedRecordColumns([...crowded, ...columns], [nestedField], {
       [nestedId]: true,
     })?.map((column) => column.id)).toEqual([columns[0]!.id]);
+  });
+
+  it('exposes nested schema leaves to structured filter options and predicates', () => {
+    const nestedId = JSON.stringify(nestedPath.tokens);
+    const filterColumns = recordColumnOptions(columns, [nestedField]);
+    expect(filterColumns.map((column) => column.id)).toEqual([columns[0]!.id, nestedId]);
+
+    const filter = buildStructuredFilter({
+      columnId: nestedId,
+      operator: 'eq',
+      value: 'assistant',
+      caseSensitive: false,
+      selectedColumn: filterColumns.find((column) => column.id === nestedId),
+      filterColumns,
+    });
+    expect(filter).toEqual({
+      columnId: nestedId,
+      operator: 'eq',
+      source: 'record',
+      path: nestedPath,
+      value: 'assistant',
+    });
+    expect(buildRecordQueryRequest({ limit: 100, filter: filter!, filterColumns }).predicate).toEqual({
+      op: 'compare',
+      path: nestedPath,
+      cmp: 'eq',
+      value: 'assistant',
+    });
   });
 
   it('builds only supported structured filters with captured source and path', () => {

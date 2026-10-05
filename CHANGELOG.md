@@ -4,6 +4,8 @@
 
 - Reconcile the visible page after clearing search even when the host omits the
   Page input blur event.
+- Include discovered nested schema fields in the structured filter field list
+  while preserving the bounded table projection.
 - Navigate table cells and view tabs with the keyboard without opening a
   record until Enter or Space. Keep focus inside narrow-screen record details
   and return it when closing them.
