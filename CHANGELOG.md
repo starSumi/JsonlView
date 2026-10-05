@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reconcile the visible page after clearing search even when the host omits the
+  Page input blur event.
 - Navigate table cells and view tabs with the keyboard without opening a
   record until Enter or Space. Keep focus inside narrow-screen record details
   and return it when closing them.

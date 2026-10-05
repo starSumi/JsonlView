@@ -721,6 +721,9 @@ export function App(): React.JSX.Element {
           }}
           onSearchChange={(query) => queryController.editQuery(query)}
           onSearchClear={() => {
+            // Clear is an explicit cross-control action. Release a stale
+            // Page focus gate even when the host did not deliver onBlur.
+            queryController.releasePageInputFocus();
             queryController.editQuery('');
             if (state.activeTab === 'insights') requestInsights({ query: '' });
             else requestRows({ query: '' });

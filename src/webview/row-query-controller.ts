@@ -289,6 +289,8 @@ export class RowQueryController {
 
   public focusPageInput(focused: boolean): void { this.#pageInputFocused = focused; }
 
+  public releasePageInputFocus(): void { this.#pageInputFocused = false; }
+
   public editPageInput(value: string): void {
     const submitted = this.#pageInputRequestId;
     this.#pageInputRequestId = undefined;

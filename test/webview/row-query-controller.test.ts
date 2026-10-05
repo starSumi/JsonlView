@@ -204,6 +204,28 @@ describe('row query controller with real client and reducer', () => {
     expect(test.state.rows[0]?.ref.generation).toBe('g2');
   });
 
+  it('reconciles page one when clear search arrives without a Page blur', () => {
+    const test = harness();
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['0', '99']));
+    test.controller.focusPageInput(true);
+    test.controller.editPageInput('4');
+    test.controller.submitPageInput();
+    const pageFour = test.last('GET_ROWS');
+    test.rows(pageFour, page(['300', '399']));
+    expect(test.controller.pageInput).toBe('4');
+    expect(test.controller.pageInputDirty).toBe(false);
+
+    test.controller.releasePageInputFocus();
+    test.controller.editQuery('');
+    test.controller.requestRows({ query: '' });
+    const cleared = test.last('GET_ROWS');
+    test.rows(cleared, page(['0', '99']));
+
+    expect(test.controller.pageInput).toBe('1');
+    expect(test.controller.pageInputDirty).toBe(false);
+  });
+
   it('deduplicates OPENED and Follow before any React-style reducer commit', () => {
     const test = harness({ followMode: true });
     test.delayCommits();
