@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Place the bounded indexing status before the toolbar at wide widths while
+  preserving accessible status semantics and narrow-container reflow.
+- Use explicit sort-shape icons in one row-order toggle so the control is not
+  confused with search-match navigation or page movement.
+- Refresh the homepage showcases with curated Codex rollout, structured record
+  detail, and Claude timeline views while keeping source sessions out of the
+  product tree.
+- Record a staged read-only agent-history adapter roadmap; private state, source
+  mutation, network access, and MCP exposure remain outside the product contract.
 - Reconcile the visible page after clearing search even when the host omits the
   Page input blur event.
 - Include discovered nested schema fields in the structured filter field list

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { ArrowDown, ArrowUp, Filter, Search, X } from 'lucide-react';
+import { ArrowDownNarrowWide, ArrowDownWideNarrow, Filter, Search, X } from 'lucide-react';
 import type { ColumnSpec, RowFilterOperator, SortDirection } from '../../../shared/types';
 import { useLightDismiss } from '../../use-light-dismiss';
 import { useViewportPopover } from '../../use-viewport-popover';
@@ -64,6 +64,11 @@ export function RecordQueryControls({
   useViewportPopover(filterMenuRef);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
+  const rowOrderTitle = descendingDisabled
+    ? descendingDisabledReason
+    : sortDirection === 'asc'
+      ? 'Rows: first line first; activate for last line first'
+      : 'Rows: last line first; activate for first line first';
 
   return (
     <>
@@ -98,34 +103,17 @@ export function RecordQueryControls({
         <button
           type="button"
           className="icon-button"
-          title={descendingDisabled ? descendingDisabledReason : 'First line first'}
-          aria-label="First line first"
-          aria-pressed={sortDirection === 'asc'}
+          title={rowOrderTitle}
+          aria-label="Toggle row order"
+          aria-pressed={sortDirection === 'desc'}
           aria-description={descendingDisabled ? descendingDisabledReason : undefined}
           disabled={descendingDisabled}
-          onClick={() => onSortDirectionChange('asc')}
+          onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
         >
-          <ArrowUp size={15} aria-hidden />
+          {sortDirection === 'asc'
+            ? <ArrowDownNarrowWide size={15} aria-hidden />
+            : <ArrowDownWideNarrow size={15} aria-hidden />}
         </button>
-        <span
-          className="row-order-option"
-          title={descendingDisabled ? descendingDisabledReason : 'Last line first'}
-          tabIndex={descendingDisabled ? 0 : undefined}
-          role={descendingDisabled ? 'note' : undefined}
-          aria-label={descendingDisabled ? descendingDisabledReason : undefined}
-        >
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Last line first"
-            aria-pressed={sortDirection === 'desc'}
-            aria-description={descendingDisabled ? descendingDisabledReason : undefined}
-            disabled={descendingDisabled}
-            onClick={() => onSortDirectionChange('desc')}
-          >
-            <ArrowDown size={15} aria-hidden />
-          </button>
-        </span>
       </div>
       <details className="filter-menu" ref={filterMenuRef}>
         <summary className={`icon-button${filterActive ? ' is-active' : ''}`} title="Filter records" aria-label="Filter records">

@@ -32,11 +32,20 @@ function render(overrides: Partial<RecordQueryControlsProps> = {}): string {
 }
 
 describe('record order controls', () => {
-  it('shows physical line direction as one toolbar mode', () => {
+  it('shows physical line direction as one explicit sort toggle', () => {
+    const ascendingMarkup = render({ sortDirection: 'asc' });
+    expect(ascendingMarkup).toContain('role="group" aria-label="Record order"');
+    expect(ascendingMarkup).toContain('aria-label="Toggle row order"');
+    expect(ascendingMarkup).toContain('aria-pressed="false"');
+    expect(ascendingMarkup).toContain('title="Rows: first line first; activate for last line first"');
+
     const markup = render({ sortDirection: 'desc' });
     expect(markup).toContain('role="group" aria-label="Record order"');
-    expect(markup).toMatch(/aria-label="First line first" aria-pressed="false"/);
-    expect(markup).toMatch(/aria-label="Last line first" aria-pressed="true"/);
+    expect(markup).toContain('aria-label="Toggle row order"');
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('title="Rows: last line first; activate for first line first"');
+    expect(markup).not.toContain('aria-label="First line first"');
+    expect(markup).not.toContain('aria-label="Last line first"');
   });
 
   it('exposes the indexing reason when reverse order is unavailable', () => {
@@ -46,8 +55,8 @@ describe('record order controls', () => {
     });
     expect(markup).toContain('title="Available when indexing completes"');
     expect(markup).toContain('aria-description="Available when indexing completes" disabled=""');
-    expect(markup).toMatch(/aria-label="First line first" aria-pressed="true"/);
-    expect(markup).toMatch(/aria-label="First line first" aria-pressed="true" aria-description="Available when indexing completes" disabled=""/);
+    expect(markup).toContain('aria-label="Toggle row order"');
+    expect(markup).toContain('aria-pressed="false"');
   });
 
   it('preserves native details disclosure with scrollable fields and reachable actions', () => {

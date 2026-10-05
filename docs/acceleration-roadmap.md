@@ -156,6 +156,32 @@ representative corpus demonstrates a columnar workload worth a second physical
 adapter; its reader must expose lazy row-group access, projection, cancellation,
 resource budgets, and stable source references before implementation begins.
 
+## Read-only agent-history adapter (planned)
+
+Agent-history graphs and local state stores are evaluation inputs, not a product
+dependency. The roadmap is deliberately staged:
+
+1. **Evidence freeze:** pin a clean product revision and keep source bytes,
+   projections, and harness artifacts separate.
+2. **Harness probes:** exercise synthetic cancellation/generation barriers,
+   bounded graph traversal, stable child ordering, framing, hydration, and
+   source immutability. A failed or cancelled read must not deliver stale rows.
+3. **Contract review:** only consider an external read-only adapter after a
+   public owner and interface exist. It would require capability-scoped
+   file/URI access, snapshot identity, row/depth/byte limits, cancellation,
+   privacy redaction, auditability, and rollback.
+4. **Measured scale work:** evaluate viewport, worker, IPC, or native options
+   only against representative fixtures and the portable oracle. No latency,
+   memory, zero-copy, or frame-rate target is implied before measurement.
+
+The adapter remains disabled until every stage is reviewed. It must not patch
+rows, edit source JSONL, expose a private local database by default, collect
+editor or agent content, open a network/MCP gateway, or turn an internal graph
+implementation into a supported plugin API. The [VS Code Webview guide](https://code.visualstudio.com/api/extension-guides/webview)
+keeps the host boundary explicit, and the [MCP Tools security
+considerations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+are the minimum reference if a future capability ever crosses a tool boundary.
+
 ## Adoption benchmark
 
 Every candidate records:

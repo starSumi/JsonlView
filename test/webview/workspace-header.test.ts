@@ -22,6 +22,14 @@ function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
 }
 
 describe('workspace header status', () => {
+  it('places the bounded status region before controls in the wide-layout DOM order', () => {
+    const markup = render();
+
+    expect(markup.indexOf('<div class="status-strip"')).toBeGreaterThanOrEqual(0);
+    expect(markup.indexOf('<div class="status-strip"')).toBeLessThan(markup.indexOf('<div class="toolbar"'));
+    expect(markup).toContain('role="status" aria-live="polite"');
+  });
+
   it('keeps file identity outside the header and labels observed problems', () => {
     const markup = render();
 
@@ -74,5 +82,13 @@ describe('workspace header status', () => {
     expect(render({ indexedBytes: '2000' })).toContain('aria-valuenow="100"');
     expect(render({ sizeBytes: 'Infinity' })).toContain('aria-valuenow="0"');
     expect(render({ sizeBytes: '0' })).toContain('aria-valuenow="0"');
+  });
+
+  it('preserves long row and byte labels without inventing a telemetry field', () => {
+    const markup = render({ indexedRecords: '13572', indexedBytes: '88200000', sizeBytes: '88200000' });
+
+    expect(markup).toContain('13572 rows');
+    expect(markup).toContain('84.1 MB / 84.1 MB');
+    expect(markup).toContain('aria-label="100% indexed"');
   });
 });

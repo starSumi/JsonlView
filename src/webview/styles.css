@@ -227,8 +227,7 @@ select:focus-visible,
   border-radius: 4px;
 }
 
-.row-order-control > .icon-button,
-.row-order-option > .icon-button {
+.row-order-control > .icon-button {
   width: 26px;
   height: 26px;
   flex-basis: 26px;
@@ -241,18 +240,6 @@ select:focus-visible,
 
 .row-order-control .icon-button:disabled {
   opacity: 0.45;
-}
-
-.row-order-option {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  border-left: 1px solid var(--vscode-panel-border);
-}
-
-.row-order-option:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: 2px;
 }
 
 .icon-button:hover:not(:disabled),
@@ -409,6 +396,7 @@ select:focus-visible,
 .status-strip {
   display: flex;
   flex: 0 0 auto;
+  order: 0;
   align-items: center;
   gap: 8px;
   min-width: 0;

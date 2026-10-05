@@ -24,7 +24,6 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
 
   return (
     <header className="workspace-header" aria-label="Workspace controls and status">
-      <div className="toolbar">{children}</div>
       <div className="status-strip" role="status" aria-live="polite">
         <span className="status-metric status-records">{status.indexedRecords} rows</span>
         <span className="status-metric status-bytes">{formatBytes(status.indexedBytes)} / {formatBytes(status.sizeBytes)}</span>
@@ -56,6 +55,7 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
           <span style={{ width: `${progress}%` }} />
         </span>
       </div>
+      <div className="toolbar">{children}</div>
     </header>
   );
 }

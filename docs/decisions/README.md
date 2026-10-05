@@ -23,6 +23,11 @@ Read these before changing a shared boundary:
 15. [ADR-015 curated release-note CI guard](015-changelog-ci-guard.md)
 16. [ADR-016 OTLP metrics and columnar format gates](016-otlp-metrics-and-columnar-format-gates.md)
 17. [ADR-017 physical order paging and incomplete results](017-physical-order-paging.md)
+18. [ADR-018 accepted Webview snapshot identity](018-accepted-webview-snapshot-identity.md)
+19. [ADR-019 Webview query and keyboard ownership](019-webview-query-and-keyboard-ownership.md)
+20. [ADR-020 read-only indexing status strip](020-read-only-indexing-status-strip.md)
+21. [ADR-021 explicit row-order toggle](021-explicit-row-order-toggle.md)
+22. [ADR-022 read-only agent-history adapter roadmap](022-read-only-agent-history-adapter-roadmap.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.
