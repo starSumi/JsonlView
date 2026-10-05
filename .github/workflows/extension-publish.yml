@@ -1,0 +1,262 @@
+name: Publish extensions
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Registry target to publish after the shared candidate passes"
+        required: true
+        default: both
+        type: choice
+        options:
+          - open-vsx
+          - marketplace
+          - both
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
+concurrency:
+  group: extension-publish
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout the reviewed main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.26.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Require green CI and CodeQL for this revision
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $checks = (gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA/check-runs?per_page=100" | ConvertFrom-Json).check_runs
+          $required = @('quality', 'native-windows', 'Analyze JavaScript and TypeScript (javascript-typescript)')
+          foreach ($name in $required) {
+            $matches = @($checks | Where-Object { $_.name -eq $name -and $_.conclusion -eq 'success' })
+            if ($matches.Count -eq 0) { throw "Required successful check is missing for $env:GITHUB_SHA - $name" }
+          }
+
+      - name: Run release checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm check:contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm test:coverage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:fmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm native:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build one frozen native and bundle candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildDir = Join-Path $env:RUNNER_TEMP 'jsonlview-extension-native'
+          $targetDir = Join-Path $env:RUNNER_TEMP 'jsonlview-extension-cargo-target'
+          $distDir = Join-Path $env:RUNNER_TEMP 'jsonlview-extension-dist'
+          $reportDir = Join-Path $env:RUNNER_TEMP 'jsonlview-extension-release'
+          New-Item -ItemType Directory -Force -Path $buildDir, $targetDir, $reportDir | Out-Null
+          $env:JSONLVIEW_NATIVE_OUTPUT_DIR = $buildDir
+          $env:JSONLVIEW_NATIVE_TARGET_DIR = $targetDir
+          pnpm native:build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath (Join-Path $buildDir 'jsonl_core.win32-x64-msvc.node') -PathType Leaf)) { throw 'Native build did not produce the expected Windows addon.' }
+          $env:JSONLVIEW_DIST_OUTPUT = $distDir
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- native/jsonl-core/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "JSONLVIEW_NATIVE_BUILD_DIR=$buildDir" >> $env:GITHUB_ENV
+          "JSONLVIEW_DIST_BUILD_DIR=$distDir" >> $env:GITHUB_ENV
+          "JSONLVIEW_EXTENSION_REPORT_DIR=$reportDir" >> $env:GITHUB_ENV
+
+      - name: Verify native provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/verify-native-addon.mjs --addon (Join-Path $env:JSONLVIEW_NATIVE_BUILD_DIR 'jsonl_core.win32-x64-msvc.node')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-native-provenance.mjs --candidate "$env:JSONLVIEW_NATIVE_BUILD_DIR" --out (Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'provenance.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Prepare paired npm and VSIX candidates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $targets = Get-Content config/release-targets.json -Raw | ConvertFrom-Json
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $npmName = [string]$targets.npm.name
+          $version = [string]$package.version
+          $npmStage = Join-Path $env:RUNNER_TEMP 'jsonlview-extension-npm-stage'
+          $npmManifest = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'npm-manifest.json'
+          $npmTarball = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'jsonl-view-npm.tgz'
+          $openVsx = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'open-vsx.vsix'
+          $marketplace = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'marketplace.vsix'
+          $openManifest = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'open-vsx-manifest.json'
+          $marketplaceManifest = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'marketplace-manifest.json'
+          $pairReport = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'vsix-pair.json'
+          node scripts/prepare-npm-package.mjs --public --name "$npmName" --version "$version" --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --output "$npmStage" --manifest "$npmManifest" --tarball "$npmTarball"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-vsix-candidate.mjs --target open-vsx --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$openVsx" --manifest "$openManifest"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-vsix-candidate.mjs --target marketplace --native "$env:JSONLVIEW_NATIVE_BUILD_DIR" --dist "$env:JSONLVIEW_DIST_BUILD_DIR" --out "$marketplace" --manifest "$marketplaceManifest"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-vsix-targets.mjs --open-vsx "$openVsx" --marketplace "$marketplace" --out "$pairReport"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($target in @('open-vsx', 'marketplace')) {
+            $manifest = if ($target -eq 'open-vsx') { $openManifest } else { $marketplaceManifest }
+            $artifact = if ($target -eq 'open-vsx') { $openVsx } else { $marketplace }
+            $paired = if ($target -eq 'open-vsx') { $marketplace } else { $openVsx }
+            $preflight = Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR "preflight-$target.json"
+            pnpm release:preflight -- --public --approved-npm-name "$npmName" --vsix-target "$target" --vsix-pair-report "$pairReport" --paired-vsix-artifact "$paired" --provenance (Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'provenance.json') --npm-manifest "$npmManifest" --npm-candidate "$npmStage" --npm-tarball "$npmTarball" --vsix-manifest "$manifest" --vsix-artifact "$artifact" --out "$preflight"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $version | Set-Content -NoNewline (Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'version.txt')
+          $npmName | Set-Content -NoNewline (Join-Path $env:JSONLVIEW_EXTENSION_REPORT_DIR 'npm-name.txt')
+
+      - name: Retain non-secret release evidence and exact artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jsonlview-extension-release-${{ github.run_number }}
+          path: ${{ runner.temp }}/jsonlview-extension-release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-open-vsx:
+    needs: package
+    if: github.ref == 'refs/heads/main' && (inputs.target == 'open-vsx' || inputs.target == 'both')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: extension-publish
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download the reviewed candidate
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: jsonlview-extension-release-${{ github.run_number }}
+          path: jsonlview-extension-release
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+      - name: Publish exact VSIX with Open VSX trusted publishing
+        run: npx --yes ovsx@1.2.0 publish jsonlview-extension-release/open-vsx.vsix --trusted-publishing --no-dependencies
+      - name: Read back Open VSX version
+        run: |
+          set -euo pipefail
+          version="$(cat jsonlview-extension-release/version.txt)"
+          EXPECTED_VERSION="$version" node --input-type=module <<'NODE'
+          const expected = process.env.EXPECTED_VERSION;
+          const response = await fetch('https://open-vsx.org/api/Sumi-Sophia/jsonl-view');
+          if (!response.ok) throw new Error('Open VSX readback failed with HTTP ' + response.status);
+          const payload = await response.json();
+          if (payload?.allVersions?.[expected] === undefined) throw new Error('Open VSX does not list Sumi-Sophia.jsonl-view@' + expected);
+          console.log(JSON.stringify({ ok: true, target: 'Sumi-Sophia.jsonl-view', version: expected, source: 'open-vsx-api' }));
+          NODE
+
+  publish-marketplace:
+    needs: package
+    if: github.ref == 'refs/heads/main' && (inputs.target == 'marketplace' || inputs.target == 'both')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: extension-publish
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download the reviewed candidate
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: jsonlview-extension-release-${{ github.run_number }}
+          path: jsonlview-extension-release
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.26.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Publish through the Marketplace adapter
+        id: marketplace_publish
+        continue-on-error: true
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: pnpm marketplace:publish -- --publish --vsix jsonlview-extension-release/marketplace.vsix --provenance jsonlview-extension-release/provenance.json --preflight jsonlview-extension-release/preflight-marketplace.json --confirm-target "Sumi-Sophia/jsonlview-data-studio@$(cat jsonlview-extension-release/version.txt)" --out jsonlview-extension-release/marketplace-publish.json
+      - name: Verify Marketplace artifact bytes after publication
+        run: |
+          set -euo pipefail
+          node --input-type=module -e 'const report=JSON.parse(require("fs").readFileSync("jsonlview-extension-release/marketplace-publish.json", "utf8")); if (!["version-visible-unverified", "already-present"].includes(report.status)) { throw new Error("Marketplace publication did not reach a publish/readback state: " + report.status); }'
+          version="$(cat jsonlview-extension-release/version.txt)"
+          EXPECTED_VERSION="$version" CANDIDATE=jsonlview-extension-release/marketplace.vsix node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFile, writeFile } from 'node:fs/promises';
+          const expected = process.env.EXPECTED_VERSION;
+          const candidatePath = process.env.CANDIDATE;
+          const candidate = await readFile(candidatePath);
+          const candidateSha = createHash('sha256').update(candidate).digest('hex');
+          const url = 'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/Sumi-Sophia/vsextensions/jsonlview-data-studio/' + encodeURIComponent(expected) + '/vspackage';
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('Marketplace artifact readback failed with HTTP ' + response.status);
+          const published = Buffer.from(await response.arrayBuffer());
+          const publishedSha = createHash('sha256').update(published).digest('hex');
+          if (candidateSha !== publishedSha) throw new Error('Marketplace artifact digest mismatch: candidate ' + candidateSha + ', registry ' + publishedSha);
+          const report = { ok: true, target: 'Sumi-Sophia.jsonlview-data-studio', version: expected, bytes: published.length, sha256: publishedSha, source: url };
+          await writeFile('jsonlview-extension-release/marketplace-artifact-readback.json', JSON.stringify(report, null, 2) + '\n');
+          console.log(JSON.stringify(report));
+          NODE
+      - name: Retain Marketplace publication evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jsonlview-marketplace-publication-${{ github.run_number }}
+          path: jsonlview-extension-release/
+          if-no-files-found: error
+          retention-days: 30
