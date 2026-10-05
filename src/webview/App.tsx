@@ -569,6 +569,16 @@ export function App(): React.JSX.Element {
   const partialScan = state.page?.scan?.truncatedReason !== undefined;
   const hasPartialContinuation = partialScan
     && (state.sort !== undefined || state.page?.scan?.cursorOrdinal !== undefined);
+  const partialBannerIdentity = state.page === undefined
+    ? undefined
+    : [
+      state.page.anchorOrdinal,
+      state.page.sortOffset ?? '',
+      state.page.sortNextOffset ?? '',
+      state.page.scan?.cursorOrdinal ?? '',
+      state.page.scan?.examinedRecords ?? '',
+      state.page.scan?.truncatedReason ?? '',
+    ].join('|');
   const showPageControls = (state.activeTab === 'table' || state.activeTab === 'timeline')
     && (
       state.rows.length > 0
@@ -802,7 +812,7 @@ export function App(): React.JSX.Element {
           ) : null}
         </div>
       ) : null}
-      <RecordQueryBanner scan={state.page?.scan} sort={state.sort} />
+      <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
 
       <nav {...workspaceTabs.tabListProps} className="workspace-tabs" aria-label="Workspace views">
         {tabs.map(({ id, label, icon: Icon }) => {

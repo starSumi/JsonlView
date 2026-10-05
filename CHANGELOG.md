@@ -26,6 +26,8 @@
 - Switch the table between forward and reverse record order and restore the
   selected order when reopening the view. Keep the controls disabled with an
   explanation while indexing or rebuilding.
+- Explain hydration-bounded physical pages without implying that their order
+  is incomplete, and allow the current partial-result notice to be dismissed.
 - Select nested object fields such as `$.message.role` as table columns.
 - Keep the default table columns when opening a view in reverse order before
   its first row projection is available.
