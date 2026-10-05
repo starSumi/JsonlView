@@ -22,9 +22,17 @@ import type {
   ScanTruncationReason,
   SnapshotIdentity,
 } from '../shared/types';
+import { MAX_TABLE_COLUMNS } from '../shared/types';
 import { JsonlEngineError, isAbortError } from './errors';
 import { createNewlineScanner } from './newline-scanner';
 import { evaluatePredicate, jsonKindOf, resolveFieldPath } from './predicate';
+import {
+  insertSortCandidate,
+  isOrdinalSort,
+  normalizeRowSort,
+  sortColumnFromId,
+  sortValueForColumn,
+} from './row-sort';
 import { ProgressiveSchemaTracker } from './schema';
 import {
   AdaptiveSegmentIndex,
@@ -615,7 +623,7 @@ export class JsonlFileEngine {
       if (direction === 'backward') selected = selected.reverse();
       const columns = options.columns === undefined
         ? this.defaultColumns(options.enricher?.columns)
-        : options.columns.slice(0, this.options.defaultColumnLimit + 1);
+        : options.columns.slice(0, MAX_TABLE_COLUMNS);
       const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
       const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
       const lastOrdinal = selected[selected.length - 1]?.hydrated.internal.ordinal;
@@ -678,7 +686,7 @@ export class JsonlFileEngine {
     const total = this.index.totalRecords ?? this.index.indexedRecords;
     const columns = options.columns === undefined
       ? this.defaultColumns(options.enricher?.columns)
-      : options.columns.slice(0, this.options.defaultColumnLimit + 1);
+      : options.columns.slice(0, MAX_TABLE_COLUMNS);
     const selected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
     let retainedBytes = 0n;
     let examinedRecords = 0n;
@@ -777,7 +785,9 @@ export class JsonlFileEngine {
     const hasMoreMatches = options.predicate === undefined
       ? offset + BigInt(selected.length) < total
       : matchedRecords > offset + BigInt(selected.length);
-    const hasAfter = hydrationTruncated || truncatedReason !== undefined || hasMoreMatches;
+    // A scan limit establishes an incomplete result, not another logical page.
+    // Restarting a rank-based request cannot continue beyond that same budget.
+    const hasAfter = hydrationTruncated || hasMoreMatches;
     await this.assertSnapshotUnchanged(guard);
 
     return {
@@ -827,7 +837,7 @@ export class JsonlFileEngine {
     const scanBudget = normalizeSortScanBudget(options.scanBudget);
     let columns = options.columns === undefined
       ? this.defaultColumns(options.enricher?.columns)
-      : options.columns.slice(0, this.options.defaultColumnLimit + 1);
+      : options.columns.slice(0, MAX_TABLE_COLUMNS);
     const sortColumn = columns.find((column) => column.id === sort.columnId)
       ?? (sort.columnId === '__ordinal'
         ? { id: '__ordinal', label: '#', source: 'system' as const }
@@ -838,7 +848,7 @@ export class JsonlFileEngine {
       throw new JsonlEngineError('INVALID_ARGUMENT', `Unknown sort column: ${sort.columnId}.`);
     }
     if (!columns.some((column) => column.id === sortColumn.id)) {
-      columns = [sortColumn, ...columns].slice(0, this.options.defaultColumnLimit + 1);
+      columns = [sortColumn, ...columns].slice(0, MAX_TABLE_COLUMNS);
     }
 
     const candidates: SortCandidate[] = [];
@@ -1746,23 +1756,6 @@ function normalizeProblemScanBudget(
   return normalized;
 }
 
-function normalizeRowSort(value: RowSort | undefined): RowSort | undefined {
-  if (value === undefined) return undefined;
-  if (
-    typeof value.columnId !== 'string'
-    || value.columnId.length === 0
-    || value.columnId.length > 256
-    || (value.direction !== 'asc' && value.direction !== 'desc')
-  ) {
-    throw new JsonlEngineError('INVALID_ARGUMENT', 'sort must contain a bounded columnId and asc/desc direction.');
-  }
-  return { columnId: value.columnId, direction: value.direction };
-}
-
-function isOrdinalSort(sort: RowSort): boolean {
-  return sort.columnId === '__ordinal' || sort.columnId === '$ordinal';
-}
-
 function normalizeSortScanBudget(value: RowScanBudget | undefined): NormalizedRowScanBudget {
   const normalized = normalizeRowScanBudget(value ?? {
     maxExaminedRecords: DEFAULT_SORT_MAX_EXAMINED_RECORDS,
@@ -1791,135 +1784,6 @@ function normalizeSortScanBudget(value: RowScanBudget | undefined): NormalizedRo
     throw new JsonlEngineError('INVALID_ARGUMENT', 'sort scan deadline must be within 60 seconds.');
   }
   return normalized;
-}
-
-function sortValueForColumn(
-  hydrated: HydratedRecord,
-  column: ColumnSpec,
-  profile: AgentRowProjection | undefined,
-): unknown {
-  if (column.source === 'system' || column.id === '__ordinal' || column.id === '$ordinal') {
-    return hydrated.internal.ordinal;
-  }
-  if (column.source === 'profile') {
-    if (profile === undefined) return undefined;
-    if (Object.hasOwn(profile, column.id)) {
-      return (profile as AgentRowProjection & Record<string, unknown>)[column.id];
-    }
-    return profile.derivedFields?.[column.id];
-  }
-  if (column.path === undefined || hydrated.value === undefined) return undefined;
-  const resolved = resolveFieldPath(hydrated.value, column.path);
-  return resolved.exists ? resolved.value : undefined;
-}
-
-function sortColumnFromId(id: string): ColumnSpec | undefined {
-  // Generic columns use the JSON-encoded FieldPath as their stable id. A
-  // plain key is accepted as a compatibility convenience for callers that do
-  // not yet have a schema projection.
-  try {
-    const parsed: unknown = JSON.parse(id);
-    if (Array.isArray(parsed) && parsed.length <= 32) {
-      const tokens = parsed.flatMap((token): import('../shared/types').PathToken[] => {
-        if (token === null || typeof token !== 'object' || Array.isArray(token)) return [];
-        const candidate = token as Record<string, unknown>;
-        if (candidate.kind === 'key') {
-          return typeof candidate.value === 'string' && candidate.value.length <= 256
-            ? [{ kind: 'key', value: candidate.value }]
-            : [];
-        }
-        if (candidate.kind === 'index') {
-          return typeof candidate.value === 'number'
-            && Number.isSafeInteger(candidate.value)
-            && candidate.value >= 0
-            ? [{ kind: 'index', value: candidate.value }]
-            : [];
-        }
-        return [];
-      });
-      if (tokens.length === parsed.length) {
-        return { id, label: id, path: { tokens }, source: 'record' };
-      }
-    }
-  } catch {
-    // Fall through to a bounded plain-key interpretation.
-  }
-  if (/^[A-Za-z_$][\w$]{0,127}$/.test(id)) {
-    return { id, label: id, path: { tokens: [{ kind: 'key', value: id }] }, source: 'record' };
-  }
-  return undefined;
-}
-
-function insertSortCandidate(
-  candidates: SortCandidate[],
-  candidate: SortCandidate,
-  direction: RowSort['direction'],
-  limit: number,
-): void {
-  const comparator = (left: SortCandidate, right: SortCandidate): number =>
-    compareSortCandidates(left, right, direction);
-  let low = 0;
-  let high = candidates.length;
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    if (comparator(candidates[middle]!, candidate) <= 0) low = middle + 1;
-    else high = middle;
-  }
-  candidates.splice(low, 0, candidate);
-  if (candidates.length > limit) candidates.pop();
-}
-
-function compareSortCandidates(
-  left: SortCandidate,
-  right: SortCandidate,
-  direction: RowSort['direction'],
-): number {
-  const valueOrder = compareSortValues(left.key, right.key, direction);
-  if (valueOrder !== 0) return valueOrder;
-  if (left.internal.ordinal < right.internal.ordinal) return -1;
-  if (left.internal.ordinal > right.internal.ordinal) return 1;
-  return 0;
-}
-
-/** Missing/null values are placed last in either direction for scan stability. */
-function compareSortValues(left: unknown, right: unknown, direction: RowSort['direction']): number {
-  const leftMissing = left === undefined || left === null;
-  const rightMissing = right === undefined || right === null;
-  if (leftMissing || rightMissing) {
-    if (leftMissing && rightMissing) return 0;
-    // Keep null/missing values at the end for both directions. This branch is
-    // deliberately resolved before applying the asc/desc inversion below;
-    // otherwise descending order would move them to the front.
-    return leftMissing ? 1 : -1;
-  }
-  let result: number;
-  if (typeof left === 'number' && typeof right === 'number') {
-    result = left < right ? -1 : left > right ? 1 : 0;
-  } else if (typeof left === 'string' && typeof right === 'string') {
-    result = left < right ? -1 : left > right ? 1 : 0;
-  } else if (typeof left === 'boolean' && typeof right === 'boolean') {
-    result = left === right ? 0 : left ? 1 : -1;
-  } else {
-    const leftKind = jsonKindOf(left);
-    const rightKind = jsonKindOf(right);
-    if (leftKind !== rightKind) {
-      result = leftKind < rightKind ? -1 : 1;
-    } else {
-      const leftText = searchableSortValue(left);
-      const rightText = searchableSortValue(right);
-      result = leftText < rightText ? -1 : leftText > rightText ? 1 : 0;
-    }
-  }
-  return direction === 'asc' ? result : -result;
-}
-
-function searchableSortValue(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value) ?? '';
-  } catch {
-    return String(value);
-  }
 }
 
 function scanLimitBeforeNextRecord(

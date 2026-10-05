@@ -37,6 +37,7 @@ const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
   'INSIGHTS',
   'INDEX_PROGRESS',
   'PROFILE_CHANGED',
+  'ROW_ORDER_CHANGED',
   'SOURCE_INVALIDATED',
   'ERROR',
 ]);
@@ -50,6 +51,7 @@ const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   GET_INSIGHTS: 'insights',
   SET_PROFILE: 'profile',
   SET_FOLLOW_MODE: 'follow',
+  SET_ROW_ORDER: 'order',
   CANCEL: 'rows',
   REBUILD_INDEX: 'rebuild',
 };
@@ -129,6 +131,9 @@ export function shouldAcceptMessage(
   if (message.type === 'PROFILE_CHANGED') {
     return message.requestId === '' || (request?.kind === 'profile' && request.generation === session.generation);
   }
+  if (message.type === 'ROW_ORDER_CHANGED') {
+    return request?.kind === 'order' && request.generation === session.generation;
+  }
   if (message.type === 'INDEX_PROGRESS') {
     return message.requestId === ''
       || ((request?.kind === 'follow' || request?.kind === 'rebuild') && request.generation === session.generation);
@@ -177,6 +182,7 @@ function responseCompletesRequest(type: ExtensionMessage['type']): boolean {
     || type === 'INSIGHTS'
     || type === 'INDEX_PROGRESS'
     || type === 'PROFILE_CHANGED'
+    || type === 'ROW_ORDER_CHANGED'
     || type === 'ERROR';
 }
 

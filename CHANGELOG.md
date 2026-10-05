@@ -2,7 +2,53 @@
 
 ## Unreleased
 
-No changes yet.
+- Place the bounded indexing status before the toolbar at wide widths while
+  preserving accessible status semantics and narrow-container reflow.
+- Use explicit sort-shape icons in one row-order toggle so the control is not
+  confused with search-match navigation or page movement.
+- Refresh the homepage showcases with curated Codex rollout, structured record
+  detail, and Claude timeline views while keeping source sessions out of the
+  product tree.
+- Record a staged read-only agent-history adapter roadmap; private state, source
+  mutation, network access, and MCP exposure remain outside the product contract.
+- Reconcile the visible page after clearing search even when the host omits the
+  Page input blur event.
+- Include discovered nested schema fields in the structured filter field list
+  while preserving the bounded table projection.
+- Navigate table cells and view tabs with the keyboard without opening a
+  record until Enter or Space. Keep focus inside narrow-screen record details
+  and return it when closing them.
+- Keep column and filter menus within short or narrow editor viewports.
+- Retain page recovery parameters while indexing finishes, avoiding repeated
+  empty-page requests after rebuilding.
+- Clear stale records when a replacement snapshot opens and prevent Follow
+  from retaining another document's records.
+- Switch the table between forward and reverse record order and restore the
+  selected order when reopening the view. Keep the controls disabled with an
+  explanation while indexing or rebuilding.
+- Select nested object fields such as `$.message.role` as table columns.
+- Keep the default table columns when opening a view in reverse order before
+  its first row projection is available.
+- Continue reverse paging beyond 2,048 rows. When a filtered physical-order
+  scan reaches its allowance, offer Next only for further matches already
+  found in the examined range and keep the partial-result notice visible.
+- Close the column and filter menus when clicking or moving focus outside them,
+  or pressing Escape; Escape returns focus to the menu control.
+- Fall back to the Node scanner after a packaged native scanner failure and
+  avoid retrying the failed native scanner in the same extension-host process.
+- Replace the repeated file name with a compact responsive workspace header
+  that keeps controls, record metrics, update state, and progress visible as
+  the editor narrows.
+- Keep verified append snapshots readable for row selection, details, search,
+  and paging without Rebuild; show an update indicator and explain when a
+  rewritten source prevents loading another record.
+- Reveal the selected record after a page change even when its page-local index
+  stays the same, so returning to the first page does not retain a stale scroll
+  position.
+- Reveal keyboard-selected records even when the selection has not changed, so
+  Home returns to the first row after scrolling away from it.
+- Keep keyboard-selected rows fully visible below the sticky header and reveal
+  a selected row again when the source generation changes.
 
 ## 0.2.3 - 2026-09-28
 

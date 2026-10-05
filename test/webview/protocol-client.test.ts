@@ -151,6 +151,17 @@ describe('VS Code message client', () => {
     expect(client.hasPending('follow')).toBe(false);
   });
 
+  it('accepts only the correlated row-order acknowledgement', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc', generation: 'g2',
+    });
+    const order = client.send('SET_ROW_ORDER', { direction: 'desc' });
+    expect(client.accept(message('ROW_ORDER_CHANGED', 'unknown', 'g2', { direction: 'desc' }))).toBeUndefined();
+    expect(client.hasPending('order')).toBe(true);
+    expect(client.accept(message('ROW_ORDER_CHANGED', order.id, 'g2', { direction: 'desc' }))?.type).toBe('ROW_ORDER_CHANGED');
+    expect(client.hasPending('order')).toBe(false);
+  });
+
   it('accepts an unsolicited same-document OPENED after follow advances generation', () => {
     const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
       documentId: 'doc',

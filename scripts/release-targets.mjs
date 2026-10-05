@@ -6,6 +6,10 @@ const TARGET_PATH = resolve(root, 'config/release-targets.json');
 const EXTENSION_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const PUBLISHER = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+const PINNED_PUBLIC_IDS = {
+  'open-vsx': 'Sumi-Sophia.jsonl-view',
+  marketplace: 'Sumi-Sophia.jsonlview-data-studio',
+};
 const releaseTargets = JSON.parse(readFileSync(TARGET_PATH, 'utf8'));
 const startupIssues = validateReleaseTargets(releaseTargets);
 if (startupIssues.length > 0) throw new Error(`invalid release target contract: ${startupIssues.join('; ')}`);
@@ -62,6 +66,12 @@ export function validateReleaseTargets(value) {
     if (target.registry !== expected.registry) issues.push(`extensions.${key}.registry must be ${expected.registry}`);
     if (target.preservesUpdateChain !== expected.preservesUpdateChain) {
       issues.push(`extensions.${key}.preservesUpdateChain must be ${String(expected.preservesUpdateChain)}`);
+    }
+  }
+  for (const [key, expectedId] of Object.entries(PINNED_PUBLIC_IDS)) {
+    const target = extensions[key];
+    if (target?.publisher + '.' + target?.name !== expectedId) {
+      issues.push('extensions.' + key + ' id must remain ' + expectedId);
     }
   }
   const openVsx = extensions['open-vsx'];

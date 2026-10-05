@@ -1,6 +1,8 @@
-import React from 'react';
-import { Filter, Search, X } from 'lucide-react';
-import type { ColumnSpec, RowFilterOperator } from '../../../shared/types';
+import React, { useRef } from 'react';
+import { ArrowDownNarrowWide, ArrowDownWideNarrow, Filter, Search, X } from 'lucide-react';
+import type { ColumnSpec, RowFilterOperator, SortDirection } from '../../../shared/types';
+import { useLightDismiss } from '../../use-light-dismiss';
+import { useViewportPopover } from '../../use-viewport-popover';
 
 export interface FilterOperatorOption {
   value: RowFilterOperator;
@@ -11,6 +13,10 @@ export interface FilterOperatorOption {
 export interface RecordQueryControlsProps {
   query: string;
   searchDisabled: boolean;
+  sortDirection: SortDirection;
+  descendingDisabled: boolean;
+  descendingDisabledReason: string;
+  onSortDirectionChange: (direction: SortDirection) => void;
   onSearchSubmit: () => void;
   onSearchChange: (query: string) => void;
   onSearchClear: () => void;
@@ -32,6 +38,10 @@ export interface RecordQueryControlsProps {
 export function RecordQueryControls({
   query,
   searchDisabled,
+  sortDirection,
+  descendingDisabled,
+  descendingDisabledReason,
+  onSortDirectionChange,
   onSearchSubmit,
   onSearchChange,
   onSearchClear,
@@ -49,8 +59,16 @@ export function RecordQueryControls({
   onFilterSubmit,
   onFilterClear,
 }: RecordQueryControlsProps): React.JSX.Element {
+  const filterMenuRef = useRef<HTMLDetailsElement>(null);
+  useLightDismiss(filterMenuRef);
+  useViewportPopover(filterMenuRef);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
+  const rowOrderTitle = descendingDisabled
+    ? descendingDisabledReason
+    : sortDirection === 'asc'
+      ? 'Rows: first line first; activate for last line first'
+      : 'Rows: last line first; activate for first line first';
 
   return (
     <>
@@ -76,7 +94,28 @@ export function RecordQueryControls({
           </button>
         ) : null}
       </form>
-      <details className="filter-menu">
+      <div
+        className="row-order-control"
+        role="group"
+        aria-label="Record order"
+        title={descendingDisabled ? descendingDisabledReason : undefined}
+      >
+        <button
+          type="button"
+          className="icon-button"
+          title={rowOrderTitle}
+          aria-label="Toggle row order"
+          aria-pressed={sortDirection === 'desc'}
+          aria-description={descendingDisabled ? descendingDisabledReason : undefined}
+          disabled={descendingDisabled}
+          onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
+        >
+          {sortDirection === 'asc'
+            ? <ArrowDownNarrowWide size={15} aria-hidden />
+            : <ArrowDownWideNarrow size={15} aria-hidden />}
+        </button>
+      </div>
+      <details className="filter-menu" ref={filterMenuRef}>
         <summary className={`icon-button${filterActive ? ' is-active' : ''}`} title="Filter records" aria-label="Filter records">
           <Filter size={15} aria-hidden />
         </summary>
@@ -87,6 +126,7 @@ export function RecordQueryControls({
             onFilterSubmit();
           }}
         >
+          <div className="filter-fields">
           <label>
             <span>Field</span>
             <select
@@ -120,6 +160,7 @@ export function RecordQueryControls({
               <span>Case sensitive</span>
             </label>
           ) : null}
+          </div>
           <div className="filter-actions">
             <button type="submit" disabled={!filterColumnId || filterableColumns.length === 0}>Apply</button>
             <button type="button" onClick={onFilterClear} disabled={!filterActive}>Clear</button>

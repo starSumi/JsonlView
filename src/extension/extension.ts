@@ -286,8 +286,9 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlViewDocument> {
   private readonly resolvedDocuments = new Set<JsonlViewDocument>();
   private lastResolvedDocument: JsonlViewDocument | undefined;
+  private rowOrderWrite: Promise<void> = Promise.resolve();
 
-  public constructor(private readonly extensionUri: vscode.Uri) {}
+  public constructor(private readonly context: vscode.ExtensionContext) {}
 
   public openCustomDocument(
     uri: vscode.Uri,
@@ -302,18 +303,26 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
     this.lastResolvedDocument = document;
     panel.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist')],
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist')],
     };
     const pageSize = vscode.workspace.getConfiguration('jsonlView', document.uri).get<number>('pageSize', 100);
+    const savedRowOrder = this.context.globalState.get('jsonlView.rowOrder');
     panel.webview.html = getWebviewHtml(
       panel.webview,
-      this.extensionUri,
+      this.context.extensionUri,
       document.session.getSummary().snapshot,
       pageSize,
+      savedRowOrder === 'desc' ? 'desc' : 'asc',
     );
 
     const controller = new DocumentController(document.session, panel.webview, {
       beforeRebuild: () => document.resetRecovery(),
+      onRowOrderChanged: (direction) => {
+        this.rowOrderWrite = this.rowOrderWrite.catch(() => {}).then(
+          () => this.context.globalState.update('jsonlView.rowOrder', direction),
+        );
+        return this.rowOrderWrite;
+      },
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
@@ -356,7 +365,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     return;
   }
-  const provider = new JsonlViewProvider(context.extensionUri);
+  const provider = new JsonlViewProvider(context);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {
       supportsMultipleEditorsPerDocument: false,

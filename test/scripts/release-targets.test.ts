@@ -55,6 +55,10 @@ describe('release target contract', () => {
     expect(contract.coInstallSupported).toBe(false);
     expect(validateReleaseTargets({
       ...contract,
+      extensions: { ...contract.extensions, marketplace: { ...contract.extensions.marketplace, name: 'jsonl-view-studio' } },
+    })).toContain('extensions.marketplace id must remain Sumi-Sophia.jsonlview-data-studio');
+    expect(validateReleaseTargets({
+      ...contract,
       extensions: {
         ...contract.extensions,
         'open-vsx': { ...contract.extensions['open-vsx'], registry: 'visual-studio-marketplace' },

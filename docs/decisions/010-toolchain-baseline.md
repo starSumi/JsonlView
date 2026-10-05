@@ -43,6 +43,14 @@ Pin Node `24.15.0` and pnpm `10.26.0` in Volta and CI. Document Node `22.12.0`
 as the minimum development runtime. Do not add a runtime engine claim for the
 extension host; VS Code compatibility remains controlled by `engines.vscode`.
 
+For the publishing toolchain, resolve Ajv's transitive `fast-uri` to `3.1.7`
+in the frozen lockfile. Ajv's `^3.0.1` constraint admits this patch, which
+addresses GHSA-qw65-cvwx-89v3 and GHSA-58mr-gqgx-xq4g in the previous
+`3.1.6` resolution. Resolve Cheerio's transitive `undici` to `7.29.1` under
+its `^7.19.0` constraint to address GHSA-3wwx-pv8p-q78v in `7.29.0`.
+Both fixes remain in the development/publishing toolchain; no application
+runtime dependency or override is added.
+
 ## Evidence
 
 The isolated upgrade probe passed frozen install, 38 test files (311 passing,
@@ -67,3 +75,33 @@ lower Node floor. Re-run the isolated compatibility probe before changing it.
 Restore the previous lockfile and test baseline in one reviewed change if a
 reproducible incompatibility appears. Keep the failed probe and affected
 runtime visible; do not silently downgrade only in CI.
+
+## Publishing Dependency Revision — 2026-10-04
+
+This revision supersedes only the publishing-dependency resolution paragraph
+above. The original baseline and its evidence remain historical. The product
+owns the version pin and lockfile; the companion harness owns dated audit
+responses and validation receipts.
+
+Pin `@vscode/vsce` to `4.0.0` and resolve `brace-expansion` to `5.0.12` in
+the lockfile. The previous VSCE dependency graph contained advisories in
+`fast-uri`, `braces`, and `brace-expansion`. Use the maintained upstream
+dependency graph instead of overriding incompatible internals. The
+[official VSCE 4 release](https://github.com/microsoft/vscode-vsce/releases/tag/v4.0.0)
+reduces its secretlint dependencies, replaces glob with tinyglobby, and raises
+the Node baseline to 22, which the existing Node 24 pin satisfies.
+
+Lockfile resolution also refreshes Vitest's transitive Rolldown from `1.2.8`
+to `1.2.12`, its OXC types from `0.149.0` to `0.152.0`, and PostCSS's
+`source-map-js` resolution from `1.2.1` to `1.2.2`. These are development
+dependencies. Direct runtime dependencies, Node, pnpm, and Vitest pins stay
+unchanged. This broader resolved graph requires the full test and build gate;
+the advisory audit alone cannot establish compatibility.
+
+Use a [frozen install](https://pnpm.io/10.x/cli/install), production and full
+[dependency audits](https://pnpm.io/10.x/cli/audit), typecheck, the complete
+test suite, and actual VSIX/npm archive verification before accepting this
+revision. Audit results cover the queried advisory database at capture time;
+they are not proof that source, native binaries, or future dependency versions
+have no vulnerabilities. Retain failure receipts. Roll back the VSCE pin and
+lockfile together if the packaged archive or integrated validation regresses.

@@ -1,7 +1,97 @@
 import { describe, expect, it } from 'vitest';
-import { buildTreePreview, columnGridTemplate, formatBytes, visibleColumns } from '../../src/webview/format';
+import {
+  buildTreePreview,
+  columnGridTemplate,
+  formatBytes,
+  schemaRecordColumns,
+  visibleColumns,
+} from '../../src/webview/format';
+import { validateWebviewRequest } from '../../src/extension/message-validation';
+import {
+  displayFieldPath,
+  keyPath,
+  MAX_TABLE_COLUMNS,
+  PROTOCOL_VERSION,
+  type FieldPath,
+  type FieldStats,
+} from '../../src/shared/types';
+
+function schemaField(path: FieldPath): FieldStats {
+  return {
+    path,
+    displayPath: displayFieldPath(path),
+    seenRecords: '1',
+    validRecordsObserved: '1',
+    kinds: { string: '1' },
+    missingRecords: '0',
+    nullRecords: '0',
+    examples: [],
+    firstSeenOrdinal: '0',
+    lastSeenOrdinal: '0',
+    confidence: 'sampled',
+  };
+}
 
 describe('webview formatting selectors', () => {
+  it('does not expose the root record as a selectable schema column', () => {
+    const root: FieldPath = { tokens: [] };
+    const columns = schemaRecordColumns([schemaField(root), schemaField(keyPath('message', 'role'))]);
+
+    expect(columns.map((column) => column.label)).toEqual(['$.message.role']);
+    expect(columns.some((column) => column.label === '$')).toBe(false);
+  });
+
+  it('builds distinct record columns for nested schema paths and removes repeated paths', () => {
+    const first = keyPath('payload', 'id');
+    const second = keyPath('meta', 'id');
+    const indexed: FieldPath = {
+      tokens: [...keyPath('items').tokens, { kind: 'index', value: 0 }, ...keyPath('id').tokens],
+    };
+
+    const columns = schemaRecordColumns([
+      schemaField(first), schemaField(second), schemaField(first), schemaField(indexed),
+    ]);
+
+    expect(columns.map((column) => [column.id, column.label])).toEqual([
+      [JSON.stringify(first.tokens), '$.payload.id'],
+      [JSON.stringify(second.tokens), '$.meta.id'],
+      [JSON.stringify(indexed.tokens), '$.items[0].id'],
+    ]);
+    expect(columns.every((column) => column.source === 'record')).toBe(true);
+  });
+
+  it('caps schema columns and skips paths that cannot fit the rows protocol', () => {
+    const tooDeep: FieldPath = { tokens: Array.from({ length: 33 }, () => ({ kind: 'key', value: 'a' })) };
+    const tooLong = keyPath('a'.repeat(250));
+    const fields = Array.from(
+      { length: MAX_TABLE_COLUMNS + 10 },
+      (_, index) => schemaField(keyPath(`field${String(index)}`)),
+    );
+
+    const columns = schemaRecordColumns([schemaField(tooDeep), schemaField(tooLong), ...fields]);
+    expect(columns).toHaveLength(MAX_TABLE_COLUMNS);
+    expect(columns[0]?.id).toBe(JSON.stringify(fields[0]!.path.tokens));
+    expect(columns.at(-1)?.id).toBe(JSON.stringify(fields[MAX_TABLE_COLUMNS - 1]!.path.tokens));
+    expect(schemaRecordColumns(fields, 2).map((column) => column.label)).toEqual(['$.field0', '$.field1']);
+  });
+
+  it('offers schema candidates beyond the 64-column projection budget', () => {
+    const fields = Array.from({ length: 300 }, (_, index) => schemaField(keyPath(`field${String(index)}`)));
+
+    const candidates = schemaRecordColumns(fields, 250);
+    expect(candidates).toHaveLength(250);
+    expect(candidates[64]?.id).toBe(JSON.stringify(fields[64]!.path.tokens));
+    expect(validateWebviewRequest({
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'GET_ROWS',
+      documentId: 'document',
+      generation: 'generation',
+      requestId: 'selected-nested-field',
+      payload: { limit: 1, columns: [candidates[64]] },
+    }).ok).toBe(true);
+    expect(schemaRecordColumns(fields, 300)).toHaveLength(250);
+  });
+
   it('keeps an ordinal column even when every data column is hidden', () => {
     const columns = [{ id: 'message', label: 'Message', source: 'record' as const }];
     expect(visibleColumns(columns, { __ordinal: false, message: false }).map((column) => column.id)).toEqual(['__ordinal']);

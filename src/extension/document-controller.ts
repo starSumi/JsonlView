@@ -29,6 +29,7 @@ export interface RowsRequest {
   direction?: 'forward' | 'backward';
   limit: number;
   predicate?: Predicate;
+  columns?: ColumnSpec[];
   sort?: RowSort;
   sortOffset?: string;
   scanBudget?: RowScanBudget;
@@ -69,6 +70,7 @@ export interface MessageChannel {
 export interface DocumentControllerHooks {
   /** Cancel document-owned recovery before a user-triggered rebuild starts. */
   beforeRebuild?: () => void;
+  onRowOrderChanged?: (direction: RowSort['direction']) => Promise<void>;
 }
 
 export class DocumentController {
@@ -195,6 +197,10 @@ export class DocumentController {
             'INDEX_PROGRESS',
             await this.session.setFollowMode(request.payload.enabled),
           );
+          return;
+        case 'SET_ROW_ORDER':
+          await this.hooks.onRowOrderChanged?.(request.payload.direction);
+          await this.postIfCurrent(request, operationGeneration, 'ROW_ORDER_CHANGED', request.payload);
           return;
         case 'REBUILD_INDEX': {
           const rebuildRequestSequence = ++this.rebuildRequestSequence;

@@ -3,6 +3,10 @@ export const MIN_DETAIL_WIDTH = 320;
 export const MIN_PRIMARY_WIDTH = 280;
 export const SPLITTER_WIDTH = 5;
 
+export function detailWidthValueText(width: number): string {
+  return `${Math.round(Number.isFinite(width) ? width : DEFAULT_DETAIL_WIDTH)} pixels wide`;
+}
+
 export function clampDetailWidth(desired: number, containerWidth: number): number {
   const safeDesired = Number.isFinite(desired) ? desired : DEFAULT_DETAIL_WIDTH;
   const safeContainerWidth = Number.isFinite(containerWidth) && containerWidth > 0

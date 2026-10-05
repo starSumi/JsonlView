@@ -99,25 +99,14 @@ manifests and candidates belong outside the product checkout.
    The join report must say `readyForPromotion: true` and expose one shared
    `pairSha256`.
 7. With separate authorization for each target, publish the exact frozen
-   candidate to GitHub, publish the exact npm tarball (`npm publish <candidate.tgz>`)
+   candidate to GitHub, publish the exact npm tarball
+   (`npm publish <candidate.tgz> --registry=https://registry.npmjs.org --access public`)
    rather than repacking its directory, and publish each exact VSIX only to its
-   bound registry. For Visual Studio Marketplace, use the guarded adapter after
-   the Marketplace preflight and a fresh target-specific authorization:
-
-   ```powershell
-   $env:VSCE_PAT = '<short-lived-secret-in-process-environment>'
-   pnpm marketplace:publish -- --publish `
-     --vsix <marketplace.vsix> `
-     --provenance <vsix.provenance.json> `
-     --preflight <preflight-marketplace.json> `
-     --confirm-target 'Sumi-Sophia/jsonlview-data-studio@<version>' `
-     --out <external>\marketplace-publish.json
-   Remove-Item Env:VSCE_PAT
-   ```
-
-   The adapter uses `@vscode/vsce`, queries the public gallery before and after
-   the write, and never retries an ambiguous write automatically. Record each
-   target as `pending`, `published`, `readback`, or `failed`; never collapse
+   bound registry. For the current Marketplace lane, hand the exact
+   `Sumi-Sophia.jsonlview-data-studio-<version>.vsix` and SHA-256 to the
+   publisher owner for manual upload. Never hand off the Open VSX VSIX. The
+   optional API adapter remains disabled unless separately authorized. Record
+   each target as `pending`, `published`, `readback`, or `failed`; never collapse
    them into one success. Read back the exact ref/version and artifact
    integrity after every target. A successful npm publish does not prove GitHub
    or Open VSX changed.

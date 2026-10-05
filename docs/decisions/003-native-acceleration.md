@@ -43,7 +43,9 @@ can exercise independent candidates without contaminating the process latch.
 ## Evidence
 
 `docs/acceleration-roadmap.md`, native Rust tests, scanner differential tests,
-and harness benchmark artifacts.
+the packaged/default already-active-peer fuse regression, and harness benchmark
+artifacts. The regression is a loader/fuse proof with a controlled binding; it
+does not claim that a native process crash is catchable by JavaScript.
 
 ## Boundary
 

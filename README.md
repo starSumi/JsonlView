@@ -25,21 +25,21 @@ These screenshots use the synthetic fixtures maintained in the companion
 `JsonlView-harness` checkout. They show the same read-only workbench across
 agent events, telemetry, and aggregate analysis.
 
-### Codex Rollout - Table
+### Codex Agent Workflow - Table
 
-![Codex Rollout table](docs/assets/codex-rollout-table.png)
+![Codex agent workflow table](docs/assets/codex-rollout-table.png)
 
-### Generic Agent Events - Table and Tree
+### Structured Description - Record Detail
 
-![Generic Agent Events table with Tree detail](docs/assets/generic-agent-table-tree.png)
+![Structured JSON record with raw detail and derived fields](docs/assets/struct-desc.png)
 
 ### OpenTelemetry - Schema and Tree
 
 ![OpenTelemetry schema with Tree detail](docs/assets/opentelemetry-schema-tree.png)
 
-### Claude Code Session - Insights
+### Claude Agent Session - Timeline
 
-![Claude Code Session insights](docs/assets/claude-code-insights.png)
+![Claude agent session timeline](docs/assets/claude-timeline.png)
 
 ### Unified Diff - FileChange
 

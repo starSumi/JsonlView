@@ -12,14 +12,16 @@ import type {
   RowPage,
   RowProjection,
   RowSort,
+  SortDirection,
 } from '../shared/types';
 import { normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage } from './paging';
 import { DEFAULT_DETAIL_WIDTH } from './split-pane';
+import { snapshotIdentityChanged } from './snapshot-identity';
 
 export type WorkspaceTab = 'table' | 'timeline' | 'schema' | 'problems' | 'insights';
 export type DetailTab = 'tree' | 'raw' | 'derived' | 'bytes';
 export type WorkspacePhase = 'booting' | 'loading' | 'ready' | 'invalidated' | 'degraded' | 'error';
-export type RequestKind = 'ready' | 'rows' | 'problems' | 'detail' | 'schema' | 'insights' | 'profile' | 'follow' | 'rebuild';
+export type RequestKind = 'ready' | 'rows' | 'problems' | 'detail' | 'schema' | 'insights' | 'profile' | 'follow' | 'order' | 'rebuild';
 
 export interface RequestState {
   id: string;
@@ -52,6 +54,7 @@ export interface WorkspaceState {
   query: string;
   filter?: RowFilter | undefined;
   sort?: RowSort | undefined;
+  sortDirection: SortDirection;
   sortOffset: string;
   sortOffsetHistory: string[];
   sortPage: string;
@@ -61,7 +64,21 @@ export interface WorkspaceState {
   columnOrder: string[];
   pending: Partial<Record<RequestKind, RequestState>>;
   invalidationReason?: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' | undefined;
+  blockedDetailOrdinal?: string | undefined;
   error?: WorkspaceError | undefined;
+}
+
+export function canReadSnapshot(reason: WorkspaceState['invalidationReason']): boolean {
+  return reason === undefined || reason === 'append';
+}
+
+export function nextInvalidationReason(
+  current: WorkspaceState['invalidationReason'],
+  observed: NonNullable<WorkspaceState['invalidationReason']>,
+): NonNullable<WorkspaceState['invalidationReason']> {
+  return observed === 'append' && (current === 'truncate' || current === 'replace' || current === 'delete')
+    ? current
+    : observed;
 }
 
 export interface PersistedWorkspaceState {
@@ -71,6 +88,7 @@ export interface PersistedWorkspaceState {
   query?: string;
   filter?: RowFilter | undefined;
   sort?: RowSort | undefined;
+  sortDirection?: SortDirection;
   sortOffset?: string;
   sortOffsetHistory?: string[];
   sortPage?: string;
@@ -92,6 +110,7 @@ export type WorkspaceAction =
   | { type: 'SET_QUERY'; query: string }
   | { type: 'SET_FILTER'; filter?: RowFilter | undefined }
   | { type: 'SET_SORT'; sort?: RowSort | undefined }
+  | { type: 'SET_SORT_DIRECTION'; direction: SortDirection }
   | { type: 'SET_SORT_OFFSET'; offset: string; history: string[]; page: string }
   | { type: 'SET_FOLLOW_MODE'; enabled: boolean }
   | { type: 'SET_COLUMN_VISIBILITY'; columnId: string; visible: boolean }
@@ -102,7 +121,13 @@ export type WorkspaceAction =
   | { type: 'DISMISS_ERROR' };
 
 export function createInitialState(restored?: PersistedWorkspaceState, pageSize = 100): WorkspaceState {
-  const sortOffset = restored?.sort === undefined ? '0' : normalizeSortOffset(restored.sortOffset);
+  const sortDirection = restored?.sortDirection === 'asc' || restored?.sortDirection === 'desc'
+    ? restored.sortDirection
+    : restored?.sort?.direction === 'desc' ? 'desc' : 'asc';
+  const sort = restored?.sortDirection === undefined
+    ? restored?.sort
+    : sortDirection === 'desc' ? { columnId: '__ordinal', direction: 'desc' as const } : undefined;
+  const sortOffset = sort === undefined ? '0' : normalizeSortOffset(restored?.sortOffset);
   return {
     phase: 'booting',
     rows: [],
@@ -116,14 +141,15 @@ export function createInitialState(restored?: PersistedWorkspaceState, pageSize 
     detailWidth: restored?.detailWidth ?? DEFAULT_DETAIL_WIDTH,
     query: restored?.query ?? '',
     filter: restored?.filter,
-    sort: restored?.sort,
+    sort,
+    sortDirection,
     sortOffset,
-    sortOffsetHistory: restored?.sort === undefined
+    sortOffsetHistory: sort === undefined
       ? []
-      : normalizeSortOffsetHistory(restored.sortOffsetHistory, sortOffset),
-    sortPage: restored?.sort === undefined
+      : normalizeSortOffsetHistory(restored?.sortOffsetHistory, sortOffset),
+    sortPage: sort === undefined
       ? '1'
-      : normalizeSortPage(restored.sortPage, sortOffset, pageSize),
+      : normalizeSortPage(restored?.sortPage, sortOffset, pageSize),
     followMode: restored?.followMode ?? false,
     columnVisibility: restored?.columnVisibility ?? {},
     columnWidths: restored?.columnWidths ?? {},
@@ -149,7 +175,7 @@ function reconcileVisibility(
   columns: ColumnSpec[],
   current: Record<string, boolean>,
 ): Record<string, boolean> {
-  const next: Record<string, boolean> = { __ordinal: current.__ordinal ?? true };
+  const next: Record<string, boolean> = { ...current, __ordinal: true };
   for (const column of columns) {
     next[column.id] = current[column.id] ?? true;
   }
@@ -249,33 +275,34 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
   const pending = completeRequest(state.pending, message.requestId);
   switch (message.type) {
     case 'OPENED': {
-      const generationChanged = state.summary?.snapshot.generation !== message.payload.snapshot.generation;
-      // A source invalidation is terminal for the current generation. Only a
-      // genuinely new snapshot can clear the stale-source barrier; a late
-      // same-generation OPENED must not hide it.
-      if (state.invalidationReason !== undefined && !generationChanged) return { ...state, pending };
-      const preserveFollowViewport = generationChanged && state.followMode && state.rows.length > 0;
+      const snapshotChanged = snapshotIdentityChanged(state.summary?.snapshot, message.payload.snapshot);
+      // Only an accepted new snapshot can clear the stale-source barrier.
+      // Repeated OPENED broadcasts must not hide destructive invalidation.
+      if (state.invalidationReason !== undefined && !snapshotChanged) return { ...state, pending };
+      const preserveFollowViewport = snapshotChanged && state.followMode && state.rows.length > 0
+        && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
       return {
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
         summary: message.payload,
-        rows: generationChanged && !preserveFollowViewport ? [] : state.rows,
-        columns: generationChanged && !preserveFollowViewport ? [] : state.columns,
-        page: generationChanged && !preserveFollowViewport ? undefined : state.page,
-        problems: generationChanged ? undefined : state.problems,
-        selectedOrdinal: generationChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
-        detail: generationChanged ? undefined : state.detail,
-        schema: generationChanged ? [] : state.schema,
-        schemaTotal: generationChanged ? 0 : state.schemaTotal,
-        schemaComplete: generationChanged ? false : state.schemaComplete,
-        insights: generationChanged ? undefined : state.insights,
-        pending: generationChanged ? {} : pending,
+        rows: snapshotChanged && !preserveFollowViewport ? [] : state.rows,
+        columns: snapshotChanged && !preserveFollowViewport ? [] : state.columns,
+        page: snapshotChanged && !preserveFollowViewport ? undefined : state.page,
+        problems: snapshotChanged ? undefined : state.problems,
+        selectedOrdinal: snapshotChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
+        detail: snapshotChanged ? undefined : state.detail,
+        schema: snapshotChanged ? [] : state.schema,
+        schemaTotal: snapshotChanged ? 0 : state.schemaTotal,
+        schemaComplete: snapshotChanged ? false : state.schemaComplete,
+        insights: snapshotChanged ? undefined : state.insights,
+        pending: snapshotChanged ? {} : pending,
         invalidationReason: undefined,
+        blockedDetailOrdinal: undefined,
         error: undefined,
       };
     }
     case 'ROWS': {
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       const selectedOrdinal = state.followMode
         ? message.payload.rows.at(-1)?.ref.ordinal
         : state.selectedOrdinal && message.payload.rows.some(
@@ -288,7 +315,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         : normalizeSortOffset(message.payload.sortOffset);
       return {
         ...state,
-        phase: state.summary?.indexingComplete === false ? 'loading' : 'ready',
+        phase: state.invalidationReason === 'append'
+          ? 'invalidated'
+          : state.summary?.indexingComplete === false ? 'loading' : 'ready',
         rows: message.payload.rows,
         columns: message.payload.columns,
         page: {
@@ -303,6 +332,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         },
         selectedOrdinal,
         detail: state.detail?.ref.ordinal === selectedOrdinal ? state.detail : undefined,
+        blockedDetailOrdinal: state.blockedDetailOrdinal === selectedOrdinal ? state.blockedDetailOrdinal : undefined,
         columnVisibility: reconcileVisibility(message.payload.columns, state.columnVisibility),
         columnOrder: reconcileColumnOrder(message.payload.columns, state.columnOrder),
         sortOffset,
@@ -314,16 +344,17 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     }
     case 'DETAIL':
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       return {
         ...state,
         detail: message.payload,
         selectedOrdinal: message.payload.ref.ordinal,
+        blockedDetailOrdinal: undefined,
         pending,
         error: undefined,
       };
     case 'PROBLEMS': {
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       const observedProblemRecords = message.payload.observedProblemRecords;
       const currentProblemRecords = state.summary?.problemRecords ?? '0';
       const problemRecords = BigInt(observedProblemRecords) > BigInt(currentProblemRecords)
@@ -340,7 +371,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     }
     case 'SCHEMA':
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       return {
         ...state,
         schema: message.payload.fields,
@@ -350,7 +381,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         error: undefined,
       };
     case 'INSIGHTS':
-      if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       return {
         ...state,
         insights: message.payload,
@@ -390,18 +421,28 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         insights: undefined,
       };
     }
-    case 'SOURCE_INVALIDATED':
+    case 'ROW_ORDER_CHANGED':
+      return { ...state, pending };
+    case 'SOURCE_INVALIDATED': {
+      const reason = nextInvalidationReason(state.invalidationReason, message.payload.reason);
       return {
         ...state,
         phase: 'invalidated',
-        invalidationReason: message.payload.reason,
-        pending: {},
+        invalidationReason: reason,
+        blockedDetailOrdinal: !canReadSnapshot(reason) && state.pending.detail !== undefined
+          ? state.selectedOrdinal
+          : state.blockedDetailOrdinal,
+        pending: reason === 'append' ? pending : {},
       };
+    }
     case 'ERROR':
       if (state.invalidationReason !== undefined) {
         return {
           ...state,
           phase: 'invalidated',
+          blockedDetailOrdinal: state.pending.detail?.id === message.requestId && state.detail === undefined
+            ? state.selectedOrdinal
+            : state.blockedDetailOrdinal,
           error: message.payload,
           pending,
         };
@@ -449,6 +490,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, filter: action.filter, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
     case 'SET_SORT':
       return { ...state, sort: action.sort, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
+    case 'SET_SORT_DIRECTION':
+      return { ...state, sortDirection: action.direction };
     case 'SET_SORT_OFFSET': {
       const sortOffset = normalizeSortOffset(action.offset);
       return {
@@ -491,9 +534,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         selectedOrdinal: action.ordinal,
         detail: state.detail?.ref.ordinal === action.ordinal ? state.detail : undefined,
+        blockedDetailOrdinal: !canReadSnapshot(state.invalidationReason)
+          && action.ordinal !== undefined
+          && state.detail?.ref.ordinal !== action.ordinal
+          ? action.ordinal
+          : undefined,
       };
     case 'CLOSE_DETAIL':
-      return { ...state, detail: undefined };
+      return { ...state, detail: undefined, blockedDetailOrdinal: undefined };
     case 'DISMISS_ERROR':
       if (state.invalidationReason !== undefined) {
         return { ...state, error: undefined, phase: 'invalidated' };
@@ -529,6 +577,7 @@ export function toPersistedState(state: WorkspaceState): PersistedWorkspaceState
     query: state.query,
     ...(state.filter === undefined ? {} : { filter: state.filter }),
     ...(state.sort === undefined ? {} : { sort: state.sort }),
+    sortDirection: state.sortDirection,
     sortOffset: state.sortOffset,
     sortOffsetHistory: state.sortOffsetHistory,
     sortPage: state.sortPage,

@@ -1,13 +1,13 @@
 import { appendFile, mkdtemp, open, rm, truncate, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   JsonlEngineError,
   JsonlFileEngine,
   evaluatePredicate,
 } from '../../src/engine';
-import { keyPath, type Predicate, type RowSort } from '../../src/shared/types';
+import { keyPath, MAX_TABLE_COLUMNS, type ColumnSpec, type Predicate, type RowSort } from '../../src/shared/types';
 import { AdaptiveSegmentIndex, type InternalRecordRef } from '../../src/engine/segment-index';
 import { createNewlineScanner } from '../../src/engine/newline-scanner';
 
@@ -320,6 +320,25 @@ describe('JsonlFileEngine indexing and hydration', () => {
     expect(samples.map((sample) => sample.parseState)).toEqual(['valid', 'valid']);
     expect(samples[0]?.value).toEqual({ type: 'message', role: 'developer' });
   });
+
+  it('keeps explicit nested columns up to the table cap for physical and sorted pages', async () => {
+    const { engine } = await fixture('{"payload":{"field0":"present","field63":63}}', { defaultColumnLimit: 1 });
+    const columns: ColumnSpec[] = Array.from({ length: MAX_TABLE_COLUMNS + 1 }, (_, index) => {
+      const path = keyPath('payload', `field${String(index)}`);
+      return { id: JSON.stringify(path.tokens), label: `$.payload.field${String(index)}`, path, source: 'record' };
+    });
+
+    for (const sort of [undefined, { columnId: '__ordinal', direction: 'desc' } as const,
+      { columnId: columns[0]!.id, direction: 'asc' } as const]) {
+      const page = await engine.getRows({ limit: 1, columns, ...(sort === undefined ? {} : { sort }) });
+      expect(page.columns.map((column) => column.id)).toEqual(
+        columns.slice(0, MAX_TABLE_COLUMNS).map((column) => column.id),
+      );
+      expect(page.rows[0]?.cells).toHaveLength(MAX_TABLE_COLUMNS);
+      expect(page.rows[0]?.cells.find((cell) => cell.columnId === columns[0]!.id)?.value).toBe('present');
+      expect(page.rows[0]?.cells.find((cell) => cell.columnId === columns[63]!.id)?.value).toBe(63);
+    }
+  });
 });
 
 describe('JsonlFileEngine querying and pagination', () => {
@@ -461,6 +480,67 @@ describe('JsonlFileEngine querying and pagination', () => {
     expect(page.hasBefore).toBe(true);
     expect(page.hasAfter).toBe(false);
   });
+
+  for (const direction of ['asc', 'desc'] as const) {
+    for (const visibleMatches of [0, 1]) {
+      it.each([
+        { name: 'records', reason: 'record_limit', budget: { maxExaminedRecords: 3 } },
+        { name: 'bytes', reason: 'byte_limit', budget: { maxExaminedBytes: 24n } },
+        { name: 'deadline', reason: 'time_limit', budget: { deadlineEpochMs: 2_000 } },
+      ])(
+        `ends a filtered ordinal ${direction} page with ${visibleMatches} matches when $name run out`,
+        async ({ name, reason, budget }) => {
+          const source = Array.from({ length: 8 }, (_, id) => JSON.stringify({ id })).join('\n');
+          const { engine } = await fixture(source);
+          const firstId = direction === 'asc' ? 0 : 7;
+          const beyondBudgetId = direction === 'asc' ? 7 : 0;
+          const farMatch: Predicate = { op: 'compare', path: keyPath('id'), cmp: 'eq', value: beyondBudgetId };
+          const predicate: Predicate = visibleMatches === 0 ? farMatch : {
+            op: 'or',
+            args: [{ op: 'compare', path: keyPath('id'), cmp: 'eq', value: firstId }, farMatch],
+          };
+          const clock = name === 'deadline' ? vi.spyOn(Date, 'now').mockReturnValue(1_000) : undefined;
+          let hydrated = 0;
+          try {
+            const page = await engine.getRows({
+              limit: 2,
+              sort: { columnId: '__ordinal', direction },
+              predicate,
+              scanBudget: budget,
+              onHydrated: () => {
+                if (++hydrated === 3) clock?.mockReturnValue(2_000);
+              },
+            });
+            expect(page.rows.map((row) => row.ref.ordinal)).toEqual(
+              visibleMatches === 0 ? [] : [String(firstId)],
+            );
+            expect(page.scan).toMatchObject({ examinedRecords: '3', truncatedReason: reason });
+            expect(page.hasAfter).toBe(false);
+            expect(page.sortNextOffset).toBeUndefined();
+          } finally {
+            clock?.mockRestore();
+          }
+        },
+      );
+    }
+
+    it(`continues only to known matches within a filtered ordinal ${direction} scan`, async () => {
+      const source = Array.from({ length: 8 }, (_, id) => JSON.stringify({ id })).join('\n');
+      const { engine } = await fixture(source);
+      const request = {
+        limit: 2,
+        sort: { columnId: '__ordinal', direction },
+        predicate: { op: 'compare', path: keyPath('id'), cmp: 'gte', value: 0 } as const,
+        scanBudget: { maxExaminedRecords: 3 },
+      };
+      const first = await engine.getRows(request);
+      expect(first.hasAfter).toBe(true);
+      const last = await engine.getRows({ ...request, sortOffset: '2' });
+      expect(last.rows.map((row) => row.ref.ordinal)).toEqual([direction === 'asc' ? '2' : '5']);
+      expect(last.scan?.truncatedReason).toBe('record_limit');
+      expect(last.hasAfter).toBe(false);
+    });
+  }
 
   it('keeps null and missing sort values last in both directions', async () => {
     const source = [
@@ -775,6 +855,7 @@ describe('JsonlFileEngine querying and pagination', () => {
 describe('JsonlFileEngine refresh classification and lifecycle', () => {
   it('classifies an append without adopting bytes outside the open snapshot', async () => {
     const { engine, path } = await fixture('{"a":1}\n');
+    const original = (await engine.getRows({ limit: 10 })).rows[0]!.ref;
     await appendFile(path, '{"a":2}\n');
 
     expect(await engine.classifyRefresh()).toMatchObject({ kind: 'append' });
@@ -782,6 +863,31 @@ describe('JsonlFileEngine refresh classification and lifecycle', () => {
     expect(page.rows).toHaveLength(1);
     expect(page.totalRecords).toBe('1');
     expect(page.rows[0]?.genericSummary).toBe('{"a":1}');
+    expect((await engine.getDetail(original)).value).toEqual({ a: 1 });
+
+    await writeFile(path, '{"a":3}\n{"a":2}\n');
+    await expect(engine.getDetail(original)).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+  });
+
+  it('blocks an unverified append after a large snapshot defers its original fingerprint', async () => {
+    const { engine, path } = await fixture('{"value":true}\n'.repeat(600_000));
+    expect(engine.canValidateOriginalSnapshot).toBe(false);
+    await appendFile(path, '{"value":false}\n');
+
+    expect(await engine.classifyRefresh()).toMatchObject({ kind: 'unknown' });
+    await expect(engine.getRows({ limit: 1 })).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+  });
+
+  it('keeps a large snapshot readable after establishing its baseline before an append', async () => {
+    const { engine, path } = await fixture('{"value":true}\n'.repeat(600_000));
+    expect(engine.canValidateOriginalSnapshot).toBe(false);
+    expect(await engine.classifyRefresh()).toMatchObject({ kind: 'unchanged' });
+    expect(engine.canValidateOriginalSnapshot).toBe(true);
+    await appendFile(path, '{"value":false}\n');
+
+    expect(await engine.classifyRefresh()).toMatchObject({ kind: 'append' });
+    const page = await engine.getRows({ limit: 1 });
+    expect(page.rows[0]?.genericSummary).toBe('{"value":true}');
   });
 
   it('rejects an equal-length rewrite even when no filesystem watcher runs', async () => {

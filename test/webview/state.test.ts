@@ -81,6 +81,54 @@ const rows: RowProjection[] = [
 ];
 
 describe('workspace reducer', () => {
+  it.each([false, true])('replaces stale projections on a same-generation newer epoch (invalidated=%s)', (invalidated) => {
+    const initialSummary = { ...summary, snapshot: { ...summary.snapshot, epoch: 1 } };
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('OPENED', initialSummary), epoch: 1 },
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { id: 'old-detail', kind: 'detail' } });
+    if (invalidated) state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'replace' }),
+    });
+
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, epoch: 2 } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('OPENED', nextSummary), epoch: 2 },
+    });
+    expect(state.summary?.snapshot.epoch).toBe(2);
+    expect(state.invalidationReason).toBeUndefined();
+    expect(state.rows).toEqual([]);
+    expect(state.selectedOrdinal).toBeUndefined();
+    expect(state.pending).toEqual({});
+    expect(state.phase).toBe('ready');
+  });
+
+  it('clears the Follow viewport when the document changes even if its generation matches', () => {
+    let state = workspaceReducer(createInitialState({ followMode: true }), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, documentId: 'other-document' } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('OPENED', nextSummary), documentId: 'other-document' },
+    });
+    expect(state.rows).toEqual([]);
+    expect(state.page).toBeUndefined();
+    expect(state.selectedOrdinal).toBeUndefined();
+    expect(state.summary?.snapshot.documentId).toBe('other-document');
+  });
+
   it('resets generation-bound projections when a new document generation opens', () => {
     let state = createInitialState();
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
@@ -257,6 +305,153 @@ describe('workspace reducer', () => {
     expect(state.error?.code).toBe('query_failed');
   });
 
+  it('keeps verified append snapshots readable without adopting the new generation', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows,
+        columns: [],
+        anchorOrdinal: '1',
+        hasBefore: false,
+        hasAfter: false,
+        indexedRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.blockedDetailOrdinal).toBeUndefined();
+
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', {
+        ref: rows[1]!.ref,
+        rawPreview: 'invalid record',
+        rawComplete: true,
+        problems: [],
+      }),
+    });
+    expect(state.detail?.ref.ordinal).toBe('2');
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows: [rows[1]!],
+        columns: [],
+        anchorOrdinal: '2',
+        hasBefore: true,
+        hasAfter: false,
+        indexedRecords: '2',
+      }),
+    });
+    expect(state.rows).toHaveLength(1);
+    expect(state.detail?.ref.ordinal).toBe('2');
+    expect(state.phase).toBe('invalidated');
+    expect(state.invalidationReason).toBe('append');
+    expect(state.summary?.snapshot.generation).toBe('g1');
+
+    const sameGenerationOpened = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    expect(sameGenerationOpened).toEqual(state);
+  });
+
+  it('preserves in-flight reads across append hints but cancels them on replacement', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'REQUEST_SENT', request: { kind: 'rows', id: 'rows-1' },
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    expect(state.pending.rows?.id).toBe('rows-1');
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    expect(state.pending.rows?.id).toBe('rows-1');
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'replace' }),
+    });
+    expect(state.pending.rows).toBeUndefined();
+    expect(state.invalidationReason).toBe('replace');
+  });
+
+  it('keeps a blocked selection visible when a pending detail read is cancelled', () => {
+    let state = workspaceReducer(createInitialState(), { type: 'SELECT_ROW', ordinal: '1' });
+    state = workspaceReducer(state, {
+      type: 'REQUEST_SENT', request: { kind: 'detail', id: 'detail-1' },
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'truncate' }),
+    });
+    expect(state.pending.detail).toBeUndefined();
+    expect(state.blockedDetailOrdinal).toBe('1');
+  });
+
+  it('retains already-hydrated detail only as a blocked-generation cache', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', { ref: rows[0]!.ref, rawPreview: 'old content', rawComplete: true, problems: [] }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'replace' }),
+    });
+    expect(state.detail?.rawPreview).toBe('old content');
+    expect(state.detail?.ref.generation).toBe('g1');
+    expect(state.selectedOrdinal).toBe(rows[0]!.ref.ordinal);
+    expect(state.invalidationReason).toBe('replace');
+    expect(state.blockedDetailOrdinal).toBeUndefined();
+
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: rows[1]!.ref.ordinal });
+    expect(state.detail).toBeUndefined();
+    expect(state.blockedDetailOrdinal).toBe(rows[1]!.ref.ordinal);
+  });
+
+  it('allows a verified append after uncertainty but never after destructive invalidation', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'unknown' }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    expect(state.invalidationReason).toBe('append');
+
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'truncate' }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    expect(state.invalidationReason).toBe('truncate');
+  });
+
+  it('explains a failed append detail read and allows a new selection', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    state = workspaceReducer(state, {
+      type: 'REQUEST_SENT', request: { kind: 'detail', id: 'request-1' },
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ERROR', { code: 'REQUEST_FAILED', message: 'Source changed.', recoverable: true }),
+    });
+    expect(state.blockedDetailOrdinal).toBe('2');
+    expect(state.error?.code).toBe('REQUEST_FAILED');
+    expect(state.phase).toBe('invalidated');
+
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '1' });
+    expect(state.blockedDetailOrdinal).toBeUndefined();
+    expect(state.selectedOrdinal).toBe('1');
+  });
+
   it('keeps an invalidated generation blocked until a new snapshot opens', () => {
     let state = createInitialState();
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
@@ -306,6 +501,12 @@ describe('workspace reducer', () => {
     expect(lateProfile).toEqual(invalidated);
     expect(sameGenerationOpened).toEqual(invalidated);
 
+    const blockedSelection = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    expect(blockedSelection.selectedOrdinal).toBe('2');
+    expect(blockedSelection.blockedDetailOrdinal).toBe('2');
+    expect(blockedSelection.detail).toBeUndefined();
+    expect(workspaceReducer(blockedSelection, { type: 'CLOSE_DETAIL' }).blockedDetailOrdinal).toBeUndefined();
+
     const dismissed = workspaceReducer(
       workspaceReducer(state, {
         type: 'MESSAGE_RECEIVED',
@@ -330,6 +531,34 @@ describe('workspace reducer', () => {
 
     expect(state.detailWidth).toBe(704);
     expect(toPersistedState(state).detailWidth).toBe(704);
+  });
+
+  it('restores physical row-order preference independently from an ascending preview', () => {
+    let state = createInitialState({ sortDirection: 'desc' });
+    expect(state.sort).toEqual({ columnId: '__ordinal', direction: 'desc' });
+    state = workspaceReducer(state, { type: 'SET_SORT', sort: undefined });
+    expect(state.sortDirection).toBe('desc');
+    expect(toPersistedState(state).sortDirection).toBe('desc');
+
+    state = workspaceReducer(state, { type: 'SET_SORT_DIRECTION', direction: 'asc' });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROW_ORDER_CHANGED', { direction: 'desc' }),
+    });
+    expect(state.sortDirection).toBe('asc');
+  });
+
+  it('retains a hidden schema field after the next projected page omits it', () => {
+    let state = createInitialState();
+    const column = { id: JSON.stringify([{ kind: 'key', value: 'message' }, { kind: 'key', value: 'role' }]), label: '$.message.role', source: 'record' as const };
+    state = workspaceReducer(state, { type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible: false });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '2', hasBefore: false, hasAfter: false, indexedRecords: '3',
+      }),
+    });
+    expect(state.columnVisibility[column.id]).toBe(false);
   });
 
   it('stores bounded insight results and clears them when the dimension changes', () => {

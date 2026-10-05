@@ -8,6 +8,7 @@ export function getWebviewHtml(
   extensionUri: vscode.Uri,
   snapshot: SnapshotIdentity,
   pageSize = 100,
+  rowOrder: 'asc' | 'desc' = 'asc',
 ): string {
   const nonce = randomBytes(18).toString('base64url');
   const scriptUri = webview.asWebviewUri(extensionUri.with({
@@ -32,6 +33,7 @@ export function getWebviewHtml(
   ${snapshot.epoch === undefined ? '' : `data-epoch="${String(snapshot.epoch)}"`}
   data-uri="${escapeAttribute(snapshot.uri)}"
   data-page-size="${String(Math.min(500, Math.max(20, Math.trunc(pageSize))))}"
+  data-row-order="${rowOrder}"
 >
   <div id="root"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
