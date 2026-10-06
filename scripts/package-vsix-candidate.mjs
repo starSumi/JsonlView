@@ -19,6 +19,7 @@ if (isMainModule()) await main();
 async function main() {
 const options = parseArguments(process.argv.slice(2));
 const sourceState = await readGitState();
+const sourceDateEpoch = parseOptionalSourceDateEpoch(process.env.SOURCE_DATE_EPOCH);
 const nativeBinary = await locateNativeBinary(options.native);
 const nativeDirectory = dirname(nativeBinary);
 const declaration = resolve(nativeDirectory, 'index.d.ts');
@@ -119,7 +120,15 @@ try {
     '--allow-missing-repository',
     '--out',
     output,
-  ], { cwd: staging, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  ], {
+    cwd: staging,
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+    // vsce uses the standard SOURCE_DATE_EPOCH contract to fix ZIP mtimes and
+    // entry order. Preserve the caller environment; the default is deliberate
+    // absence so packaging does not invent a release timestamp.
+    env: buildVsceEnvironment(process.env),
+  });
 
   const archive = await inspectVsixArchive(output);
   const embeddedNative = archive.native;
@@ -144,6 +153,10 @@ try {
       statusSha256: sourceState.statusSha256,
       diffSha256: sourceState.diffSha256,
       root: '<workspace>',
+    },
+    reproducibility: {
+      sourceDateEpoch: sourceDateEpoch ?? null,
+      sourceDateEpochSource: sourceDateEpoch === undefined ? 'unset' : 'environment',
     },
     package: {
       name: packageJson.name ?? null,
@@ -242,6 +255,37 @@ export function parseArguments(args) {
  */
 export function stripLeadingScriptSeparator(args) {
   return args[0] === '--' ? args.slice(1) : args;
+}
+
+/**
+ * Build the child environment for vsce. The standard reproducible-builds
+ * override is validated when supplied and deliberately remains absent by
+ * default; this helper never invents a timestamp from the wall clock.
+ */
+export function buildVsceEnvironment(environment = process.env) {
+  const childEnvironment = { ...environment };
+  if (environment.SOURCE_DATE_EPOCH !== undefined) {
+    childEnvironment.SOURCE_DATE_EPOCH = parseSourceDateEpoch(environment.SOURCE_DATE_EPOCH);
+  } else {
+    delete childEnvironment.SOURCE_DATE_EPOCH;
+  }
+  return childEnvironment;
+}
+
+export function parseOptionalSourceDateEpoch(value) {
+  return value === undefined ? undefined : parseSourceDateEpoch(value);
+}
+
+export function parseSourceDateEpoch(value, label = 'SOURCE_DATE_EPOCH') {
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(label + ' must be a non-negative Unix epoch in seconds');
+  }
+  const epoch = Number(normalized);
+  if (!Number.isSafeInteger(epoch)) {
+    throw new Error(label + ' is outside the safe integer range');
+  }
+  return String(epoch);
 }
 
 function isMainModule() {

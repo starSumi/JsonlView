@@ -3,7 +3,7 @@ import { parseArgs as parsePreflightArgs, stripLeadingScriptSeparator as stripPr
 // @ts-expect-error JavaScript CLI modules intentionally do not emit declarations.
 import { parseArgs as parseNpmArgs, stripLeadingScriptSeparator as stripNpmSeparator } from '../../scripts/prepare-npm-package.mjs';
 // @ts-expect-error JavaScript CLI modules intentionally do not emit declarations.
-import { parseArguments as parseVsixArgs, stripLeadingScriptSeparator as stripVsixSeparator } from '../../scripts/package-vsix-candidate.mjs';
+import { parseArguments as parseVsixArgs, buildVsceEnvironment, parseSourceDateEpoch, stripLeadingScriptSeparator as stripVsixSeparator } from '../../scripts/package-vsix-candidate.mjs';
 // @ts-expect-error JavaScript CLI modules intentionally do not emit declarations.
 import { fetchLatestVersion, parseArgs as parseFreshnessArgs } from '../../scripts/check-dependency-freshness.mjs';
 
@@ -21,6 +21,15 @@ import { isWithin } from '../../scripts/path-boundary.mjs';
 const execFile = promisify(execFileCallback);
 
 describe('release CLI argument separators', () => {
+  it('preserves an explicit reproducible-builds epoch and leaves the default absent', () => {
+    expect(buildVsceEnvironment({ PATH: 'fixture', SOURCE_DATE_EPOCH: '1700000000' }))
+      .toMatchObject({ PATH: 'fixture', SOURCE_DATE_EPOCH: '1700000000' });
+    expect(buildVsceEnvironment({ PATH: 'fixture' })).toEqual({ PATH: 'fixture' });
+    expect(() => parseSourceDateEpoch('-1')).toThrow(/non-negative Unix epoch/i);
+    expect(() => parseSourceDateEpoch('now')).toThrow(/non-negative Unix epoch/i);
+    expect(() => parseSourceDateEpoch('999999999999999999999999')).toThrow(/safe integer/i);
+  });
+
   it('treats a different Windows volume as outside the producer checkout', () => {
     expect(isWithin('E:\\workspace\\JsonlView', 'C:\\Temp\\jsonlview-release\\report.json')).toBe(false);
   });
