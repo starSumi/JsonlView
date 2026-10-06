@@ -11,6 +11,8 @@
   nested record details.
 - Make VSIX candidate archives reproducible when `SOURCE_DATE_EPOCH` is fixed,
   with the selected epoch recorded in candidate provenance.
+- Add a synthetic Codex rollout Insights showcase covering category and time
+  distribution views.
 
 ## 0.2.6 - 2026-10-06
 

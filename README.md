@@ -29,6 +29,10 @@ agent events, telemetry, and aggregate analysis.
 
 ![Codex agent workflow table](docs/assets/codex-rollout-table.png)
 
+### Codex Agent Workflow - Insights
+
+![Codex rollout event insights with category and time distribution views](docs/assets/rollout-event-insights.png)
+
 ### Structured Description - Record Detail
 
 ![Structured JSON record with raw detail and derived fields](docs/assets/struct-desc.png)
