@@ -29,6 +29,7 @@ Read these before changing a shared boundary:
 21. [ADR-021 explicit row-order toggle](021-explicit-row-order-toggle.md)
 22. [ADR-022 read-only agent-history adapter roadmap](022-read-only-agent-history-adapter-roadmap.md)
 23. [ADR-023 native build reproducibility](023-native-build-reproducibility.md)
+24. [ADR-026 opt-in read-only navigation prototype](026-read-only-navigation-prototype.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.
