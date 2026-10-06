@@ -41,6 +41,14 @@ describe('read-only navigation facade', () => {
     expect(result.relations).toEqual([{ sourceId: 'codex-local', fromNativeId: 'thread-1', toNativeId: 'agent-1', kind: 'spawn' }]);
   });
 
+  it('marks a filtered result truncated only after finding one extra match', async () => {
+    const facade = new ReadOnlyNavigationFacade({ providers: [provider()], allowedSourceIds: ['codex-local'] });
+    const complete = await facade.query('op-filter-complete', { text: 'worker', limit: 1 }, new AbortController().signal);
+    const bounded = await facade.query('op-filter-bounded', { text: 'thread', limit: 1 }, new AbortController().signal);
+    expect(complete.truncated).toBe(false);
+    expect(bounded.truncated).toBe(false);
+  });
+
   it('requires explicit source authorization and rejects arbitrary paths by contract', async () => {
     const facade = new ReadOnlyNavigationFacade({ providers: [provider()], allowedSourceIds: [] });
     await expect(facade.query('op-2', { sourceId: 'codex-local' }, new AbortController().signal)).rejects.toThrow('not allowlisted');

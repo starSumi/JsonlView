@@ -60,6 +60,10 @@ MCP adapter may map `list_sessions`, `get_session`, `list_relations`,
 `read_slice`, and `search_index` onto the same bounded query contract. No write
 tool, source replacement, staging operation, telemetry, or network endpoint is
 part of this phase.
+When a filtered query reaches its result limit, the facade examines one further
+matching entity before reporting `result_limit`; a final matching entity is not
+mistaken for truncation. Provider-level truncation remains visible through its
+bounded `truncatedReason`.
 
 ## Probe
 

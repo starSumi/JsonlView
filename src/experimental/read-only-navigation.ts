@@ -89,12 +89,12 @@ export class ReadOnlyNavigationFacade {
       if (query.kind !== undefined && entity.kind !== query.kind) continue;
       if (query.parentNativeId !== undefined && entity.parentNativeId !== query.parentNativeId) continue;
       if (text !== undefined && !entity.label.toLocaleLowerCase().includes(text)) continue;
-      entities.push(entity);
       if (entities.length >= limit) {
-        truncated = entities.length < snapshot.entities.length;
-        truncatedReason = truncated ? 'result_limit' : truncatedReason;
+        truncated = true;
+        truncatedReason = 'result_limit';
         break;
       }
+      entities.push(entity);
     }
 
     const resultIds = new Set(entities.map((entity) => entity.nativeId));
