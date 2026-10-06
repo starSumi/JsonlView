@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make Windows native release builds reproducible with the MSVC /Brepro
+  linker flag while preserving debug metadata and portable builds.
+
 ## 0.2.6 - 2026-10-06
 
 - Place the bounded indexing status before the toolbar at wide widths while

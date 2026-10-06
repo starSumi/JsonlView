@@ -4,100 +4,118 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const nativeRoot = resolve(root, 'native', 'jsonl-core');
-const outputDir = resolve(root, nonEmpty(process.env.JSONLVIEW_NATIVE_OUTPUT_DIR) ?? nativeRoot);
-const targetDir = nonEmpty(process.env.JSONLVIEW_NATIVE_TARGET_DIR);
-const cargoHome = resolve(nonEmpty(process.env.CARGO_HOME) ?? resolve(homedir(), '.cargo'));
-const rustupHome = resolve(nonEmpty(process.env.RUSTUP_HOME) ?? rustupHomeFromSysroot() ?? resolve(homedir(), '.rustup'));
-const declarationPath = resolve(nativeRoot, 'index.d.ts');
-const declaration = readFileSync(declarationPath, 'utf8');
-assertDeclaration(declaration);
-const require = createRequire(import.meta.url);
-const napiPackagePath = require.resolve('@napi-rs/cli/package.json');
-const napiPackage = JSON.parse(readFileSync(napiPackagePath, 'utf8'));
-const napiBin = napiPackage?.bin?.napi;
-if (typeof napiBin !== 'string' || napiBin.length === 0) {
-  throw new Error('@napi-rs/cli does not declare the napi executable');
+export function buildEncodedRustflags(existingFlags, remaps, includeMsvcRepro) {
+  const flags = [...existingFlags];
+  const hasBrepro = flags.some((flag, index) => {
+    const normalized = flag.toLowerCase();
+    return normalized === '-clink-arg=/brepro'
+      || (normalized === '-c' && flags[index + 1]?.toLowerCase() === 'link-arg=/brepro');
+  });
+  if (includeMsvcRepro && !hasBrepro) flags.push('-C', 'link-arg=/Brepro');
+  flags.push(...remaps.map(([from, to]) => '--remap-path-prefix=' + from + '=' + to));
+  return flags;
 }
-const napiCli = resolve(dirname(napiPackagePath), napiBin);
 
-// Cargo accepts encoded flags without shell quoting. Remapping the checkout,
-// Cargo registry, and Rust toolchain keeps local usernames and drive paths out
-// of the distributable native binary while preserving normal compiler output.
-const remaps = [
-  [root, '<workspace>'],
-  [cargoHome, '<cargo>'],
-  [rustupHome, '<rustup>'],
-];
-const existingEncoded = process.env.CARGO_ENCODED_RUSTFLAGS?.split('\x1f').filter(Boolean) ?? [];
-const encodedFlags = [
-  ...existingEncoded,
-  ...remaps.map(([from, to]) => `--remap-path-prefix=${from}=${to}`),
-];
-
-// `pnpm run` accepts an optional `--` separator. It is not a napi option and
-// must not be forwarded to Cargo, where it changes the parser boundary.
-const forwardedArgs = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2);
-const buildArgs = [
-  'build',
-  '--cwd',
-  nativeRoot,
-  '--platform',
-  '--release',
-  '--output-dir',
-  outputDir,
-  ...(targetDir === undefined ? [] : ['--target-dir', resolve(root, targetDir)]),
-  '--no-js',
-  '--no-dts-header',
-  ...forwardedArgs,
-];
-
-// Invoke the installed napi-rs CLI with Node instead of rediscovering pnpm.
-// Package-manager shims differ across local Volta installs and hosted Windows
-// runners, while this executable is already pinned by the project lockfile.
-const child = spawn(process.execPath, [
-  napiCli,
-  ...buildArgs,
-], {
-  cwd: root,
-  env: {
-    ...process.env,
-    CARGO_ENCODED_RUSTFLAGS: encodedFlags.join('\x1f'),
-  },
-  stdio: 'inherit',
-  windowsHide: true,
-});
-
-child.once('error', (error) => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
-child.once('exit', (code, signal) => {
-  if (signal) {
-    console.error(`native build terminated by ${signal}`);
-    process.exitCode = 1;
-  } else {
-    if ((code ?? 1) !== 0) {
-      process.exitCode = code ?? 1;
-      return;
-    }
-    try {
-      // napi-rs emits an empty declaration when the Rust crate does not enable
-      // its typedef feature. The declaration is an authored JS-facing
-      // contract, so restore it after every build and copy it to candidates.
-      writeFileSync(declarationPath, declaration, 'utf8');
-      const outputDeclaration = resolve(outputDir, 'index.d.ts');
-      if (outputDeclaration !== declarationPath) writeFileSync(outputDeclaration, declaration, 'utf8');
-      process.exitCode = 0;
-    } catch (error) {
-      console.error(error.stack || error.message);
-      process.exitCode = 1;
-    }
+function main() {
+  const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
+  const nativeRoot = resolve(root, 'native', 'jsonl-core');
+  const outputDir = resolve(root, nonEmpty(process.env.JSONLVIEW_NATIVE_OUTPUT_DIR) ?? nativeRoot);
+  const targetDir = nonEmpty(process.env.JSONLVIEW_NATIVE_TARGET_DIR);
+  const cargoHome = resolve(nonEmpty(process.env.CARGO_HOME) ?? resolve(homedir(), '.cargo'));
+  const rustupHome = resolve(nonEmpty(process.env.RUSTUP_HOME) ?? rustupHomeFromSysroot() ?? resolve(homedir(), '.rustup'));
+  const declarationPath = resolve(nativeRoot, 'index.d.ts');
+  const declaration = readFileSync(declarationPath, 'utf8');
+  assertDeclaration(declaration);
+  const require = createRequire(import.meta.url);
+  const napiPackagePath = require.resolve('@napi-rs/cli/package.json');
+  const napiPackage = JSON.parse(readFileSync(napiPackagePath, 'utf8'));
+  const napiBin = napiPackage?.bin?.napi;
+  if (typeof napiBin !== 'string' || napiBin.length === 0) {
+    throw new Error('@napi-rs/cli does not declare the napi executable');
   }
-});
+  const napiCli = resolve(dirname(napiPackagePath), napiBin);
+
+  // Cargo accepts encoded flags without shell quoting. Remapping the checkout,
+  // Cargo registry, and Rust toolchain keeps local usernames and drive paths out
+  // of the distributable native binary while preserving normal compiler output.
+  const remaps = [
+    [root, '<workspace>'],
+    [cargoHome, '<cargo>'],
+    [rustupHome, '<rustup>'],
+  ];
+  const existingEncoded = process.env.CARGO_ENCODED_RUSTFLAGS?.split('\x1f').filter(Boolean) ?? [];
+  const encodedFlags = buildEncodedRustflags(existingEncoded, remaps, process.platform === 'win32');
+
+  // `pnpm run` accepts an optional `--` separator. It is not a napi option and
+  // must not be forwarded to Cargo, where it changes the parser boundary.
+  const forwardedArgs = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2);
+  const buildArgs = [
+    'build',
+    '--cwd',
+    nativeRoot,
+    '--platform',
+    '--release',
+    '--output-dir',
+    outputDir,
+    ...(targetDir === undefined ? [] : ['--target-dir', resolve(root, targetDir)]),
+    '--no-js',
+    '--no-dts-header',
+    ...forwardedArgs,
+  ];
+
+  // Invoke the installed napi-rs CLI with Node instead of rediscovering pnpm.
+  // Package-manager shims differ across local Volta installs and hosted Windows
+  // runners, while this executable is already pinned by the project lockfile.
+  const child = spawn(process.execPath, [
+    napiCli,
+    ...buildArgs,
+  ], {
+    cwd: root,
+    env: {
+      ...process.env,
+      CARGO_ENCODED_RUSTFLAGS: encodedFlags.join('\x1f'),
+    },
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+
+  child.once('error', (error) => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+  child.once('exit', (code, signal) => {
+    if (signal) {
+      console.error(`native build terminated by ${signal}`);
+      process.exitCode = 1;
+    } else {
+      if ((code ?? 1) !== 0) {
+        process.exitCode = code ?? 1;
+        return;
+      }
+      try {
+        // napi-rs emits an empty declaration when the Rust crate does not enable
+        // its typedef feature. The declaration is an authored JS-facing
+        // contract, so restore it after every build and copy it to candidates.
+        writeFileSync(declarationPath, declaration, 'utf8');
+        const outputDeclaration = resolve(outputDir, 'index.d.ts');
+        if (outputDeclaration !== declarationPath) writeFileSync(outputDeclaration, declaration, 'utf8');
+        process.exitCode = 0;
+      } catch (error) {
+        console.error(error.stack || error.message);
+        process.exitCode = 1;
+      }
+    }
+  });
+}
+
+function isMainModule() {
+  const entry = process.argv[1];
+  return entry !== undefined && import.meta.url === pathToFileURL(resolve(entry)).href;
+}
+
+if (isMainModule()) main();
 
 function assertDeclaration(value) {
   for (const signature of [
