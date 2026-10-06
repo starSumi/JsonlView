@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.6 - 2026-10-06
+
 - Place the bounded indexing status before the toolbar at wide widths while
   preserving accessible status semantics and narrow-container reflow.
 - Use explicit sort-shape icons in one row-order toggle so the control is not
