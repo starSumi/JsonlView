@@ -182,6 +182,18 @@ keeps the host boundary explicit, and the [MCP Tools security
 considerations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 are the minimum reference if a future capability ever crosses a tool boundary.
 
+## Experimental staged mutation and local navigation
+
+The proposed companion capability is governed by
+[ADR-025](decisions/025-experimental-staged-mutation-and-local-mcp.md). It
+keeps provider discovery, the extension-owned catalog, the mutation
+coordinator, and the UI/MCP projections under separate ownership. The current
+release candidate remains read-only. The staged gates are contract freeze,
+read-only catalog, source-preserving staging, synthetic commit recovery,
+read-only MCP, and only then a measured write review. PieceTree, LSM, Monaco,
+zero-copy, and frame-rate claims remain benchmark hypotheses until the same
+synthetic corpus and failure matrix produce evidence.
+
 ## Adoption benchmark
 
 Every candidate records:
