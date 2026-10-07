@@ -16,6 +16,8 @@ import {
   type FollowRecoveryProbe,
 } from './follow-recovery';
 import { getWebviewHtml } from './webview-html';
+import { RevealIntentRegistry, type RevealIntent } from '../experimental';
+import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 
@@ -27,6 +29,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private reconcilePending = false;
   private disposed = false;
   private publishedProfileId: string;
+  private pendingReveal: RevealIntent | undefined;
   private readonly recovery: FollowRecoveryCoordinator;
   private readonly followModeRegistration: { dispose(): void };
 
@@ -113,6 +116,23 @@ class JsonlViewDocument implements vscode.CustomDocument {
 
   public resetRecovery(): void {
     this.recovery.reset();
+  }
+
+  public setPendingReveal(intent: RevealIntent): void {
+    this.pendingReveal = intent;
+  }
+
+  public async flushPendingReveal(): Promise<void> {
+    const intent = this.pendingReveal;
+    this.pendingReveal = undefined;
+    if (intent === undefined) return;
+    const current = this.session.getSummary().snapshot;
+    await this.broadcast('REVEAL', {
+      sourceId: intent.sourceId,
+      generation: current.generation,
+      nativeId: intent.nativeId,
+      anchorOrdinal: intent.anchorOrdinal,
+    });
   }
 
   public dispose(): void {
@@ -288,7 +308,10 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
   private lastResolvedDocument: JsonlViewDocument | undefined;
   private rowOrderWrite: Promise<void> = Promise.resolve();
 
-  public constructor(private readonly context: vscode.ExtensionContext) {}
+  public constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly revealRegistry: RevealIntentRegistry,
+  ) {}
 
   public openCustomDocument(
     uri: vscode.Uri,
@@ -301,6 +324,8 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
   public resolveCustomEditor(document: JsonlViewDocument, panel: vscode.WebviewPanel): void {
     this.resolvedDocuments.add(document);
     this.lastResolvedDocument = document;
+    const pendingReveal = this.revealRegistry.take(document.uri.toString());
+    if (pendingReveal !== undefined) document.setPendingReveal(pendingReveal);
     panel.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist')],
@@ -323,6 +348,7 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
         );
         return this.rowOrderWrite;
       },
+      onReady: () => document.flushPendingReveal(),
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
@@ -365,8 +391,12 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     return;
   }
-  const provider = new JsonlViewProvider(context);
+  const revealRegistry = new RevealIntentRegistry();
+  const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
+  const provider = new JsonlViewProvider(context, revealRegistry);
   context.subscriptions.push(
+    ...navigator.register(),
+    navigator,
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {
       supportsMultipleEditorsPerDocument: false,
       webviewOptions: { retainContextWhenHidden: false },

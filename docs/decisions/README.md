@@ -35,6 +35,7 @@ Read these before changing a shared boundary:
 27. [ADR-026 opt-in read-only navigation prototype](026-read-only-navigation-prototype.md)
 28. [ADR-027 synthetic provider and navigation index contract](027-synthetic-provider-index-contract.md)
 29. [ADR-028 staged mutation benchmark](028-staged-mutation-benchmark.md)
+30. [ADR-029 opt-in Session Navigator TreeView and local catalog](029-opt-in-session-navigator-treeview.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

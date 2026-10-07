@@ -71,6 +71,8 @@ export interface DocumentControllerHooks {
   /** Cancel document-owned recovery before a user-triggered rebuild starts. */
   beforeRebuild?: () => void;
   onRowOrderChanged?: (direction: RowSort['direction']) => Promise<void>;
+  /** Deliver host-owned positioning intents only after the Webview handshake. */
+  onReady?: () => Promise<void> | void;
 }
 
 export class DocumentController {
@@ -130,6 +132,7 @@ export class DocumentController {
       switch (request.type) {
         case 'READY':
           await this.post(request, 'OPENED', summary);
+          await this.hooks.onReady?.();
           return;
         case 'GET_ROWS':
           signal = this.requests.startLatest('viewport', request.requestId);

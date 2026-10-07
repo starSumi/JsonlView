@@ -328,6 +328,7 @@ export function App(): React.JSX.Element {
       if (message.type === 'SOURCE_INVALIDATED') {
         invalidationRef.current = nextInvalidationReason(invalidationRef.current, message.payload.reason);
       } else if (openedGenerationChanged) invalidationRef.current = undefined;
+      if (message.type === 'REVEAL') queryController.revealOrdinal(message.payload.anchorOrdinal);
       if (message.type === 'OPENED') {
         if (openedGenerationChanged) setSchemaLoadFailed(false);
         indexingCompleteRef.current = message.payload.indexingComplete;

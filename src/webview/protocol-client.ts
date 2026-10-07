@@ -38,6 +38,7 @@ const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
   'INDEX_PROGRESS',
   'PROFILE_CHANGED',
   'ROW_ORDER_CHANGED',
+  'REVEAL',
   'SOURCE_INVALIDATED',
   'ERROR',
 ]);
@@ -140,6 +141,13 @@ export function shouldAcceptMessage(
   }
   if (message.type === 'SOURCE_INVALIDATED') {
     return message.requestId === '';
+  }
+  if (message.type === 'REVEAL') {
+    return message.requestId === ''
+      && message.payload.sourceId.length > 0
+      && message.payload.generation === message.generation
+      && message.payload.nativeId.length > 0
+      && message.payload.anchorOrdinal.length > 0;
   }
   return false;
 }

@@ -185,6 +185,15 @@ export class RowQueryController {
     return request;
   }
 
+  public revealOrdinal(ordinal: string): void {
+    if (!/^[0-9]+$/u.test(ordinal)) return;
+    const context = this.#ports.getContext();
+    if (!canReadSnapshot(context.invalidationReason)) return;
+    this.abandonRestore();
+    this.#ports.dispatch({ type: 'SELECT_ROW', ordinal });
+    this.requestRows({ anchorOrdinal: ordinal, direction: 'forward' }, { supersedesRestore: true });
+  }
+
   public rebuild(): void {
     const context = this.#ports.getContext();
     const captured = captureRebuild({

@@ -74,8 +74,82 @@
         "command": "jsonlView.rebuildIndex",
         "title": "JsonlView: Rebuild Index",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.enable",
+        "title": "JsonlView: Enable Session Navigator",
+        "icon": "$(activate-breakpoints)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.disable",
+        "title": "JsonlView: Disable Session Navigator",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.addSource",
+        "title": "JsonlView: Authorize Agent Source",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.removeSource",
+        "title": "JsonlView: Remove Agent Source",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.refresh",
+        "title": "JsonlView: Refresh Session Navigator",
+        "icon": "$(refresh)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "jsonlViewSessionNavigator",
+          "title": "Agent Sessions",
+          "icon": "$(list-tree)"
+        }
+      ]
+    },
+    "views": {
+      "jsonlViewSessionNavigator": [
+        {
+          "id": "jsonlView.sessionNavigator",
+          "name": "Session Navigator",
+          "when": "config.jsonlView.sessionNavigator.enabled"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "jsonlView.sessionNavigator.refresh",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.addSource",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.enable",
+          "when": "view == jsonlView.sessionNavigator && !config.jsonlView.sessionNavigator.enabled",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.disable",
+          "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "jsonlView.sessionNavigator.removeSource",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source",
+          "group": "inline@1"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "jsonlView.editor",
@@ -141,6 +215,30 @@
           ],
           "default": "off",
           "description": "Experimental Rust newline scanner. Native failures always fall back to the bounded Node implementation."
+        },
+        "jsonlView.sessionNavigator.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to the read-only Agent Session Navigator. It does not scan sources until you explicitly authorize and refresh one."
+        },
+        "jsonlView.sessionNavigator.sources": {
+          "type": "array",
+          "default": [],
+          "description": "Explicitly authorized local Agent source roots. Paths are read-only and are never discovered automatically.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["codex", "claude", "generic"]
+              },
+              "rootUri": {
+                "type": "string",
+                "description": "A file URI selected through Authorize Agent Source."
+              }
+            },
+            "required": ["provider", "rootUri"]
+          }
         }
       }
     }

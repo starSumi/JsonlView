@@ -12,6 +12,10 @@
 - Add a synthetic provider and immutable navigation-index contract for bounded
   topology, redaction, diagnostics, and generation-rebuild experiments; no
   producer store is read and no runtime activation is added.
+- Add a disabled-by-default Session Navigator TreeView experiment with explicit
+  file roots, bounded metadata-only JSONL adapters, a global SQLite catalog, and
+  read-only reveal intents into Data Studio; no MCP transport or source writes
+  are enabled.
 
 ## 0.2.7 - 2026-10-06
 

@@ -423,6 +423,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
     }
     case 'ROW_ORDER_CHANGED':
       return { ...state, pending };
+    case 'REVEAL':
+      return { ...state, pending };
     case 'SOURCE_INVALIDATED': {
       const reason = nextInvalidationReason(state.invalidationReason, message.payload.reason);
       return {

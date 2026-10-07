@@ -357,6 +357,7 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'INDEX_PROGRESS', DocumentSummary>
   | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; columns: ColumnSpec[] }>
   | ProtocolEnvelope<'ROW_ORDER_CHANGED', { direction: RowSort['direction'] }>
+  | ProtocolEnvelope<'REVEAL', { sourceId: string; generation: string; nativeId: string; anchorOrdinal: string }>
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>
   | ProtocolEnvelope<'ERROR', { code: string; message: string; recoverable: boolean }>;
 
