@@ -435,7 +435,9 @@ export function assertHarnessReportPath(outputPath: string, harnessRoot = resolv
     throw new Error(`--out target already exists; use a new harness run path: ${resolved}`);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('--out target already exists')) throw error;
-    // ENOENT is the expected state for a one-shot report target.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new Error(`--out could not inspect the report target: ${resolved}`);
+    }
   }
   return resolved;
 }
@@ -448,6 +450,18 @@ function makeSession(base: Uint8Array): StagedMutationSession {
     baseGeneration: 'base-1',
     fenceToken: 'fence-replay',
   });
+}
+
+export async function writeHarnessReport(outputPath: string, output: string): Promise<void> {
+  try {
+    // O_EXCL closes the check/use gap for the report target itself.
+    await writeFile(outputPath, output, { encoding: 'utf8', flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error('--out target already exists; use a new harness run path: ' + outputPath);
+    }
+    throw error;
+  }
 }
 
 function intentFor(
@@ -488,7 +502,7 @@ async function main(): Promise<void> {
   if (options.help === true) return;
   const report = await runBenchmark(options);
   const output = `${JSON.stringify(report, null, 2)}\n`;
-  if (options.out !== undefined) await writeFile(options.out, output, 'utf8');
+  if (options.out !== undefined) await writeHarnessReport(options.out, output);
   process.stdout.write(output);
 }
 

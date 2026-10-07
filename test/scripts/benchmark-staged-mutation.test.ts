@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import {
   replayFailureScenarios,
   runBenchmark,
   summarize,
+  writeHarnessReport,
 } from '../../scripts/benchmark-staged-mutation-runner';
 
 describe('staged mutation benchmark and replay oracle', () => {
@@ -82,7 +83,7 @@ describe('staged mutation benchmark and replay oracle', () => {
     expect(report.timingInterpretation.status).toBe('partial');
   });
 
-  it('rejects report output outside the harness state/runs boundary', () => {
+  it('rejects report output outside the harness state/runs boundary', async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'jsonlview-mutation-boundary-'));
     const root = join(tempRoot, 'JsonlView-harness');
     const run = join(root, 'state', 'runs', 'run');
@@ -90,7 +91,8 @@ describe('staged mutation benchmark and replay oracle', () => {
     const allowed = join(run, 'report.json');
     try {
       expect(assertHarnessReportPath(allowed, root)).toBe(allowed);
-      writeFileSync(allowed, '{}', 'utf8');
+      await writeHarnessReport(allowed, '{}\n');
+      await expect(writeHarnessReport(allowed, '{}\n')).rejects.toThrow(/already exists/);
       expect(() => assertHarnessReportPath(allowed, root)).toThrow(/already exists/);
       rmSync(allowed);
       expect(() => assertHarnessReportPath(join(root, '..', 'JsonlView', 'report.json'), root)).toThrow(/state[\\/]+runs/);
