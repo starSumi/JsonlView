@@ -15,6 +15,7 @@ const status: WorkspaceHeaderProps = {
   appendPending: false,
   rebuildBusy: false,
   onRebuild: () => undefined,
+  onOpenNavigator: () => undefined,
 };
 
 function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
@@ -35,6 +36,7 @@ describe('workspace header status', () => {
 
     expect(markup).toContain('<header class="workspace-header"');
     expect(markup).toContain('aria-label="Workspace controls and status"');
+    expect(markup).toContain('aria-label="Open Agent Sessions"');
     expect(markup).toContain('24 rows');
     expect(markup).toContain('512 B / 1.0 KB');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');

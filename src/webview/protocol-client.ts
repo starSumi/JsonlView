@@ -53,6 +53,7 @@ const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   SET_PROFILE: 'profile',
   SET_FOLLOW_MODE: 'follow',
   SET_ROW_ORDER: 'order',
+  OPEN_SESSION_NAVIGATOR: 'ready',
   CANCEL: 'rows',
   REBUILD_INDEX: 'rebuild',
 };

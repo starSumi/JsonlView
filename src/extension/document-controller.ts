@@ -73,6 +73,8 @@ export interface DocumentControllerHooks {
   onRowOrderChanged?: (direction: RowSort['direction']) => Promise<void>;
   /** Deliver host-owned positioning intents only after the Webview handshake. */
   onReady?: () => Promise<void> | void;
+  /** Focus the opt-in Session Navigator without changing the document. */
+  onOpenSessionNavigator?: () => Promise<void> | void;
 }
 
 export class DocumentController {
@@ -133,6 +135,9 @@ export class DocumentController {
         case 'READY':
           await this.post(request, 'OPENED', summary);
           await this.hooks.onReady?.();
+          return;
+        case 'OPEN_SESSION_NAVIGATOR':
+          await this.hooks.onOpenSessionNavigator?.();
           return;
         case 'GET_ROWS':
           signal = this.requests.startLatest('viewport', request.requestId);

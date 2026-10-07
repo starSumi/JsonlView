@@ -344,6 +344,7 @@ export type WebviewRequest =
   | ProtocolEnvelope<'SET_PROFILE', { profileId: string }>
   | ProtocolEnvelope<'SET_FOLLOW_MODE', { enabled: boolean }>
   | ProtocolEnvelope<'SET_ROW_ORDER', { direction: RowSort['direction'] }>
+  | ProtocolEnvelope<'OPEN_SESSION_NAVIGATOR', Record<string, never>>
   | ProtocolEnvelope<'CANCEL', { targetRequestId: string }>
   | ProtocolEnvelope<'REBUILD_INDEX', Record<string, never>>;
 

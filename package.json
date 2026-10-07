@@ -99,6 +99,28 @@
         "command": "jsonlView.sessionNavigator.refresh",
         "title": "JsonlView: Refresh Session Navigator",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.open",
+        "title": "JsonlView: Open Agent Sessions",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sortActivity",
+        "title": "JsonlView: Sort Sessions by Recent Activity"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sortCreated",
+        "title": "JsonlView: Sort Sessions by Created Time"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sortTitle",
+        "title": "JsonlView: Sort Sessions by Title"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
+        "title": "JsonlView: Authorize Agent Source from Clipboard",
+        "icon": "$(clippy)"
       }
     ],
     "viewsContainers": {
@@ -140,6 +162,50 @@
           "command": "jsonlView.sessionNavigator.disable",
           "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
           "group": "navigation@4"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.open",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@5"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sortActivity",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@6"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sortCreated",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@7"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sortTitle",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@8"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@9"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "jsonlView.open",
+          "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
+          "group": "navigation@jsonlview"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "jsonlView.open",
+          "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
+          "group": "navigation@jsonlview"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.open",
+          "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
+          "group": "navigation@jsonlview"
         }
       ],
       "view/item/context": [
@@ -220,6 +286,17 @@
           "type": "boolean",
           "default": false,
           "description": "Opt in to the read-only Agent Session Navigator. It does not scan sources until you explicitly authorize and refresh one."
+        },
+        "jsonlView.sessionNavigator.sort": {
+          "type": "string",
+          "enum": ["activity", "created", "title"],
+          "enumDescriptions": [
+            "Recent activity first, using provider metadata and a stable ID tie-breaker.",
+            "Session start time first.",
+            "Product or provider title, then stable ID."
+          ],
+          "default": "activity",
+          "description": "Session Navigator ordering. Source folder dates are never used as activity time."
         },
         "jsonlView.sessionNavigator.sources": {
           "type": "array",

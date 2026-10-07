@@ -173,6 +173,8 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
         return failure('Row order must be ascending or descending.');
       }
       break;
+    case 'OPEN_SESSION_NAVIGATOR':
+      break;
     case 'CANCEL':
       if (!isBoundedString(value.payload.targetRequestId, MAX_REQUEST_ID_LENGTH)) {
         return failure('Cancellation target is required.');

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, CircleAlert, LoaderCircle } from 'lucide-react';
+import { Check, CircleAlert, ListTree, LoaderCircle } from 'lucide-react';
 import { formatBytes } from './format';
 
 export interface WorkspaceHeaderProps {
@@ -14,6 +14,7 @@ export interface WorkspaceHeaderProps {
   appendPending: boolean;
   rebuildBusy: boolean;
   onRebuild: () => void;
+  onOpenNavigator: () => void;
 }
 
 export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): React.JSX.Element {
@@ -55,7 +56,12 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
           <span style={{ width: `${progress}%` }} />
         </span>
       </div>
-      <div className="toolbar">{children}</div>
+      <div className="toolbar">
+        <button type="button" className="icon-button navigator-action" title="Open Agent Sessions" aria-label="Open Agent Sessions" onClick={status.onOpenNavigator}>
+          <ListTree size={15} aria-hidden />
+        </button>
+        {children}
+      </div>
     </header>
   );
 }

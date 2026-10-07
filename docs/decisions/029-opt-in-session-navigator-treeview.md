@@ -1,6 +1,6 @@
 # ADR-029: Opt-In Session Navigator TreeView and Local Catalog
 
-Status: experimental
+Status: experimental (provider-native details superseded by ADR-030)
 
 ## Pressure
 
@@ -43,8 +43,9 @@ probes, receipts, and measurements.
 2. Put the navigator in the editor Webview or bottom Panel: rejected because a
    native TreeView gives the topology an independent vertical viewport and
    keeps the editor projection separate from discovery.
-3. Read provider SQLite databases directly: deferred until a provider contract,
-   read-only opening policy, migration policy, and measured lock behavior exist.
+3. Read provider SQLite databases without a provider adapter: rejected because
+   it would couple the tree to an unbounded private schema. ADR-030 adds only a
+   bounded, explicitly authorized, read-only Codex state projection.
 4. Use DuckDB in the first slice: deferred because the catalog needs bounded
    point lookups and restart recovery before analytical scans justify another
    runtime dependency.
@@ -82,12 +83,14 @@ authorized source, rejects a changed catalog fingerprint, validates that the
 resolved path remains inside the configured root and is a regular file, then
 opens the existing custom editor.
 
-Initial providers are a bounded generic JSONL provider with `codex` and
-`claude` labels. These labels are adapter identities, not claims that private
-producer schemas are stable. Unknown or unsupported records remain diagnostic
-inputs, and message bodies are not indexed. MCP remains a dormant architecture
-seam over the same immutable catalog/query contract; this slice adds no process,
-transport, network endpoint, tool registration, or write path.
+The generic JSONL provider remains the compatibility fallback. Provider-native
+Codex and Claude adapters now build one session entity per provider session
+file or state row, retain parent/subagent/orphan metadata, and keep activity
+timestamps separate from source folder placement. These adapters are still
+experimental observations rather than stable producer contracts. MCP remains a
+dormant architecture seam over the same immutable catalog/query contract; this
+slice adds no process, transport, network endpoint, tool registration, or write
+path.
 
 ## Evidence
 
@@ -108,9 +111,10 @@ authorize access to a user's local history.
 
 This phase adds a product integration seam and a disabled-by-default read-only
 TreeView. It does not add private source fixtures, automatic root discovery,
-filesystem watchers, source mutation, staged edits, MCP transport, telemetry,
-network access, or release authorization. The extension remains usable when
-the catalog is unavailable, corrupt, stale, or disabled.
+recursive filesystem watchers, source mutation, staged edits, MCP transport,
+telemetry, network access, or release authorization. Provider scans occur only
+after explicit authorization and refresh. The extension remains usable when the
+catalog is unavailable, corrupt, stale, or disabled.
 
 ## Revisit trigger
 

@@ -3,6 +3,7 @@ import type { NavigationEntity, NavigationProvider, NavigationSnapshot } from '.
 export const SESSION_NAVIGATOR_SCHEMA_VERSION = 1 as const;
 
 export type SessionNavigatorProviderId = 'codex' | 'claude' | 'generic';
+export type SessionNavigatorSortKey = 'activity' | 'created' | 'title';
 
 export interface AuthorizedSourceSetting {
   readonly provider: SessionNavigatorProviderId;
@@ -18,6 +19,7 @@ export interface NavigatorSourceSummary {
   readonly entityCount: number;
   readonly relationCount: number;
   readonly updateAvailable: boolean;
+  readonly lastActivityAt?: string;
 }
 
 export interface NavigatorLocation {

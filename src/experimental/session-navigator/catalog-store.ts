@@ -2,9 +2,11 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import type { NavigatorEntity, NavigatorLocation, NavigatorSnapshot, NavigatorSourceSummary, SessionNavigatorProviderId } from './types';
+import type { NavigatorEntity, NavigatorLocation, NavigatorSnapshot, NavigatorSourceSummary, SessionNavigatorProviderId, SessionNavigatorSortKey } from './types';
 import type { AuthorizedSourceSetting } from './types';
 import { sourceIdFor, sourceLabelFor } from './source-config';
+
+const MAX_TREE_CHILDREN = 2_000;
 
 interface SourceRow {
   source_id: string;
@@ -28,6 +30,14 @@ interface EntityRow {
   status: string | null;
   confidence: string;
   opaque_ref: string | null;
+  vendor_title: string | null;
+  title_source: string | null;
+  first_message_preview: string | null;
+  started_at: string | null;
+  activity_at: string | null;
+  relationship: string | null;
+  project: string | null;
+  product_title: string | null;
 }
 
 interface RelationRow {
@@ -83,7 +93,21 @@ export class CatalogStore {
         status TEXT,
         confidence TEXT NOT NULL,
         opaque_ref TEXT,
+        vendor_title TEXT,
+        title_source TEXT,
+        first_message_preview TEXT,
+        started_at TEXT,
+        activity_at TEXT,
+        relationship TEXT NOT NULL DEFAULT 'generic',
+        project TEXT,
         PRIMARY KEY (source_id, generation, native_id)
+      );
+      CREATE TABLE IF NOT EXISTS entity_labels (
+        source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
+        native_id TEXT NOT NULL,
+        product_title TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (source_id, native_id)
       );
       CREATE TABLE IF NOT EXISTS relations (
         source_id TEXT NOT NULL REFERENCES sources(source_id) ON DELETE CASCADE,
@@ -103,8 +127,16 @@ export class CatalogStore {
       );
       CREATE INDEX IF NOT EXISTS entities_parent_idx ON entities(source_id, generation, parent_native_id, label);
       CREATE INDEX IF NOT EXISTS entities_label_idx ON entities(source_id, generation, label);
-      INSERT OR IGNORE INTO catalog_meta(key, value) VALUES ('schema_version', '1');
+      INSERT OR IGNORE INTO catalog_meta(key, value) VALUES ('schema_version', '2');
     `);
+    ensureColumn(db, 'entities', 'vendor_title', 'TEXT');
+    ensureColumn(db, 'entities', 'title_source', 'TEXT');
+    ensureColumn(db, 'entities', 'first_message_preview', 'TEXT');
+    ensureColumn(db, 'entities', 'started_at', 'TEXT');
+    ensureColumn(db, 'entities', 'activity_at', 'TEXT');
+    ensureColumn(db, 'entities', 'relationship', "TEXT NOT NULL DEFAULT 'generic'");
+    ensureColumn(db, 'entities', 'project', 'TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS entities_activity_idx ON entities(source_id, generation, activity_at, started_at, native_id);');
     return new CatalogStore(path, db);
   }
 
@@ -142,6 +174,7 @@ export class CatalogStore {
         entityCount: Number(counts.entities ?? 0),
         relationCount: Number(counts.relations ?? 0),
         updateAvailable: row.update_available === 1,
+        ...lastActivityFor(this.#db, row.source_id, generationText(row.generation)),
       };
     });
   }
@@ -161,13 +194,17 @@ export class CatalogStore {
     return row?.fingerprint ?? undefined;
   }
 
-  public getChildren(sourceId: string, parentNativeId?: string): readonly NavigatorEntity[] {
+  public getChildren(sourceId: string, parentNativeId?: string, sortKey: SessionNavigatorSortKey = 'activity'): readonly NavigatorEntity[] {
     const source = this.#sourceRow(sourceId);
     if (source === undefined || source.generation < 1) return [];
     const generation = generationText(source.generation);
+    const orderBy = orderByFor(sortKey);
+    const query = parentNativeId === undefined
+      ? `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id IS NULL ORDER BY ${orderBy} LIMIT ${MAX_TREE_CHILDREN}`
+      : `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id = ? ORDER BY ${orderBy} LIMIT ${MAX_TREE_CHILDREN}`;
     const rows = parentNativeId === undefined
-      ? this.#db.prepare('SELECT * FROM entities WHERE source_id = ? AND generation = ? AND parent_native_id IS NULL ORDER BY updated_at DESC, label LIMIT 100').all(sourceId, generation)
-      : this.#db.prepare('SELECT * FROM entities WHERE source_id = ? AND generation = ? AND parent_native_id = ? ORDER BY updated_at DESC, label LIMIT 100').all(sourceId, generation, parentNativeId);
+      ? this.#db.prepare(query).all(sourceId, generation)
+      : this.#db.prepare(query).all(sourceId, generation, parentNativeId);
     return (rows as unknown as EntityRow[]).map((row) => toEntity(row, source.provider as SessionNavigatorProviderId));
   }
 
@@ -176,6 +213,20 @@ export class CatalogStore {
     if (source === undefined || source.generation < 1) return false;
     const row = this.#db.prepare('SELECT 1 AS found FROM entities WHERE source_id = ? AND generation = ? AND parent_native_id = ? LIMIT 1').get(sourceId, generationText(source.generation), nativeId) as { found?: number } | undefined;
     return row?.found === 1;
+  }
+
+  public setProductTitle(sourceId: string, nativeId: string, title: string): void {
+    const value = title.trim().slice(0, 160);
+    if (value.length === 0) {
+      this.clearProductTitle(sourceId, nativeId);
+      return;
+    }
+    this.#db.prepare(`INSERT INTO entity_labels(source_id, native_id, product_title, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(source_id, native_id) DO UPDATE SET product_title = excluded.product_title, updated_at = excluded.updated_at`).run(sourceId, nativeId, value, new Date().toISOString());
+  }
+
+  public clearProductTitle(sourceId: string, nativeId: string): void {
+    this.#db.prepare('DELETE FROM entity_labels WHERE source_id = ? AND native_id = ?').run(sourceId, nativeId);
   }
 
   public getLocation(intent: { sourceId: string; generation: string; nativeId: string }): NavigatorLocation | undefined {
@@ -200,9 +251,17 @@ export class CatalogStore {
       this.#db.prepare('DELETE FROM entities WHERE source_id = ?').run(sourceId);
       this.#db.prepare('DELETE FROM relations WHERE source_id = ?').run(sourceId);
       this.#db.prepare('DELETE FROM locations WHERE source_id = ?').run(sourceId);
-      const insertEntity = this.#db.prepare('INSERT INTO entities(source_id, generation, native_id, kind, label, parent_native_id, updated_at, status, confidence, opaque_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      const insertEntity = this.#db.prepare(`INSERT INTO entities(
+        source_id, generation, native_id, kind, label, parent_native_id, updated_at, status, confidence, opaque_ref,
+        vendor_title, title_source, first_message_preview, started_at, activity_at, relationship, project
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const entity of nextSnapshot.entities) {
-        insertEntity.run(sourceId, generation, entity.nativeId, entity.kind, entity.label, entity.parentNativeId ?? null, entity.updatedAt ?? null, entity.status ?? null, entity.confidence, entity.opaqueRef ?? null);
+        insertEntity.run(
+          sourceId, generation, entity.nativeId, entity.kind, entity.label, entity.parentNativeId ?? null, entity.updatedAt ?? null,
+          entity.status ?? null, entity.confidence, entity.opaqueRef ?? null, entity.vendorTitle ?? null, entity.titleSource ?? null,
+          entity.firstMessagePreview ?? null, entity.startedAt ?? null, entity.activityAt ?? entity.updatedAt ?? null,
+          entity.relationship ?? 'generic', entity.project ?? null,
+        );
       }
       const insertRelation = this.#db.prepare('INSERT OR IGNORE INTO relations(source_id, generation, from_native_id, to_native_id, kind) VALUES (?, ?, ?, ?, ?)');
       for (const relation of nextSnapshot.relations) insertRelation.run(sourceId, generation, relation.fromNativeId, relation.toNativeId, relation.kind);
@@ -230,12 +289,47 @@ export class CatalogStore {
 
 function generationText(value: number | string): string { return `g-${String(value)}`; }
 
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  if (columns.some((candidate) => candidate.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function orderByFor(sortKey: SessionNavigatorSortKey): string {
+  switch (sortKey) {
+    case 'created':
+      return "COALESCE(e.started_at, e.updated_at, '') DESC, e.native_id ASC";
+    case 'title':
+      return "COALESCE(l.product_title, e.vendor_title, e.label) COLLATE NOCASE ASC, e.native_id ASC";
+    case 'activity':
+    default:
+      return "COALESCE(e.activity_at, e.updated_at, e.started_at, '') DESC, e.native_id ASC";
+  }
+}
+
+function lastActivityFor(db: DatabaseSync, sourceId: string, generation: string): { lastActivityAt?: string } {
+  const row = db.prepare('SELECT MAX(COALESCE(activity_at, updated_at, started_at)) AS value FROM entities WHERE source_id = ? AND generation = ?').get(sourceId, generation) as { value?: string | null } | undefined;
+  return row?.value ? { lastActivityAt: row.value } : {};
+}
+
 function toEntity(row: EntityRow, provider: SessionNavigatorProviderId): NavigatorEntity {
+  const productTitle = row.product_title ?? undefined;
+  const vendorTitle = row.vendor_title ?? undefined;
+  const firstMessagePreview = row.first_message_preview ?? undefined;
+  const label = productTitle ?? vendorTitle ?? firstMessagePreview ?? row.label;
   return {
     sourceId: row.source_id,
     nativeId: row.native_id,
     kind: row.kind as NavigatorEntity['kind'],
-    label: row.label,
+    label,
+    ...(vendorTitle === undefined ? {} : { vendorTitle }),
+    ...(productTitle === undefined ? {} : { productTitle }),
+    ...(row.title_source === null ? {} : { titleSource: row.title_source as NonNullable<NavigatorEntity['titleSource']> }),
+    ...(firstMessagePreview === undefined ? {} : { firstMessagePreview }),
+    ...(row.started_at === null ? {} : { startedAt: row.started_at }),
+    ...(row.activity_at === null ? {} : { activityAt: row.activity_at }),
+    ...(row.relationship === null ? {} : { relationship: row.relationship as NonNullable<NavigatorEntity['relationship']> }),
+    ...(row.project === null ? {} : { project: row.project }),
     confidence: row.confidence as NavigatorEntity['confidence'],
     generation: row.generation,
     provider,

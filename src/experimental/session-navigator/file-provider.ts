@@ -14,6 +14,7 @@ import {
   type SessionNavigatorProviderId,
   type SessionNavigatorScanResult,
 } from './types';
+import { createNativeSessionNavigatorProvider } from './native-provider';
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_DEPTH = 8;
@@ -25,7 +26,7 @@ const CONTROL = /[\u0000-\u001f\u007f]/u;
 const PATH_LIKE = /^(?:[A-Za-z]:[\\/]|[\\/]{1,2}|file:\/\/)/u;
 const JSONL_EXTENSIONS = new Set(['.jsonl', '.ndjson']);
 
-interface FileEntry {
+export interface FileEntry {
   readonly path: string;
   readonly relativePath: string;
   readonly size: bigint;
@@ -46,7 +47,9 @@ interface RelationInput {
 
 export function createSessionNavigatorProvider(setting: AuthorizedSourceSetting): SessionNavigatorProvider {
   const sourceId = sourceIdFor(setting);
-  return new FileSessionNavigatorProvider(setting, sourceId);
+  return setting.provider === 'generic'
+    ? new FileSessionNavigatorProvider(setting, sourceId)
+    : createNativeSessionNavigatorProvider(setting);
 }
 
 export class FileSessionNavigatorProvider implements SessionNavigatorProvider {
@@ -141,7 +144,7 @@ export class FileSessionNavigatorProvider implements SessionNavigatorProvider {
   }
 }
 
-async function collectFiles(rootPath: string, signal: AbortSignal, budget: SessionNavigatorBudget, startedAt: number): Promise<FileEntry[]> {
+export async function collectFiles(rootPath: string, signal: AbortSignal, budget: SessionNavigatorBudget, startedAt: number): Promise<FileEntry[]> {
   const root = resolve(rootPath);
   const rootInfo = await lstat(root);
   if (rootInfo.isSymbolicLink()) throw new Error('Session navigator refuses a symbolic-link source root.');
@@ -187,14 +190,22 @@ function parseRecord(value: unknown, provider: SessionNavigatorProviderId, relat
   const nativeId = normalizeId(rawId);
   const rawParent = firstString(value.parentId, value.parent_id, value.parentUuid, value.threadId);
   const parentNativeId = rawParent === undefined ? undefined : normalizeId(rawParent);
-  const label = safeLabel(firstString(value.title, value.summary, value.name), `${type} ${nativeId.slice(0, 12)}`);
-  const updatedAt = firstString(value.updatedAt, value.timestamp, value.createdAt);
+  const vendorTitle = safeOptionalLabel(firstString(value.title, value.summary, value.name));
+  const firstMessagePreview = safeOptionalLabel(firstString(value.firstMessage, value.first_message));
+  const startedAt = firstString(value.createdAt, value.created_at, value.timestamp);
+  const updatedAt = firstString(value.updatedAt, value.updated_at, value.timestamp, value.createdAt);
+  const label = vendorTitle ?? firstMessagePreview ?? safeLabel(undefined, `${type} ${nativeId.slice(0, 12)}`);
   const rawStatus = firstString(value.status, value.state);
   const entity: NavigationEntity = {
     sourceId: '',
     nativeId,
     kind: mapKind(type),
     label,
+    ...(vendorTitle === undefined ? {} : { vendorTitle, titleSource: 'provider' as const }),
+    ...(firstMessagePreview === undefined ? {} : { firstMessagePreview }),
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(updatedAt === undefined ? {} : { activityAt: updatedAt }),
+    relationship: parentNativeId === undefined ? 'generic' : 'orphan',
     confidence: 'source',
     ...(parentNativeId === undefined ? {} : { parentNativeId }),
     ...(updatedAt === undefined ? {} : { updatedAt }),
@@ -292,6 +303,12 @@ function normalizeId(value: string): string {
 function safeLabel(value: string | undefined, fallback: string): string {
   const candidate = value && !CONTROL.test(value) && !PATH_LIKE.test(value) ? value.trim() : fallback;
   return candidate.slice(0, MAX_LABEL_LENGTH) || fallback;
+}
+
+function safeOptionalLabel(value: string | undefined): string | undefined {
+  if (value === undefined || CONTROL.test(value) || PATH_LIKE.test(value)) return undefined;
+  const trimmed = value.trim().slice(0, MAX_LABEL_LENGTH);
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function safeStatus(value: string): string {

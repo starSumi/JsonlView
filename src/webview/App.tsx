@@ -19,7 +19,7 @@ import type {
   RowSort,
   SortDirection,
 } from '../shared/types';
-import { MAX_TABLE_COLUMNS } from '../shared/types';
+import { MAX_TABLE_COLUMNS, PROTOCOL_VERSION } from '../shared/types';
 import { DetailDrawer } from './detail-drawer';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -169,6 +169,20 @@ export function App(): React.JSX.Element {
   const schemaRequestKeyRef = useRef('');
   const schemaRequestIdRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
+  const openNavigator = useCallback((): void => {
+    const session = clientRef.current.session;
+    const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'navigator-' + Date.now().toString(36);
+    vscode.postMessage({
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'OPEN_SESSION_NAVIGATOR',
+      documentId: session.documentId,
+      generation: session.generation,
+      requestId,
+      payload: {},
+    });
+  }, []);
 
   useEffect(() => {
     stateRef.current = state;
@@ -663,6 +677,7 @@ export function App(): React.JSX.Element {
         appendPending={state.invalidationReason === 'append'}
         rebuildBusy={Boolean(state.pending.rebuild)}
         onRebuild={rebuild}
+        onOpenNavigator={openNavigator}
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab" aria-label="JSONL workspace">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>

@@ -16,6 +16,11 @@
   file roots, bounded metadata-only JSONL adapters, a global SQLite catalog, and
   read-only reveal intents into Data Studio; no MCP transport or source writes
   are enabled.
+- Add provider-native Codex and Claude session projections with activity-first
+  sorting, title provenance, parent/subagent/orphan relationships, explicit
+  Navigator focus actions, and confirmed root drop or clipboard authorization;
+  provider stores remain read-only and no transcript bytes are copied into the
+  product catalog.
 
 ## 0.2.7 - 2026-10-06
 

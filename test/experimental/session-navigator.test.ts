@@ -103,6 +103,75 @@ describe('session navigator source boundary', () => {
     reopened.close();
   });
 
+  it('orders by provider activity by default and keeps product titles separate', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-order-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    store.replaceSnapshot(sourceId, {
+      schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-1', snapshotId: 'snapshot-1',
+      capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: false,
+      entities: [
+        { sourceId, nativeId: 'old', kind: 'session', label: 'Old', vendorTitle: 'Old', titleSource: 'provider', startedAt: '2026-10-01T00:00:00.000Z', activityAt: '2026-10-02T00:00:00.000Z', relationship: 'root', confidence: 'source' },
+        { sourceId, nativeId: 'new', kind: 'session', label: 'New', vendorTitle: 'New', titleSource: 'provider', startedAt: '2026-10-01T00:00:00.000Z', activityAt: '2026-10-07T00:00:00.000Z', relationship: 'root', confidence: 'source' },
+      ],
+      relations: [],
+      locations: [
+        { nativeId: 'old', relativePath: 'old.jsonl', rowOrdinal: '0' },
+        { nativeId: 'new', relativePath: 'new.jsonl', rowOrdinal: '0' },
+      ],
+    }, 'fingerprint-1');
+    expect(store.getChildren(sourceId).map((entity) => entity.nativeId)).toEqual(['new', 'old']);
+    expect(store.getChildren(sourceId, undefined, 'title').map((entity) => entity.nativeId)).toEqual(['new', 'old']);
+    store.setProductTitle(sourceId, 'old', 'Pinned investigation');
+    expect(store.getChildren(sourceId, undefined, 'title').map((entity) => entity.label)).toEqual(['New', 'Pinned investigation']);
+    expect(store.getChildren(sourceId, undefined, 'title')[1]).toMatchObject({ productTitle: 'Pinned investigation', vendorTitle: 'Old', titleSource: 'provider' });
+    store.clearProductTitle(sourceId, 'old');
+    store.close();
+  });
+
+  it('reads Codex state metadata and spawn edges without writing the provider database', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-codex-native-'));
+    cleanup.push(root);
+    const sessions = join(root, 'sessions');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(sessions));
+    const rollout = join(sessions, 'rollout-2026-10-08T00-00-00-child.jsonl');
+    await writeFile(rollout, JSON.stringify({ private: 'body' }), 'utf8');
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(join(root, 'state_5.sqlite'));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL, title TEXT NOT NULL, preview TEXT NOT NULL,
+        recency_at INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT PRIMARY KEY, status TEXT NOT NULL);
+    `);
+    db.prepare('INSERT INTO threads(id, rollout_path, created_at, updated_at, title, preview, recency_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('root-1', join(sessions, 'root.jsonl'), 1_000, 1_100, 'Root title', 'root preview', 1_200);
+    db.prepare('INSERT INTO threads(id, rollout_path, created_at, updated_at, title, preview, recency_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run('child-1', rollout, 1_300, 1_500, '', 'child preview', 1_600);
+    db.prepare('INSERT INTO thread_spawn_edges(parent_thread_id, child_thread_id, status) VALUES (?, ?, ?)').run('root-1', 'child-1', 'open');
+    db.close();
+
+    const setting: AuthorizedSourceSetting = { provider: 'codex', rootUri: pathToFileURL(root).toString() };
+    const result = await createSessionNavigatorProvider(setting).scan(new AbortController().signal, {
+      maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
+    });
+    expect(result.snapshot.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: 'child-1', firstMessagePreview: 'child preview', relationship: 'subagent', parentNativeId: 'root-1' }),
+    ]));
+    expect(result.snapshot.relations).toEqual(expect.arrayContaining([expect.objectContaining({ fromNativeId: 'child-1', toNativeId: 'root-1', kind: 'parent' })]));
+    expect(JSON.stringify(result.snapshot)).not.toContain('private');
+
+    const stateFileSetting: AuthorizedSourceSetting = { provider: 'codex', rootUri: pathToFileURL(join(root, 'state_5.sqlite')).toString() };
+    const stateFileResult = await createSessionNavigatorProvider(stateFileSetting).scan(new AbortController().signal, {
+      maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
+    });
+    expect(stateFileResult.snapshot.entities).toEqual(expect.arrayContaining([expect.objectContaining({ nativeId: 'child-1', relationship: 'subagent' })]));
+  });
+
   it('cancels a scan before it reads a source', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-cancel-'));
     cleanup.push(root);
@@ -112,5 +181,19 @@ describe('session navigator source boundary', () => {
     await expect(provider.scan(controller.signal, {
       maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
     })).rejects.toThrow('cancelled');
+  });
+
+  it('keeps Claude message UUIDs out of the session identity graph', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-claude-session-'));
+    cleanup.push(root);
+    await writeFile(join(root, 'session.jsonl'), [
+      JSON.stringify({ type: 'user', sessionId: 'session-1', id: 'message-1', parentUuid: 'message-0', customTitle: 'Claude session' }),
+      JSON.stringify({ type: 'assistant', sessionId: 'session-1', id: 'message-2', parentUuid: 'message-1', summary: 'message summary' }),
+    ].join('\n'), 'utf8');
+    const result = await createSessionNavigatorProvider({ provider: 'claude', rootUri: pathToFileURL(root).toString() }).scan(new AbortController().signal, {
+      maxEntities: 10, maxRelations: 10, maxRecords: 20, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
+    });
+    expect(result.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['session-1']);
+    expect(result.snapshot.relations).toEqual([]);
   });
 });

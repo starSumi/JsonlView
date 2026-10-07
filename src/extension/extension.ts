@@ -311,6 +311,7 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly revealRegistry: RevealIntentRegistry,
+    private readonly openSessionNavigator: () => Promise<void>,
   ) {}
 
   public openCustomDocument(
@@ -349,6 +350,7 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
         return this.rowOrderWrite;
       },
       onReady: () => document.flushPendingReveal(),
+      onOpenSessionNavigator: () => this.openSessionNavigator(),
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
@@ -393,7 +395,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   const revealRegistry = new RevealIntentRegistry();
   const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
-  const provider = new JsonlViewProvider(context, revealRegistry);
+  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open());
   context.subscriptions.push(
     ...navigator.register(),
     navigator,
