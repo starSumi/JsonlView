@@ -14,6 +14,7 @@ export type NavigationEntityKind =
   | 'thread'
   | 'turn'
   | 'workflow'
+  | 'team'
   | 'tool'
   | 'goal'
   | 'plan'

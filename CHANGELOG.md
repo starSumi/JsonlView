@@ -7,6 +7,9 @@
 - Add a dormant, opt-in-only read-only navigation facade for bounded local
   agent metadata projections; no provider scanning, MCP process, or source
   mutation is enabled by default.
+- Add a synthetic provider and immutable navigation-index contract for bounded
+  topology, redaction, diagnostics, and generation-rebuild experiments; no
+  producer store is read and no runtime activation is added.
 
 ## 0.2.7 - 2026-10-06
 
