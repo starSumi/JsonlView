@@ -1,4 +1,4 @@
-# ADR-027: Synthetic Staged-Mutation Benchmark and Failure Replay
+# ADR-028: Synthetic Staged-Mutation Benchmark and Failure Replay
 
 Status: experimental
 

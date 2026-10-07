@@ -34,7 +34,7 @@ Read these before changing a shared boundary:
 26. [ADR-025 staged mutation and local agent navigation](025-experimental-staged-mutation-and-local-mcp.md)
 27. [ADR-026 opt-in read-only navigation prototype](026-read-only-navigation-prototype.md)
 28. [ADR-027 synthetic provider and navigation index contract](027-synthetic-provider-index-contract.md)
-29. [ADR-027 staged mutation benchmark](027-staged-mutation-benchmark.md)
+29. [ADR-028 staged mutation benchmark](028-staged-mutation-benchmark.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

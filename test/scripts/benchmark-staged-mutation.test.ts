@@ -80,11 +80,15 @@ describe('staged mutation benchmark and replay oracle', () => {
   });
 
   it('rejects report output outside the harness state/runs boundary', () => {
-    const root = String.raw`C:\evidence\JsonlView-harness`;
-    const allowed = String.raw`C:\evidence\JsonlView-harness\state\runs\run\report.json`;
+    const separator = process.platform === 'win32' ? '\\' : '/';
+    const root = process.platform === 'win32' ? String.raw`C:\evidence\JsonlView-harness` : '/tmp/evidence/JsonlView-harness';
+    const join = (...parts: string[]) => parts.join(separator);
+    const allowed = join(root, 'state', 'runs', 'run', 'report.json');
     expect(assertHarnessReportPath(allowed, root)).toBe(allowed);
-    expect(() => assertHarnessReportPath(String.raw`C:\evidence\JsonlView\report.json`, root)).toThrow(/state\\runs/);
-    expect(() => assertHarnessReportPath(String.raw`C:\evidence\JsonlView-harness\state\runs\..\..\secret.json`, root)).toThrow(/state\\runs/);
+    expect(() => assertHarnessReportPath(join(root, '..', 'JsonlView', 'report.json'), root)).toThrow(/state[\\/]+runs/);
+    expect(() => assertHarnessReportPath(join(root, 'state', 'runs', '..', '..', 'secret.json'), root)).toThrow(/state[\\/]+runs/);
+    expect(() => assertHarnessReportPath(String.raw`C:\evidence\outside.json`, root)).toThrow(/Windows absolute|state[\\/]+runs/);
+    expect(() => assertHarnessReportPath(String.raw`\\server\share\outside.json`, root)).toThrow(/UNC|state[\\/]+runs/);
   });
 
   it('exposes the newline corpus helper as synthetic, bounded evidence', () => {
