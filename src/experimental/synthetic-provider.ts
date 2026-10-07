@@ -191,10 +191,11 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
     }
     ids.add(parsed.entity.nativeId);
     entities.push(parsed.entity);
-    if (parsed.parentId !== undefined) {
+    // Keep relation working-set proportional to the visible entity bound.
+    if (entities.length <= maxEntities && parsed.parentId !== undefined) {
       parsedRelations.push({ from: parsed.parentId, to: parsed.entity.nativeId, kind: 'parent' });
     }
-    parsedRelations.push(...parsed.relations);
+    if (entities.length <= maxEntities) parsedRelations.push(...parsed.relations);
   }
 
   if (!recordsTruncated && recordsExamined < options.records.length) {
