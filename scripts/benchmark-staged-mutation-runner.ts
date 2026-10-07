@@ -1,6 +1,7 @@
+import { lstatSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
-import { resolve, relative, isAbsolute } from 'node:path';
+import { dirname, resolve, relative, isAbsolute } from 'node:path';
 import {
   StagedMutationError,
   StagedMutationSession,
@@ -388,6 +389,53 @@ export function assertHarnessReportPath(outputPath: string, harnessRoot = resolv
   const suffix = relative(root, resolved);
   if (isAbsolute(suffix) || suffix === '' || suffix === '..' || suffix.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
     throw new Error(`--out must stay inside the harness state/runs directory: ${root}`);
+  }
+  const parent = dirname(resolved);
+  let rootStat;
+  let parentStat;
+  try {
+    rootStat = lstatSync(root);
+    parentStat = lstatSync(parent);
+  } catch {
+    throw new Error(`--out requires an existing harness run directory: ${parent}`);
+  }
+  if (!rootStat.isDirectory() || !parentStat.isDirectory()) {
+    throw new Error(`--out requires an existing harness run directory: ${parent}`);
+  }
+  let current = parent;
+  while (true) {
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch {
+      throw new Error(`--out could not inspect the harness path: ${current}`);
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`--out rejects symlink or junction ancestors: ${current}`);
+    }
+    if (current === root) break;
+    const next = dirname(current);
+    if (next === current) throw new Error(`--out escaped the harness state/runs directory: ${root}`);
+    current = next;
+  }
+  let rootReal;
+  let parentReal;
+  try {
+    rootReal = realpathSync(root);
+    parentReal = realpathSync(parent);
+  } catch {
+    throw new Error(`--out could not resolve the harness path: ${parent}`);
+  }
+  const realSuffix = relative(rootReal, parentReal);
+  if (isAbsolute(realSuffix) || realSuffix === '..' || realSuffix.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+    throw new Error(`--out rejects symlink or junction escape: ${parent}`);
+  }
+  try {
+    lstatSync(resolved);
+    throw new Error(`--out target already exists; use a new harness run path: ${resolved}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('--out target already exists')) throw error;
+    // ENOENT is the expected state for a one-shot report target.
   }
   return resolved;
 }

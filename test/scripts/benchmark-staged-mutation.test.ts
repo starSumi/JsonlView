@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   benchmarkMutationCase,
@@ -80,15 +83,36 @@ describe('staged mutation benchmark and replay oracle', () => {
   });
 
   it('rejects report output outside the harness state/runs boundary', () => {
-    const separator = process.platform === 'win32' ? '\\' : '/';
-    const root = process.platform === 'win32' ? String.raw`C:\evidence\JsonlView-harness` : '/tmp/evidence/JsonlView-harness';
-    const join = (...parts: string[]) => parts.join(separator);
-    const allowed = join(root, 'state', 'runs', 'run', 'report.json');
-    expect(assertHarnessReportPath(allowed, root)).toBe(allowed);
-    expect(() => assertHarnessReportPath(join(root, '..', 'JsonlView', 'report.json'), root)).toThrow(/state[\\/]+runs/);
-    expect(() => assertHarnessReportPath(join(root, 'state', 'runs', '..', '..', 'secret.json'), root)).toThrow(/state[\\/]+runs/);
-    expect(() => assertHarnessReportPath(String.raw`C:\evidence\outside.json`, root)).toThrow(/Windows absolute|state[\\/]+runs/);
-    expect(() => assertHarnessReportPath(String.raw`\\server\share\outside.json`, root)).toThrow(/UNC|state[\\/]+runs/);
+    const tempRoot = mkdtempSync(join(tmpdir(), 'jsonlview-mutation-boundary-'));
+    const root = join(tempRoot, 'JsonlView-harness');
+    const run = join(root, 'state', 'runs', 'run');
+    mkdirSync(run, { recursive: true });
+    const allowed = join(run, 'report.json');
+    try {
+      expect(assertHarnessReportPath(allowed, root)).toBe(allowed);
+      writeFileSync(allowed, '{}', 'utf8');
+      expect(() => assertHarnessReportPath(allowed, root)).toThrow(/already exists/);
+      rmSync(allowed);
+      expect(() => assertHarnessReportPath(join(root, '..', 'JsonlView', 'report.json'), root)).toThrow(/state[\\/]+runs/);
+      expect(() => assertHarnessReportPath(join(root, 'state', 'runs', '..', '..', 'secret.json'), root)).toThrow(/state[\\/]+runs/);
+      expect(() => assertHarnessReportPath(String.raw`C:\evidence\outside.json`, root)).toThrow(/Windows absolute|state[\\/]+runs/);
+      expect(() => assertHarnessReportPath(String.raw`\\server\share\outside.json`, root)).toThrow(/UNC|state[\\/]+runs/);
+      const outside = join(tempRoot, 'outside');
+      mkdirSync(outside);
+      const escape = join(root, 'state', 'runs', 'escape');
+      let symlinkCreated = false;
+      try {
+        symlinkSync(outside, escape, process.platform === 'win32' ? 'junction' : 'dir');
+        symlinkCreated = true;
+      } catch {
+        // Some Windows runners disallow link creation; the lexical checks above remain active.
+      }
+      if (symlinkCreated) {
+        expect(() => assertHarnessReportPath(join(escape, 'report.json'), root)).toThrow(/symlink|junction|escape/);
+      }
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it('exposes the newline corpus helper as synthetic, bounded evidence', () => {
