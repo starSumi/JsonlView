@@ -28,9 +28,13 @@ Read these before changing a shared boundary:
 20. [ADR-020 read-only indexing status strip](020-read-only-indexing-status-strip.md)
 21. [ADR-021 explicit row-order toggle](021-explicit-row-order-toggle.md)
 22. [ADR-022 read-only agent-history adapter roadmap](022-read-only-agent-history-adapter-roadmap.md)
-23. [ADR-023 native build reproducibility](023-native-build-reproducibility.md)
-24. [ADR-026 opt-in read-only navigation prototype](026-read-only-navigation-prototype.md)
-25. [ADR-027 synthetic provider and navigation index contract](027-synthetic-provider-index-contract.md)
+23. [ADR-023 keyless target-separated publication](023-keyless-target-separated-publication.md)
+24. [ADR-023 native build reproducibility](023-native-build-reproducibility.md)
+25. [ADR-024 VSIX archive reproducibility](024-vsix-archive-reproducibility.md)
+26. [ADR-025 staged mutation and local agent navigation](025-experimental-staged-mutation-and-local-mcp.md)
+27. [ADR-026 opt-in read-only navigation prototype](026-read-only-navigation-prototype.md)
+28. [ADR-027 synthetic provider and navigation index contract](027-synthetic-provider-index-contract.md)
+29. [ADR-027 staged mutation benchmark](027-staged-mutation-benchmark.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

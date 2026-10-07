@@ -4,6 +4,8 @@
 
 - Make Windows native release builds reproducible with the MSVC /Brepro
   linker flag while preserving debug metadata and portable builds.
+- Add a synthetic in-memory staged-mutation benchmark with an independent byte
+  oracle, p50/p95 summaries, and deterministic failure replay receipts.
 - Add a dormant, opt-in-only read-only navigation facade for bounded local
   agent metadata projections; no provider scanning, MCP process, or source
   mutation is enabled by default.
