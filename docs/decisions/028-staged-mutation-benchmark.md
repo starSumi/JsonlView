@@ -14,8 +14,9 @@ the read-only source boundary.
 - The benchmark uses deterministic in-memory bytes only; it does not open,
   write, watch, or replace a source file and it does not start VS Code, MCP, or
   a provider process. The optional `--out` argument is report output only and
-  is guarded to `JsonlView-harness/state/runs`; it cannot target product source
-  or an arbitrary filesystem location.
+  is guarded to `JsonlView-harness/state/runs`; it validates canonical
+  ancestors, rejects symlink/junction escapes, and creates a new report with an
+  exclusive flag so it cannot overwrite an existing evidence file.
 - The source snapshot remains unchanged after every stage or rejected replay.
 - Candidate materialization is checked against an independent byte oracle.
 - Required corpus sizes are exactly 64 KiB and 1 MiB. Each case reports sample
