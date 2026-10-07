@@ -14,6 +14,7 @@ export type NavigationEntityKind =
   | 'thread'
   | 'turn'
   | 'workflow'
+  | 'team'
   | 'tool'
   | 'goal'
   | 'plan'
@@ -54,12 +55,14 @@ export interface NavigationSnapshot {
   entities: readonly NavigationEntity[];
   relations: readonly NavigationRelation[];
   truncated: boolean;
-  truncatedReason?: 'entity_limit' | 'relation_limit' | 'time_limit';
+  truncatedReason?: 'entity_limit' | 'relation_limit' | 'record_limit' | 'diagnostic_limit' | 'time_limit';
 }
 
 export interface NavigationBudget {
   maxEntities?: number;
   maxRelations?: number;
+  maxRecords?: number;
+  maxDiagnostics?: number;
   maxMilliseconds?: number;
 }
 
@@ -83,7 +86,7 @@ export interface NavigationQueryResult {
   examinedEntities: number;
   examinedRelations: number;
   truncated: boolean;
-  truncatedReason?: 'entity_limit' | 'relation_limit' | 'time_limit' | 'result_limit';
+  truncatedReason?: 'entity_limit' | 'relation_limit' | 'record_limit' | 'diagnostic_limit' | 'time_limit' | 'result_limit';
 }
 
 export interface NavigationProvider {
