@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
-import { resolve, relative, isAbsolute, win32 } from 'node:path';
+import { resolve, relative, isAbsolute } from 'node:path';
 import {
   StagedMutationError,
   StagedMutationSession,
@@ -375,10 +375,12 @@ function sampleRss(): number[] {
 
 export function assertHarnessReportPath(outputPath: string, harnessRoot = resolve(process.cwd(), '..', 'JsonlView-harness')): string {
   if (outputPath.trim().length === 0) throw new Error('--out requires a non-empty path.');
-  if (win32.isAbsolute(outputPath) && win32.parse(outputPath).root.startsWith('\\')) {
+  const windowsDriveAbsolute = /^[A-Za-z]:[\\/]/.test(outputPath);
+  const windowsUncAbsolute = /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(outputPath);
+  if (windowsUncAbsolute) {
     throw new Error('--out must not use a UNC path.');
   }
-  if (process.platform !== 'win32' && win32.isAbsolute(outputPath)) {
+  if (process.platform !== 'win32' && windowsDriveAbsolute) {
     throw new Error('--out received a Windows absolute path on a non-Windows host.');
   }
   const root = resolve(harnessRoot, 'state', 'runs');
