@@ -150,6 +150,7 @@
     "benchmark:engine": "node scripts/benchmark-engine.mjs",
     "benchmark:trend": "node scripts/benchmark-trend.mjs",
     "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
+    "benchmark:mutation": "node scripts/benchmark-staged-mutation.mjs",
     "check:dependencies": "node scripts/check-dependency-freshness.mjs",
     "check:changelog": "node scripts/check-changelog.mjs",
     "check:cargo-notices": "node scripts/check-cargo-notices.mjs",
