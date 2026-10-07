@@ -46,9 +46,11 @@ export interface SyntheticNavigationInput {
 export interface SyntheticNavigationBudget {
   readonly maxEntities?: number;
   readonly maxRelations?: number;
+  readonly maxRecords?: number;
+  readonly maxDiagnostics?: number;
 }
 
-export type SyntheticDiagnosticCode = 'malformed' | 'unsupported';
+export type SyntheticDiagnosticCode = 'malformed' | 'unsupported' | 'limit';
 
 export interface SyntheticDiagnostic {
   readonly index: number;
@@ -64,7 +66,9 @@ export interface SyntheticDiagnostic {
     | 'duplicate_id'
     | 'invalid_timestamp'
     | 'invalid_status'
-    | 'invalid_confidence';
+    | 'invalid_confidence'
+    | 'record_limit'
+    | 'diagnostic_limit';
 }
 
 export interface SyntheticNavigationIndex {
@@ -74,6 +78,9 @@ export interface SyntheticNavigationIndex {
   readonly snapshot: NavigationSnapshot;
   readonly acceptedRecords: number;
   readonly rejectedRecords: number;
+  readonly recordsExamined: number;
+  readonly recordsTruncated: boolean;
+  readonly diagnosticsTruncated: boolean;
   readonly diagnostics: readonly SyntheticDiagnostic[];
 }
 
@@ -82,9 +89,12 @@ export interface SyntheticNavigationBuildOptions extends SyntheticNavigationBudg
   readonly sourceGeneration: string;
   readonly capturedAt: string;
   readonly records: readonly unknown[];
+  readonly signal?: AbortSignal;
+  readonly deadline?: number;
+  readonly now?: () => number;
 }
 
-export type SyntheticBuildStatus = 'ok' | 'malformed' | 'unsupported';
+export type SyntheticBuildStatus = 'ok' | 'malformed' | 'unsupported' | 'truncated';
 
 export interface SyntheticNavigationBuildResult {
   readonly status: SyntheticBuildStatus;
@@ -93,8 +103,12 @@ export interface SyntheticNavigationBuildResult {
 
 const DEFAULT_MAX_ENTITIES = 500;
 const DEFAULT_MAX_RELATIONS = 2_000;
+const DEFAULT_MAX_RECORDS = 2_000;
+const DEFAULT_MAX_DIAGNOSTICS = 1_000;
 const MAX_ENTITIES = 10_000;
 const MAX_RELATIONS = 50_000;
+const MAX_RECORDS = 50_000;
+const MAX_DIAGNOSTICS = 10_000;
 const MAX_RECORD_RELATIONS = 32;
 const MAX_LABEL_LENGTH = 256;
 const MAX_STATUS_LENGTH = 128;
@@ -126,24 +140,51 @@ const SUPPORTED_RELATIONS = new Set<SyntheticEdgeKind>(['parent', 'child', 'fork
 export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildOptions): SyntheticNavigationBuildResult {
   const maxEntities = normalizeBudget(options.maxEntities, DEFAULT_MAX_ENTITIES, MAX_ENTITIES, 'maxEntities');
   const maxRelations = normalizeBudget(options.maxRelations, DEFAULT_MAX_RELATIONS, MAX_RELATIONS, 'maxRelations');
+  const maxRecords = normalizeBudget(options.maxRecords, DEFAULT_MAX_RECORDS, MAX_RECORDS, 'maxRecords');
+  const maxDiagnostics = normalizeBudget(options.maxDiagnostics, DEFAULT_MAX_DIAGNOSTICS, MAX_DIAGNOSTICS, 'maxDiagnostics');
   assertOpaque(options.sourceId, 'sourceId');
   assertOpaque(options.sourceGeneration, 'sourceGeneration');
   assertTimestamp(options.capturedAt, 'capturedAt');
 
   const diagnostics: SyntheticDiagnostic[] = [];
+  let diagnosticsTruncated = false;
+  const addDiagnostic = (diagnostic: SyntheticDiagnostic): void => {
+    if (diagnostics.length >= maxDiagnostics) {
+      diagnosticsTruncated = true;
+      return;
+    }
+    diagnostics.push(diagnostic);
+  };
   const entities: NavigationEntity[] = [];
   const parsedRelations: Array<{ readonly from: string; readonly to: string; readonly kind: SyntheticEdgeKind }> = [];
   const ids = new Set<string>();
   let rejectedRecords = 0;
+  let recordsExamined = 0;
+  let recordsTruncated = false;
+  let recordsTruncatedReason: 'record_limit' | 'time_limit' | undefined;
+  const now = options.now ?? Date.now;
 
-  for (const [index, raw] of options.records.entries()) {
-    const parsed = parseRecord(raw, index, options.sourceId, diagnostics);
+  for (let index = 0; index < options.records.length; index += 1) {
+    if (recordsExamined >= maxRecords) {
+      recordsTruncated = true;
+      recordsTruncatedReason = 'record_limit';
+      addDiagnostic({ index, code: 'limit', reason: 'record_limit' });
+      break;
+    }
+    throwIfBuildInactive(options.signal);
+    if (options.deadline !== undefined && now() >= options.deadline) {
+      recordsTruncated = true;
+      recordsTruncatedReason = 'time_limit';
+      break;
+    }
+    recordsExamined += 1;
+    const parsed = parseRecord(options.records[index], index, options.sourceId, addDiagnostic);
     if (parsed === undefined) {
       rejectedRecords += 1;
       continue;
     }
     if (ids.has(parsed.entity.nativeId)) {
-      diagnostics.push({ index, code: 'malformed', reason: 'duplicate_id' });
+      addDiagnostic({ index, code: 'malformed', reason: 'duplicate_id' });
       rejectedRecords += 1;
       continue;
     }
@@ -155,6 +196,12 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
     parsedRelations.push(...parsed.relations);
   }
 
+  if (!recordsTruncated && recordsExamined < options.records.length) {
+    recordsTruncated = true;
+    recordsTruncatedReason = 'record_limit';
+    addDiagnostic({ index: recordsExamined, code: 'limit', reason: 'record_limit' });
+  }
+
   const truncatedByEntities = entities.length > maxEntities;
   const boundedEntities = entities.slice(0, maxEntities);
   const visibleIds = new Set(boundedEntities.map((entity) => entity.nativeId));
@@ -162,6 +209,12 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
   const relationKeys = new Set<string>();
   let truncatedByRelations = false;
   for (const relation of parsedRelations) {
+    throwIfBuildInactive(options.signal);
+    if (options.deadline !== undefined && now() >= options.deadline) {
+      recordsTruncated = true;
+      recordsTruncatedReason = 'time_limit';
+      break;
+    }
     if (!visibleIds.has(relation.from) || !visibleIds.has(relation.to)) continue;
     const key = relation.from + '\u0000' + relation.to + '\u0000' + relation.kind;
     if (relationKeys.has(key)) continue;
@@ -178,8 +231,18 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
     });
   }
 
-  const truncated = truncatedByEntities || truncatedByRelations;
-  const truncatedReason = truncatedByEntities ? 'entity_limit' : truncatedByRelations ? 'relation_limit' : undefined;
+  const truncated = truncatedByEntities || truncatedByRelations || recordsTruncated || diagnosticsTruncated;
+  const truncatedReason = recordsTruncatedReason === 'time_limit'
+    ? 'time_limit'
+    : truncatedByEntities
+      ? 'entity_limit'
+      : truncatedByRelations
+        ? 'relation_limit'
+        : recordsTruncatedReason === 'record_limit'
+          ? 'record_limit'
+          : diagnosticsTruncated
+            ? 'diagnostic_limit'
+            : undefined;
   const snapshotId = createSnapshotId(options.sourceId, options.sourceGeneration, boundedEntities, relations, maxEntities, maxRelations);
   const snapshot: NavigationSnapshot = Object.freeze({
     snapshotId,
@@ -199,17 +262,22 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
     snapshot,
     acceptedRecords: entities.length,
     rejectedRecords,
+    recordsExamined,
+    recordsTruncated,
+    diagnosticsTruncated,
     diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))),
   });
   const hasMalformed = diagnostics.some((diagnostic) => diagnostic.code === 'malformed');
   const hasUnsupported = diagnostics.some((diagnostic) => diagnostic.code === 'unsupported');
-  const status: SyntheticBuildStatus = entities.length > 0 || diagnostics.length === 0
-    ? 'ok'
-    : hasMalformed
-      ? 'malformed'
-      : hasUnsupported
-        ? 'unsupported'
-        : 'ok';
+  const status: SyntheticBuildStatus = recordsTruncated || diagnosticsTruncated
+    ? 'truncated'
+    : entities.length > 0 || diagnostics.length === 0
+      ? 'ok'
+      : hasMalformed
+        ? 'malformed'
+        : hasUnsupported
+          ? 'unsupported'
+          : 'ok';
   return { status, index };
 }
 
@@ -241,24 +309,40 @@ export class SyntheticNavigationProvider implements NavigationProvider {
   private readonly sourceGeneration: string;
   private readonly capturedAt: string;
   private readonly records: readonly unknown[];
+  private readonly now: () => number;
 
   public constructor(adapter: SyntheticNavigationAdapter, input: Omit<SyntheticNavigationBuildOptions, 'sourceId'>) {
     this.adapter = adapter;
     this.sourceId = adapter.sourceId;
     assertOpaque(input.sourceGeneration, 'sourceGeneration');
     assertTimestamp(input.capturedAt, 'capturedAt');
+    const captureLimit = normalizeBudget(input.maxRecords, DEFAULT_MAX_RECORDS, MAX_RECORDS, 'maxRecords');
+    if (input.records.length > captureLimit) {
+      throw new Error('Synthetic provider input exceeds its maxRecords capture budget.');
+    }
     this.sourceGeneration = input.sourceGeneration;
     this.capturedAt = input.capturedAt;
     this.records = Object.freeze(input.records.map(cloneInputRecord));
+    this.now = input.now ?? Date.now;
   }
 
   public async readSnapshot(signal: AbortSignal, budget: Required<NavigationBudget>): Promise<NavigationSnapshot> {
     throwIfAborted(signal);
+    const startedAt = this.now();
+    const deadline = startedAt + budget.maxMilliseconds;
     const result = this.adapter.build(
-      { sourceGeneration: this.sourceGeneration, capturedAt: this.capturedAt, records: this.records },
-      { maxEntities: budget.maxEntities, maxRelations: budget.maxRelations },
+      { sourceGeneration: this.sourceGeneration, capturedAt: this.capturedAt, records: this.records, signal, deadline, now: this.now },
+      {
+        maxEntities: budget.maxEntities,
+        maxRelations: budget.maxRelations,
+        maxRecords: budget.maxRecords,
+        maxDiagnostics: budget.maxDiagnostics,
+      },
     );
     throwIfAborted(signal);
+    if (this.now() >= deadline && !result.index.recordsTruncated) {
+      throw new Error('Synthetic navigation provider exceeded its time budget.');
+    }
     return result.index.snapshot;
   }
 
@@ -280,59 +364,61 @@ interface ParsedRecord {
   readonly relations: readonly { readonly from: string; readonly to: string; readonly kind: SyntheticEdgeKind }[];
 }
 
+type DiagnosticSink = (diagnostic: SyntheticDiagnostic) => void;
+
 function parseRecord(
   raw: unknown,
   index: number,
   sourceId: string,
-  diagnostics: SyntheticDiagnostic[],
+  addDiagnostic: DiagnosticSink,
 ): ParsedRecord | undefined {
   if (!isRecord(raw)) {
-    diagnostics.push({ index, code: 'malformed', reason: 'record_not_object' });
+    addDiagnostic({ index, code: 'malformed', reason: 'record_not_object' });
     return undefined;
   }
   const type = raw.type;
   if (typeof type !== 'string') {
-    diagnostics.push({ index, code: 'malformed', reason: 'missing_id' });
+    addDiagnostic({ index, code: 'malformed', reason: 'missing_id' });
     return undefined;
   }
   if (!SUPPORTED_TYPES.has(type as SyntheticNodeKind)) {
-    diagnostics.push({ index, code: 'unsupported', reason: 'unsupported_type' });
+    addDiagnostic({ index, code: 'unsupported', reason: 'unsupported_type' });
     return undefined;
   }
   if (typeof raw.id !== 'string' || raw.id.length === 0) {
-    diagnostics.push({ index, code: 'malformed', reason: 'missing_id' });
+    addDiagnostic({ index, code: 'malformed', reason: 'missing_id' });
     return undefined;
   }
   if (!ID_PATTERN.test(raw.id)) {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_id' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_id' });
     return undefined;
   }
   const label = raw.label === undefined ? type + ' ' + raw.id : raw.label;
   if (typeof label !== 'string' || !isSafeLabel(label)) {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_label' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_label' });
     return undefined;
   }
   const parentId = raw.parentId;
   if (parentId !== undefined && (typeof parentId !== 'string' || !ID_PATTERN.test(parentId))) {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_parent' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_parent' });
     return undefined;
   }
   const updatedAt = raw.updatedAt;
   if (updatedAt !== undefined && (typeof updatedAt !== 'string' || !isSafeTimestamp(updatedAt))) {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_timestamp' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_timestamp' });
     return undefined;
   }
   const status = raw.status;
   if (status !== undefined && (typeof status !== 'string' || status.length > MAX_STATUS_LENGTH || CONTROL_PATTERN.test(status))) {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_status' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_status' });
     return undefined;
   }
   const confidence = raw.confidence;
   if (confidence !== undefined && confidence !== 'source' && confidence !== 'correlated' && confidence !== 'inferred') {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_confidence' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_confidence' });
     return undefined;
   }
-  const relations = parseRelations(raw.relations, raw.id, index, diagnostics);
+  const relations = parseRelations(raw.relations, raw.id, index, addDiagnostic);
   const entity: NavigationEntity = {
     sourceId,
     nativeId: raw.id,
@@ -350,17 +436,17 @@ function parseRelations(
   raw: unknown,
   from: string,
   index: number,
-  diagnostics: SyntheticDiagnostic[],
+  addDiagnostic: DiagnosticSink,
 ): readonly { readonly from: string; readonly to: string; readonly kind: SyntheticEdgeKind }[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) {
-    diagnostics.push({ index, code: 'malformed', reason: 'invalid_relation' });
+    addDiagnostic({ index, code: 'malformed', reason: 'invalid_relation' });
     return [];
   }
   const relations: Array<{ readonly from: string; readonly to: string; readonly kind: SyntheticEdgeKind }> = [];
   for (const candidate of raw.slice(0, MAX_RECORD_RELATIONS)) {
     if (!isRecord(candidate) || typeof candidate.kind !== 'string' || !SUPPORTED_RELATIONS.has(candidate.kind as SyntheticEdgeKind) || typeof candidate.targetId !== 'string' || !ID_PATTERN.test(candidate.targetId)) {
-      diagnostics.push({ index, code: 'malformed', reason: 'invalid_relation' });
+      addDiagnostic({ index, code: 'malformed', reason: 'invalid_relation' });
       continue;
     }
     relations.push({ from, to: candidate.targetId, kind: candidate.kind as SyntheticEdgeKind });
@@ -431,4 +517,8 @@ function cloneInputRecord(value: unknown): unknown {
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new Error('Synthetic navigation query cancelled.');
+}
+
+function throwIfBuildInactive(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('Synthetic navigation query cancelled.');
 }

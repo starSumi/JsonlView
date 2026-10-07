@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSyntheticNavigationIndex,
   SyntheticNavigationAdapter,
+  type NavigationBudget,
   type SyntheticNavigationRecord,
 } from '../../src/experimental';
 
 const capturedAt = '2026-10-07T00:00:00.000Z';
 
-function budget(maxEntities = 500, maxRelations = 2_000): Required<{ maxEntities: number; maxRelations: number; maxMilliseconds: number }> {
-  return { maxEntities, maxRelations, maxMilliseconds: 1_000 };
+function budget(maxEntities = 500, maxRelations = 2_000): Required<NavigationBudget> {
+  return { maxEntities, maxRelations, maxRecords: 2_000, maxDiagnostics: 1_000, maxMilliseconds: 1_000 };
 }
 
 describe('synthetic navigation provider adapter', () => {
@@ -80,6 +81,31 @@ describe('synthetic navigation provider adapter', () => {
     expect(relationBound.index.snapshot.truncatedReason).toBe('relation_limit');
   });
 
+  it('bounds raw records and diagnostics before the projection can grow without limit', () => {
+    const recordBound = buildSyntheticNavigationIndex({
+      sourceId: 'synthetic-agent', sourceGeneration: 'gen-1', capturedAt, maxRecords: 2,
+      records: [
+        { type: 'session', id: 's-1', label: 'one' },
+        { type: 'thread', id: 't-1', label: 'two' },
+        { type: 'task', id: 'task-1', label: 'three' },
+      ],
+    });
+    expect(recordBound.status).toBe('truncated');
+    expect(recordBound.index.recordsExamined).toBe(2);
+    expect(recordBound.index.recordsTruncated).toBe(true);
+    expect(recordBound.index.snapshot.truncatedReason).toBe('record_limit');
+    expect(recordBound.index.diagnostics.at(-1)).toMatchObject({ code: 'limit', reason: 'record_limit' });
+
+    const diagnosticBound = buildSyntheticNavigationIndex({
+      sourceId: 'synthetic-agent', sourceGeneration: 'gen-1', capturedAt, maxDiagnostics: 1,
+      records: [null, { type: 'future', id: 'future-1' }, null],
+    });
+    expect(diagnosticBound.status).toBe('truncated');
+    expect(diagnosticBound.index.diagnostics).toHaveLength(1);
+    expect(diagnosticBound.index.diagnosticsTruncated).toBe(true);
+    expect(diagnosticBound.index.snapshot.truncatedReason).toBe('diagnostic_limit');
+  });
+
   it('keeps generations immutable across rebuilds and gives each projection a stable id', async () => {
     const adapter = new SyntheticNavigationAdapter('synthetic-agent');
     const firstRecords: readonly SyntheticNavigationRecord[] = [{ type: 'session', id: 's-1', label: 'first' }];
@@ -120,6 +146,20 @@ describe('synthetic navigation provider adapter', () => {
     await expect(provider.readSnapshot(controller.signal, budget())).rejects.toThrow('cancelled');
   });
 
+  it('returns an explicit time-limit snapshot when the cooperative clock reaches its deadline', async () => {
+    let tick = 0;
+    const adapter = new SyntheticNavigationAdapter('synthetic-agent');
+    const provider = adapter.provider({
+      sourceGeneration: 'gen-1',
+      capturedAt,
+      now: () => (tick++ === 0 ? 100 : 105),
+      records: [{ type: 'session', id: 's-1', label: 'one' }],
+    });
+    const result = await provider.readSnapshot(new AbortController().signal, { ...budget(), maxMilliseconds: 5 });
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedReason).toBe('time_limit');
+  });
+
   it('rejects unsafe identity, labels, and budgets before constructing a projection', () => {
     expect(() => buildSyntheticNavigationIndex({ sourceId: 'C:/private', sourceGeneration: 'gen-1', capturedAt, records: [] })).toThrow('opaque identifier');
     expect(() => buildSyntheticNavigationIndex({ sourceId: 'synthetic-agent', sourceGeneration: 'gen-1', capturedAt, maxEntities: 0, records: [] })).toThrow('maxEntities');
@@ -140,5 +180,18 @@ describe('synthetic navigation provider adapter', () => {
     const snapshot = await provider.readSnapshot(new AbortController().signal, budget());
     expect(snapshot.entities[0]?.label).toBe('Worker');
     expect(snapshot.relations).toEqual([]);
+  });
+
+  it('rejects an oversized provider capture before copying records', () => {
+    const adapter = new SyntheticNavigationAdapter('synthetic-agent');
+    expect(() => adapter.provider({
+      sourceGeneration: 'gen-1',
+      capturedAt,
+      maxRecords: 1,
+      records: [
+        { type: 'session', id: 's-1', label: 'one' },
+        { type: 'session', id: 's-2', label: 'two' },
+      ],
+    })).toThrow('maxRecords capture budget');
   });
 });

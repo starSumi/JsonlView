@@ -12,11 +12,15 @@ import {
 const DEFAULT_BUDGET: Required<NavigationBudget> = {
   maxEntities: 500,
   maxRelations: 2_000,
+  maxRecords: 2_000,
+  maxDiagnostics: 1_000,
   maxMilliseconds: 1_000,
 };
 const MAX_BUDGET: Required<NavigationBudget> = {
   maxEntities: 10_000,
   maxRelations: 50_000,
+  maxRecords: 50_000,
+  maxDiagnostics: 10_000,
   maxMilliseconds: 10_000,
 };
 const MAX_METADATA_LABEL_LENGTH = 256;
@@ -184,7 +188,7 @@ export class ReadOnlyNavigationFacade {
 
 function normalizeBudget(value: NavigationBudget | undefined): Required<NavigationBudget> {
   const result = { ...DEFAULT_BUDGET, ...value };
-  for (const key of ['maxEntities', 'maxRelations', 'maxMilliseconds'] as const) {
+  for (const key of ['maxEntities', 'maxRelations', 'maxRecords', 'maxDiagnostics', 'maxMilliseconds'] as const) {
     const candidate = result[key];
     if (!Number.isSafeInteger(candidate) || candidate < 1 || candidate > MAX_BUDGET[key]) {
       throw new Error(`Navigation ${key} must be an integer between 1 and ${String(MAX_BUDGET[key])}.`);

@@ -14,9 +14,11 @@ the projection.
 
 The adapter accepts only caller-supplied synthetic records. It has no path,
 filesystem, database, process, network, VS Code, or MCP dependency. Its output
-is metadata-only, bounded by negotiated entity and relation budgets, carries an
-opaque source generation, and is immutable after construction. Malformed or
-unsupported records are reported and do not discard valid records.
+is metadata-only, bounded by negotiated record, diagnostic, entity, relation,
+and wall-clock budgets, carries an opaque source generation, and is immutable
+after construction. Malformed or unsupported records are reported and do not
+discard valid records. Metadata-only describes the fields emitted by this
+projection; it is not a privacy or provenance proof for any future provider.
 
 ## Owner and change class
 
@@ -37,7 +39,7 @@ source module owns only the pure adapter seam and its focused tests.
 
 Synthetic fixtures cover parent, child, fork, spawn, team, workflow, tool,
 confidence, malformed, unsupported, redaction, generation rebuild, cancellation,
-and entity/relation limits. The expected result is deterministic metadata-only
+and record, diagnostic, entity, relation, and wall-clock limits. The expected result is deterministic metadata-only
 snapshots, explicit diagnostics, and no payload or path leakage. A future
 provider may reuse the contract only after its own shape and provenance review.
 
@@ -47,9 +49,12 @@ Use SyntheticNavigationAdapter and SyntheticNavigationProvider as the pure
 contract probe. Records are copied on input, accepted kinds and relation kinds
 are allowlisted, labels and identifiers are bounded, and unknown properties are
 ignored. Parent edges are derived only from an explicit parent identifier;
-additional edges are allowlisted and bounded. Snapshot identifiers include the
-source generation and negotiated bounds. rebuild returns a new provider and
-never mutates an earlier snapshot.
+additional edges are allowlisted and bounded. Provider capture rejects input
+above its maxRecords ceiling, and each build applies independent record and
+diagnostic ceilings. A ceiling or cooperative deadline sets an explicit
+truncation flag and reason instead of silently returning a complete status.
+Snapshot identifiers include the source generation and negotiated bounds.
+rebuild returns a new provider and never mutates an earlier snapshot.
 
 The adapter may report malformed and unsupported diagnostics while returning a
 valid partial index. It does not turn a payload field into a label or opaque
@@ -62,8 +67,9 @@ contain relation-level errors attached to an otherwise valid record.
 ## Evidence
 
 The focused suite is test/experimental/synthetic-provider.test.ts. It checks
-topology, redaction, malformed/unsupported handling, bounds and truncation,
-generation immutability, cancellation, and identity validation. The shared
+topology, redaction, malformed/unsupported handling, raw-record and diagnostic
+ceilings, cooperative time limits, generation immutability, cancellation, and
+identity validation. The shared
 read-only facade remains the only caller contract; no activation entry point
 imports this adapter.
 
@@ -77,9 +83,11 @@ and the [MCP tools security guidance](https://modelcontextprotocol.io/specificat
 This is synthetic evidence, not proof that Codex, Claude, or another producer
 can be safely scanned. No native UUID, session path, prompt, message body,
 credential, database schema, or provider-specific relation is part of the
-contract. A real adapter must first document its source authority, redaction
-rules, generation signal, and rebuild behavior. This experiment does not add a
-TreeView, MCP transport, catalog persistence, or write capability.
+contract. A real adapter must first document its source authority, provenance,
+redaction rules, generation signal, and rebuild behavior, then pass an
+independent review of its source ownership and privacy boundary. This
+experiment does not add a TreeView, MCP transport, catalog persistence, or
+write capability.
 
 ## Revisit trigger and rollback
 
