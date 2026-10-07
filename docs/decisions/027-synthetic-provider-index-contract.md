@@ -55,6 +55,9 @@ The adapter may report malformed and unsupported diagnostics while returning a
 valid partial index. It does not turn a payload field into a label or opaque
 reference. An empty or all-rejected fixture is still a valid bounded snapshot;
 the diagnostic status tells the caller why records were not accepted.
+acceptedRecords counts valid records before snapshot bounds, rejectedRecords
+counts records omitted for a record-level error, and diagnostics may also
+contain relation-level errors attached to an otherwise valid record.
 
 ## Evidence
 

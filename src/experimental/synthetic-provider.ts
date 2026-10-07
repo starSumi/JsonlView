@@ -134,12 +134,17 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
   const entities: NavigationEntity[] = [];
   const parsedRelations: Array<{ readonly from: string; readonly to: string; readonly kind: SyntheticEdgeKind }> = [];
   const ids = new Set<string>();
+  let rejectedRecords = 0;
 
   for (const [index, raw] of options.records.entries()) {
     const parsed = parseRecord(raw, index, options.sourceId, diagnostics);
-    if (parsed === undefined) continue;
+    if (parsed === undefined) {
+      rejectedRecords += 1;
+      continue;
+    }
     if (ids.has(parsed.entity.nativeId)) {
       diagnostics.push({ index, code: 'malformed', reason: 'duplicate_id' });
+      rejectedRecords += 1;
       continue;
     }
     ids.add(parsed.entity.nativeId);
@@ -193,7 +198,7 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
     sourceGeneration: options.sourceGeneration,
     snapshot,
     acceptedRecords: entities.length,
-    rejectedRecords: diagnostics.length,
+    rejectedRecords,
     diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))),
   });
   const hasMalformed = diagnostics.some((diagnostic) => diagnostic.code === 'malformed');
