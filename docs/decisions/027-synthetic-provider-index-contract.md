@@ -49,7 +49,8 @@ Use SyntheticNavigationAdapter and SyntheticNavigationProvider as the pure
 contract probe. Records are copied on input, accepted kinds and relation kinds
 are allowlisted, labels and identifiers are bounded, and unknown properties are
 ignored. Parent edges are derived only from an explicit parent identifier;
-additional edges are allowlisted and bounded. Provider capture rejects input
+additional edges are allowlisted and bounded, with a per-record relation
+ceiling applied before provider input is copied. Provider capture rejects input
 above its maxRecords ceiling, and each build applies independent record and
 diagnostic ceilings. A ceiling or cooperative deadline sets an explicit
 truncation flag and reason instead of silently returning a complete status.
@@ -87,7 +88,10 @@ contract. A real adapter must first document its source authority, provenance,
 redaction rules, generation signal, and rebuild behavior, then pass an
 independent review of its source ownership and privacy boundary. This
 experiment does not add a TreeView, MCP transport, catalog persistence, or
-write capability.
+write capability. The deadline is cooperative: synchronous JavaScript cannot
+be preempted; the adapter checks between bounded records/relations and the
+facade drops late results. This is a latency guard, not a hard CPU isolation
+boundary.
 
 ## Revisit trigger and rollback
 

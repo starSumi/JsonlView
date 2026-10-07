@@ -67,6 +67,7 @@ export interface SyntheticDiagnostic {
     | 'invalid_timestamp'
     | 'invalid_status'
     | 'invalid_confidence'
+    | 'relation_limit'
     | 'record_limit'
     | 'diagnostic_limit';
 }
@@ -443,6 +444,9 @@ function parseRelations(
     addDiagnostic({ index, code: 'malformed', reason: 'invalid_relation' });
     return [];
   }
+  if (raw.length > MAX_RECORD_RELATIONS) {
+    addDiagnostic({ index, code: 'limit', reason: 'relation_limit' });
+  }
   const relations: Array<{ readonly from: string; readonly to: string; readonly kind: SyntheticEdgeKind }> = [];
   for (const candidate of raw.slice(0, MAX_RECORD_RELATIONS)) {
     if (!isRecord(candidate) || typeof candidate.kind !== 'string' || !SUPPORTED_RELATIONS.has(candidate.kind as SyntheticEdgeKind) || typeof candidate.targetId !== 'string' || !ID_PATTERN.test(candidate.targetId)) {
@@ -505,7 +509,7 @@ function cloneInputRecord(value: unknown): unknown {
   }
   const relations = value.relations;
   if (Array.isArray(relations)) {
-    clone.relations = Object.freeze(relations.map((relation) => {
+    clone.relations = Object.freeze(relations.slice(0, MAX_RECORD_RELATIONS + 1).map((relation) => {
       if (!isRecord(relation)) return relation;
       return Object.freeze({ kind: relation.kind, targetId: relation.targetId });
     }));

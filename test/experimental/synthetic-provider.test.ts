@@ -106,6 +106,23 @@ describe('synthetic navigation provider adapter', () => {
     expect(diagnosticBound.index.snapshot.truncatedReason).toBe('diagnostic_limit');
   });
 
+  it('caps relation cloning and reports a per-record relation limit', () => {
+    const result = buildSyntheticNavigationIndex({
+      sourceId: 'synthetic-agent', sourceGeneration: 'gen-1', capturedAt,
+      records: [
+        {
+          type: 'subagent',
+          id: 'agent-1',
+          label: 'bounded',
+          relations: Array.from({ length: 100_000 }, (_, index) => ({ kind: 'spawn', targetId: 'tool-' + String(index) })),
+        },
+      ],
+    });
+    expect(result.index.acceptedRecords).toBe(1);
+    expect(result.index.diagnostics).toContainEqual({ index: 0, code: 'limit', reason: 'relation_limit' });
+    expect(result.index.snapshot.relations).toHaveLength(0);
+  });
+
   it('keeps generations immutable across rebuilds and gives each projection a stable id', async () => {
     const adapter = new SyntheticNavigationAdapter('synthetic-agent');
     const firstRecords: readonly SyntheticNavigationRecord[] = [{ type: 'session', id: 's-1', label: 'first' }];
