@@ -3,7 +3,7 @@ import { lstat, mkdtemp, open, realpath, rmdir, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
-import { getSourceIntakeHtml } from './source-intake-html';
+import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
 
 export const SOURCE_INTAKE_MAX_BYTES = 1_048_576;
 export const SOURCE_INTAKE_MAX_RECORDS = 10_000;
@@ -70,11 +70,12 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
 export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
-export class SourceIntakePanel implements vscode.Disposable {
+export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewProvider {
   readonly #onSource: SourceIntakeHandler;
   readonly #lifetime = new AbortController();
   readonly #previews = new Map<string, { readonly dev: number; readonly ino: number; readonly size?: number; readonly mtimeMs?: number }>();
   #panel: vscode.WebviewPanel | undefined;
+  #view: vscode.WebviewView | undefined;
   #panelLifetime: AbortController | undefined;
   #pending: Promise<void> | undefined;
   #directory: string | undefined;
@@ -82,6 +83,21 @@ export class SourceIntakePanel implements vscode.Disposable {
   #disposal: Promise<void> | undefined;
 
   public constructor(onSource: SourceIntakeHandler) { this.#onSource = onSource; }
+
+  public resolveWebviewView(view: vscode.WebviewView): void {
+    if (this.#lifetime.signal.aborted) return;
+    this.#view = view;
+    view.webview.options = { enableScripts: true, localResourceRoots: [] };
+    view.webview.html = getSourceDropHtml();
+    const controller = new AbortController();
+    const listener = view.webview.onDidReceiveMessage((message: unknown) => {
+      if (controller.signal.aborted || this.#pending !== undefined) return;
+      const operation = this.receive(message, view.webview, controller.signal);
+      this.#pending = operation;
+      void operation.finally(() => { if (this.#pending === operation) this.#pending = undefined; });
+    });
+    view.onDidDispose(() => { controller.abort(); listener.dispose(); if (this.#view === view) this.#view = undefined; });
+  }
 
   public show(): void {
     if (this.#lifetime.signal.aborted) return;
@@ -96,10 +112,10 @@ export class SourceIntakePanel implements vscode.Disposable {
     const listener = panel.webview.onDidReceiveMessage((message: unknown) => {
       if (controller.signal.aborted) return;
       if (this.#pending !== undefined) {
-        void this.post(panel, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
+        void this.post(panel.webview, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
         return;
       }
-      const operation = this.receive(message, panel, controller.signal);
+      const operation = this.receive(message, panel.webview, controller.signal);
       this.#pending = operation;
       void operation.finally(() => { if (this.#pending === operation) this.#pending = undefined; });
     });
@@ -116,15 +132,15 @@ export class SourceIntakePanel implements vscode.Disposable {
     return this.#disposal;
   }
 
-  private async receive(raw: unknown, panel: vscode.WebviewPanel, signal: AbortSignal): Promise<void> {
+  private async receive(raw: unknown, webview: vscode.Webview, signal: AbortSignal): Promise<void> {
     try {
       const message = parseSourceIntakeMessage(raw);
-      await this.post(panel, signal, 'busy', 'Adding source…');
+      await this.post(webview, signal, 'busy', 'Adding source…');
       if (signal.aborted) return;
       if (message.type === 'import-jsonl') {
         const records = validatePastedJsonl(message.text);
         await this.openPreview(message.text, signal);
-        await this.post(panel, signal, 'success', `Opened a temporary preview with ${String(records)} records.`, true);
+        await this.post(webview, signal, 'success', `Opened a temporary preview with ${String(records)} records.`, true);
         return;
       }
       const selected = message.type === 'drop-uris' ? message.uris : (await vscode.window.showOpenDialog({
@@ -133,7 +149,7 @@ export class SourceIntakePanel implements vscode.Disposable {
         ...(message.type === 'pick-files' ? { filters: { 'JSONL / NDJSON': ['jsonl', 'ndjson'], 'All files': ['*'] } } : {}),
       }))?.map((uri) => uri.toString());
       if (signal.aborted) return;
-      if (selected === undefined || selected.length === 0) { await this.post(panel, signal, 'idle', 'No source selected.'); return; }
+      if (selected === undefined || selected.length === 0) { await this.post(webview, signal, 'idle', 'No source selected.'); return; }
       if (selected.length > MAX_SOURCES) throw new Error('Choose up to 32 sources at a time.');
       // Validate the complete selection before authorizing any source.
       const uris: vscode.Uri[] = [];
@@ -146,15 +162,15 @@ export class SourceIntakePanel implements vscode.Disposable {
         if (signal.aborted) return;
         await this.#onSource(uri, signal);
       }
-      await this.post(panel, signal, 'idle', 'Source selection complete.');
+      await this.post(webview, signal, 'idle', 'Source selection complete.');
     } catch (error) {
-      await this.post(panel, signal, 'error', error instanceof Error ? error.message : 'Could not add this source.');
+      await this.post(webview, signal, 'error', error instanceof Error ? error.message : 'Could not add this source.');
     }
   }
 
-  private async post(panel: vscode.WebviewPanel, signal: AbortSignal, state: string, text: string, clearText = false): Promise<void> {
-    if (signal.aborted || this.#lifetime.signal.aborted || this.#panel !== panel) return;
-    try { await panel.webview.postMessage({ type: 'status', state, text, clearText }); }
+  private async post(webview: vscode.Webview, signal: AbortSignal, state: string, text: string, clearText = false): Promise<void> {
+    if (signal.aborted || this.#lifetime.signal.aborted) return;
+    try { await webview.postMessage({ type: 'status', state, text, clearText }); }
     catch { /* The panel may close between the signal check and delivery. */ }
   }
 

@@ -143,6 +143,12 @@
     "views": {
       "jsonlViewSessionNavigator": [
         {
+          "type": "webview",
+          "id": "jsonlView.sourceDrop",
+          "name": "Add source",
+          "when": "config.jsonlView.sessionNavigator.enabled"
+        },
+        {
           "id": "jsonlView.sessionNavigator",
           "name": "Sessions",
           "when": "config.jsonlView.sessionNavigator.enabled"
