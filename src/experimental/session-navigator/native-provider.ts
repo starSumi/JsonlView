@@ -197,14 +197,19 @@ function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string,
   const projection = selected.map((name) => boundedText.has(name) ? 'substr(' + quoteIdentifier(name) + ', 1, 240) AS ' + quoteIdentifier(name) : quoteIdentifier(name));
   const rowLimit = Math.max(0, Math.min(budget.maxRecords, budget.maxEntities * 4));
   const rows = db.prepare('SELECT ' + projection.join(', ') + ' FROM threads' + order + ' LIMIT ?').all(rowLimit) as Array<Record<string, unknown>>;
-  const candidates = rows.filter((row) => typeof row.id === 'string' && typeof row.rollout_path === 'string' && isAuthorizedPath(rootPath, String(row.rollout_path)));
-  const ids = new Set(candidates.slice(0, budget.maxEntities).map((row) => String(row.id)));
+  const canonicalRoot = canonicalPath(resolveRootPath(rootPath));
+  const candidates = rows.flatMap((row) => {
+    if (typeof row.id !== 'string' || typeof row.rollout_path !== 'string') return [];
+    const relativePath = authorizedRelativePath(canonicalRoot, row.rollout_path);
+    return relativePath === undefined ? [] : [{ row, relativePath }];
+  });
+  const ids = new Set(candidates.slice(0, budget.maxEntities).map(({ row }) => String(row.id)));
   const edges = readCodexEdges(db, [...ids]);
   const entities: NavigationEntity[] = [];
   const relations: NavigationRelation[] = [];
   const locations: NavigatorLocation[] = [];
   let relationsTruncated = false;
-  for (const row of candidates.slice(0, budget.maxEntities)) {
+  for (const { row, relativePath } of candidates.slice(0, budget.maxEntities)) {
     throwIfAborted(signal);
     const id = String(row.id);
     const parent = edges.get(id);
@@ -230,8 +235,7 @@ function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string,
       confidence: 'source', opaqueRef: 'codex-thread-' + hash(id),
     };
     entities.push(entity);
-    const rollout = String(row.rollout_path);
-    locations.push({ nativeId: id, relativePath: relative(resolveRootPath(rootPath), resolve(stripLongPathPrefix(rollout))) || basename(rollout), rowOrdinal: '0' });
+    locations.push({ nativeId: id, relativePath, rowOrdinal: '0' });
     if (parent !== undefined && !orphan) relations.push({ sourceId, fromNativeId: id, toNativeId: parent, kind: 'parent' });
   }
   return Object.freeze({
@@ -263,7 +267,7 @@ async function fillCodexPreviews(snapshot: NavigatorSnapshot, rootPath: string, 
     files += 1;
     try {
       const path = join(resolveRootPath(rootPath), location.relativePath);
-      if (!isAuthorizedPath(rootPath, path)) { entities.push(entity); continue; }
+      if (authorizedRelativePath(canonicalPath(resolveRootPath(rootPath)), path) === undefined) { entities.push(entity); continue; }
       const records = await readMetadataRecords(path, budget);
       const preview = records.values.map(userMessagePreview).find((value) => value !== undefined);
       entities.push(preview === undefined ? entity : { ...entity, label: preview, firstMessagePreview: preview });
@@ -303,11 +307,12 @@ function tableExists(db: DatabaseSync, table: string): boolean { return db.prepa
 function quoteIdentifier(value: string): string { return '"' + value.replaceAll('"', '""') + '"'; }
 async function fileFingerprint(path: string): Promise<string> { const info = await stat(path); return path + '\0' + info.dev + '\0' + info.ino + '\0' + info.size + '\0' + info.mtimeMs; }
 
-function isAuthorizedPath(rootPath: string, candidate: string): boolean {
-  const root = canonicalPath(resolveRootPath(rootPath));
+function authorizedRelativePath(canonicalRoot: string, candidate: string): string | undefined {
   const target = canonicalPath(stripLongPathPrefix(candidate));
-  const suffix = relative(root, target);
-  return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..\\') && !suffix.startsWith('../'));
+  const suffix = relative(canonicalRoot, target);
+  return suffix !== '' && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..\\') && !suffix.startsWith('../')
+    ? suffix
+    : undefined;
 }
 
 function canonicalPath(value: string): string {

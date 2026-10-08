@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix Codex session links when stored rollout paths use a Windows junction or
+  home-directory alias. Rebuilt indexes resolve links within the authorized home.
 - Show initial session loading, retry and partial-index states; use native agent
   names and Claude subagent layouts, with concise tree labels and one sort menu.
 - Add a local source form for files, folders, drops, and bounded JSONL paste

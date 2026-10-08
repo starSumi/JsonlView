@@ -244,6 +244,14 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       void vscode.window.showWarningMessage('This navigation entry is stale. Refresh the Session Navigator.');
       return;
     }
+    // Persisted locations from older candidates may contain an absolute alias
+    // path. Never join those to a source root; a refresh rebuilds the projection.
+    if (location.relativePath.length === 0 || isAbsolute(location.relativePath)
+      || /^[A-Za-z]:/u.test(location.relativePath) || /^[\\/]/u.test(location.relativePath)
+      || location.relativePath.split(/[\\/]+/u).includes('..')) {
+      void vscode.window.showWarningMessage('This session location needs to be rebuilt. Refresh the Session Navigator.');
+      return;
+    }
     const setting = this.settings().find((candidate) => sourceIdFor(candidate) === node.entity.sourceId);
     if (setting === undefined) {
       void vscode.window.showWarningMessage('This navigation source is no longer authorized. Refresh the Session Navigator.');

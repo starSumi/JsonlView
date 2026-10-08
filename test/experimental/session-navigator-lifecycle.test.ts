@@ -111,6 +111,24 @@ describe('Session Navigator host lifecycle', () => {
     expect(host.execute).not.toHaveBeenCalled();
   });
 
+  it.each(['C:\\old-home\\session.jsonl', '/old-home/session.jsonl', '..\\outside\\session.jsonl', '../outside/session.jsonl', 'C:session.jsonl', '\\\\server\\share\\session.jsonl'])('rejects malformed cached location %s before probing or joining', async (relativePath) => {
+    host.scan.mockResolvedValueOnce({ ...snapshot, snapshot: { ...snapshot.snapshot, locations: [{ nativeId: 'thread-1', relativePath, rowOrdinal: '0' }] } });
+    const entity = await loadedEntity();
+    await tree.reveal(entity);
+    expect(host.probe).not.toHaveBeenCalled();
+    expect(host.execute).not.toHaveBeenCalled();
+  });
+
+  it('still opens a stable generic nested record after location validation', async () => {
+    host.roots = [{ ...host.roots[0]!, provider: 'generic' }];
+    await mkdir(join(root, 'provider', 'sessions'), { recursive: true });
+    await writeFile(join(root, 'provider', 'sessions', 'thread.jsonl'), '{}\n{}\n');
+    host.scan.mockResolvedValueOnce({ ...snapshot, snapshot: { ...snapshot.snapshot, locations: [{ nativeId: 'thread-1', relativePath: 'sessions/thread.jsonl', rowOrdinal: '1' }] } });
+    const entity = await loadedEntity();
+    await tree.reveal(entity);
+    expect(host.execute).toHaveBeenCalledWith('vscode.openWith', expect.objectContaining({ fsPath: join(root, 'provider', 'sessions', 'thread.jsonl') }), 'jsonlView.editor');
+  });
+
   it('rejects a transcript reached through a junction outside its authorized root', async () => {
     await mkdir(join(root, 'outside'));
     await writeFile(join(root, 'outside', 'thread.jsonl'), '{}\n');

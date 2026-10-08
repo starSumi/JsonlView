@@ -28,6 +28,9 @@ did not provide a visible place to drop files or paste JSONL content.
   unrelated provider writes mark updates available without blocking that link.
   Generic record anchors retain strict fingerprint checks. Both paths verify
   canonical containment, authorization and catalog generation before opening.
+  Location construction uses the same canonical root and target as authorization;
+  lexical aliases cannot be persisted as absolute or parent-traversing locations.
+  A refresh rebuilds malformed locations left by an older catalog projection.
 - File inputs stay file inputs. Pasted content is explicitly submitted into an
   owned temporary preview, never appended to a provider log or saved in the
   navigation catalog. The original pasted bytes are not silently normalized.
@@ -93,6 +96,9 @@ uses no remote content, source-code execution, or automatic clipboard reads.
   [WAL](https://sqlite.org/wal.html) distinguishes commit from checkpoint.
 - [SQLite URI parameters](https://sqlite.org/uri.html) warns that `immutable=1`
   disables locking and change detection and is unsafe if the file can change.
+- [Node.js realpath](https://nodejs.org/api/fs.html#fsrealpathsyncnativepath-options)
+  resolves symbolic links; [path.relative](https://nodejs.org/api/path.html#pathrelativefrom-to)
+  computes a path between its inputs without asserting filesystem identity.
 - Codex state columns and graph edges remain version-specific implementation
   observations, not a public extension API; optional columns are schema-checked.
 

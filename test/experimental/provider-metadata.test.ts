@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +25,32 @@ const user = (sessionId: string, content: unknown, extra = {}) => ({ type: 'user
 const provider = (path: string, kind: 'claude' | 'codex' = 'claude') => createNativeSessionNavigatorProvider({ provider: kind, rootUri: pathToFileURL(path).toString() });
 
 describe('native provider metadata', () => {
+  it.each(['canonical', 'alias'] as const)('maps Codex junction rollout paths relative to the %s source root', async (rootKind) => {
+    const base = await root();
+    const home = join(base, 'actual-home');
+    const alias = join(base, 'home-alias');
+    const outside = join(base, 'outside');
+    await transcript(join(home, 'sessions', 'child.jsonl'), [{ type: 'event_msg', payload: { type: 'user_message', message: 'Read a session through its alias' } }]);
+    await transcript(join(outside, 'escape.jsonl'), [{ type: 'session_meta', payload: { id: 'escape' } }]);
+    await symlink(home, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await symlink(outside, join(home, 'escaped'), process.platform === 'win32' ? 'junction' : 'dir');
+    const db = new DatabaseSync(join(home, 'state_5.sqlite'));
+    try {
+      db.exec('CREATE TABLE threads (id TEXT, rollout_path TEXT)');
+      const insert = db.prepare('INSERT INTO threads VALUES (?, ?)');
+      insert.run('child', join(alias, 'sessions', 'child.jsonl'));
+      insert.run('escape', join(home, 'escaped', 'escape.jsonl'));
+    } finally { db.close(); }
+    const selectedRoot = rootKind === 'canonical' ? home : alias;
+    const result = await createNativeSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(selectedRoot).toString(), stateRootUri: pathToFileURL(home).toString() }).scan(signal(), limits);
+    expect(result.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['child']);
+    const location = result.snapshot.locations[0]!;
+    expect(location.relativePath).toBe(join('sessions', 'child.jsonl'));
+    expect(isAbsolute(location.relativePath)).toBe(false);
+    expect(await realpath(join(selectedRoot, location.relativePath))).toBe(await realpath(join(home, 'sessions', 'child.jsonl')));
+    expect(result.snapshot.entities[0]?.firstMessagePreview).toBe('Read a session through its alias');
+  });
+
   it('keeps Claude subagent identity distinct from its shared sessionId and derives its explicit layout parent', async () => {
     const path = await root();
     await transcript(join(path, 'history.jsonl'), [user('fake-history', 'Do not display history')]);
