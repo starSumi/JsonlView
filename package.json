@@ -285,7 +285,7 @@
         "jsonlView.sessionNavigator.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Opt in to the read-only Agent Session Navigator. It does not scan sources until you explicitly authorize and refresh one."
+          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex and Claude roots are detected automatically; custom roots remain explicit."
         },
         "jsonlView.sessionNavigator.sort": {
           "type": "string",
@@ -301,7 +301,7 @@
         "jsonlView.sessionNavigator.sources": {
           "type": "array",
           "default": [],
-          "description": "Explicitly authorized local Agent source roots. Paths are read-only and are never discovered automatically.",
+          "description": "Additional local Agent source roots. Standard Codex and Claude roots are detected automatically; all paths are read-only.",
           "items": {
             "type": "object",
             "properties": {
@@ -312,6 +312,10 @@
               "rootUri": {
                 "type": "string",
                 "description": "A file URI selected through Authorize Agent Source."
+              },
+              "stateRootUri": {
+                "type": "string",
+                "description": "Optional provider-owned SQLite state home URI detected for Codex."
               }
             },
             "required": ["provider", "rootUri"]

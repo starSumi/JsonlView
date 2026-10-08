@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Detect standard Agent homes after Navigator opt-in, keep removed sources
+  excluded, and show sessions instead of falling back to raw rollout rows.
+  Codex supports a separate SQLite home and detects WAL-only metadata updates.
+
 - Make Windows native release builds reproducible with the MSVC /Brepro
   linker flag while preserving debug metadata and portable builds.
 - Add a synthetic in-memory staged-mutation benchmark with an independent byte
@@ -18,9 +22,9 @@
   are enabled.
 - Add provider-native Codex and Claude session projections with activity-first
   sorting, title provenance, parent/subagent/orphan relationships, explicit
-  Navigator focus actions, and confirmed root drop or clipboard authorization;
-  provider stores remain read-only and no transcript bytes are copied into the
-  product catalog.
+  Navigator focus actions, default-root detection, and confirmed custom-root
+  drop or clipboard authorization; provider stores remain read-only and no
+  transcript bytes are copied into the product catalog.
 
 ## 0.2.7 - 2026-10-06
 

@@ -22,9 +22,12 @@ hard to find.
   timestamp.
 - A missing parent is retained as an explicit orphan root. A provider title is
   distinct from a product title and is never overwritten by a product rename.
-- Provider adapters open local state read-only and fall back to the bounded
-  generic JSONL adapter only when the provider-native metadata source is not
-  available or is not compatible.
+- Provider adapters open local state read-only. The generic JSONL adapter is an
+  explicit compatibility source; provider-native adapters fail closed with a
+  bounded warning when their metadata source is unavailable or incompatible.
+- When the Navigator is enabled, it detects the provider-owned default roots
+  ('CODEX_HOME' or '~/.codex', and 'CLAUDE_CONFIG_DIR' or '~/.claude') without
+  scanning arbitrary home-directory files. Custom roots remain explicit.
 - Windows junctions are resolved before containment checks, so an explicitly
   authorized Codex home can safely follow its own canonical rollout paths;
   unrelated drives and roots remain rejected. State-file roots resolve to the
@@ -52,8 +55,9 @@ the provider, stable ID, relative activity, relationship, and source details.
 Sorting can be changed to activity, created time, or title and is persisted as
 a user setting.
 
-The Codex adapter reads threads and thread_spawn_edges from an explicitly
-authorized state_*.sqlite companion in read-only mode. It orders the bounded
+The Codex adapter resolves the provider-owned home and, when present, the
+provider-owned `CODEX_SQLITE_HOME` separately. It reads threads and
+thread_spawn_edges from its state_*.sqlite companion in read-only mode. It orders the bounded
 thread query by recency before applying the entity limit, uses recency_at or
 updated metadata before created metadata, and filters rollout locations to the
 canonical authorized root. The Claude adapter creates one session entity per
@@ -61,6 +65,15 @@ authorized session file, uses provider session IDs rather than message UUIDs,
 recognizes subagents as a relationship, and keeps missing parents as orphans.
 Both adapters expose only bounded metadata and reveal the selected rollout
 through the existing read-only custom editor.
+
+An explicit stateRootUri overrides the detected SQLite home for that source.
+This experimental slice resolves environment/default locations; it does not
+interpret Codex's layered config.toml sqlite_home setting. Such a configured
+override must currently be supplied as stateRootUri. The title index remains
+under the transcript home even when SQLite storage is separate. Removing a
+detected source persists a product-owned exclusion; authorizing it again clears
+the exclusion. Automatically detected locations are not pinned into user
+settings, so environment changes can be resolved on the next discovery.
 
 The Activity Bar is the topology surface. A command, editor-title action, and
 Webview header button all focus the Navigator explicitly. Explorer/editor
@@ -79,8 +92,10 @@ preview, not a session source.
 3. Put topology in the Data Studio Webview or bottom Panel: rejected because
    the native TreeView provides a separate vertical navigation viewport while
    the editor remains the data projection.
-4. Auto-discover all agent home directories: rejected because authorization,
-   privacy, and startup I/O would become implicit.
+4. Recursively auto-discover all agent home-directory files: rejected because
+   authorization, privacy, and startup I/O would become implicit. The
+   accepted rule detects only provider-owned standard roots and requires an
+   explicit Navigator opt-in; custom roots still require authorization.
 
 ## Evidence
 
@@ -102,13 +117,52 @@ The official VS Code references define host contribution and drag/drop
 contracts. The local source studies explain observed producer shapes; they do
 not authorize access to private state or guarantee future compatibility.
 
+## SQLite lifecycle and future update notifications
+
+The current implementation uses Node's built-in SQLite reader, with one short
+read transaction per thread/relationship snapshot. It closes the handle after
+each scan and does not checkpoint or change journal mode on provider databases.
+An advisory fingerprint includes the main database and optional WAL, because
+committed changes may exist only in the WAL before a checkpoint. A changed
+fingerprint across a scan rejects that candidate; file metadata is an update
+hint, not a transactional change feed or proof that a file is unchanged.
+
+Connection reuse is deferred until measured open costs justify its lifecycle
+complexity. A future shared resource must be keyed by the canonical database
+file and replacement generation, while authorization and projection remain
+scoped to each source. Sharing a handle does not remove SQLite's single-writer
+rule. Long read transactions can prevent checkpoints from completing.
+
+Separate watchers for transcript and SQLite locations are an accepted experiment,
+not an implementation in this slice. Events must be debounced invalidation
+hints followed by bounded reconciliation, with explicit refresh retained.
+WAL file changes do not expose row changes or reliable checkpoint notifications.
+If a future persistent reader uses PRAGMA data_version, comparisons must stay
+on the same connection and reset after reopen. Disable, source removal, database
+replacement, and extension disposal must release watchers and handles.
+
+Primary references:
+
+- [SQLite write-ahead logging](https://sqlite.org/wal.html) defines commit,
+  checkpoint, reader concurrency, and read-only WAL behavior.
+- [SQLite isolation](https://sqlite.org/isolation.html) defines snapshot reads.
+- [SQLite PRAGMA data_version](https://sqlite.org/pragma.html#pragma_data_version)
+  restricts comparisons to the same connection.
+- [VS Code file watcher API](https://code.visualstudio.com/api/references/vscode-api#workspace.createFileSystemWatcher)
+  defines create/change/delete notifications and watcher limitations.
+- [Node SQLite DatabaseSync](https://nodejs.org/api/sqlite.html#class-databasesync)
+  defines the existing read-only connection API; no new native dependency is
+  introduced for speculative pooling.
+
 ## Boundary
 
 This slice is opt-in and local-only. It adds no network transport, MCP server,
 source mutation, provider database writes, recursive watcher, or release
-authorization. Background probes only mark a source stale; explicit refresh is
-the authoritative reconciliation. Harness fixtures and host receipts remain
-outside the product tree.
+authorization. Standard roots are detected only after the user enables the
+Navigator; `CODEX_HOME`/`CODEX_SQLITE_HOME` and Claude config roots are the
+only automatic locations. Background probes only mark a source stale and a
+visible Navigator performs a bounded metadata refresh. Harness fixtures and
+host receipts remain outside the product tree.
 
 ## Revisit trigger
 

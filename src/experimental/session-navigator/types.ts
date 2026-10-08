@@ -8,6 +8,7 @@ export type SessionNavigatorSortKey = 'activity' | 'created' | 'title';
 export interface AuthorizedSourceSetting {
   readonly provider: SessionNavigatorProviderId;
   readonly rootUri: string;
+  readonly stateRootUri?: string;
 }
 
 export interface NavigatorSourceSummary {

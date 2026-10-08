@@ -24,7 +24,6 @@ abstract class NativeSessionNavigatorProvider implements SessionNavigatorProvide
   public readonly provider: SessionNavigatorProviderId;
   public readonly rootUri: string;
   protected readonly rootPath: string;
-  protected readonly fallback: FileSessionNavigatorProvider;
 
   public constructor(setting: AuthorizedSourceSetting, sourceId: string) {
     const parsed = new URL(setting.rootUri);
@@ -33,7 +32,6 @@ abstract class NativeSessionNavigatorProvider implements SessionNavigatorProvide
     this.provider = setting.provider;
     this.rootUri = setting.rootUri;
     this.rootPath = fileURLToPath(parsed);
-    this.fallback = new FileSessionNavigatorProvider(setting, sourceId);
   }
 
   public abstract scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult>;
@@ -69,17 +67,27 @@ abstract class NativeSessionNavigatorProvider implements SessionNavigatorProvide
     });
   }
 
-  protected fallbackProbe(signal: AbortSignal): Promise<string> { return this.fallback.probe(signal); }
-  protected fallbackScan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult> { return this.fallback.scan(signal, budget); }
 }
 
 class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
+  private readonly stateRootPath: string;
+
+  public constructor(setting: AuthorizedSourceSetting, sourceId: string) {
+    super(setting, sourceId);
+    this.stateRootPath = setting.stateRootUri === undefined
+      ? this.rootPath
+      : fileURLToPath(new URL(setting.stateRootUri));
+  }
+
   public async probe(signal: AbortSignal): Promise<string> {
     throwIfAborted(signal);
-    const statePath = await findCodexStatePath(this.rootPath);
-    if (statePath === undefined) return this.fallbackProbe(signal);
+    const statePath = await findCodexStatePath(this.stateRootPath);
+    if (statePath === undefined) throw new Error('Codex state database was not found under the provider home.');
     const parts = [await fileFingerprint(statePath)];
-    const indexPath = join(dirname(statePath), 'session_index.jsonl');
+    const walPath = statePath + '-wal';
+    const wal = await stat(walPath).catch(() => undefined);
+    parts.push(wal === undefined ? 'wal:absent' : walPath + '\0' + wal.size + '\0' + wal.mtimeMs);
+    const indexPath = join(resolveCodexHome(this.rootPath), 'session_index.jsonl');
     if (existsSync(indexPath)) parts.push(await fileFingerprint(indexPath));
     const rolloutRoot = resolveRootPath(this.rootPath);
     for (const directory of ['sessions', 'archived_sessions']) {
@@ -95,16 +103,22 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
 
   public async scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult> {
     throwIfAborted(signal);
-    const statePath = await findCodexStatePath(this.rootPath);
-    if (statePath === undefined) return this.fallbackScan(signal, budget);
+    const fingerprint = await this.probe(signal);
+    const statePath = await findCodexStatePath(this.stateRootPath);
+    if (statePath === undefined) throw new Error('Codex state database was not found under the provider home.');
     const db = await openReadOnlyDatabase(statePath);
-    if (db === undefined) return this.fallbackScan(signal, budget);
+    if (db === undefined) throw new Error('Codex state database could not be opened read-only.');
     try {
-      const titles = await readCodexTitles(join(dirname(statePath), 'session_index.jsonl'), budget, signal);
-      const snapshot = readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles);
-      return { snapshot, fingerprint: await this.probe(signal) };
-    } catch {
-      return this.fallbackScan(signal, budget);
+      const titles = await readCodexTitles(join(resolveCodexHome(this.rootPath), 'session_index.jsonl'), budget, signal);
+      db.exec('BEGIN');
+      let snapshot: NavigatorSnapshot;
+      try {
+        snapshot = readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles);
+      } finally {
+        db.exec('ROLLBACK');
+      }
+      if (fingerprint !== await this.probe(signal)) throw new Error('Codex metadata changed during the scan. Refresh to retry.');
+      return { snapshot, fingerprint };
     } finally {
       db.close();
     }
@@ -198,7 +212,8 @@ function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string,
   if (!columns.has('id') || !columns.has('rollout_path')) throw new Error('Codex state database has no compatible thread table.');
   const selected = ['id', 'rollout_path', 'created_at', 'updated_at', 'created_at_ms', 'updated_at_ms', 'recency_at', 'recency_at_ms', 'title', 'name', 'preview', 'first_user_message', 'project_id', 'archived'].filter((name) => columns.has(name));
   const orderColumns = ['recency_at_ms', 'updated_at_ms', 'recency_at', 'updated_at', 'created_at_ms', 'created_at'].filter((name) => columns.has(name));
-  const order = orderColumns.length > 0 ? ' ORDER BY COALESCE(' + orderColumns.map(quoteIdentifier).join(', ') + ') DESC, ' + quoteIdentifier('id') + ' ASC' : ' ORDER BY ' + quoteIdentifier('id') + ' ASC';
+  const orderValue = orderColumns.length === 1 ? quoteIdentifier(orderColumns[0]!) : 'COALESCE(' + orderColumns.map(quoteIdentifier).join(', ') + ')';
+  const order = orderColumns.length > 0 ? ' ORDER BY ' + orderValue + ' DESC, ' + quoteIdentifier('id') + ' ASC' : ' ORDER BY ' + quoteIdentifier('id') + ' ASC';
   const rows = db.prepare('SELECT ' + selected.map(quoteIdentifier).join(', ') + ' FROM threads' + order + ' LIMIT ?').all(Math.max(1, budget.maxEntities * 4)) as Array<Record<string, unknown>>;
   const candidates = rows.filter((row) => typeof row.id === 'string' && typeof row.rollout_path === 'string' && isAuthorizedPath(rootPath, String(row.rollout_path)));
   const edges = readCodexEdges(db, budget.maxRelations);
@@ -288,7 +303,7 @@ async function openReadOnlyDatabase(path: string): Promise<DatabaseSync | undefi
 function tableColumns(db: DatabaseSync, table: string): string[] { return (db.prepare('PRAGMA table_info(' + table + ')').all() as Array<{ name?: string }>).flatMap((row) => typeof row.name === 'string' ? [row.name] : []); }
 function tableExists(db: DatabaseSync, table: string): boolean { return db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(table) !== undefined; }
 function quoteIdentifier(value: string): string { return '"' + value.replaceAll('"', '""') + '"'; }
-async function fileFingerprint(path: string): Promise<string> { const info = await stat(path); return path + '\0' + info.size + '\0' + info.mtimeMs; }
+async function fileFingerprint(path: string): Promise<string> { const info = await stat(path); return path + '\0' + info.dev + '\0' + info.ino + '\0' + info.size + '\0' + info.mtimeMs; }
 
 function isAuthorizedPath(rootPath: string, candidate: string): boolean {
   const root = canonicalPath(resolveRootPath(rootPath));
@@ -305,6 +320,11 @@ function canonicalPath(value: string): string {
 function resolveRootPath(rootPath: string): string {
   if (/state(?:_\d+)?\.sqlite$/iu.test(basename(rootPath))) return dirname(rootPath);
   try { return statSync(rootPath).isFile() ? dirname(rootPath) : rootPath; } catch { return rootPath; }
+}
+
+function resolveCodexHome(rootPath: string): string {
+  const root = resolveRootPath(rootPath);
+  return ['sessions', 'archived_sessions'].includes(basename(root).toLowerCase()) ? dirname(root) : root;
 }
 
 function stripLongPathPrefix(value: string): string {

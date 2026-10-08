@@ -14,9 +14,10 @@ surface must not turn private producer layouts into a new product authority.
 
 - The navigator is disabled by default and performs no provider scan while
   disabled or before an explicit user action.
-- Sources are explicit `file://` roots stored in user settings; source paths,
-  bodies, prompts, credentials, and arbitrary record payloads are not copied to
-  the catalog or returned in tree labels.
+- Standard Codex and Claude roots are detected only after opt-in from their
+  provider-owned environment paths; custom `file://` roots remain explicit.
+  Source paths, bodies, prompts, credentials, and arbitrary record payloads are
+  not copied to the catalog or returned in tree labels.
 - Catalog rows are a derived, versioned projection. Provider files remain the
   source of truth and a failed or partial scan never replaces the last complete
   snapshot.
@@ -38,8 +39,9 @@ probes, receipts, and measurements.
 
 ## Alternatives
 
-1. Scan Codex or Claude directories during extension activation: rejected
-   because it adds startup I/O and silently discloses private state.
+1. Scan arbitrary Codex or Claude files during extension activation: rejected
+   because it adds startup I/O and silently discloses private state. The
+   accepted path detects only standard provider roots after Navigator opt-in.
 2. Put the navigator in the editor Webview or bottom Panel: rejected because a
    native TreeView gives the topology an independent vertical viewport and
    keeps the editor projection separate from discovery.
@@ -68,13 +70,14 @@ focus, visibility changes, and reveal into a synthetic fixture.
 Implement a dormant Activity Bar container with a native TreeView. The view is
 created lazily and only becomes visible when
 `jsonlView.sessionNavigator.enabled` is true. Five explicit commands cover
-enable, disable, add source, remove source, and refresh. Refresh is the only
-operation that scans sources; a bounded background probe may mark “update
-available” while the view is visible, but it never replaces rows or reorders
-the tree without an explicit refresh.
+enable, disable, add source, remove source, and refresh. A bounded initial
+refresh runs when the opted-in view becomes visible; later refreshes remain
+explicit. A background probe may mark “update available”, but it never replaces
+rows or reorders the tree without a refresh.
 
-Persist the authorized source list in `jsonlView.sessionNavigator.sources` in
-the user's VS Code settings. Store only normalized metadata, relation edges,
+Persist the additional custom source list in `jsonlView.sessionNavigator.sources`
+in the user's VS Code settings. Standard provider roots are derived at runtime;
+store only normalized metadata, relation edges,
 generation, and relative locations in a versioned SQLite sidecar under
 `globalStorageUri`. Use Node's built-in `node:sqlite` API, WAL for the sidecar,
 foreign keys, a busy timeout, and a transaction per complete source snapshot.
@@ -83,7 +86,8 @@ authorized source, rejects a changed catalog fingerprint, validates that the
 resolved path remains inside the configured root and is a regular file, then
 opens the existing custom editor.
 
-The generic JSONL provider remains the compatibility fallback. Provider-native
+The generic JSONL provider remains an explicit compatibility provider.
+Provider-native
 Codex and Claude adapters now build one session entity per provider session
 file or state row, retain parent/subagent/orphan metadata, and keep activity
 timestamps separate from source folder placement. These adapters are still
@@ -110,11 +114,12 @@ authorize access to a user's local history.
 ## Boundary
 
 This phase adds a product integration seam and a disabled-by-default read-only
-TreeView. It does not add private source fixtures, automatic root discovery,
+TreeView. It does not add private source fixtures, arbitrary root traversal,
 recursive filesystem watchers, source mutation, staged edits, MCP transport,
 telemetry, network access, or release authorization. Provider scans occur only
-after explicit authorization and refresh. The extension remains usable when the
-catalog is unavailable, corrupt, stale, or disabled.
+after Navigator opt-in and a bounded visible refresh; custom providers still
+require explicit authorization. The extension remains usable when the catalog
+is unavailable, corrupt, stale, or disabled.
 
 ## Revisit trigger
 

@@ -3,7 +3,7 @@ import { lstat } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { CatalogStore } from './catalog-store';
 import { createSessionNavigatorProvider } from './file-provider';
-import { parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
+import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import { RevealIntentRegistry } from './reveal-intents';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorSortKey } from './types';
 
@@ -11,6 +11,7 @@ const SOURCES_SETTING = 'sessionNavigator.sources';
 const ENABLED_SETTING = 'sessionNavigator.enabled';
 const SORT_SETTING = 'sessionNavigator.sort';
 const PROBE_INTERVAL_MS = 30_000;
+const EXCLUDED_SOURCES_KEY = 'sessionNavigator.excludedDefaultSources';
 
 interface SourceTreeNode {
   readonly nodeKind: 'source';
@@ -30,6 +31,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   readonly #changed = new vscode.EventEmitter<SessionNavigatorTreeNode | undefined | null | void>();
   readonly #providers = new Map<string, SessionNavigatorProvider>();
   #store: CatalogStore | undefined;
+  #openingStore: Promise<CatalogStore> | undefined;
+  #refreshing: Promise<void> | undefined;
+  #scanController: AbortController | undefined;
+  #refreshAgain = false;
+  #initialized = false;
   #treeView: vscode.TreeView<SessionNavigatorTreeNode> | undefined;
   #probeTimer: NodeJS.Timeout | undefined;
   #disposed = false;
@@ -65,7 +71,15 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.revealSessionNode', (node: EntityTreeNode) => this.reveal(node)),
       this.#treeView.onDidChangeVisibility((event) => this.handleVisibility(event.visible)),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration('jsonlView.sessionNavigator')) this.#changed.fire(undefined);
+        if (event.affectsConfiguration('jsonlView.sessionNavigator')) {
+          if (event.affectsConfiguration('jsonlView.' + SOURCES_SETTING) || event.affectsConfiguration('jsonlView.' + ENABLED_SETTING)) {
+            this.#scanController?.abort();
+            this.#refreshAgain = true;
+            this.#initialized = false;
+            this.handleVisibility(this.#treeView?.visible ?? false);
+          }
+          this.#changed.fire(undefined);
+        }
       }),
     ];
     this.handleVisibility(this.#treeView.visible);
@@ -102,7 +116,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   public async getChildren(node?: SessionNavigatorTreeNode): Promise<SessionNavigatorTreeNode[]> {
     if (this.#disposed || !this.isEnabled()) return [];
     const store = await this.ensureStore();
+    if (this.#disposed || !this.isEnabled()) return [];
     if (node === undefined) {
+      store.syncSources(this.settings());
       return store.listSources().map((source) => ({ nodeKind: 'source', source } satisfies SourceTreeNode));
     }
     if (node.nodeKind === 'source') {
@@ -113,16 +129,37 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
   public async refresh(): Promise<void> {
     if (this.#disposed || !this.isEnabled()) return;
+    if (this.#refreshing !== undefined) return this.#refreshing;
+    this.#refreshing = this.runRefreshes();
+    try { await this.#refreshing; }
+    finally { this.#refreshing = undefined; }
+  }
+
+  private async runRefreshes(): Promise<void> {
+    do {
+      this.#refreshAgain = false;
+      const controller = new AbortController();
+      this.#scanController = controller;
+      try { await this.refreshSources(controller.signal); }
+      finally { if (this.#scanController === controller) this.#scanController = undefined; }
+    } while (this.#refreshAgain && !this.#disposed && this.isEnabled() && this.#treeView?.visible);
+  }
+
+  private async refreshSources(signal: AbortSignal): Promise<void> {
     try {
       const store = await this.ensureStore();
+      if (signal.aborted || this.#disposed || !this.isEnabled()) return;
       const settings = this.settings();
       store.syncSources(settings);
       const failures: string[] = [];
       for (const setting of settings) {
+        if (signal.aborted || this.#disposed || !this.isEnabled()) return;
         const sourceId = sourceIdFor(setting);
         try {
           const provider = this.providerFor(setting);
-          const scan = await provider.scan(new AbortController().signal, DEFAULT_SESSION_NAVIGATOR_BUDGET);
+          const scan = await provider.scan(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET);
+          if (signal.aborted || this.#disposed || !this.isEnabled()) return;
+          if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) continue;
           const snapshot = {
             ...scan.snapshot,
             entities: scan.snapshot.entities.map((entity) => ({ ...entity, sourceId })),
@@ -130,6 +167,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
           };
           store.replaceSnapshot(sourceId, snapshot, scan.fingerprint);
         } catch (error) {
+          if (signal.aborted || this.#disposed) return;
           failures.push(sourceLabelFor(setting) + ': ' + (error instanceof Error ? error.message : String(error)));
         }
       }
@@ -138,6 +176,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       }
       this.#changed.fire(undefined);
     } catch (error) {
+      if (signal.aborted || this.#disposed) return;
       void vscode.window.showErrorMessage('Session Navigator could not refresh: ' + (error instanceof Error ? error.message : String(error)));
     }
   }
@@ -201,6 +240,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
   public dispose(): void {
     this.#disposed = true;
+    this.#scanController?.abort();
     if (this.#probeTimer !== undefined) clearInterval(this.#probeTimer);
     this.#probeTimer = undefined;
     this.#store?.close();
@@ -211,15 +251,27 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
   private async ensureStore(): Promise<CatalogStore> {
     if (this.#store !== undefined) return this.#store;
+    if (this.#openingStore !== undefined) return this.#openingStore;
+    this.#openingStore = this.openStore();
+    try { return await this.#openingStore; }
+    finally { this.#openingStore = undefined; }
+  }
+
+  private async openStore(): Promise<CatalogStore> {
     const directory = vscode.Uri.joinPath(this.#context.globalStorageUri, 'session-navigator');
     await vscode.workspace.fs.createDirectory(directory);
-    this.#store = await CatalogStore.open(vscode.Uri.joinPath(directory, 'catalog.sqlite').fsPath);
-    this.#store.syncSources(this.settings());
+    const store = await CatalogStore.open(vscode.Uri.joinPath(directory, 'catalog.sqlite').fsPath);
+    if (this.#disposed) { store.close(); throw new Error('Session Navigator is disposed.'); }
+    this.#store = store;
+    if (this.isEnabled()) this.#store.syncSources(this.settings());
     return this.#store;
   }
 
   private settings(): readonly AuthorizedSourceSetting[] {
-    return parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
+    if (!this.isEnabled()) return [];
+    const configured = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
+    const excluded = new Set(this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []));
+    return mergeSourceSettings(configured).filter((setting) => !excluded.has(sourceIdFor(setting)));
   }
 
   private isEnabled(): boolean {
@@ -246,6 +298,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       { placeHolder: 'Choose the source format to authorize' },
     );
     if (provider === undefined) return;
+
+    const detected = discoverDefaultSources().find((setting) => setting.provider === provider.value);
+    if (detected !== undefined) {
+      await this.authorizeSourceSetting(detected);
+      return;
+    }
+
     const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: true, canSelectMany: false, openLabel: 'Authorize source' });
     const uri = picked?.[0];
     if (uri === undefined) return;
@@ -273,11 +332,20 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   }
 
   private async authorizeSourceUri(provider: AuthorizedSourceSetting['provider'], uri: vscode.Uri): Promise<void> {
-    const current = [...this.settings()];
-    const next = parseAuthorizedSources([...current, { provider, rootUri: uri.toString(true) }]);
+    await this.authorizeSourceSetting({ provider, rootUri: uri.toString(true) });
+  }
+
+  private async authorizeSourceSetting(setting: AuthorizedSourceSetting): Promise<void> {
+    const sourceId = sourceIdFor(setting);
+    const excluded = this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []);
+    await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded.filter((id) => id !== sourceId));
+    const current = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
+    const isDefault = discoverDefaultSources().some((candidate) => sourceIdFor(candidate) === sourceId);
+    const next = parseAuthorizedSources(isDefault ? current : [...current, setting]);
     await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
     await this.setEnabled(true);
     this.#changed.fire(undefined);
+    await this.refresh();
   }
 
   private async handleDrop(target: SessionNavigatorTreeNode | undefined, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
@@ -316,19 +384,35 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   }
 
   private async removeSource(node?: SessionNavigatorTreeNode): Promise<void> {
-    const current = [...this.settings()];
+    const current = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
     const sourceId = node?.nodeKind === 'source' ? node.source.sourceId : node?.nodeKind === 'entity' ? node.entity.sourceId : undefined;
     if (sourceId === undefined) return;
+    const removed = this.settings().find((setting) => sourceIdFor(setting) === sourceId);
+    const sameDefault = removed === undefined ? undefined : discoverDefaultSources().find((setting) =>
+      sourceIdFor({ provider: setting.provider, rootUri: setting.rootUri }) === sourceIdFor({ provider: removed.provider, rootUri: removed.rootUri }),
+    );
+    this.#scanController?.abort();
+    const excluded = this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []);
+    await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, [...new Set([...excluded, sourceId, ...(sameDefault === undefined ? [] : [sourceIdFor(sameDefault)])])]);
     const next = current.filter((setting) => sourceIdFor(setting) !== sourceId);
     await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
+    this.#store?.syncSources(this.settings());
+    this.#providers.delete(sourceId);
     this.#changed.fire(undefined);
   }
 
   private handleVisibility(visible: boolean): void {
     if (visible && this.isEnabled()) {
       if (this.#probeTimer === undefined) this.#probeTimer = setInterval(() => { void this.probeVisibleSources(); }, PROBE_INTERVAL_MS);
-    } else if (this.#probeTimer !== undefined) {
-      clearInterval(this.#probeTimer);
+      if (!this.#initialized) {
+        this.#initialized = true;
+        if (this.#scanController?.signal.aborted) this.#refreshAgain = true;
+        void this.refresh();
+      }
+    } else {
+      if (this.#scanController !== undefined) this.#initialized = false;
+      this.#scanController?.abort();
+      if (this.#probeTimer !== undefined) clearInterval(this.#probeTimer);
       this.#probeTimer = undefined;
     }
   }

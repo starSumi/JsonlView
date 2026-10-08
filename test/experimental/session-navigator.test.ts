@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CatalogStore, createSessionNavigatorProvider, parseAuthorizedSources, RevealIntentRegistry, sourceIdFor } from '../../src/experimental';
+import { CatalogStore, createSessionNavigatorProvider, discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, RevealIntentRegistry, sourceIdFor } from '../../src/experimental';
 import type { AuthorizedSourceSetting } from '../../src/experimental';
 
 const cleanup: string[] = [];
@@ -52,6 +52,49 @@ describe('session navigator source boundary', () => {
     expect(JSON.stringify(settings)).not.toContain('private');
   });
 
+  it('discovers provider-owned default roots from their standard environment paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-defaults-'));
+    cleanup.push(root);
+    const codexHome = join(root, 'codex-home');
+    const codexStateHome = join(root, 'codex-state');
+    const claudeHome = join(root, 'claude-home');
+    await import('node:fs/promises').then(async ({ mkdir }) => {
+      await mkdir(join(codexHome, 'sessions'), { recursive: true });
+      await mkdir(codexStateHome, { recursive: true });
+      await mkdir(join(claudeHome, 'projects'), { recursive: true });
+    });
+    await writeFile(join(codexStateHome, 'state_5.sqlite'), '', 'utf8');
+
+    const discovered = discoverDefaultSources({
+      env: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: codexStateHome, CLAUDE_CONFIG_DIR: claudeHome },
+      homeDirectory: join(root, 'unused-home'),
+    });
+    expect(discovered.map((setting) => setting.provider)).toEqual(['codex', 'claude']);
+    expect(discovered.map((setting) => setting.rootUri)).toEqual([
+      pathToFileURL(codexHome).toString(),
+      pathToFileURL(claudeHome).toString(),
+    ]);
+    expect(discovered[0]?.stateRootUri).toBe(pathToFileURL(codexStateHome).toString());
+    const merged = mergeSourceSettings([
+      { provider: 'codex', rootUri: pathToFileURL(join(codexHome, 'sessions')).toString() },
+    ], discovered);
+    expect(merged.filter((setting) => setting.provider === 'codex')).toEqual([discovered[0]]);
+    const override = { provider: 'codex' as const, rootUri: discovered[0]!.rootUri, stateRootUri: pathToFileURL(join(root, 'custom-state')).toString() };
+    expect(mergeSourceSettings([override], discovered)[0]).toEqual(override);
+    expect(sourceIdFor({ provider: 'codex', rootUri: override.rootUri })).toBe(sourceIdFor({ provider: 'codex', rootUri: override.rootUri, stateRootUri: override.rootUri }));
+    expect(parseAuthorizedSources([{ ...override, stateRootUri: 'https://invalid.example' }])).toEqual([]);
+    const missingState = join(root, 'missing-state');
+    expect(discoverDefaultSources({ env: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: missingState }, homeDirectory: root })[0]?.stateRootUri).toBe(pathToFileURL(missingState).toString());
+  });
+
+  it('does not fall back to rollout rows when Codex metadata is absent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-no-state-'));
+    cleanup.push(root);
+    await writeFile(join(root, 'rollout.jsonl'), JSON.stringify({ type: 'event_msg', id: 'not-a-session' }));
+    const provider = createSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(root).toString() });
+    await expect(provider.scan(new AbortController().signal, { maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000 })).rejects.toThrow('state database was not found');
+  });
+
   it('scans bounded metadata and preserves locations without exposing message bodies', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-navigator-'));
     cleanup.push(root);
@@ -61,7 +104,7 @@ describe('session navigator source boundary', () => {
       JSON.stringify({ type: 'subagent', id: 'agent-1', parentId: 'session-1', status: 'ready', message: { text: 'private body' } }),
       JSON.stringify({ type: 'event_msg', id: 'event-1', parentId: 'agent-1', summary: 'tool completed' }),
     ].join('\n'), 'utf8');
-    const setting: AuthorizedSourceSetting = { provider: 'codex', rootUri: pathToFileURL(root).toString() };
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
     const provider = createSessionNavigatorProvider(setting);
     const result = await provider.scan(new AbortController().signal, {
       maxEntities: 20, maxRelations: 20, maxRecords: 20, maxFiles: 4, maxBytes: 1_000_000, maxMilliseconds: 2_000,
@@ -170,6 +213,38 @@ describe('session navigator source boundary', () => {
       maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
     });
     expect(stateFileResult.snapshot.entities).toEqual(expect.arrayContaining([expect.objectContaining({ nativeId: 'child-1', relationship: 'subagent' })]));
+
+    const stateHome = join(root, 'separate-state');
+    await mkdir(stateHome);
+    await copyFile(join(root, 'state_5.sqlite'), join(stateHome, 'state_5.sqlite'));
+    await writeFile(join(root, 'session_index.jsonl'), JSON.stringify({ thread_id: 'child-1', thread_name: 'Title in provider home' }));
+    const separated = createSessionNavigatorProvider({ ...setting, stateRootUri: pathToFileURL(stateHome).toString() });
+    const separatedResult = await separated.scan(new AbortController().signal, { maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000 });
+    expect(separatedResult.snapshot.entities).toEqual(expect.arrayContaining([expect.objectContaining({ nativeId: 'child-1', vendorTitle: 'Title in provider home' })]));
+    const legacy = createSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(sessions).toString() });
+    const legacyResult = await legacy.scan(new AbortController().signal, { maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000 });
+    expect(legacyResult.snapshot.entities).toEqual(expect.arrayContaining([expect.objectContaining({ nativeId: 'child-1', vendorTitle: 'Title in provider home' })]));
+  });
+
+  it('detects WAL-only commits and reads committed metadata without checkpointing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-wal-'));
+    cleanup.push(root);
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(join(root, 'state_5.sqlite'));
+    try {
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER, title TEXT);');
+      db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?)').run('s1', join(root, 's1.jsonl'), 1000, 'Before');
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      const provider = createSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(root).toString() });
+      const before = await provider.probe(new AbortController().signal);
+      const mainBytes = await readFile(join(root, 'state_5.sqlite'));
+      db.exec("UPDATE threads SET title='After', updated_at=2000");
+      expect(await readFile(join(root, 'state_5.sqlite'))).toEqual(mainBytes);
+      expect(await provider.probe(new AbortController().signal)).not.toBe(before);
+      const snapshot = await provider.scan(new AbortController().signal, { maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000 });
+      expect(snapshot.snapshot.entities[0]?.vendorTitle).toBe('After');
+      expect(await readFile(join(root, 'state_5.sqlite'))).toEqual(mainBytes);
+    } finally { db.close(); }
   });
 
   it('cancels a scan before it reads a source', async () => {
