@@ -877,6 +877,52 @@ function claudeMessageSections(
 }
 
 /**
+ * Claude control records such as model and MCP attachments carry their
+ * human-readable payload outside `message.content`. Keep these paths explicit
+ * so arbitrary attachment objects remain available in Tree/Raw without being
+ * flattened into an unbounded transcript.
+ */
+function claudeAttachmentSections(
+  payload: EventObject,
+  profile?: AgentRowProjection,
+): EventPresentationSection[] {
+  if (profile?.profileId !== 'claude-code-session' || valueLabel(payload.type)?.toLowerCase() !== 'attachment') return [];
+  const sections: EventPresentationSection[] = [];
+  const attachment = objectOf(payload.attachment);
+  if (attachment) {
+    addTextCandidate(sections, 'Attachment text', own(attachment, 'text'));
+    addTextCandidate(sections, 'Added blocks', own(attachment, 'addedBlocks'));
+    addTextCandidate(sections, 'Added lines', own(attachment, 'addedLines'));
+    addTextCandidate(sections, 'Removed names', own(attachment, 'removedNames'));
+    addRenderedClaudeContent(sections, own(attachment, 'rendered'));
+  }
+  addRenderedClaudeContent(sections, own(payload, 'rendered'));
+  return sections;
+}
+
+function addRenderedClaudeContent(
+  sections: EventPresentationSection[],
+  value: unknown,
+): void {
+  if (!Array.isArray(value)) return;
+  const visible = Math.min(value.length, 32);
+  for (let index = 0; index < visible; index += 1) {
+    const rendered = objectOf(value[index]);
+    const content = rendered ? (own(rendered, 'content') ?? own(rendered, 'text')) : value[index];
+    addTextCandidate(sections, visible === 1 ? 'Rendered content' : `Rendered content ${String(index + 1)}`, content);
+  }
+  if (value.length > visible) {
+    sections.push({
+      title: 'Additional rendered content',
+      code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
+      truncated: true,
+      previewOnly: true,
+      language: 'json',
+    });
+  }
+}
+
+/**
  * These are deliberately explicit Codex-owned paths. A generic `text` key is
  * not enough evidence to turn arbitrary application data into Markdown.
  */
@@ -1192,7 +1238,10 @@ export function buildAgentEventPresentation(
     ?? plainText
     ?? payload.lastPrompt
     ?? payload.prompt;
-  const claudeSections = claudeMessageSections(payload, profile);
+  const claudeSections = [
+    ...claudeMessageSections(payload, profile),
+    ...claudeAttachmentSections(payload, profile),
+  ];
   const messageText = claudeSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
   const isPrompt = lowerKind === 'last-prompt' || lowerKind === 'prompt';

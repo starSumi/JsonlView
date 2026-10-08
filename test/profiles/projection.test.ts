@@ -344,6 +344,35 @@ describe('Agent profile projection', () => {
     expect(rows[8]).toMatchObject({ actor: 'system', summary: 'Progress: hook_progress' });
   });
 
+  it('projects Claude attachment text and bounded MCP delta fields', () => {
+    const registry = new AgentProfileRegistry();
+    const model = registry.project('claude-code-session', { value: {
+      type: 'attachment',
+      attachment: {
+        type: 'mcp_instructions_delta',
+        addedBlocks: ['# Server instructions', 'Use the read tool'],
+        removedNames: ['old_server'],
+      },
+      rendered: [{ content: 'Rendered attachment content' }],
+      sessionId: 'session-redacted',
+    } }, context);
+
+    expect(model).toMatchObject({
+      eventKind: 'checkpoint',
+      summary: expect.stringContaining('# Server instructions'),
+      derivedFields: {
+        attachmentType: 'mcp_instructions_delta',
+        addedBlocks: '# Server instructions Use the read tool',
+        removedNames: 'old_server',
+        renderedContent: 'Rendered attachment content',
+      },
+    });
+    expect(model.evidence).toEqual(expect.arrayContaining([
+      { field: 'addedBlocks', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'addedBlocks' }] } },
+      { field: 'renderedContent', path: { tokens: [{ kind: 'key', value: 'rendered' }] } },
+    ]));
+  });
+
   it('uses Claude leafUuid as identity for control records that have no uuid', () => {
     const registry = new AgentProfileRegistry();
     const values = [

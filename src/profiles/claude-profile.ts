@@ -248,9 +248,24 @@ export class ClaudeCodeProfile implements AgentProfile {
         case 'attachment': {
           const attachment = objectAt(value, 'attachment');
           const attachmentType = stringAt(attachment, 'type');
-          projection = createProjection(this.id, 'checkpoint', boundedSummary(attachment ?? value, 'Attachment'), typePath, attachment !== undefined ? keyPath('attachment') : keyPath());
+          const attachmentProjection = projectClaudeAttachment(value, attachment);
+          const semanticSummary = attachmentProjection.attachmentText
+            ?? attachmentProjection.addedBlocks
+            ?? attachmentProjection.renderedContent
+            ?? attachmentProjection.removedNames;
+          projection = createProjection(
+            this.id,
+            'checkpoint',
+            boundedSummary(semanticSummary ?? attachment ?? value, 'Attachment'),
+            typePath,
+            attachment !== undefined ? keyPath('attachment') : keyPath(),
+          );
           setActor(projection, 'system', keyPath('type'));
           if (attachmentType) setDerivedField(projection, 'attachmentType', attachmentType, keyPath('attachment', 'type'));
+          if (attachmentProjection.attachmentText) setDerivedField(projection, 'attachmentText', attachmentProjection.attachmentText, keyPath('attachment', 'text'));
+          if (attachmentProjection.renderedContent) setDerivedField(projection, 'renderedContent', attachmentProjection.renderedContent, keyPath('rendered'));
+          if (attachmentProjection.addedBlocks) setDerivedField(projection, 'addedBlocks', attachmentProjection.addedBlocks, keyPath('attachment', 'addedBlocks'));
+          if (attachmentProjection.removedNames) setDerivedField(projection, 'removedNames', attachmentProjection.removedNames, keyPath('attachment', 'removedNames'));
           break;
         }
         case 'file-history-snapshot':
@@ -300,4 +315,62 @@ function findBlock(blocks: unknown[], type: string): { value: Record<string, unk
     }
   }
   return undefined;
+}
+
+interface ClaudeAttachmentProjection {
+  attachmentText?: string;
+  renderedContent?: string;
+  addedBlocks?: string;
+  removedNames?: string;
+}
+
+/**
+ * Claude stores several useful attachment messages outside `message.content`.
+ * Keep this projection deliberately allow-listed and bounded: the source JSONL
+ * remains authoritative and the complete values stay available through Raw.
+ */
+function projectClaudeAttachment(
+  value: Record<string, unknown>,
+  attachment: Record<string, unknown> | undefined,
+): ClaudeAttachmentProjection {
+  const result: ClaudeAttachmentProjection = {};
+  if (attachment !== undefined) {
+    const attachmentText = boundedClaudeText(attachment.text);
+    const addedBlocks = boundedClaudeText(attachment.addedBlocks);
+    const removedNames = boundedClaudeText(attachment.removedNames);
+    if (attachmentText !== undefined) result.attachmentText = attachmentText;
+    if (addedBlocks !== undefined) result.addedBlocks = addedBlocks;
+    if (removedNames !== undefined) result.removedNames = removedNames;
+  }
+  const renderedContent = boundedClaudeText(value.rendered);
+  if (renderedContent !== undefined) result.renderedContent = renderedContent;
+  return result;
+}
+
+function boundedClaudeText(value: unknown): string | undefined {
+  const seen = new WeakSet<object>();
+  const visit = (current: unknown, depth: number): string | undefined => {
+    if (current === undefined || current === null || depth > 4) return undefined;
+    if (typeof current === 'string') return current.length > 8_000 ? current.slice(0, 8_000) : current;
+    if (typeof current !== 'object') return undefined;
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      const parts: string[] = [];
+      for (const item of current.slice(0, 32)) {
+        const text = visit(item, depth + 1);
+        if (text) parts.push(text);
+        if (parts.join('\n').length >= 8_000) break;
+      }
+      return parts.length > 0 ? parts.join('\n').slice(0, 8_000) : undefined;
+    }
+    const object = current as Record<string, unknown>;
+    for (const key of ['text', 'content', 'addedBlocks', 'addedLines', 'removedNames']) {
+      const text = visit(object[key], depth + 1);
+      if (text) return text;
+    }
+    return undefined;
+  };
+  const text = visit(value, 0);
+  return text && text.trim().length > 0 ? text : undefined;
 }

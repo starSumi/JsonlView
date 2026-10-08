@@ -854,6 +854,30 @@ describe('structured agent event presentation', () => {
     expect(markup).toContain('Tool result');
   });
 
+  it('renders Claude attachment text, rendered content, and MCP added blocks', () => {
+    const value = {
+      type: 'attachment',
+      attachment: {
+        type: 'mcp_instructions_delta',
+        text: 'Model attachment text',
+        addedBlocks: ['# MCP Server Instructions', 'Use the tool safely'],
+      },
+      rendered: [{ content: 'Rendered attachment text' }],
+    };
+    const profile = {
+      profileId: 'claude-code-session', eventKind: 'checkpoint' as const, actor: 'system' as const,
+      summary: 'Attachment', evidence: [], confidence: 'source' as const,
+    };
+
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Attachment text', text: 'Model attachment text' }),
+      expect.objectContaining({ title: 'Added blocks', text: '# MCP Server Instructions\nUse the tool safely' }),
+      expect.objectContaining({ title: 'Rendered content', text: 'Rendered attachment text' }),
+    ]));
+    expect(model?.sections.some((section) => section.title === 'Payload')).toBe(false);
+  });
+
   it('keeps an empty Claude timeline text field useful through its detail value', () => {
     const model = buildAgentEventPresentation(
       { at: '2026-08-06T10:33:35.710Z', state: 'working', detail: 'Indexing source', text: '' },
