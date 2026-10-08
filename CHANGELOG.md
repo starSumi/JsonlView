@@ -8,6 +8,8 @@
   names and Claude subagent layouts, with concise tree labels and one sort menu.
 - Add a local source form for files, folders, drops, and bounded JSONL paste
   previews. Pasted content stays temporary and never changes provider data.
+- Keep a dashed, keyboard-accessible source drop target above the session list,
+  with a file-picker fallback and the same explicit source authorization.
 - Detect standard Agent homes after Navigator opt-in, keep removed sources
   excluded, and show sessions instead of falling back to raw rollout rows.
   Codex supports a separate SQLite home and detects WAL-only metadata updates.

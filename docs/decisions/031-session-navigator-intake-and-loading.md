@@ -61,8 +61,10 @@ The opt-in navigator also places a compact Webview View before the native tree.
 It keeps a dashed local-file drop target and a visible file-picker button above
 the session list. The same host-side URI validation and explicit source
 authorization apply to both entry points; the persistent view does not read the
-clipboard or stream file contents through the Webview. The richer panel remains
-the explicit multiline-paste surface.
+clipboard or stream file contents through the Webview. It accepts VS Code
+Explorer URI drops; when the host does not expose a dropped file as a URI,
+clicking the target opens the file picker. The richer panel remains the explicit
+multiline-paste surface.
 
 The intake form has a host-enforced 1 MiB / 10,000 record text limit. Larger
 existing files use the existing bounded reader without copying file bodies
