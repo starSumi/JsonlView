@@ -105,6 +105,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "jsonlView.sessionNavigator.loadMore",
+        "title": "JsonlView: Load More Sessions",
+        "icon": "$(fold-down)"
+      },
+      {
         "command": "jsonlView.sessionNavigator.refresh",
         "title": "JsonlView: Refresh Session Navigator",
         "icon": "$(refresh)"
@@ -155,13 +160,6 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "jsonlView.sessionNavigator",
-        "contents": "Browse local agent sessions, or add your own JSONL.\n[Add Source](command:jsonlView.sessionNavigator.addSource)\n[Connect Local Agent](command:jsonlView.sessionNavigator.authorizeAgent)",
-        "when": "config.jsonlView.sessionNavigator.enabled"
-      }
-    ],
     "menus": {
       "view/title": [
         {
@@ -230,6 +228,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "jsonlView.sessionNavigator.loadMore",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source.partial",
+          "group": "inline@0"
+        },
         {
           "command": "jsonlView.sessionNavigator.removeSource",
           "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source",

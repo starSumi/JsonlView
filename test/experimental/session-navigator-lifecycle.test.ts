@@ -172,7 +172,7 @@ describe('Session Navigator host lifecycle', () => {
     complete(snapshot);
     await refresh;
     const [loaded] = await tree.getChildren();
-    expect(tree.getTreeItem(loaded!).description).toBe('1 loaded');
+    expect(tree.getTreeItem(loaded!).description).toBe('1 session');
     expect(host.view.message).not.toBe('Loading sessions…');
   });
 
@@ -187,7 +187,7 @@ describe('Session Navigator host lifecycle', () => {
     host.view.visible = true; host.visibility!({ visible: true });
     await tree.refresh();
     const [loaded] = await tree.getChildren();
-    expect(tree.getTreeItem(loaded!).description).toBe('1 loaded');
+    expect(tree.getTreeItem(loaded!).description).toBe('1 session');
     expect(host.scan).toHaveBeenCalledTimes(2);
   });
 
@@ -195,7 +195,7 @@ describe('Session Navigator host lifecycle', () => {
     host.scan.mockResolvedValueOnce({ ...snapshot, snapshot: { ...snapshot.snapshot, truncated: true, truncatedReason: 'entity_limit' } });
     await tree.refresh();
     const [source] = await tree.getChildren();
-    expect(tree.getTreeItem(source!).description).toBe('1 loaded · partial');
+    expect(tree.getTreeItem(source!).description).toBe('1 session · partial index');
     expect(host.progress).toHaveBeenCalledWith({ location: { viewId: 'jsonlView.sessionNavigator' } }, expect.any(Function));
   });
 

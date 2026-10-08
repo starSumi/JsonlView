@@ -53,8 +53,9 @@ its warning state or by reopening the view.
 Add Source opens a lazy, theme-aware WebviewPanel for file/folder selection,
 dropping sources, and explicit multiline JSONL paste. A TreeView cannot expose
 this multiline/drop-zone form, so it remains the navigation surface instead of
-becoming a custom tree renderer. Empty-tree guidance uses viewsWelcome, not an
-action disguised as a data node. OS drops enumerate DataTransfer items; the
+becoming a custom tree renderer. The persistent source-drop view supplies empty
+state guidance; the native tree does not add an action disguised as a data node.
+OS drops enumerate DataTransfer items; the
 `files` MIME wildcard is not treated as a guaranteed item key.
 
 The opt-in navigator also places a compact Webview View before the native tree.
@@ -70,7 +71,9 @@ The intake form has a host-enforced 1 MiB / 10,000 record text limit. Larger
 existing files use the existing bounded reader without copying file bodies
 through the Webview. Temporary previews are separately owned, capped, and
 cleaned by their controller. Cancellation discards pending intake work. The form
-uses no remote content, source-code execution, or automatic clipboard reads.
+uses no remote content, source-code execution, or automatic clipboard reads. The
+persistent source-drop view is the single always-visible intake entry point; the
+native tree does not repeat this copy through `viewsWelcome`.
 
 ## Alternatives and deferred work
 

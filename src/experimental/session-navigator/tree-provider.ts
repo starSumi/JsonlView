@@ -69,6 +69,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.sessionNavigator.addSource', () => this.addSource()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.authorizeAgent', () => this.authorizeAgent()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.removeSource', (node?: SessionNavigatorTreeNode) => this.removeSource(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.loadMore', (node?: SessionNavigatorTreeNode) => this.loadMore(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.enable', () => this.setEnabled(true)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.disable', () => this.setEnabled(false)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.open', () => this.open()),
@@ -104,15 +105,16 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       item.id = `source:${node.source.sourceId}`;
       item.contextValue = 'jsonlView.sessionNavigator.source';
       item.description = status?.phase === 'loading' ? (node.source.capturedAt === undefined ? 'Loading…' : 'Refreshing…')
-        : status?.phase === 'error' ? (node.source.capturedAt === undefined ? 'Could not load · Retry' : String(node.source.entityCount) + ' cached · Retry')
+        : status?.phase === 'error' ? (node.source.capturedAt === undefined ? 'Could not load · Retry' : String(node.source.entityCount) + ' cached session' + (node.source.entityCount === 1 ? '' : 's') + ' · Retry')
         : node.source.capturedAt === undefined ? 'Waiting to load…'
         : node.source.entityCount === 0 && !node.source.truncated ? 'No sessions found'
-        : String(node.source.entityCount) + ' loaded' + (node.source.truncated ? ' · partial' : '') + (node.source.updateAvailable ? ' · updates available' : '');
+        : String(node.source.entityCount) + ' session' + (node.source.entityCount === 1 ? '' : 's') + (node.source.truncated ? ' · partial index' : '') + (node.source.updateAvailable ? ' · updates available' : '');
       item.iconPath = new vscode.ThemeIcon(status?.phase === 'loading' ? 'loading~spin' : status?.phase === 'error' ? 'warning' : 'folder');
       item.tooltip = [node.source.label, this.#store?.getSourceRoot(node.source.sourceId), status?.detail,
         node.source.truncated ? 'Partial index: the metadata scan reached a budget limit.' : undefined,
         node.source.lastActivityAt === undefined ? undefined : 'Last activity: ' + node.source.lastActivityAt].filter(Boolean).join('\n');
       if (status?.phase === 'error') item.command = { command: 'jsonlView.sessionNavigator.refresh', title: 'Retry loading sessions' };
+      if (node.source.nextCursor !== undefined) item.contextValue += '.partial';
       return item;
     }
     const hasChildren = this.#store?.hasChildren(node.entity.sourceId, node.entity.nativeId) ?? false;
@@ -168,8 +170,31 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       if (!this.#disposed && this.#treeView) {
         this.#treeView.message = [...this.#sourceStatus.values()].some((status) => status.phase === 'error')
           ? 'Some sources could not load. Select a warning to retry.'
-          : this.settings().length > 0 ? 'Drop files here, or use + to add a source.' : '';
+          : '';
       }
+      this.#changed.fire(undefined);
+    }
+  }
+
+  public async loadMore(node?: SessionNavigatorTreeNode): Promise<void> {
+    if (this.#disposed || !this.isEnabled() || node?.nodeKind !== 'source' || this.#refreshing !== undefined) return;
+    const store = await this.ensureStore();
+    const cursor = node.source.nextCursor;
+    if (cursor === undefined) return;
+    const setting = this.settings().find((candidate) => sourceIdFor(candidate) === node.source.sourceId);
+    if (setting === undefined) return;
+    const controller = new AbortController();
+    this.#sourceStatus.set(node.source.sourceId, { phase: 'loading' });
+    this.#changed.fire(undefined);
+    try {
+      const provider = this.providerFor(setting);
+      const page = provider.scanPage === undefined ? await provider.scan(controller.signal, DEFAULT_SESSION_NAVIGATOR_BUDGET) : await provider.scanPage(controller.signal, DEFAULT_SESSION_NAVIGATOR_BUDGET, cursor);
+      if (this.#disposed || !this.isEnabled()) return;
+      store.appendSnapshot(node.source.sourceId, { ...page.snapshot, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }, page.fingerprint);
+    } catch (error) {
+      if (!this.#disposed) this.#sourceStatus.set(node.source.sourceId, { phase: 'error', detail: error instanceof Error ? error.message : String(error) });
+    } finally {
+      this.#sourceStatus.delete(node.source.sourceId);
       this.#changed.fire(undefined);
     }
   }
@@ -209,7 +234,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
             entities: scan.snapshot.entities.map((entity) => ({ ...entity, sourceId })),
             relations: scan.snapshot.relations.map((relation) => ({ ...relation, sourceId })),
           };
-          store.replaceSnapshot(sourceId, snapshot, scan.fingerprint);
+          store.replaceSnapshot(sourceId, { ...snapshot, ...(scan.nextCursor === undefined ? {} : { nextCursor: scan.nextCursor }) }, scan.fingerprint);
           this.#sourceStatus.delete(sourceId);
           this.#changed.fire(undefined);
         } catch (error) {

@@ -104,9 +104,15 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
   }
 
   public async scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult> {
+    return this.scanPage(signal, budget);
+  }
+
+  public async scanPage(signal: AbortSignal, budget: SessionNavigatorBudget, cursor?: string): Promise<SessionNavigatorScanResult> {
     throwIfAborted(signal);
     const metadataBudget = new MetadataBudget(budget, signal);
     const fingerprint = await this.probe(signal);
+    const pageCursor = decodePageCursor(cursor);
+    assertCursorFingerprint(pageCursor, fingerprint);
     const statePath = await findCodexStatePath(this.stateRootPath);
     if (statePath === undefined) throw new Error('Codex state database was not found under the provider home.');
     const db = await openReadOnlyDatabase(statePath);
@@ -116,14 +122,14 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       db.exec('BEGIN');
       let snapshot: NavigatorSnapshot;
       try {
-        snapshot = await readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles);
+        snapshot = await readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles, metadataBudget, pageCursor.offset);
       } finally {
         db.exec('ROLLBACK');
       }
       snapshot = await fillCodexPreviews(snapshot, this.rootPath, metadataBudget);
       // The transaction is coherent even while Codex writes its WAL. This earlier
       // advisory fingerprint lets the next probe flag updates without starving scans.
-      return { snapshot, fingerprint };
+      return { snapshot, fingerprint, ...(snapshot.truncatedReason === 'record_limit' ? { nextCursor: encodePageCursor(pageCursor.offset + Math.max(1, budget.maxEntities), fingerprint) } : {}) };
     } finally {
       db.close();
     }
@@ -137,8 +143,16 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
   }
 
   public async scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult> {
+    return this.scanPage(signal, budget);
+  }
+
+  public async scanPage(signal: AbortSignal, budget: SessionNavigatorBudget, cursor?: string): Promise<SessionNavigatorScanResult> {
     const metadataBudget = new MetadataBudget(budget, signal);
-    const collected = await collectClaudeFiles(this.rootPath, metadataBudget);
+    const pageCursor = decodePageCursor(cursor);
+    const pageOffset = pageCursor.offset;
+    const collected = await collectClaudeFiles(this.rootPath, metadataBudget, pageOffset);
+    const fingerprint = claudeFingerprint(collected.allFiles);
+    assertCursorFingerprint(pageCursor, fingerprint);
     const files = collected.files;
     const pending = new Map<string, ClaudeMetadata>();
     let truncated = collected.truncated;
@@ -155,14 +169,12 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
         throw error;
       }
     }
-    const ids = new Set(pending.keys());
     const entities: NavigationEntity[] = [];
     const relations: NavigationRelation[] = [];
     const locations: NavigatorLocation[] = [];
     for (const item of pending.values()) {
-      const orphan = item.parentNativeId !== undefined && !ids.has(item.parentNativeId);
-      const parent = item.parentNativeId !== undefined && !orphan && relations.length < budget.maxRelations ? item.parentNativeId : undefined;
-      if (item.parentNativeId !== undefined && !orphan && parent === undefined) truncated = true;
+      const parent = item.parentNativeId !== undefined && pending.has(item.parentNativeId) && relations.length < budget.maxRelations ? item.parentNativeId : undefined;
+      if (item.parentNativeId !== undefined && parent === undefined) truncated = true;
       const entity: NavigationEntity = {
         sourceId: this.sourceId,
         nativeId: item.nativeId,
@@ -173,7 +185,7 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
         ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
         ...(item.activityAt === undefined ? {} : { activityAt: item.activityAt, updatedAt: item.activityAt }),
         ...(parent === undefined ? {} : { parentNativeId: parent }),
-        relationship: orphan || (item.parentNativeId !== undefined && parent === undefined) ? 'orphan' : item.relationship,
+        relationship: item.parentNativeId !== undefined && parent === undefined ? 'orphan' : item.relationship,
         confidence: 'source',
         opaqueRef: 'claude-file-' + hash(item.relativePath),
       };
@@ -182,11 +194,11 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       if (parent !== undefined) relations.push({ sourceId: this.sourceId, fromNativeId: item.nativeId, toNativeId: parent, kind: 'parent' });
     }
     const snapshot = this.snapshot(entities, relations, locations, new Date().toISOString(), truncated || metadataBudget.truncated);
-    return { snapshot, fingerprint: claudeFingerprint(files) };
+    return { snapshot, fingerprint, ...(collected.hasMore ? { nextCursor: encodePageCursor(pageOffset + Math.max(1, budget.maxFiles), fingerprint) } : {}) };
   }
 }
 
-async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>): Promise<NavigatorSnapshot> {
+async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>, metadataBudget: MetadataBudget, pageOffset = 0): Promise<NavigatorSnapshot> {
   const columns = new Set(tableColumns(db, 'threads'));
   if (!columns.has('id') || !columns.has('rollout_path')) throw new Error('Codex state database has no compatible thread table.');
   const selected = ['id', 'rollout_path', 'created_at', 'updated_at', 'created_at_ms', 'updated_at_ms', 'recency_at', 'recency_at_ms', 'title', 'name', 'agent_nickname', 'agent_role', 'preview', 'first_user_message', 'project_id', 'archived'].filter((name) => columns.has(name));
@@ -195,8 +207,10 @@ async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: s
   const order = orderColumns.length > 0 ? ' ORDER BY ' + orderValue + ' DESC, ' + quoteIdentifier('id') + ' ASC' : ' ORDER BY ' + quoteIdentifier('id') + ' ASC';
   const boundedText = new Set(['title', 'name', 'agent_nickname', 'agent_role', 'preview', 'first_user_message']);
   const projection = selected.map((name) => boundedText.has(name) ? 'substr(' + quoteIdentifier(name) + ', 1, 240) AS ' + quoteIdentifier(name) : quoteIdentifier(name));
-  const rowLimit = Math.max(0, Math.min(budget.maxRecords, budget.maxEntities * 4));
-  const rows = db.prepare('SELECT ' + projection.join(', ') + ' FROM threads' + order + ' LIMIT ?').all(rowLimit) as Array<Record<string, unknown>>;
+  // Fetch one page plus a look-ahead row. The cursor is a bounded raw-row offset,
+  // so invalid/stale rows cannot cause valid sessions to be skipped on resume.
+  const rowLimit = Math.max(1, Math.min(budget.maxRecords, budget.maxEntities + 1));
+  const rows = db.prepare('SELECT ' + projection.join(', ') + ' FROM threads' + order + ' LIMIT ? OFFSET ?').all(rowLimit, Math.max(0, pageOffset)) as Array<Record<string, unknown>>;
   const canonicalRoot = canonicalPath(resolveRootPath(rootPath));
   const candidates = rows.flatMap((row) => {
     if (typeof row.id !== 'string' || typeof row.rollout_path !== 'string') return [];
@@ -209,7 +223,6 @@ async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: s
   const relations: NavigationRelation[] = [];
   const locations: NavigatorLocation[] = [];
   const rowOrdinalsByPath = new Map<string, ReadonlyMap<string, string>>();
-  const rowOrdinalBudget = new MetadataBudget(budget, signal);
   let relationsTruncated = false;
   for (const { row, relativePath } of candidates.slice(0, budget.maxEntities)) {
     throwIfAborted(signal);
@@ -239,7 +252,7 @@ async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: s
     entities.push(entity);
     let rowOrdinals = rowOrdinalsByPath.get(relativePath);
     if (rowOrdinals === undefined) {
-      rowOrdinals = await codexRowOrdinals(join(resolveRootPath(rootPath), relativePath), rowOrdinalBudget);
+      rowOrdinals = await codexRowOrdinals(join(resolveRootPath(rootPath), relativePath), metadataBudget);
       rowOrdinalsByPath.set(relativePath, rowOrdinals);
     }
     locations.push({ nativeId: id, relativePath, rowOrdinal: rowOrdinals.get(id) ?? '0' });
@@ -247,9 +260,19 @@ async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: s
   }
   return Object.freeze({
     schemaVersion: 1, provider: 'codex', sourceId, sourceGeneration: 'scan-codex', snapshotId: 'scan-' + sourceId + '-' + Date.now().toString(36),
-    capturedAt: new Date().toISOString(), redaction: 'metadata-only', entities: Object.freeze(entities), relations: Object.freeze(relations), locations: Object.freeze(locations), truncated: candidates.length > budget.maxEntities || rows.length >= rowLimit || relationsTruncated,
-    ...(candidates.length > budget.maxEntities ? { truncatedReason: 'entity_limit' as const } : relationsTruncated ? { truncatedReason: 'relation_limit' as const } : rows.length >= rowLimit ? { truncatedReason: 'record_limit' as const } : {}),
+    capturedAt: new Date().toISOString(), redaction: 'metadata-only', entities: Object.freeze(entities), relations: Object.freeze(relations), locations: Object.freeze(locations), truncated: rows.length >= rowLimit || relationsTruncated,
+    ...(relationsTruncated ? { truncatedReason: 'relation_limit' as const } : rows.length >= rowLimit ? { truncatedReason: 'record_limit' as const } : {}),
   });
+}
+
+interface PageCursor { offset: number; fingerprint?: string }
+function encodePageCursor(offset: number, fingerprint: string): string { return `v1:${fingerprint}:${Math.max(0, Math.floor(offset))}`; }
+function decodePageCursor(cursor: string | undefined): PageCursor {
+  const match = /^v1:([a-f0-9]{16,128}):(\d{1,12})$/u.exec(cursor ?? '');
+  return match === null || match[1] === undefined ? { offset: 0 } : { offset: Math.min(Number(match[2]), Number.MAX_SAFE_INTEGER), fingerprint: match[1] };
+}
+function assertCursorFingerprint(cursor: PageCursor, fingerprint: string): void {
+  if (cursor.fingerprint !== undefined && cursor.fingerprint !== fingerprint) throw new Error('Session source changed while loading a page. Refresh the source before loading more.');
 }
 
 async function readCodexTitles(path: string, budget: MetadataBudget): Promise<ReadonlyMap<string, string>> {

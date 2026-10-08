@@ -2,11 +2,11 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import type { NavigationRelation } from '../navigation-contract';
 import type { NavigatorEntity, NavigatorLocation, NavigatorSnapshot, NavigatorSourceSummary, SessionNavigatorProviderId, SessionNavigatorSortKey } from './types';
 import type { AuthorizedSourceSetting } from './types';
 import { sourceIdFor, sourceLabelFor } from './source-config';
 
-const MAX_TREE_CHILDREN = 2_000;
 
 interface SourceRow {
   source_id: string;
@@ -18,6 +18,7 @@ interface SourceRow {
   fingerprint: string | null;
   update_available: number;
   truncated: number;
+  next_cursor: string | null;
 }
 
 interface EntityRow {
@@ -132,6 +133,7 @@ export class CatalogStore {
     `);
     ensureColumn(db, 'entities', 'vendor_title', 'TEXT');
     ensureColumn(db, 'sources', 'truncated', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn(db, 'sources', 'next_cursor', 'TEXT');
     ensureColumn(db, 'entities', 'title_source', 'TEXT');
     ensureColumn(db, 'entities', 'first_message_preview', 'TEXT');
     ensureColumn(db, 'entities', 'started_at', 'TEXT');
@@ -164,7 +166,7 @@ export class CatalogStore {
   }
 
   public listSources(): readonly NavigatorSourceSummary[] {
-    const rows = this.#db.prepare('SELECT source_id, provider, label, generation, captured_at, update_available, truncated FROM sources ORDER BY label COLLATE NOCASE').all() as Array<Pick<SourceRow, 'source_id' | 'provider' | 'label' | 'generation' | 'captured_at' | 'update_available' | 'truncated'>>;
+    const rows = this.#db.prepare('SELECT source_id, provider, label, generation, captured_at, update_available, truncated, next_cursor FROM sources ORDER BY label COLLATE NOCASE').all() as Array<Pick<SourceRow, 'source_id' | 'provider' | 'label' | 'generation' | 'captured_at' | 'update_available' | 'truncated' | 'next_cursor'>>;
     return rows.map((row) => {
       const counts = this.#db.prepare('SELECT (SELECT COUNT(*) FROM entities WHERE source_id = ? AND generation = ?) AS entities, (SELECT COUNT(*) FROM relations WHERE source_id = ? AND generation = ?) AS relations').get(row.source_id, generationText(row.generation), row.source_id, generationText(row.generation)) as { entities: number; relations: number };
       return {
@@ -177,6 +179,7 @@ export class CatalogStore {
         relationCount: Number(counts.relations ?? 0),
         updateAvailable: row.update_available === 1,
         truncated: row.truncated === 1,
+        ...(row.next_cursor === null ? {} : { nextCursor: row.next_cursor }),
         ...lastActivityFor(this.#db, row.source_id, generationText(row.generation)),
       };
     });
@@ -203,8 +206,8 @@ export class CatalogStore {
     const generation = generationText(source.generation);
     const orderBy = orderByFor(sortKey);
     const query = parentNativeId === undefined
-      ? `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id IS NULL ORDER BY ${orderBy} LIMIT ${MAX_TREE_CHILDREN}`
-      : `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id = ? ORDER BY ${orderBy} LIMIT ${MAX_TREE_CHILDREN}`;
+      ? `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id IS NULL ORDER BY ${orderBy}`
+      : `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id = ? ORDER BY ${orderBy}`;
     const rows = parentNativeId === undefined
       ? this.#db.prepare(query).all(sourceId, generation)
       : this.#db.prepare(query).all(sourceId, generation, parentNativeId);
@@ -236,6 +239,36 @@ export class CatalogStore {
     const row = this.#db.prepare('SELECT native_id, relative_path, row_ordinal FROM locations WHERE source_id = ? AND generation = ? AND native_id = ?').get(intent.sourceId, intent.generation, intent.nativeId) as LocationRow | undefined;
     if (row === undefined) return undefined;
     return { nativeId: row.native_id, relativePath: row.relative_path, rowOrdinal: row.row_ordinal };
+  }
+
+  public getSnapshot(sourceId: string): NavigatorSnapshot | undefined {
+    const source = this.#sourceRow(sourceId);
+    if (source === undefined || source.generation < 1) return undefined;
+    const generation = generationText(source.generation);
+    const entities = (this.#db.prepare('SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ?').all(sourceId, generation) as unknown as EntityRow[]).map((row) => toEntity(row, source.provider as SessionNavigatorProviderId));
+    const relations = this.#db.prepare('SELECT source_id, from_native_id, to_native_id, kind FROM relations WHERE source_id = ? AND generation = ?').all(sourceId, generation) as unknown as RelationRow[];
+    const locations = this.#db.prepare('SELECT native_id, relative_path, row_ordinal FROM locations WHERE source_id = ? AND generation = ?').all(sourceId, generation) as unknown as LocationRow[];
+    return { schemaVersion: 1, provider: source.provider as SessionNavigatorProviderId, sourceId, sourceGeneration: generation, snapshotId: 'catalog-' + sourceId + '-' + generation, capturedAt: source.captured_at ?? new Date(0).toISOString(), redaction: 'metadata-only', entities, relations: relations.map((row) => ({ sourceId: row.source_id, fromNativeId: row.from_native_id, toNativeId: row.to_native_id, kind: row.kind as NavigationRelation['kind'] })), locations: locations.map((row) => ({ nativeId: row.native_id, relativePath: row.relative_path, rowOrdinal: row.row_ordinal })), truncated: source.truncated === 1, ...(source.next_cursor === null ? {} : { nextCursor: source.next_cursor }) };
+  }
+
+  public appendSnapshot(sourceId: string, page: NavigatorSnapshot, fingerprint: string): NavigatorSnapshot {
+    const previous = this.getSnapshot(sourceId);
+    if (previous === undefined) return this.replaceSnapshot(sourceId, page, fingerprint);
+    const entities = new Map(previous.entities.map((entity) => [entity.nativeId, entity]));
+    for (const entity of page.entities) entities.set(entity.nativeId, entity);
+    const relations = new Map(previous.relations.map((relation) => [relation.fromNativeId + '\0' + relation.toNativeId + '\0' + relation.kind, relation]));
+    for (const relation of page.relations) relations.set(relation.fromNativeId + '\0' + relation.toNativeId + '\0' + relation.kind, relation);
+    const locations = new Map(previous.locations.map((location) => [location.nativeId, location]));
+    for (const location of page.locations) locations.set(location.nativeId, location);
+    const mergedRelations = [...relations.values()];
+    const parentByChild = new Map(mergedRelations.filter((relation) => relation.kind === 'parent').map((relation) => [relation.fromNativeId, relation.toNativeId]));
+    const mergedEntities = [...entities.values()].map((entity) => {
+      const parent = parentByChild.get(entity.nativeId);
+      return parent !== undefined && entities.has(parent)
+        ? { ...entity, parentNativeId: parent, relationship: 'subagent' as const }
+        : entity;
+    });
+    return this.replaceSnapshot(sourceId, { ...page, entities: mergedEntities, relations: mergedRelations, locations: [...locations.values()] }, fingerprint);
   }
 
   public replaceSnapshot(sourceId: string, snapshot: NavigatorSnapshot, fingerprint: string): NavigatorSnapshot {
@@ -270,7 +303,7 @@ export class CatalogStore {
       for (const relation of nextSnapshot.relations) insertRelation.run(sourceId, generation, relation.fromNativeId, relation.toNativeId, relation.kind);
       const insertLocation = this.#db.prepare('INSERT OR REPLACE INTO locations(source_id, generation, native_id, relative_path, row_ordinal) VALUES (?, ?, ?, ?, ?)');
       for (const location of nextSnapshot.locations) insertLocation.run(sourceId, generation, location.nativeId, location.relativePath, location.rowOrdinal);
-      this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0, truncated = ? WHERE source_id = ?').run(nextGeneration, nextSnapshot.capturedAt, fingerprint, nextSnapshot.truncated ? 1 : 0, sourceId);
+      this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0, truncated = ?, next_cursor = ? WHERE source_id = ?').run(nextGeneration, nextSnapshot.capturedAt, fingerprint, nextSnapshot.truncated ? 1 : 0, nextSnapshot.nextCursor ?? null, sourceId);
       this.#db.exec('COMMIT');
     } catch (error) {
       this.#db.exec('ROLLBACK');

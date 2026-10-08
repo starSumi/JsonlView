@@ -178,6 +178,25 @@ describe('session navigator source boundary', () => {
     store.close();
   });
 
+  it('reconciles parent edges when a continuation page arrives after its child', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-page-relations-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    const entity = (nativeId: string, relationship: 'root' | 'subagent', parentNativeId?: string) => ({
+      sourceId, nativeId, kind: 'thread' as const, label: nativeId, relationship, confidence: 'source' as const,
+      ...(parentNativeId === undefined ? {} : { parentNativeId }),
+    });
+    store.replaceSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'page-1', snapshotId: 'page-1', capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: true, nextCursor: 'v1:fixture:1', entities: [entity('child', 'subagent')], relations: [{ sourceId, fromNativeId: 'child', toNativeId: 'parent', kind: 'parent' }], locations: [{ nativeId: 'child', relativePath: 'child.jsonl', rowOrdinal: '0' }] }, 'v1:fixture');
+    store.appendSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'page-2', snapshotId: 'page-2', capturedAt: '2026-10-08T00:01:00.000Z', redaction: 'metadata-only', truncated: false, entities: [entity('parent', 'root')], relations: [], locations: [{ nativeId: 'parent', relativePath: 'parent.jsonl', rowOrdinal: '0' }] }, 'v1:fixture');
+    expect(store.getChildren(sourceId).map((item) => item.nativeId)).toEqual(['parent']);
+    expect(store.getChildren(sourceId, 'parent').map((item) => item.nativeId)).toEqual(['child']);
+    store.close();
+  });
+
   it('reads Codex state metadata and spawn edges without writing the provider database', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-codex-native-'));
     cleanup.push(root);
@@ -226,6 +245,30 @@ describe('session navigator source boundary', () => {
     const legacy = createSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(sessions).toString() });
     const legacyResult = await legacy.scan(new AbortController().signal, { maxEntities: 10, maxRelations: 10, maxRecords: 10, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000 });
     expect(legacyResult.snapshot.entities).toEqual(expect.arrayContaining([expect.objectContaining({ nativeId: 'child-1', vendorTitle: 'Title in provider home' })]));
+  });
+
+  it('pages Codex threads by a bounded raw-row cursor instead of raising the first-load limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-codex-pages-'));
+    cleanup.push(root);
+    const sessions = join(root, 'sessions');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(sessions));
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(join(root, 'state_5.sqlite'));
+    db.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, recency_at INTEGER NOT NULL, title TEXT NOT NULL, preview TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0);');
+    for (const [id, recency] of [['s-1', 3000], ['s-2', 2000], ['s-3', 1000]] as const) {
+      const file = join(sessions, id + '.jsonl');
+      await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id } }), 'utf8');
+      db.prepare('INSERT INTO threads(id, rollout_path, created_at, updated_at, recency_at, title, preview) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, file, recency, recency, recency, id, id + ' preview');
+    }
+    db.close();
+    const provider = createSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(root).toString() });
+    const budget = { maxEntities: 2, maxRelations: 8, maxRecords: 3, maxFiles: 8, maxBytes: 100_000, maxMilliseconds: 2_000 };
+    const first = await provider.scanPage!(new AbortController().signal, budget);
+    expect(first.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['s-1', 's-2']);
+    expect(first.nextCursor).toMatch(/^v1:[a-f0-9]+:2$/u);
+    const second = await provider.scanPage!(new AbortController().signal, budget, first.nextCursor);
+    expect(second.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['s-3']);
+    expect(second.nextCursor).toBeUndefined();
   });
 
   it('anchors parent and child Codex threads to their own session metadata in a shared rollout', async () => {
@@ -310,5 +353,22 @@ describe('session navigator source boundary', () => {
     });
     expect(result.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['session-1']);
     expect(result.snapshot.relations).toEqual([]);
+  });
+
+  it('pages Claude transcripts by activity without rescanning an unbounded entity set', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-claude-pages-'));
+    cleanup.push(root);
+    for (const [id, timestamp] of [['claude-1', '2026-10-08T03:00:00.000Z'], ['claude-2', '2026-10-08T02:00:00.000Z'], ['claude-3', '2026-10-08T01:00:00.000Z']] as const) {
+      await writeFile(join(root, id + '.jsonl'), JSON.stringify({ type: 'user', sessionId: id, timestamp, message: { role: 'user', content: id } }), 'utf8');
+    }
+    const provider = createSessionNavigatorProvider({ provider: 'claude', rootUri: pathToFileURL(root).toString() });
+    const budget = { maxEntities: 20, maxRelations: 20, maxRecords: 20, maxFiles: 2, maxBytes: 100_000, maxMilliseconds: 2_000 };
+    const first = await provider.scanPage!(new AbortController().signal, budget);
+    expect(first.snapshot.entities).toHaveLength(2);
+    expect(first.nextCursor).toMatch(/^v1:[a-f0-9]+:2$/u);
+    const second = await provider.scanPage!(new AbortController().signal, budget, first.nextCursor);
+    expect(second.snapshot.entities).toHaveLength(1);
+    expect([...first.snapshot.entities, ...second.snapshot.entities].map((entity) => entity.nativeId)).toHaveLength(3);
+    expect(second.nextCursor).toBeUndefined();
   });
 });

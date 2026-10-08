@@ -38,6 +38,7 @@
     "jsonlView.sessionNavigator.addSource",
     "jsonlView.sessionNavigator.authorizeAgent",
     "jsonlView.sessionNavigator.removeSource",
+    "jsonlView.sessionNavigator.loadMore",
     "jsonlView.sessionNavigator.refresh",
     "jsonlView.sessionNavigator.open",
     "jsonlView.sessionNavigator.sortActivity",

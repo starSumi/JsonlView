@@ -10,14 +10,16 @@ export interface ClaudeMetadata {
 }
 
 /** Restrict discovery to provider transcript layouts; history/telemetry are not sessions. */
-export async function collectClaudeFiles(rootPath: string, budget: MetadataBudget): Promise<{ files: ClaudeFile[]; truncated: boolean }> {
+export async function collectClaudeFiles(rootPath: string, budget: MetadataBudget, pageOffset = 0): Promise<{ files: ClaudeFile[]; allFiles: ClaudeFile[]; truncated: boolean; hasMore: boolean }> {
   const root = resolve(rootPath);
   const info = await lstat(root);
   if (info.isSymbolicLink()) throw new Error('Session navigator refuses a symbolic-link source root.');
   const files: ClaudeFile[] = [];
   let visited = 0;
   let truncated = false;
-  const maxEntries = Math.min(32_768, Math.max(2_048, budget.limits.maxFiles * 128));
+  const offset = Math.max(0, Math.floor(pageOffset));
+  const pageEnd = offset + Math.max(1, budget.limits.maxFiles);
+  const maxEntries = Math.min(32_768, Math.max(2_048, pageEnd * 128));
   const accept = async (path: string, parentSessionId?: string): Promise<void> => {
     if (!/\.(?:jsonl|ndjson)$/iu.test(path) || /\.orphaned-/iu.test(basename(path)) || ['history.jsonl', 'session_index.jsonl'].includes(basename(path))) return;
     const fileInfo = await optionalInfo(path);
@@ -69,7 +71,7 @@ export async function collectClaudeFiles(rootPath: string, budget: MetadataBudge
     else await project(root);
   }
   files.sort((left, right) => right.mtimeMs - left.mtimeMs || left.relativePath.localeCompare(right.relativePath));
-  return { files: files.slice(0, budget.limits.maxFiles), truncated: truncated || budget.truncated || files.length > budget.limits.maxFiles };
+  return { files: files.slice(offset, pageEnd), allFiles: files, truncated: truncated || budget.truncated || files.length > pageEnd, hasMore: files.length > pageEnd };
 }
 
 export async function readClaudeMetadata(file: ClaudeFile, budget: MetadataBudget): Promise<{ metadata?: ClaudeMetadata; sampled: boolean }> {
