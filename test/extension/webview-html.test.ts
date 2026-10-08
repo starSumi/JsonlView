@@ -35,5 +35,7 @@ describe('getWebviewHtml', () => {
     expect(html).not.toContain('data-uri="file:///fixture.jsonl?value=<unsafe>"');
     expect(html).toContain('data-page-size="250"');
     expect(html).toContain('data-row-order="desc"');
+    expect(html).toContain('JSONLVIEW_DIAGNOSTIC');
+    expect(html).toContain('UnhandledRejection');
   });
 });

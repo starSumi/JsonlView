@@ -50,7 +50,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry) {
     this.#context = context;
     this.#revealRegistry = revealRegistry;
-    this.#intake = new SourceIntakePanel((uri, signal) => this.confirmCustomSource(uri, () => signal.aborted));
+    this.#intake = new SourceIntakePanel(
+      (uri, signal) => this.confirmCustomSource(uri, () => signal.aborted),
+      (provider, signal) => this.authorizeDetectedAgent(provider, signal),
+    );
   }
 
   public register(): vscode.Disposable[] {
@@ -415,6 +418,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     } catch (error) {
       if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  private async authorizeDetectedAgent(provider: 'codex' | 'claude', signal: AbortSignal): Promise<void> {
+    if (this.#disposed || signal.aborted) return;
+    const detected = discoverDefaultSources().find((setting) => setting.provider === provider);
+    if (detected === undefined) throw new Error('No ' + (provider === 'codex' ? 'Codex' : 'Claude') + ' home was detected. Use Files or Folder to choose a local source.');
+    await this.authorizeSourceSetting(detected, () => this.#disposed || signal.aborted);
   }
 
   private async authorizeSourceUri(provider: AuthorizedSourceSetting['provider'], uri: vscode.Uri, cancelled = () => false): Promise<void> {

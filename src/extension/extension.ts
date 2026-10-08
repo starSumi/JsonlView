@@ -18,6 +18,7 @@ import {
 import { getWebviewHtml } from './webview-html';
 import { RevealIntentRegistry, type RevealIntent } from '../experimental';
 import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
+import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 
@@ -354,7 +355,17 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
-      void controller.handleMessage(message);
+      if (isWebviewDiagnostic(message)) {
+        void offerDiagnostic({ stage: 'editor-webview', name: message.name, message: message.message });
+        return;
+      }
+      void controller.handleMessage(message).catch((error: unknown) => {
+        void offerDiagnostic({
+          stage: 'editor-message',
+          name: error instanceof Error ? error.name : 'Error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     });
     const viewStateRegistration = panel.onDidChangeViewState((event) => {
       if (!event.webviewPanel.visible) {
@@ -383,6 +394,37 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
     await this.lastResolvedDocument.rebuild();
   }
 
+}
+
+let lastDiagnostic: JsonlViewDiagnosticEnvelope | undefined;
+
+async function offerDiagnostic(input: { stage: string; name: string; message: string }): Promise<void> {
+  const envelope = buildDiagnosticEnvelope({
+    ...input,
+    extensionId: 'Sumi-Sophia.jsonl-view',
+  });
+  lastDiagnostic = envelope;
+  const action = await vscode.window.showErrorMessage(
+    'JsonlView detected a bounded Webview error. Source contents were not included.',
+    'Explain with VS Code Chat',
+    'Copy diagnostic context',
+  );
+  await handleDiagnosticAction(action, envelope);
+}
+
+async function handleDiagnosticAction(action: string | undefined, envelope: JsonlViewDiagnosticEnvelope): Promise<void> {
+  if (action === 'Copy diagnostic context') {
+    await vscode.env.clipboard.writeText(formatDiagnosticContext(envelope));
+    return;
+  }
+  if (action !== 'Explain with VS Code Chat') return;
+  const prompt = formatDiagnosticPrompt(envelope);
+  await vscode.env.clipboard.writeText(prompt);
+  try {
+    await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
+  } catch {
+    void vscode.window.showInformationMessage('VS Code Chat is unavailable. The bounded diagnostic prompt was copied instead.');
+  }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -418,6 +460,17 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.commands.executeCommand('vscode.openWith', target, 'jsonlView.editor');
     }),
     vscode.commands.registerCommand('jsonlView.rebuildIndex', async () => provider.rebuildActiveDocument()),
+    vscode.commands.registerCommand('jsonlView.diagnoseWebview', async () => {
+      const envelope = lastDiagnostic ?? buildDiagnosticEnvelope({
+        stage: 'webview-host-registration',
+        name: 'InvalidStateError',
+        message: 'The VS Code Webview host reported that the document is in an invalid state while registering its service worker. JsonlView does not register a service worker.',
+        extensionId: 'Sumi-Sophia.jsonl-view',
+      });
+      lastDiagnostic = envelope;
+      const action = await vscode.window.showInformationMessage('JsonlView prepared a bounded Webview diagnosis without source contents.', 'Explain with VS Code Chat', 'Copy diagnostic context');
+      await handleDiagnosticAction(action, envelope);
+    }),
   );
 }
 
@@ -433,6 +486,13 @@ function cancellationSignal(token: vscode.CancellationToken): AbortSignal {
 function isJsonlResource(uri: vscode.Uri): boolean {
   const name = basename(uri.path).toLowerCase();
   return name.endsWith('.jsonl') || name.endsWith('.ndjson');
+}
+
+function isWebviewDiagnostic(value: unknown): value is { readonly type: 'JSONLVIEW_DIAGNOSTIC'; readonly name: string; readonly message: string } {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const message = value as Record<string, unknown>;
+  return message.type === 'JSONLVIEW_DIAGNOSTIC' && typeof message.name === 'string' && message.name.length > 0 && message.name.length <= 128
+    && typeof message.message === 'string' && message.message.length > 0 && message.message.length <= 512;
 }
 
 function activeResourceUri(): vscode.Uri | undefined {

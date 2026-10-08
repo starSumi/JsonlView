@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
+import type { SessionNavigatorProviderId } from './types';
 
 export const SOURCE_INTAKE_MAX_BYTES = 1_048_576;
 export const SOURCE_INTAKE_MAX_RECORDS = 10_000;
@@ -13,7 +14,9 @@ const MAX_PREVIEWS = 20;
 type IntakeMessage =
   | { readonly type: 'pick-files' | 'pick-folder' }
   | { readonly type: 'drop-uris'; readonly uris: readonly string[] }
-  | { readonly type: 'import-jsonl'; readonly text: string };
+  | { readonly type: 'import-jsonl'; readonly text: string }
+  | { readonly type: 'authorize-agent'; readonly provider: 'codex' | 'claude' }
+  | { readonly type: 'webview-diagnostic'; readonly name: string; readonly message: string };
 
 export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid source request.');
@@ -31,6 +34,14 @@ export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
     && message.uris.every((uri: unknown) => typeof uri === 'string' && uri.length > 0 && uri.length <= 8_192)
     && message.uris.join('').length <= 65_536) {
     return { type: 'drop-uris', uris: message.uris as string[] };
+  }
+  if (message.type === 'webview-diagnostic' && keys.length === 3
+    && typeof message.name === 'string' && message.name.length > 0 && message.name.length <= 128
+    && typeof message.message === 'string' && message.message.length > 0 && message.message.length <= 512) {
+    return { type: 'webview-diagnostic', name: message.name, message: message.message };
+  }
+  if (message.type === 'authorize-agent' && keys.length === 2 && (message.provider === 'codex' || message.provider === 'claude')) {
+    return { type: 'authorize-agent', provider: message.provider };
   }
   throw new Error('Invalid or oversized source request.');
 }
@@ -68,10 +79,12 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
 }
 
 export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
+export type DetectedAgentHandler = (provider: Extract<SessionNavigatorProviderId, 'codex' | 'claude'>, signal: AbortSignal) => Promise<void>;
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
 export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewProvider {
   readonly #onSource: SourceIntakeHandler;
+  readonly #onDetectedAgent: DetectedAgentHandler | undefined;
   readonly #lifetime = new AbortController();
   readonly #previews = new Map<string, { readonly dev: number; readonly ino: number; readonly size?: number; readonly mtimeMs?: number }>();
   #panel: vscode.WebviewPanel | undefined;
@@ -83,7 +96,10 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   #directoryIdentity: { readonly dev: number; readonly ino: number } | undefined;
   #disposal: Promise<void> | undefined;
 
-  public constructor(onSource: SourceIntakeHandler) { this.#onSource = onSource; }
+  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler) {
+    this.#onSource = onSource;
+    this.#onDetectedAgent = onDetectedAgent;
+  }
 
   public resolveWebviewView(view: vscode.WebviewView): void {
     if (this.#lifetime.signal.aborted) return;
@@ -144,8 +160,18 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   private async receive(raw: unknown, webview: vscode.Webview, signal: AbortSignal): Promise<void> {
     try {
       const message = parseSourceIntakeMessage(raw);
+      if (message.type === 'webview-diagnostic') {
+        await this.handleWebviewDiagnostic(webview, signal, message);
+        return;
+      }
       await this.post(webview, signal, 'busy', 'Adding source…');
       if (signal.aborted) return;
+      if (message.type === 'authorize-agent') {
+        if (this.#onDetectedAgent === undefined) throw new Error('Detected agent authorization is unavailable. Use Add Source to choose a local folder.');
+        await this.#onDetectedAgent(message.provider, signal);
+        await this.post(webview, signal, 'success', (message.provider === 'codex' ? 'Codex' : 'Claude') + ' source connected.');
+        return;
+      }
       if (message.type === 'import-jsonl') {
         const records = validatePastedJsonl(message.text);
         await this.openPreview(message.text, signal);
@@ -174,6 +200,24 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       await this.post(webview, signal, 'idle', 'Source selection complete.');
     } catch (error) {
       await this.post(webview, signal, 'error', error instanceof Error ? error.message : 'Could not add this source.');
+    }
+  }
+
+  private async handleWebviewDiagnostic(webview: vscode.Webview, signal: AbortSignal, message: Extract<IntakeMessage, { readonly type: 'webview-diagnostic' }>): Promise<void> {
+    const safeMessage = sanitizeDiagnostic(message.message);
+    const diagnostics = 'JsonlView source intake webview\nError: ' + message.name + '\nMessage: ' + safeMessage;
+    const action = await vscode.window.showInformationMessage('JsonlView detected a Webview error. Source contents were not included.', 'Copy diagnostics', 'Send to VS Code AI');
+    if (action === 'Copy diagnostics') {
+      await vscode.env.clipboard.writeText(diagnostics);
+      await this.post(webview, signal, 'success', 'Diagnostics copied.');
+    } else if (action === 'Send to VS Code AI') {
+      await vscode.env.clipboard.writeText(diagnostics);
+      try {
+        await vscode.commands.executeCommand('workbench.action.chat.open', { query: diagnostics });
+        await this.post(webview, signal, 'success', 'Diagnostics sent to VS Code AI.');
+      } catch {
+        await this.post(webview, signal, 'error', 'VS Code AI is unavailable. Diagnostics were copied instead.');
+      }
     }
   }
 
@@ -240,4 +284,8 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       try { await rmdir(this.#directory!); } catch { /* Retain an occupied or locked directory. */ }
     }
   }
+}
+
+function sanitizeDiagnostic(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 512);
 }

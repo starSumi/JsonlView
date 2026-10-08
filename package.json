@@ -76,6 +76,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "jsonlView.diagnoseWebview",
+        "title": "JsonlView: Diagnose Webview Host Error",
+        "icon": "$(question)"
+      },
+      {
         "command": "jsonlView.sessionNavigator.enable",
         "title": "JsonlView: Enable Session Navigator",
         "icon": "$(activate-breakpoints)"
@@ -206,6 +211,11 @@
           "command": "jsonlView.sessionNavigator.authorizeAgent",
           "when": "view == jsonlView.sessionNavigator",
           "group": "sources@1"
+        },
+        {
+          "command": "jsonlView.diagnoseWebview",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "help@1"
         }
       ],
       "explorer/context": [

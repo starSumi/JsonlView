@@ -355,6 +355,33 @@ describe('session navigator source boundary', () => {
     expect(result.snapshot.relations).toEqual([]);
   });
 
+  it('links Claude Agent-tool transcripts under their parent session directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-claude-subagents-'));
+    cleanup.push(root);
+    const parentId = 'parent-session-1';
+    const parentDir = join(root, parentId);
+    const subagentsDir = join(parentDir, 'subagents');
+    await mkdir(subagentsDir, { recursive: true });
+    await writeFile(join(root, parentId + '.jsonl'), JSON.stringify({
+      type: 'user', sessionId: parentId, timestamp: '2026-10-08T03:00:00.000Z', customTitle: 'Parent session',
+    }), 'utf8');
+    await writeFile(join(subagentsDir, 'agent-worker-1.jsonl'), JSON.stringify({
+      type: 'user', sessionId: 'worker-session', agentId: 'worker-1', isSidechain: true,
+      timestamp: '2026-10-08T03:01:00.000Z', message: { role: 'user', content: 'child task' },
+    }), 'utf8');
+
+    const result = await createSessionNavigatorProvider({ provider: 'claude', rootUri: pathToFileURL(root).toString() }).scan(new AbortController().signal, {
+      maxEntities: 10, maxRelations: 10, maxRecords: 20, maxFiles: 10, maxBytes: 100_000, maxMilliseconds: 2_000,
+    });
+    expect(result.snapshot.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: parentId, relationship: 'root' }),
+      expect.objectContaining({ nativeId: `subagent:${parentId}:worker-1`, relationship: 'subagent', parentNativeId: parentId }),
+    ]));
+    expect(result.snapshot.relations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fromNativeId: `subagent:${parentId}:worker-1`, toNativeId: parentId, kind: 'parent' }),
+    ]));
+  });
+
   it('pages Claude transcripts by activity without rescanning an unbounded entity set', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-claude-pages-'));
     cleanup.push(root);

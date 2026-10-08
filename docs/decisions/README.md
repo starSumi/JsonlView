@@ -38,6 +38,9 @@ Read these before changing a shared boundary:
 30. [ADR-029 opt-in Session Navigator TreeView and local catalog](029-opt-in-session-navigator-treeview.md)
 31. [ADR-030 provider-native Session Navigator contract](030-provider-native-session-navigator-contract.md)
 32. [ADR-031 session loading, native metadata, and source intake](031-session-navigator-intake-and-loading.md)
+33. [ADR-032 bounded session pagination](032-bounded-session-pagination.md)
+34. [ADR-033 bounded Webview diagnostics](033-bounded-webview-diagnostics.md)
+35. [ADR-034 opt-in OTLP observability boundary](034-opt-in-otlp-observability.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

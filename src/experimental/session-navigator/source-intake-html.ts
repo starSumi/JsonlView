@@ -18,6 +18,11 @@ export function getSourceIntakeHtml(): string {
     h1 { margin: 8px 0; font-size: 28px; line-height: 1.25; font-weight: 600; }
     .intro, .hint { color: var(--vscode-descriptionForeground); }
     .intro { margin: 0 0 28px; }
+    .detected { margin: 0 0 20px; padding: 12px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px; background: var(--vscode-sideBar-background); }
+    .detected-title { margin: 0 0 8px; font-weight: 600; }
+    .detected-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .detected-actions button { padding: 6px 10px; border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 4px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); }
+    .detected-actions button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
     .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     button { font: inherit; cursor: pointer; }
     .choice { display: flex; align-items: flex-start; text-align: left; gap: 12px; min-height: 90px; padding: 18px 14px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 8px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); }
@@ -42,6 +47,10 @@ export function getSourceIntakeHtml(): string {
     .hint { font-size: 12px; }
     #status { min-height: 24px; margin: 20px 0 0; overflow-wrap: anywhere; }
     #status[data-state="error"] { color: var(--vscode-errorForeground); }
+    #diagnostic { margin-top: 16px; padding: 12px; border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)); background: var(--vscode-inputValidation-errorBackground); }
+    #diagnostic[hidden] { display: none; }
+    #diagnostic strong { color: var(--vscode-errorForeground); }
+    #diagnostic button { margin-right: 6px; }
     .privacy { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
     @media (max-width: 560px) { main { padding: 28px 18px; } .choices { grid-template-columns: 1fr; gap: 8px; } .choice { min-height: 68px; padding: 12px; } .paste-footer { align-items: flex-start; flex-direction: column; } }
   </style>
@@ -51,6 +60,14 @@ export function getSourceIntakeHtml(): string {
     <div class="eyebrow">JsonlView</div>
     <h1>Add sources</h1>
     <p class="intro">Choose local files, add a folder, or paste JSONL to start exploring.</p>
+    <section class="detected" aria-labelledby="detected-title">
+      <p id="detected-title" class="detected-title">Connect known local agents</p>
+      <p class="hint">Restore a provider home from its standard location when it is available. No source content is sent from this panel.</p>
+      <div class="detected-actions">
+        <button id="connect-codex" type="button">Connect Codex</button>
+        <button id="connect-claude" type="button">Connect Claude</button>
+      </div>
+    </section>
     <div class="choices" aria-label="Source options">
       <button class="choice" id="files" type="button">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6"/></svg>
@@ -79,6 +96,12 @@ export function getSourceIntakeHtml(): string {
       <p class="hint">Pasted text opens as a temporary local file for this VS Code session.</p>
     </section>
     <p id="status" role="status" aria-live="polite"></p>
+    <section id="diagnostic" hidden role="alert" aria-live="assertive">
+      <strong>Webview error</strong>
+      <p id="diagnostic-text" class="hint">The source intake view could not initialize.</p>
+      <button id="diagnostic-copy" type="button">Copy diagnostics</button>
+      <button id="diagnostic-send" type="button">Send to VS Code AI</button>
+    </section>
     <p class="hint privacy">Source files are read-only. Custom folders are added after you confirm their source format.</p>
   </main>
   <script nonce="${nonce}">
@@ -94,8 +117,23 @@ export function getSourceIntakeHtml(): string {
       function setStatus(message, state) { status.textContent = message; status.dataset.state = state; }
       function setBusy(value) { busy = value; document.querySelectorAll('button').forEach(button => { button.disabled = value; }); text.readOnly = value; }
       function send(message) { if (busy) return; setBusy(true); vscode.postMessage(message); }
+      function showDiagnostic(name, message) {
+        const safeName = String(name || 'Error').slice(0, 128);
+        const safeMessage = String(message || 'Unknown webview error').replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 512);
+        const text = safeName + ': ' + (safeMessage || 'Unknown webview error');
+        const card = document.getElementById('diagnostic');
+        const detail = document.getElementById('diagnostic-text');
+        detail.textContent = text;
+        card.hidden = false;
+        document.getElementById('diagnostic-copy').onclick = () => vscode.postMessage({ type: 'webview-diagnostic', name: safeName, message: safeMessage });
+        document.getElementById('diagnostic-send').onclick = () => vscode.postMessage({ type: 'webview-diagnostic', name: safeName, message: safeMessage });
+      }
+      window.addEventListener('error', event => showDiagnostic('Error', event.message));
+      window.addEventListener('unhandledrejection', event => showDiagnostic('UnhandledRejection', event.reason && event.reason.message ? event.reason.message : event.reason));
       document.getElementById('files').addEventListener('click', () => send({ type: 'pick-files' }));
       document.getElementById('folder').addEventListener('click', () => send({ type: 'pick-folder' }));
+      document.getElementById('connect-codex').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'codex' }));
+      document.getElementById('connect-claude').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'claude' }));
       pasteChoice.addEventListener('click', () => {
         document.getElementById('paste-section').hidden = false;
         pasteChoice.setAttribute('aria-expanded', 'true'); text.focus();

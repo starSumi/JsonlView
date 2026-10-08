@@ -13,6 +13,10 @@
 - Detect standard Agent homes after Navigator opt-in, keep removed sources
   excluded, and show sessions instead of falling back to raw rollout rows.
   Codex supports a separate SQLite home and detects WAL-only metadata updates.
+- Restore detected Codex or Claude homes directly from Add Source, and expose
+  bounded Webview diagnostics with copy and best-effort VS Code Chat handoff.
+- Add a no-op-by-default observability contract for future opt-in OTLP export;
+  source bodies, paths, prompts, credentials, and arbitrary JSON are rejected.
 
 - Make Windows native release builds reproducible with the MSVC /Brepro
   linker flag while preserving debug metadata and portable builds.

@@ -25,7 +25,8 @@ vi.mock('vscode', () => ({
     },
   },
   ViewColumn: { Active: -1 },
-  window: { createWebviewPanel: host.create, showOpenDialog: host.dialog },
+  window: { createWebviewPanel: host.create, showOpenDialog: host.dialog, showInformationMessage: vi.fn().mockResolvedValue(undefined) },
+  env: { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } },
   commands: { executeCommand: host.open },
 }));
 
@@ -66,6 +67,13 @@ async function send(message: unknown): Promise<void> {
 }
 
 describe('bounded source intake validation', () => {
+  it('accepts bounded Webview diagnostics without accepting source content', () => {
+    expect(parseSourceIntakeMessage({ type: 'webview-diagnostic', name: 'InvalidStateError', message: 'The object is in an invalid state.' })).toEqual({
+      type: 'webview-diagnostic', name: 'InvalidStateError', message: 'The object is in an invalid state.',
+    });
+    expect(() => parseSourceIntakeMessage({ type: 'webview-diagnostic', name: 'InvalidStateError', message: 'x'.repeat(513) })).toThrow();
+  });
+
   it('accepts JSON values and CRLF without changing record content', () => {
     expect(validatePastedJsonl('{"event":"started"}\r\n[1,2]\r\nnull\r\n')).toBe(3);
     expect(validatePastedJsonl('"<script>never run</script>"')).toBe(1);
@@ -279,5 +287,8 @@ it('ships a nonce-only static document without HTML injection or automatic clipb
   expect(html).not.toMatch(/innerHTML|readText|navigator\.clipboard|unsafe-eval|https?:\/\//u);
   expect(html).toContain('textContent = message');
   expect(html).toContain('file.size > maxBytes');
+  expect(html).toContain('Send to VS Code AI');
+  expect(html).toContain('webview-diagnostic');
+  expect(html).toContain('Source files are read-only');
   expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
 });
