@@ -30,7 +30,7 @@ vi.mock('vscode', () => ({
 }));
 
 import { parseSourceIntakeMessage, SOURCE_INTAKE_MAX_BYTES, SourceIntakePanel, type SourceIntakeHandler, validateLocalSourceUri, validatePastedJsonl } from '../../src/experimental/session-navigator/source-intake';
-import { getSourceIntakeHtml } from '../../src/experimental/session-navigator/source-intake-html';
+import { getSourceDropHtml, getSourceIntakeHtml } from '../../src/experimental/session-navigator/source-intake-html';
 
 let directory: string;
 let intake: SourceIntakePanel;
@@ -232,6 +232,39 @@ describe('Add Source panel host lifecycle', () => {
     await intake.dispose();
     expect((onSource.mock.calls[0]?.[1] as AbortSignal).aborted).toBe(true);
     expect(host.post.mock.calls.at(-1)?.[0].state).toBe('busy');
+  });
+});
+
+describe('persistent sidebar source drop view', () => {
+  it('sets up an isolated Webview View and authorizes only validated local URI drops', async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    let dispose: (() => void) | undefined;
+    let html = '';
+    const webview = {
+      options: undefined as vscode.WebviewOptions | undefined,
+      set html(value: string) { html = value; },
+      postMessage: host.post,
+      onDidReceiveMessage: (listener: (message: unknown) => void) => { receive = listener; return { dispose() {} }; },
+    };
+    const view = { webview, onDidDispose: (listener: () => void) => { dispose = listener; return { dispose() {} }; } } as unknown as vscode.WebviewView;
+    intake.resolveWebviewView(view);
+    expect(webview.options).toEqual({ enableScripts: true, localResourceRoots: [] });
+    expect(html).toContain('Drop JSONL here');
+    expect(html).toContain('Choose files');
+    receive!({ type: 'drop-uris', uris: [pathToFileURL(directory).toString()] });
+    await vi.waitFor(() => expect(host.post.mock.calls.at(-1)?.[0].state).toBe('idle'));
+    expect(onSource).toHaveBeenCalledWith(expect.objectContaining({ fsPath: directory }), expect.any(AbortSignal));
+    dispose?.();
+  });
+
+  it('ships a nonce-only, local-only drop target with safe message rendering', () => {
+    const html = getSourceDropHtml();
+    const nonce = html.match(/<script nonce="([^"]+)"/u)?.[1];
+    expect(nonce).toBeTruthy();
+    expect(html).toContain('border:1px dashed');
+    expect(html).toContain(`script-src 'nonce-${nonce}'`);
+    expect(html).not.toMatch(/innerHTML|readText|navigator\.clipboard|unsafe-eval|https?:\/\//u);
+    expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
   });
 });
 

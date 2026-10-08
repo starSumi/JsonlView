@@ -10,5 +10,7 @@ describe('Session Navigator layout contract', () => {
     ]);
     for (const item of primary) expect(manifest.contributes.commands.find((command: { command: string }) => command.command === item.command).icon).toMatch(/^\$\(/u);
     expect(manifest.contributes.viewsWelcome[0].contents).toContain('command:jsonlView.sessionNavigator.addSource');
+    expect(manifest.contributes.views.jsonlViewSessionNavigator[0]).toMatchObject({ type: 'webview', id: 'jsonlView.sourceDrop' });
+    expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.sessionNavigator')).toBeTruthy();
   });
 });

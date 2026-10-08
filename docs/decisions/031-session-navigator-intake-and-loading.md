@@ -57,6 +57,13 @@ becoming a custom tree renderer. Empty-tree guidance uses viewsWelcome, not an
 action disguised as a data node. OS drops enumerate DataTransfer items; the
 `files` MIME wildcard is not treated as a guaranteed item key.
 
+The opt-in navigator also places a compact Webview View before the native tree.
+It keeps a dashed local-file drop target and a visible file-picker button above
+the session list. The same host-side URI validation and explicit source
+authorization apply to both entry points; the persistent view does not read the
+clipboard or stream file contents through the Webview. The richer panel remains
+the explicit multiline-paste surface.
+
 The intake form has a host-enforced 1 MiB / 10,000 record text limit. Larger
 existing files use the existing bounded reader without copying file bodies
 through the Webview. Temporary previews are separately owned, capped, and
@@ -88,6 +95,9 @@ uses no remote content, source-code execution, or automatic clipboard reads.
   defines primary/secondary view actions, welcome content, and view progress.
 - [VS Code Webviews UX](https://code.visualstudio.com/api/ux-guidelines/webviews)
   reserves custom surfaces for needs beyond the native APIs.
+- [Webview Views](https://code.visualstudio.com/api/extension-guides/webview#webview-views)
+  documents the persistent Webview View provider lifecycle used for the compact
+  source drop target.
 - [Webview security](https://code.visualstudio.com/api/extension-guides/webview#security)
   requires minimal capabilities, a restrictive CSP, and validated user input.
 - [Claude subagents](https://code.claude.com/docs/en/sub-agents) documents separate

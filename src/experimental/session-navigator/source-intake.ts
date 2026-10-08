@@ -77,6 +77,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   #panel: vscode.WebviewPanel | undefined;
   #view: vscode.WebviewView | undefined;
   #panelLifetime: AbortController | undefined;
+  #viewLifetime: AbortController | undefined;
   #pending: Promise<void> | undefined;
   #directory: string | undefined;
   #directoryIdentity: { readonly dev: number; readonly ino: number } | undefined;
@@ -90,13 +91,21 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = getSourceDropHtml();
     const controller = new AbortController();
+    this.#viewLifetime = controller;
     const listener = view.webview.onDidReceiveMessage((message: unknown) => {
-      if (controller.signal.aborted || this.#pending !== undefined) return;
+      if (controller.signal.aborted) return;
+      if (this.#pending !== undefined) {
+        void this.post(view.webview, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
+        return;
+      }
       const operation = this.receive(message, view.webview, controller.signal);
       this.#pending = operation;
       void operation.finally(() => { if (this.#pending === operation) this.#pending = undefined; });
     });
-    view.onDidDispose(() => { controller.abort(); listener.dispose(); if (this.#view === view) this.#view = undefined; });
+    view.onDidDispose(() => {
+      controller.abort(); listener.dispose();
+      if (this.#view === view) { this.#view = undefined; this.#viewLifetime = undefined; }
+    });
   }
 
   public show(): void {
@@ -127,7 +136,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
 
   public dispose(): Promise<void> {
     if (this.#disposal !== undefined) return this.#disposal;
-    this.#lifetime.abort(); this.#panelLifetime?.abort(); this.#panel?.dispose();
+    this.#lifetime.abort(); this.#panelLifetime?.abort(); this.#viewLifetime?.abort(); this.#panel?.dispose();
     this.#disposal = this.cleanup();
     return this.#disposal;
   }

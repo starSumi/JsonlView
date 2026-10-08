@@ -26,7 +26,7 @@ vi.mock('vscode', () => ({
     parse: (value: string) => ({ fsPath: fileURLToPath(value), toString: () => value }),
   },
   ConfigurationTarget: { Global: 1 },
-  window: { createTreeView: () => host.view, withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
+  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
   workspace: {
     fs: { createDirectory: async ({ fsPath }: { fsPath: string }) => { const { mkdir } = await import('node:fs/promises'); await mkdir(fsPath, { recursive: true }); } },
     getConfiguration: () => ({
