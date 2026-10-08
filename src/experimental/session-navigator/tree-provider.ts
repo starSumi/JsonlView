@@ -64,7 +64,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     });
     const subscriptions: vscode.Disposable[] = [
       this.#treeView,
-      vscode.window.registerWebviewViewProvider('jsonlView.sourceDrop', this.#intake, { webviewOptions: { retainContextWhenHidden: true } }),
+      vscode.window.registerWebviewViewProvider('jsonlView.sourceDrop', this.#intake),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.refresh', () => this.refresh()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.addSource', () => this.addSource()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.authorizeAgent', () => this.authorizeAgent()),

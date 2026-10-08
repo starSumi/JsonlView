@@ -250,7 +250,8 @@ describe('persistent sidebar source drop view', () => {
     intake.resolveWebviewView(view);
     expect(webview.options).toEqual({ enableScripts: true, localResourceRoots: [] });
     expect(html).toContain('Drop JSONL here');
-    expect(html).toContain('Choose files');
+    expect(html).toContain('Drop JSONL here');
+    expect(html).toContain('type="button"');
     receive!({ type: 'drop-uris', uris: [pathToFileURL(directory).toString()] });
     await vi.waitFor(() => expect(host.post.mock.calls.at(-1)?.[0].state).toBe('idle'));
     expect(onSource).toHaveBeenCalledWith(expect.objectContaining({ fsPath: directory }), expect.any(AbortSignal));
@@ -262,6 +263,7 @@ describe('persistent sidebar source drop view', () => {
     const nonce = html.match(/<script nonce="([^"]+)"/u)?.[1];
     expect(nonce).toBeTruthy();
     expect(html).toContain('border:1px dashed');
+    expect(html).toContain('Drop from the VS Code Explorer');
     expect(html).toContain(`script-src 'nonce-${nonce}'`);
     expect(html).not.toMatch(/innerHTML|readText|navigator\.clipboard|unsafe-eval|https?:\/\//u);
     expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
