@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { lstat, readdir, stat } from 'node:fs/promises';
+import { lstat, open, readdir, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
@@ -116,7 +116,7 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       db.exec('BEGIN');
       let snapshot: NavigatorSnapshot;
       try {
-        snapshot = readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles);
+        snapshot = await readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles);
       } finally {
         db.exec('ROLLBACK');
       }
@@ -186,7 +186,7 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
   }
 }
 
-function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>): NavigatorSnapshot {
+async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>): Promise<NavigatorSnapshot> {
   const columns = new Set(tableColumns(db, 'threads'));
   if (!columns.has('id') || !columns.has('rollout_path')) throw new Error('Codex state database has no compatible thread table.');
   const selected = ['id', 'rollout_path', 'created_at', 'updated_at', 'created_at_ms', 'updated_at_ms', 'recency_at', 'recency_at_ms', 'title', 'name', 'agent_nickname', 'agent_role', 'preview', 'first_user_message', 'project_id', 'archived'].filter((name) => columns.has(name));
@@ -208,6 +208,8 @@ function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string,
   const entities: NavigationEntity[] = [];
   const relations: NavigationRelation[] = [];
   const locations: NavigatorLocation[] = [];
+  const rowOrdinalsByPath = new Map<string, ReadonlyMap<string, string>>();
+  const rowOrdinalBudget = new MetadataBudget(budget, signal);
   let relationsTruncated = false;
   for (const { row, relativePath } of candidates.slice(0, budget.maxEntities)) {
     throwIfAborted(signal);
@@ -235,7 +237,12 @@ function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string,
       confidence: 'source', opaqueRef: 'codex-thread-' + hash(id),
     };
     entities.push(entity);
-    locations.push({ nativeId: id, relativePath, rowOrdinal: '0' });
+    let rowOrdinals = rowOrdinalsByPath.get(relativePath);
+    if (rowOrdinals === undefined) {
+      rowOrdinals = await codexRowOrdinals(join(resolveRootPath(rootPath), relativePath), rowOrdinalBudget);
+      rowOrdinalsByPath.set(relativePath, rowOrdinals);
+    }
+    locations.push({ nativeId: id, relativePath, rowOrdinal: rowOrdinals.get(id) ?? '0' });
     if (parent !== undefined && !orphan) relations.push({ sourceId, fromNativeId: id, toNativeId: parent, kind: 'parent' });
   }
   return Object.freeze({
@@ -274,6 +281,39 @@ async function fillCodexPreviews(snapshot: NavigatorSnapshot, rootPath: string, 
     } catch { throwIfAborted(budget.signal); entities.push(entity); }
   }
   return Object.freeze({ ...snapshot, entities: Object.freeze(entities), truncated: snapshot.truncated || budget.truncated, ...(budget.truncated ? { truncatedReason: 'record_limit' as const } : {}) });
+}
+
+/** Read only the bounded session metadata needed to anchor a thread inside a shared rollout. */
+async function codexRowOrdinals(path: string, budget: MetadataBudget): Promise<ReadonlyMap<string, string>> {
+  const result = new Map<string, string>();
+  if (!budget.available() || !existsSync(path)) return result;
+  const file = await open(path, 'r');
+  try {
+    const size = (await file.stat()).size;
+    const remaining = Math.max(0, budget.limits.maxBytes - budget.bytes);
+    const length = Math.min(size, remaining, 512 * 1024);
+    if (length <= 0) return result;
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    budget.bytes += bytesRead;
+    const lines = buffer.subarray(0, bytesRead).toString('utf8').split(/\r?\n/u);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!budget.check() || budget.records >= budget.limits.maxRecords) { budget.truncated = true; break; }
+      const line = lines[index]?.trim();
+      if (!line) continue;
+      let value: unknown;
+      try { value = JSON.parse(line); } catch { continue; }
+      budget.records += 1;
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+      const record = value as Record<string, unknown>;
+      if (String(record.type ?? '') !== 'session_meta') continue;
+      const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+        ? record.payload as Record<string, unknown> : record;
+      const id = [payload.id, payload.thread_id, payload.threadId].find((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);
+      if (id !== undefined && !result.has(id)) result.set(id, String(index));
+    }
+  } finally { await file.close(); }
+  return result;
 }
 
 function readCodexEdges(db: DatabaseSync, childIds: readonly string[]): Map<string, string> {

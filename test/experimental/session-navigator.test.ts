@@ -228,6 +228,44 @@ describe('session navigator source boundary', () => {
     expect(legacyResult.snapshot.entities).toEqual(expect.arrayContaining([expect.objectContaining({ nativeId: 'child-1', vendorTitle: 'Title in provider home' })]));
   });
 
+  it('anchors parent and child Codex threads to their own session metadata in a shared rollout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-codex-shared-rollout-'));
+    cleanup.push(root);
+    const sessions = join(root, 'sessions');
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(sessions));
+    const rollout = join(sessions, 'rollout-shared.jsonl');
+    await writeFile(rollout, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'root-1' } }),
+      JSON.stringify({ type: 'session_meta', payload: { id: 'child-1', forked_from_ordinal_exclusive: 0 } }),
+    ].join('\n'), 'utf8');
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(join(root, 'state_5.sqlite'));
+    db.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL, title TEXT NOT NULL, preview TEXT NOT NULL,
+        recency_at INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT PRIMARY KEY, status TEXT NOT NULL);
+    `);
+    for (const row of [
+      ['root-1', 1_000, 1_100, 'Root title', 'root preview', 1_200],
+      ['child-1', 1_300, 1_500, '', 'child preview', 1_600],
+    ] as const) {
+      db.prepare('INSERT INTO threads(id, rollout_path, created_at, updated_at, title, preview, recency_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(row[0], rollout, row[1], row[2], row[3], row[4], row[5]);
+    }
+    db.prepare('INSERT INTO thread_spawn_edges(parent_thread_id, child_thread_id, status) VALUES (?, ?, ?)').run('root-1', 'child-1', 'open');
+    db.close();
+
+    const result = await createSessionNavigatorProvider({ provider: 'codex', rootUri: pathToFileURL(root).toString() }).scan(new AbortController().signal, {
+      maxEntities: 10, maxRelations: 10, maxRecords: 20, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
+    });
+    expect(result.snapshot.locations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: 'root-1', relativePath: 'sessions\\rollout-shared.jsonl', rowOrdinal: '0' }),
+      expect.objectContaining({ nativeId: 'child-1', relativePath: 'sessions\\rollout-shared.jsonl', rowOrdinal: '1' }),
+    ]));
+  });
+
   it('detects WAL-only commits and reads committed metadata without checkpointing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-wal-'));
     cleanup.push(root);
