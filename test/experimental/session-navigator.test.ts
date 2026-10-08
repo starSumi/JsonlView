@@ -132,17 +132,19 @@ describe('session navigator source boundary', () => {
     });
     const first = await CatalogStore.open(dbPath);
     first.syncSources([setting]);
-    const stored = first.replaceSnapshot(sourceId, scan.snapshot, scan.fingerprint);
+    const stored = first.replaceSnapshot(sourceId, { ...scan.snapshot, truncated: true, truncatedReason: 'record_limit' }, scan.fingerprint);
     expect(stored.sourceGeneration).toBe('g-1');
     expect(first.listSources()[0]).toMatchObject({ sourceId, provider: 'claude', entityCount: 1 });
     first.close();
 
     const reopened = await CatalogStore.open(dbPath);
-    expect(reopened.listSources()[0]).toMatchObject({ sourceId, generation: 'g-1', entityCount: 1 });
+    expect(reopened.listSources()[0]).toMatchObject({ sourceId, generation: 'g-1', entityCount: 1, truncated: true });
     const children = reopened.getChildren(sourceId);
     expect(children.map((entity) => entity.nativeId)).toEqual(['s-1']);
     expect(reopened.getLocation({ sourceId, generation: 'g-1', nativeId: 's-1' })).toMatchObject({ relativePath: 'events.ndjson', rowOrdinal: '0' });
     expect(reopened.getLocation({ sourceId, generation: 'g-0', nativeId: 's-1' })).toBeUndefined();
+    reopened.replaceSnapshot(sourceId, { ...scan.snapshot, truncated: false }, scan.fingerprint);
+    expect(reopened.listSources()[0]?.truncated).toBe(false);
     reopened.close();
   });
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show initial session loading, retry and partial-index states; use native agent
+  names and Claude subagent layouts, with concise tree labels and one sort menu.
+- Add a local source form for files, folders, drops, and bounded JSONL paste
+  previews. Pasted content stays temporary and never changes provider data.
 - Detect standard Agent homes after Navigator opt-in, keep removed sources
   excluded, and show sessions instead of falling back to raw rollout rows.
   Codex supports a separate SQLite home and detects WAL-only metadata updates.
@@ -23,7 +27,7 @@
 - Add provider-native Codex and Claude session projections with activity-first
   sorting, title provenance, parent/subagent/orphan relationships, explicit
   Navigator focus actions, default-root detection, and confirmed custom-root
-  drop or clipboard authorization; provider stores remain read-only and no
+  drops and source intake; provider stores remain read-only and no
   transcript bytes are copied into the product catalog.
 
 ## 0.2.7 - 2026-10-06

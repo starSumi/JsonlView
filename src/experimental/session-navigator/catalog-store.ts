@@ -17,6 +17,7 @@ interface SourceRow {
   captured_at: string | null;
   fingerprint: string | null;
   update_available: number;
+  truncated: number;
 }
 
 interface EntityRow {
@@ -130,6 +131,7 @@ export class CatalogStore {
       INSERT OR IGNORE INTO catalog_meta(key, value) VALUES ('schema_version', '2');
     `);
     ensureColumn(db, 'entities', 'vendor_title', 'TEXT');
+    ensureColumn(db, 'sources', 'truncated', 'INTEGER NOT NULL DEFAULT 0');
     ensureColumn(db, 'entities', 'title_source', 'TEXT');
     ensureColumn(db, 'entities', 'first_message_preview', 'TEXT');
     ensureColumn(db, 'entities', 'started_at', 'TEXT');
@@ -162,7 +164,7 @@ export class CatalogStore {
   }
 
   public listSources(): readonly NavigatorSourceSummary[] {
-    const rows = this.#db.prepare('SELECT source_id, provider, label, generation, captured_at, update_available FROM sources ORDER BY label COLLATE NOCASE').all() as Array<Pick<SourceRow, 'source_id' | 'provider' | 'label' | 'generation' | 'captured_at' | 'update_available'>>;
+    const rows = this.#db.prepare('SELECT source_id, provider, label, generation, captured_at, update_available, truncated FROM sources ORDER BY label COLLATE NOCASE').all() as Array<Pick<SourceRow, 'source_id' | 'provider' | 'label' | 'generation' | 'captured_at' | 'update_available' | 'truncated'>>;
     return rows.map((row) => {
       const counts = this.#db.prepare('SELECT (SELECT COUNT(*) FROM entities WHERE source_id = ? AND generation = ?) AS entities, (SELECT COUNT(*) FROM relations WHERE source_id = ? AND generation = ?) AS relations').get(row.source_id, generationText(row.generation), row.source_id, generationText(row.generation)) as { entities: number; relations: number };
       return {
@@ -174,6 +176,7 @@ export class CatalogStore {
         entityCount: Number(counts.entities ?? 0),
         relationCount: Number(counts.relations ?? 0),
         updateAvailable: row.update_available === 1,
+        truncated: row.truncated === 1,
         ...lastActivityFor(this.#db, row.source_id, generationText(row.generation)),
       };
     });
@@ -267,7 +270,7 @@ export class CatalogStore {
       for (const relation of nextSnapshot.relations) insertRelation.run(sourceId, generation, relation.fromNativeId, relation.toNativeId, relation.kind);
       const insertLocation = this.#db.prepare('INSERT OR REPLACE INTO locations(source_id, generation, native_id, relative_path, row_ordinal) VALUES (?, ?, ?, ?, ?)');
       for (const location of nextSnapshot.locations) insertLocation.run(sourceId, generation, location.nativeId, location.relativePath, location.rowOrdinal);
-      this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0 WHERE source_id = ?').run(nextGeneration, nextSnapshot.capturedAt, fingerprint, sourceId);
+      this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0, truncated = ? WHERE source_id = ?').run(nextGeneration, nextSnapshot.capturedAt, fingerprint, nextSnapshot.truncated ? 1 : 0, sourceId);
       this.#db.exec('COMMIT');
     } catch (error) {
       this.#db.exec('ROLLBACK');

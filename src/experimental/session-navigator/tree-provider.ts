@@ -1,10 +1,11 @@
-import { basename, dirname, relative, resolve, sep } from 'node:path';
-import { lstat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { CatalogStore } from './catalog-store';
 import { createSessionNavigatorProvider } from './file-provider';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import { RevealIntentRegistry } from './reveal-intents';
+import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorSortKey } from './types';
 
 const SOURCES_SETTING = 'sessionNavigator.sources';
@@ -23,6 +24,8 @@ interface EntityTreeNode {
   readonly entity: NavigatorEntity;
 }
 
+interface SourceStatus { phase: 'loading' | 'error'; detail?: string }
+
 export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode;
 
 export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<SessionNavigatorTreeNode>, vscode.Disposable {
@@ -30,6 +33,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   readonly #revealRegistry: RevealIntentRegistry;
   readonly #changed = new vscode.EventEmitter<SessionNavigatorTreeNode | undefined | null | void>();
   readonly #providers = new Map<string, SessionNavigatorProvider>();
+  readonly #sourceStatus = new Map<string, SourceStatus>();
+  readonly #intake: SourceIntakePanel;
   #store: CatalogStore | undefined;
   #openingStore: Promise<CatalogStore> | undefined;
   #refreshing: Promise<void> | undefined;
@@ -45,6 +50,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry) {
     this.#context = context;
     this.#revealRegistry = revealRegistry;
+    this.#intake = new SourceIntakePanel((uri, signal) => this.confirmCustomSource(uri, () => signal.aborted));
   }
 
   public register(): vscode.Disposable[] {
@@ -60,6 +66,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       this.#treeView,
       vscode.commands.registerCommand('jsonlView.sessionNavigator.refresh', () => this.refresh()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.addSource', () => this.addSource()),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.authorizeAgent', () => this.authorizeAgent()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.removeSource', (node?: SessionNavigatorTreeNode) => this.removeSource(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.enable', () => this.setEnabled(true)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.disable', () => this.setEnabled(false)),
@@ -67,7 +74,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sortActivity', () => this.setSort('activity')),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sortCreated', () => this.setSort('created')),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sortTitle', () => this.setSort('title')),
-      vscode.commands.registerCommand('jsonlView.sessionNavigator.addSourceFromClipboard', () => this.addSourceFromClipboard()),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.sort', () => this.chooseSort()),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.addSourceFromClipboard', () => this.addSource()),
       vscode.commands.registerCommand('jsonlView.revealSessionNode', (node: EntityTreeNode) => this.reveal(node)),
       this.#treeView.onDidChangeVisibility((event) => this.handleVisibility(event.visible)),
       vscode.workspace.onDidChangeConfiguration((event) => {
@@ -88,23 +96,39 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
   public getTreeItem(node: SessionNavigatorTreeNode): vscode.TreeItem {
     if (node.nodeKind === 'source') {
+      const status = this.#sourceStatus.get(node.source.sourceId);
       const item = new vscode.TreeItem(node.source.label, node.source.entityCount > 0
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None);
       item.id = `source:${node.source.sourceId}`;
       item.contextValue = 'jsonlView.sessionNavigator.source';
-      item.description = node.source.provider + ' · ' + String(node.source.entityCount) + (node.source.lastActivityAt === undefined ? '' : ' · last ' + compactTime(node.source.lastActivityAt)) + (node.source.updateAvailable ? ' · update available' : '');
-      item.tooltip = node.source.updateAvailable ? node.source.label + ' has new metadata. Refresh explicitly.' : node.source.label + ' · read-only metadata projection';
+      item.description = status?.phase === 'loading' ? (node.source.capturedAt === undefined ? 'Loading…' : 'Refreshing…')
+        : status?.phase === 'error' ? (node.source.capturedAt === undefined ? 'Could not load · Retry' : String(node.source.entityCount) + ' cached · Retry')
+        : node.source.capturedAt === undefined ? 'Waiting to load…'
+        : node.source.entityCount === 0 && !node.source.truncated ? 'No sessions found'
+        : String(node.source.entityCount) + ' loaded' + (node.source.truncated ? ' · partial' : '') + (node.source.updateAvailable ? ' · updates available' : '');
+      item.iconPath = new vscode.ThemeIcon(status?.phase === 'loading' ? 'loading~spin' : status?.phase === 'error' ? 'warning' : 'folder');
+      item.tooltip = [node.source.label, this.#store?.getSourceRoot(node.source.sourceId), status?.detail,
+        node.source.truncated ? 'Partial index: the metadata scan reached a budget limit.' : undefined,
+        node.source.lastActivityAt === undefined ? undefined : 'Last activity: ' + node.source.lastActivityAt].filter(Boolean).join('\n');
+      if (status?.phase === 'error') item.command = { command: 'jsonlView.sessionNavigator.refresh', title: 'Retry loading sessions' };
       return item;
     }
     const hasChildren = this.#store?.hasChildren(node.entity.sourceId, node.entity.nativeId) ?? false;
-    const item = new vscode.TreeItem(node.entity.label, hasChildren
+    const label = node.entity.label.startsWith('Untitled session') ? '#' + node.entity.nativeId.slice(0, 10) : node.entity.label;
+    const item = new vscode.TreeItem(label, hasChildren
       ? vscode.TreeItemCollapsibleState.Collapsed
       : vscode.TreeItemCollapsibleState.None);
     item.id = `entity:${node.entity.sourceId}:${node.entity.nativeId}`;
     item.contextValue = `jsonlView.sessionNavigator.${node.entity.kind}`;
-    item.description = [node.entity.status ?? node.entity.kind, node.entity.relationship, shortId(node.entity.nativeId), node.entity.activityAt === undefined ? undefined : compactTime(node.entity.activityAt)].filter((value): value is string => value !== undefined).join(' · ');
-    item.tooltip = [node.entity.label, node.entity.vendorTitle === undefined ? undefined : 'provider title: ' + node.entity.vendorTitle, node.entity.firstMessagePreview === undefined ? undefined : 'preview: ' + node.entity.firstMessagePreview, 'id: ' + node.entity.nativeId].filter((value): value is string => value !== undefined).join('\n');
+    item.description = [node.entity.relationship === 'root' ? undefined : node.entity.relationship, node.entity.activityAt === undefined ? undefined : relativeTime(node.entity.activityAt)].filter((value): value is string => value !== undefined).join(' · ');
+    item.iconPath = new vscode.ThemeIcon(node.entity.kind === 'subagent' ? 'hubot' : 'comment-discussion');
+    const location = this.#store?.getLocation({ sourceId: node.entity.sourceId, generation: node.entity.generation, nativeId: node.entity.nativeId });
+    item.tooltip = [label, node.entity.vendorTitle === undefined ? undefined : 'Provider title: ' + node.entity.vendorTitle,
+      node.entity.firstMessagePreview === undefined ? undefined : 'Preview: ' + node.entity.firstMessagePreview,
+      'ID: ' + node.entity.nativeId, node.entity.activityAt === undefined ? undefined : 'Last activity: ' + node.entity.activityAt,
+      node.entity.status === undefined ? undefined : 'Status: ' + node.entity.status,
+      location === undefined ? undefined : 'Source: ' + location.relativePath].filter((value): value is string => value !== undefined).join('\n');
     item.command = {
       command: 'jsonlView.revealSessionNode',
       title: 'Reveal in JsonlView',
@@ -119,6 +143,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (this.#disposed || !this.isEnabled()) return [];
     if (node === undefined) {
       store.syncSources(this.settings());
+      if (!this.#initialized && this.#treeView?.visible && this.#refreshing === undefined) {
+        this.#initialized = true;
+        void this.refresh();
+      }
       return store.listSources().map((source) => ({ nodeKind: 'source', source } satisfies SourceTreeNode));
     }
     if (node.nodeKind === 'source') {
@@ -130,9 +158,19 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   public async refresh(): Promise<void> {
     if (this.#disposed || !this.isEnabled()) return;
     if (this.#refreshing !== undefined) return this.#refreshing;
-    this.#refreshing = this.runRefreshes();
+    if (this.#treeView) this.#treeView.message = 'Loading sessions…';
+    this.#changed.fire(undefined);
+    this.#refreshing = Promise.resolve(vscode.window.withProgress({ location: { viewId: 'jsonlView.sessionNavigator' } }, () => this.runRefreshes()));
     try { await this.#refreshing; }
-    finally { this.#refreshing = undefined; }
+    finally {
+      this.#refreshing = undefined;
+      if (!this.#disposed && this.#treeView) {
+        this.#treeView.message = [...this.#sourceStatus.values()].some((status) => status.phase === 'error')
+          ? 'Some sources could not load. Select a warning to retry.'
+          : this.settings().length > 0 ? 'Drop files here, or use + to add a source.' : '';
+      }
+      this.#changed.fire(undefined);
+    }
   }
 
   private async runRefreshes(): Promise<void> {
@@ -151,6 +189,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       if (signal.aborted || this.#disposed || !this.isEnabled()) return;
       const settings = this.settings();
       store.syncSources(settings);
+      const activeSourceIds = new Set(settings.map(sourceIdFor));
+      for (const id of this.#sourceStatus.keys()) if (!activeSourceIds.has(id)) this.#sourceStatus.delete(id);
+      for (const id of this.#providers.keys()) if (!activeSourceIds.has(id)) this.#providers.delete(id);
+      for (const setting of settings) this.#sourceStatus.set(sourceIdFor(setting), { phase: 'loading' });
+      this.#changed.fire(undefined);
       const failures: string[] = [];
       for (const setting of settings) {
         if (signal.aborted || this.#disposed || !this.isEnabled()) return;
@@ -166,9 +209,14 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
             relations: scan.snapshot.relations.map((relation) => ({ ...relation, sourceId })),
           };
           store.replaceSnapshot(sourceId, snapshot, scan.fingerprint);
+          this.#sourceStatus.delete(sourceId);
+          this.#changed.fire(undefined);
         } catch (error) {
           if (signal.aborted || this.#disposed) return;
-          failures.push(sourceLabelFor(setting) + ': ' + (error instanceof Error ? error.message : String(error)));
+          const detail = error instanceof Error ? error.message : String(error);
+          this.#sourceStatus.set(sourceId, { phase: 'error', detail });
+          this.#changed.fire(undefined);
+          failures.push(sourceLabelFor(setting) + ': ' + detail);
         }
       }
       if (failures.length > 0) {
@@ -178,6 +226,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     } catch (error) {
       if (signal.aborted || this.#disposed) return;
       void vscode.window.showErrorMessage('Session Navigator could not refresh: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      for (const [id, status] of this.#sourceStatus) if (status.phase === 'loading') this.#sourceStatus.delete(id);
     }
   }
 
@@ -201,9 +251,15 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     }
     try {
       const currentFingerprint = await this.providerFor(setting).probe(new AbortController().signal);
+      if (this.#disposed || !this.isEnabled()) return;
       if (currentFingerprint !== store.getFingerprint(node.entity.sourceId)) {
-        void vscode.window.showWarningMessage('This navigation entry is stale. Refresh the Session Navigator.');
-        return;
+        const sessionStart = (setting.provider === 'codex' || setting.provider === 'claude') && location.rowOrdinal === '0';
+        if (!sessionStart) {
+          void vscode.window.showWarningMessage('This navigation entry is stale. Refresh the Session Navigator.');
+          return;
+        }
+        store.markUpdateAvailable(node.entity.sourceId, true);
+        this.#changed.fire(undefined);
       }
     } catch {
       void vscode.window.showWarningMessage('The authorized source file is no longer available.');
@@ -219,21 +275,26 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       return;
     }
     const target = rootIsFile ? root : vscode.Uri.joinPath(root, ...location.relativePath.split(/[\\/]+/u));
-    if (!isContainedFile(root.fsPath, target.fsPath) || !(await isRegularFile(target.fsPath))) {
+    const [canonicalRoot, canonicalTarget] = await Promise.all([realpath(root.fsPath).catch(() => undefined), realpath(target.fsPath).catch(() => undefined)]);
+    if (canonicalRoot === undefined || canonicalTarget === undefined || !isContainedFile(canonicalRoot, canonicalTarget) || !(await isRegularFile(canonicalTarget))) {
       void vscode.window.showWarningMessage('The authorized source file is no longer available.');
       return;
     }
+    if (this.#disposed || !this.isEnabled()
+      || !this.settings().some((current) => sourceIdFor(current) === node.entity.sourceId)
+      || store.getLocation({ sourceId: node.entity.sourceId, generation: node.entity.generation, nativeId: node.entity.nativeId }) === undefined) return;
+    const canonicalUri = vscode.Uri.file(canonicalTarget);
     const intent: RevealIntent = {
       sourceId: node.entity.sourceId,
       catalogGeneration: node.entity.generation,
       nativeId: node.entity.nativeId,
       anchorOrdinal: location.rowOrdinal,
     };
-    this.#revealRegistry.set(target.toString(), intent);
+    this.#revealRegistry.set(canonicalUri.toString(), intent);
     try {
-      await vscode.commands.executeCommand('vscode.openWith', target, 'jsonlView.editor');
+      await vscode.commands.executeCommand('vscode.openWith', canonicalUri, 'jsonlView.editor');
     } catch (error) {
-      this.#revealRegistry.clear(target.toString());
+      this.#revealRegistry.clear(canonicalUri.toString());
       void vscode.window.showErrorMessage(`JsonlView could not open the selected source: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -246,6 +307,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     this.#store?.close();
     this.#store = undefined;
     this.#providers.clear();
+    void this.#intake.dispose().catch(() => { /* Preserve any preview whose cleanup could not be verified. */ });
     this.#changed.dispose();
   }
 
@@ -292,12 +354,17 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return provider;
   }
 
-  private async addSource(): Promise<void> {
+  private addSource(): void {
+    if (!this.#disposed) this.#intake.show();
+  }
+
+  private async authorizeAgent(): Promise<void> {
+    if (this.#disposed) return;
     const provider = await vscode.window.showQuickPick(
       [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
       { placeHolder: 'Choose the source format to authorize' },
     );
-    if (provider === undefined) return;
+    if (provider === undefined || this.#disposed) return;
 
     const detected = discoverDefaultSources().find((setting) => setting.provider === provider.value);
     if (detected !== undefined) {
@@ -307,56 +374,40 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
     const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: true, canSelectMany: false, openLabel: 'Authorize source' });
     const uri = picked?.[0];
-    if (uri === undefined) return;
-    await this.authorizeSourceUri(provider.value, uri);
-  }
-
-  private async addSourceFromClipboard(): Promise<void> {
-    const text = (await vscode.env.clipboard.readText()).trim().split(/\r?\n/u).find((line) => line.trim().length > 0)?.trim();
-    if (text === undefined) {
-      void vscode.window.showInformationMessage('Paste a local file or folder path to authorize an Agent source.');
-      return;
+    if (uri === undefined || this.#disposed) return;
+    try {
+      const canonical = await validateLocalSourceUri(uri.toString());
+      if (!this.#disposed) await this.authorizeSourceUri(provider.value, canonical);
+    } catch (error) {
+      if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
     }
-    let uri: vscode.Uri;
-    try { uri = text.startsWith('file://') ? vscode.Uri.parse(text) : vscode.Uri.file(text); }
-    catch { void vscode.window.showWarningMessage('The clipboard does not contain a valid local path.'); return; }
-    if (uri.scheme !== 'file') {
-      void vscode.window.showWarningMessage('Session Navigator accepts local file or folder paths only.');
-      return;
-    }
-    const provider = await vscode.window.showQuickPick(
-      [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
-      { placeHolder: 'Choose the source format to authorize' },
-    );
-    if (provider !== undefined) await this.authorizeSourceUri(provider.value, uri);
   }
 
-  private async authorizeSourceUri(provider: AuthorizedSourceSetting['provider'], uri: vscode.Uri): Promise<void> {
-    await this.authorizeSourceSetting({ provider, rootUri: uri.toString(true) });
+  private async authorizeSourceUri(provider: AuthorizedSourceSetting['provider'], uri: vscode.Uri, cancelled = () => false): Promise<void> {
+    await this.authorizeSourceSetting({ provider, rootUri: uri.toString(true) }, cancelled);
   }
 
-  private async authorizeSourceSetting(setting: AuthorizedSourceSetting): Promise<void> {
+  private async authorizeSourceSetting(setting: AuthorizedSourceSetting, cancelled = () => false): Promise<void> {
+    if (this.#disposed || cancelled()) return;
     const sourceId = sourceIdFor(setting);
     const excluded = this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []);
     await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded.filter((id) => id !== sourceId));
+    if (this.#disposed || cancelled()) return;
     const current = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
     const isDefault = discoverDefaultSources().some((candidate) => sourceIdFor(candidate) === sourceId);
     const next = parseAuthorizedSources(isDefault ? current : [...current, setting]);
     await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
+    if (this.#disposed || cancelled()) return;
     await this.setEnabled(true);
+    if (this.#disposed || cancelled()) return;
     this.#changed.fire(undefined);
     await this.refresh();
   }
 
   private async handleDrop(target: SessionNavigatorTreeNode | undefined, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
-    if (target !== undefined) {
-      void vscode.window.showInformationMessage('Drop a local source on the Navigator root to authorize it.');
-      return;
-    }
     if (token.isCancellationRequested) return;
     const candidates: vscode.Uri[] = [];
-    const files = dataTransfer.get('files')?.asFile();
-    if (files?.uri !== undefined) candidates.push(files.uri);
+    dataTransfer.forEach((item) => { const file = item.asFile(); if (file?.uri?.scheme === 'file') candidates.push(file.uri); });
     const uriList = dataTransfer.get('text/uri-list');
     if (uriList !== undefined) {
       const text = await uriList.asString();
@@ -369,18 +420,30 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         } catch { /* Ignore malformed transfer items. */ }
       }
     }
-    const uri = candidates[0];
+    const uri = candidates.find((candidate) => candidate.scheme === 'file' && isAbsolute(candidate.fsPath));
     if (uri === undefined) {
       void vscode.window.showWarningMessage('No local file or folder was found in the drop.');
       return;
     }
-    const action = await vscode.window.showWarningMessage(`Authorize ${uri.fsPath} as a read-only Session Navigator source?`, 'Authorize source');
-    if (action !== 'Authorize source' || token.isCancellationRequested) return;
+    await this.confirmCustomSource(uri, () => token.isCancellationRequested);
+  }
+
+  private async confirmCustomSource(uri: vscode.Uri, cancelled: () => boolean): Promise<void> {
+    if (cancelled() || this.#disposed) return;
+    let canonical: vscode.Uri;
+    try { canonical = await validateLocalSourceUri(uri.toString()); }
+    catch (error) {
+      if (!cancelled() && !this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (cancelled() || this.#disposed) return;
+    const action = await vscode.window.showWarningMessage(`Add ${canonical.fsPath} as a read-only source?`, 'Add source');
+    if (action !== 'Add source' || cancelled() || this.#disposed) return;
     const provider = await vscode.window.showQuickPick(
       [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
       { placeHolder: 'Choose the source format to authorize' },
     );
-    if (provider !== undefined) await this.authorizeSourceUri(provider.value, uri);
+    if (provider !== undefined && !cancelled() && !this.#disposed) await this.authorizeSourceUri(provider.value, canonical, cancelled);
   }
 
   private async removeSource(node?: SessionNavigatorTreeNode): Promise<void> {
@@ -398,6 +461,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
     this.#store?.syncSources(this.settings());
     this.#providers.delete(sourceId);
+    this.#sourceStatus.delete(sourceId);
     this.#changed.fire(undefined);
   }
 
@@ -410,7 +474,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         void this.refresh();
       }
     } else {
-      if (this.#scanController !== undefined) this.#initialized = false;
+      if (this.#scanController !== undefined || [...this.#sourceStatus.values()].some((status) => status.phase === 'error')) this.#initialized = false;
       this.#scanController?.abort();
       if (this.#probeTimer !== undefined) clearInterval(this.#probeTimer);
       this.#probeTimer = undefined;
@@ -425,6 +489,16 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   private async setSort(value: SessionNavigatorSortKey): Promise<void> {
     await vscode.workspace.getConfiguration('jsonlView').update(SORT_SETTING, value, vscode.ConfigurationTarget.Global);
     this.#changed.fire(undefined);
+  }
+
+  private async chooseSort(): Promise<void> {
+    const choices: Array<{ label: string; value: SessionNavigatorSortKey; description?: string }> = [
+      { label: 'Recent activity', value: 'activity' },
+      { label: 'Created time', value: 'created' },
+      { label: 'Title', value: 'title' },
+    ];
+    const selected = await vscode.window.showQuickPick(choices.map((choice) => ({ ...choice, ...(choice.value === this.sortKey() ? { description: 'Current' } : {}) })), { title: 'Sort sessions', placeHolder: 'Choose how sessions are ordered' });
+    if (selected !== undefined) await this.setSort(selected.value);
   }
 
   public async open(): Promise<void> {
@@ -449,7 +523,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         const provider = this.providerFor(setting);
         try {
           const fingerprint = await provider.probe(new AbortController().signal);
-          if (fingerprint !== store.getFingerprint(sourceId)) store.markUpdateAvailable(sourceId, true);
+          if (this.#disposed || !this.isEnabled() || !this.#treeView?.visible) return;
+          const previous = store.getFingerprint(sourceId);
+          if (previous !== undefined) store.markUpdateAvailable(sourceId, fingerprint !== previous);
         } catch {
           // Background hints are advisory; explicit refresh remains authoritative.
         }
@@ -465,11 +541,18 @@ function isContainedFile(rootPath: string, targetPath: string): boolean {
   const root = resolve(rootPath);
   const target = resolve(targetPath);
   const suffix = relative(root, target);
-  return suffix === '' || (suffix !== '..' && !suffix.startsWith(`..${sep}`));
+  return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`));
 }
 
 async function isRegularFile(path: string): Promise<boolean> {
   try { return (await lstat(path)).isFile(); } catch { return false; }
 }
-function shortId(value: string): string { return value.length > 12 ? value.slice(0, 12) : value; }
-function compactTime(value: string): string { const time = Date.parse(value); return Number.isNaN(time) ? value : new Date(time).toISOString().replace('.000Z', 'Z'); }
+function relativeTime(value: string): string {
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return '';
+  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60_000));
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return String(minutes) + 'm ago';
+  if (minutes < 1_440) return String(Math.floor(minutes / 60)) + 'h ago';
+  return String(Math.floor(minutes / 1_440)) + 'd ago';
+}

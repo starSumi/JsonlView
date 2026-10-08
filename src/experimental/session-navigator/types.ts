@@ -20,6 +20,7 @@ export interface NavigatorSourceSummary {
   readonly entityCount: number;
   readonly relationCount: number;
   readonly updateAvailable: boolean;
+  readonly truncated?: boolean;
   readonly lastActivityAt?: string;
 }
 

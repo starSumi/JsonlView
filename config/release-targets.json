@@ -36,6 +36,7 @@
     "jsonlView.sessionNavigator.enable",
     "jsonlView.sessionNavigator.disable",
     "jsonlView.sessionNavigator.addSource",
+    "jsonlView.sessionNavigator.authorizeAgent",
     "jsonlView.sessionNavigator.removeSource",
     "jsonlView.sessionNavigator.refresh",
     "jsonlView.sessionNavigator.open",

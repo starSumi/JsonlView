@@ -87,8 +87,17 @@
       },
       {
         "command": "jsonlView.sessionNavigator.addSource",
-        "title": "JsonlView: Authorize Agent Source",
-        "icon": "$(folder-opened)"
+        "title": "JsonlView: Add Source",
+        "icon": "$(add)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.authorizeAgent",
+        "title": "JsonlView: Connect Local Agent"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sort",
+        "title": "JsonlView: Sort Sessions",
+        "icon": "$(sort-precedence)"
       },
       {
         "command": "jsonlView.sessionNavigator.removeSource",
@@ -119,8 +128,7 @@
       },
       {
         "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
-        "title": "JsonlView: Authorize Agent Source from Clipboard",
-        "icon": "$(clippy)"
+        "title": "JsonlView: Paste JSONL Source"
       }
     ],
     "viewsContainers": {
@@ -136,11 +144,18 @@
       "jsonlViewSessionNavigator": [
         {
           "id": "jsonlView.sessionNavigator",
-          "name": "Session Navigator",
+          "name": "Sessions",
           "when": "config.jsonlView.sessionNavigator.enabled"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "jsonlView.sessionNavigator",
+        "contents": "Browse local agent sessions, or add your own JSONL.\n[Add Source](command:jsonlView.sessionNavigator.addSource)\n[Connect Local Agent](command:jsonlView.sessionNavigator.authorizeAgent)",
+        "when": "config.jsonlView.sessionNavigator.enabled"
+      }
+    ],
     "menus": {
       "view/title": [
         {
@@ -156,37 +171,37 @@
         {
           "command": "jsonlView.sessionNavigator.enable",
           "when": "view == jsonlView.sessionNavigator && !config.jsonlView.sessionNavigator.enabled",
-          "group": "navigation@3"
+          "group": "settings@1"
         },
         {
           "command": "jsonlView.sessionNavigator.disable",
           "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
-          "group": "navigation@4"
+          "group": "settings@2"
         },
         {
-          "command": "jsonlView.sessionNavigator.open",
+          "command": "jsonlView.sessionNavigator.sort",
           "when": "view == jsonlView.sessionNavigator",
-          "group": "navigation@5"
+          "group": "navigation@3"
         },
         {
           "command": "jsonlView.sessionNavigator.sortActivity",
           "when": "view == jsonlView.sessionNavigator",
-          "group": "navigation@6"
+          "group": "sort@1"
         },
         {
           "command": "jsonlView.sessionNavigator.sortCreated",
           "when": "view == jsonlView.sessionNavigator",
-          "group": "navigation@7"
+          "group": "sort@2"
         },
         {
           "command": "jsonlView.sessionNavigator.sortTitle",
           "when": "view == jsonlView.sessionNavigator",
-          "group": "navigation@8"
+          "group": "sort@3"
         },
         {
-          "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
+          "command": "jsonlView.sessionNavigator.authorizeAgent",
           "when": "view == jsonlView.sessionNavigator",
-          "group": "navigation@9"
+          "group": "sources@1"
         }
       ],
       "explorer/context": [
@@ -311,7 +326,7 @@
               },
               "rootUri": {
                 "type": "string",
-                "description": "A file URI selected through Authorize Agent Source."
+                "description": "A local file URI selected through Add Source or Connect Local Agent."
               },
               "stateRootUri": {
                 "type": "string",

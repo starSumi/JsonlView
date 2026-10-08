@@ -2,6 +2,9 @@
 
 Status: experimental
 
+Initial loading, metadata freshness, and intake UX are superseded by
+[ADR-031](031-session-navigator-intake-and-loading.md).
+
 ## Pressure
 
 Codex stores rollout files under creation-date directories while its state

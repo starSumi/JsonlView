@@ -37,6 +37,7 @@ Read these before changing a shared boundary:
 29. [ADR-028 staged mutation benchmark](028-staged-mutation-benchmark.md)
 30. [ADR-029 opt-in Session Navigator TreeView and local catalog](029-opt-in-session-navigator-treeview.md)
 31. [ADR-030 provider-native Session Navigator contract](030-provider-native-session-navigator-contract.md)
+32. [ADR-031 session loading, native metadata, and source intake](031-session-navigator-intake-and-loading.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.
