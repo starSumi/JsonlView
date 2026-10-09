@@ -9,7 +9,7 @@ import type { AuthorizedSourceSetting, SessionNavigatorScanResult } from '../../
 const host = vi.hoisted(() => ({
   config: new Map<string, unknown>(), state: new Map<string, unknown>(),
   commands: new Map<string, (...args: any[]) => unknown>(),
-  roots: [] as AuthorizedSourceSetting[], scan: vi.fn(), picker: vi.fn(), dialog: vi.fn(),
+  roots: [] as AuthorizedSourceSetting[], scan: vi.fn(), scanPage: vi.fn(), picker: vi.fn(), dialog: vi.fn(),
   configuration: undefined as undefined | ((event: { affectsConfiguration: (key: string) => boolean }) => void),
   visibility: undefined as undefined | ((event: { visible: boolean }) => void),
   view: { visible: false, message: undefined as string | undefined, dispose() {}, onDidChangeVisibility: vi.fn() },
@@ -44,7 +44,7 @@ vi.mock('../../src/experimental/session-navigator/source-config', async (origina
   const actual = await original<typeof import('../../src/experimental/session-navigator/source-config')>();
   return { ...actual, discoverDefaultSources: () => host.roots, mergeSourceSettings: (configured: AuthorizedSourceSetting[]) => actual.mergeSourceSettings(configured, host.roots) };
 });
-vi.mock('../../src/experimental/session-navigator/file-provider', () => ({ createSessionNavigatorProvider: () => ({ scan: host.scan, probe: host.probe }) }));
+vi.mock('../../src/experimental/session-navigator/file-provider', () => ({ createSessionNavigatorProvider: () => ({ scan: host.scan, scanPage: host.scanPage, probe: host.probe }) }));
 vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class { show() { host.intake(); } async dispose() {} } }));
 import { SessionNavigatorTreeProvider } from '../../src/experimental/session-navigator/tree-provider';
 import { RevealIntentRegistry } from '../../src/experimental/session-navigator/reveal-intents';
@@ -64,7 +64,7 @@ beforeEach(async () => {
   host.config.clear(); host.state.clear(); host.commands.clear();
   host.config.set('sessionNavigator.enabled', true);
   host.roots = [{ provider: 'codex', rootUri: pathToFileURL(join(root, 'provider')).toString() }];
-  host.scan.mockReset().mockResolvedValue(snapshot); host.dialog.mockReset(); host.picker.mockReset(); host.intake.mockReset();
+  host.scan.mockReset().mockResolvedValue(snapshot); host.scanPage.mockReset(); host.dialog.mockReset(); host.picker.mockReset(); host.intake.mockReset();
   host.probe.mockReset().mockResolvedValue('stable'); host.execute.mockReset().mockResolvedValue(undefined);
   host.persist.mockReset().mockResolvedValue(undefined);
   host.view.visible = false;
@@ -189,6 +189,52 @@ describe('Session Navigator host lifecycle', () => {
     const [loaded] = await tree.getChildren();
     expect(tree.getTreeItem(loaded!).description).toBe('1 session');
     expect(host.scan).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a transient empty Claude page before committing a zero-session partial index', async () => {
+    host.roots = [{ ...host.roots[0]!, provider: 'claude' }];
+    host.view.visible = true;
+    host.visibility!({ visible: true });
+    host.scan
+      .mockResolvedValueOnce({
+        ...snapshot,
+        snapshot: { ...snapshot.snapshot, provider: 'claude', entities: [], locations: [], truncated: true, truncatedReason: 'record_limit' },
+      })
+      .mockResolvedValueOnce({
+        ...snapshot,
+        snapshot: { ...snapshot.snapshot, provider: 'claude' },
+      });
+
+    await tree.refresh();
+
+    expect(host.scan).toHaveBeenCalledTimes(2);
+    const [source] = await tree.getChildren();
+    expect(tree.getTreeItem(source!).description).toBe('1 session');
+  });
+
+  it('eagerly reconciles a Claude child whose parent arrives on the first continuation page', async () => {
+    host.roots = [{ ...host.roots[0]!, provider: 'claude' }];
+    host.view.visible = true;
+    host.visibility!({ visible: true });
+    const child = { sourceId: 'fixture', nativeId: 'child', kind: 'subagent' as const, label: 'Child worker', relationship: 'orphan' as const, confidence: 'source' as const };
+    const parent = { sourceId: 'fixture', nativeId: 'parent', kind: 'session' as const, label: 'Parent session', relationship: 'root' as const, confidence: 'source' as const };
+    host.scan.mockResolvedValueOnce({
+      fingerprint: 'page-1',
+      nextCursor: 'page-2',
+      snapshot: { ...snapshot.snapshot, provider: 'claude', truncated: true, entities: [child], relations: [{ sourceId: 'fixture', fromNativeId: 'child', toNativeId: 'parent', kind: 'parent' }], locations: [{ nativeId: 'child', relativePath: 'child.jsonl', rowOrdinal: '0' }] },
+    });
+    host.scanPage.mockResolvedValueOnce({
+      fingerprint: 'page-2',
+      snapshot: { ...snapshot.snapshot, provider: 'claude', truncated: false, entities: [parent], relations: [], locations: [{ nativeId: 'parent', relativePath: 'parent.jsonl', rowOrdinal: '0' }] },
+    });
+
+    await tree.refresh();
+
+    expect(host.scanPage).toHaveBeenCalledWith(expect.any(AbortSignal), expect.any(Object), 'page-2');
+    const [source] = await tree.getChildren();
+    const roots = await tree.getChildren(source);
+    expect(roots.map((node) => node.nodeKind === 'entity' ? node.entity.nativeId : '')).toEqual(['parent']);
+    expect((await tree.getChildren(roots[0]!)).map((node) => node.nodeKind === 'entity' ? node.entity.nativeId : '')).toEqual(['child']);
   });
 
   it('keeps source-level progress and marks partial counts', async () => {

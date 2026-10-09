@@ -12,6 +12,8 @@ const SOURCES_SETTING = 'sessionNavigator.sources';
 const ENABLED_SETTING = 'sessionNavigator.enabled';
 const SORT_SETTING = 'sessionNavigator.sort';
 const PROBE_INTERVAL_MS = 30_000;
+const MAX_TRANSIENT_EMPTY_SCANS = 2;
+const MAX_INITIAL_CLAUDE_PAGES = 2;
 const EXCLUDED_SOURCES_KEY = 'sessionNavigator.excludedDefaultSources';
 
 interface SourceTreeNode {
@@ -40,6 +42,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #refreshing: Promise<void> | undefined;
   #scanController: AbortController | undefined;
   #refreshAgain = false;
+  /**
+   * A Claude directory can be visible before its first metadata records are
+   * readable (for example while a transcript is still being appended). Keep
+   * that bounded empty page provisional instead of replacing a usable catalog
+   * with a misleading zero-session partial index.
+   */
+  readonly #transientEmptyScans = new Map<string, number>();
   #initialized = false;
   #treeView: vscode.TreeView<SessionNavigatorTreeNode> | undefined;
   #probeTimer: NodeJS.Timeout | undefined;
@@ -221,6 +230,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       const activeSourceIds = new Set(settings.map(sourceIdFor));
       for (const id of this.#sourceStatus.keys()) if (!activeSourceIds.has(id)) this.#sourceStatus.delete(id);
       for (const id of this.#providers.keys()) if (!activeSourceIds.has(id)) this.#providers.delete(id);
+      for (const id of this.#transientEmptyScans.keys()) if (!activeSourceIds.has(id)) this.#transientEmptyScans.delete(id);
       for (const setting of settings) this.#sourceStatus.set(sourceIdFor(setting), { phase: 'loading' });
       this.#changed.fire(undefined);
       const failures: string[] = [];
@@ -232,12 +242,44 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
           const scan = await provider.scan(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET);
           if (signal.aborted || this.#disposed || !this.isEnabled()) return;
           if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) continue;
+          if (setting.provider === 'claude' && scan.snapshot.entities.length === 0 && scan.snapshot.truncated) {
+            const attempts = this.#transientEmptyScans.get(sourceId) ?? 0;
+            if (attempts < MAX_TRANSIENT_EMPTY_SCANS) {
+              this.#transientEmptyScans.set(sourceId, attempts + 1);
+              this.#sourceStatus.set(sourceId, { phase: 'loading', detail: 'Waiting for Claude metadata…' });
+              this.#refreshAgain = true;
+              this.#changed.fire(undefined);
+              continue;
+            }
+          }
+          this.#transientEmptyScans.delete(sourceId);
           const snapshot = {
             ...scan.snapshot,
             entities: scan.snapshot.entities.map((entity) => ({ ...entity, sourceId })),
             relations: scan.snapshot.relations.map((relation) => ({ ...relation, sourceId })),
           };
           store.replaceSnapshot(sourceId, { ...snapshot, ...(scan.nextCursor === undefined ? {} : { nextCursor: scan.nextCursor }) }, scan.fingerprint);
+          // Claude stores child transcripts under parent-specific directories.
+          // The activity order can place a child on page one and its parent on
+          // page two; eagerly consume one continuation so the normal catalog
+          // reconciliation can attach that child before the first render.
+          if (setting.provider === 'claude' && provider.scanPage !== undefined) {
+            let continuation = scan.nextCursor;
+            let pages = 1;
+            while (continuation !== undefined && pages < MAX_INITIAL_CLAUDE_PAGES) {
+              const page = await provider.scanPage(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET, continuation);
+              if (signal.aborted || this.#disposed || !this.isEnabled()) return;
+              if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) break;
+              const pageSnapshot = {
+                ...page.snapshot,
+                entities: page.snapshot.entities.map((entity) => ({ ...entity, sourceId })),
+                relations: page.snapshot.relations.map((relation) => ({ ...relation, sourceId })),
+              };
+              store.appendSnapshot(sourceId, { ...pageSnapshot, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }, page.fingerprint);
+              continuation = page.nextCursor;
+              pages += 1;
+            }
+          }
           this.#sourceStatus.delete(sourceId);
           this.#changed.fire(undefined);
         } catch (error) {
