@@ -76,9 +76,11 @@ export class ReadOnlyNavigationFacade {
     });
     const deadline = startedAt + budget.maxMilliseconds;
     const limit = normalizeLimit(query.limit, budget.maxEntities);
+    const offset = normalizeOffset(query.offset, budget.maxEntities);
     const text = query.text?.trim().toLocaleLowerCase();
     const entities: NavigationEntity[] = [];
     let examinedEntities = 0;
+    let matchedEntities = 0;
     let truncated = snapshot.truncated;
     let truncatedReason: NavigationQueryResult['truncatedReason'] = snapshot.truncated ? (snapshot.truncatedReason ?? 'entity_limit') : undefined;
 
@@ -93,11 +95,16 @@ export class ReadOnlyNavigationFacade {
       if (query.kind !== undefined && entity.kind !== query.kind) continue;
       if (query.parentNativeId !== undefined && entity.parentNativeId !== query.parentNativeId) continue;
       if (text !== undefined && !entity.label.toLocaleLowerCase().includes(text)) continue;
+      if (matchedEntities < offset) {
+        matchedEntities += 1;
+        continue;
+      }
       if (entities.length >= limit) {
         truncated = true;
         truncatedReason = 'result_limit';
         break;
       }
+      matchedEntities += 1;
       entities.push(entity);
     }
 
@@ -201,6 +208,14 @@ function normalizeLimit(value: number | undefined, maximum: number): number {
   const limit = value ?? Math.min(100, maximum);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > maximum) throw new Error('Navigation limit is outside the active budget.');
   return limit;
+}
+
+function normalizeOffset(value: number | undefined, maximum: number): number {
+  const offset = value ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 50_000 || offset > maximum * 100) {
+    throw new Error('Navigation offset is outside the active budget.');
+  }
+  return offset;
 }
 
 function assertOperationId(operationId: string): void {

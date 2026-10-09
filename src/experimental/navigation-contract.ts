@@ -85,6 +85,8 @@ export interface NavigationBudget {
 export interface NavigationQuery {
   sourceId?: string;
   snapshotId?: string;
+  /** Bounded entity offset used by transport adapters for snapshot paging. */
+  offset?: number;
   kind?: NavigationEntityKind;
   parentNativeId?: string;
   text?: string;

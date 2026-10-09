@@ -1,6 +1,7 @@
 export * from './navigation-contract';
 export * from './navigation-registration';
 export * from './read-only-navigation';
+export * from './mcp-navigation-adapter';
 export * from './synthetic-provider';
 export * from './session-navigator/types';
 export * from './session-navigator/source-config';
