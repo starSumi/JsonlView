@@ -396,6 +396,7 @@
     "native:verify": "node scripts/verify-native-addon.mjs",
     "watch": "node esbuild.mjs --watch",
     "check:contract": "node scripts/check-engineering-contract.mjs",
+    "check:biome": "node scripts/check-biome.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -411,6 +412,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@napi-rs/cli": "3.10.5",
     "@types/node": "26.6.2",
     "@types/react": "19.3.0",
@@ -425,9 +427,5 @@
     "vitest": "5.0.1",
     "yauzl": "3.4.0"
   },
-  "packageManager": "pnpm@10.26.0",
-  "volta": {
-    "node": "24.15.0",
-    "pnpm": "10.26.0"
-  }
+  "packageManager": "pnpm@10.26.0"
 }

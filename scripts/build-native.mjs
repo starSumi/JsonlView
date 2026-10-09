@@ -66,7 +66,7 @@ function main() {
   ];
 
   // Invoke the installed napi-rs CLI with Node instead of rediscovering pnpm.
-  // Package-manager shims differ across local Volta installs and hosted Windows
+  // Package-manager shims differ across local fnm installs and hosted Windows
   // runners, while this executable is already pinned by the project lockfile.
   const child = spawn(process.execPath, [
     napiCli,

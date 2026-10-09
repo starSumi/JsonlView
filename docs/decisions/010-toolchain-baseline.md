@@ -10,7 +10,7 @@ first on `PATH`.
 
 ## Invariant
 
-Dependency upgrades must be reproducible under the Volta pins and the frozen
+Dependency upgrades must be reproducible under the fnm project pin and the frozen
 lockfile. A test or typecheck result from an unsupported Node runtime is not
 release evidence.
 
@@ -39,7 +39,8 @@ file is updated.
 ## Decision
 
 Use Vitest `5.0.0`, `@vitest/coverage-v8` `5.0.0`, and `@types/node` `26.5.1`.
-Pin Node `24.15.0` and pnpm `10.26.0` in Volta and CI. Document Node `22.12.0`
+Pin Node `24.15.0` in `.node-version` for fnm and keep pnpm `10.26.0` in
+`packageManager` and CI. Document Node `22.12.0`
 as the minimum development runtime. Do not add a runtime engine claim for the
 extension host; VS Code compatibility remains controlled by `engines.vscode`.
 
@@ -66,7 +67,7 @@ runtime supplied by VS Code for the packaged extension.
 
 ## Revisit Trigger
 
-Revisit when the Volta major, TypeScript compiler, Vitest, or VS Code extension
+Revisit when the fnm project pin, TypeScript compiler, Vitest, or VS Code extension
 host contract changes, or when a supported contributor environment requires a
 lower Node floor. Re-run the isolated compatibility probe before changing it.
 

@@ -32,6 +32,11 @@
   rescanning and retaining cached rows while changed sources rebuild.
 - Keep Claude fingerprint probes stat-only; parse bounded agent sidecars only
   during a metadata scan so probe budgets cannot hide source changes.
+- Add an opt-in pi coding-agent session adapter for the standard `~/.pi/agent`
+  home and `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR` overrides, preserving bounded titles, activity
+  times, and cross-file fork relationships without copying transcript bodies.
+- Establish the runtime-bounded decomposition plan, fnm-owned Node project pin,
+  and changed-file Biome lint gate before further module extraction.
 - Let VS Code's native Open With own JSONL editor selection; remove the
   duplicate JsonlView editor-title button while keeping the Navigator action.
 - Read Claude agent sidecars within a bounded budget so nested parentAgentId

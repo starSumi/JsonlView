@@ -155,8 +155,8 @@ pnpm benchmark:engine --file <stable.jsonl> --scanner on --no-query
 
 ## Development
 
-Development and CI use Node `24.15.0` through Volta (minimum supported
-runtime: Node `22.12.0`) and pnpm `10.26.0`. The Node floor is intentional:
+Development and CI use Node `24.15.0` through the project `.node-version`
+(minimum supported runtime: Node `22.12.0`) and pnpm `10.26.0`. The Node floor is intentional:
 Vitest 5 and the current Node type definitions require it. The VS Code
 extension itself remains governed by the `engines.vscode` field above.
 

@@ -41,6 +41,7 @@ Read these before changing a shared boundary:
 33. [ADR-032 bounded session pagination](032-bounded-session-pagination.md)
 34. [ADR-033 bounded Webview diagnostics](033-bounded-webview-diagnostics.md)
 35. [ADR-034 opt-in OTLP observability boundary](034-opt-in-otlp-observability.md)
+36. [ADR-035 runtime-bounded decomposition and toolchain ownership](035-architecture-decomposition-and-toolchain-ownership.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.
