@@ -4,6 +4,10 @@
 
 - Keep an explicit Rebuild action in the header toolbar when an appended JSONL
   source leaves the current snapshot pending.
+- Register a dedicated JsonlView Output channel for bounded lifecycle and
+  diagnostic summaries.
+- Resolve Claude child sessions across activity pages while keeping confirmed
+  missing parents as standalone orphans.
 - Fix Codex session links when stored rollout paths use a Windows junction or
   home-directory alias. Rebuilt indexes resolve links within the authorized home.
 - Show initial session loading, retry and partial-index states; use native agent

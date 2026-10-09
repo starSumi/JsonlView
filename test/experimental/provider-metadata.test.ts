@@ -88,6 +88,26 @@ describe('native provider metadata', () => {
     expect(second.snapshot.entities[0]).toMatchObject({ nativeId: parentId, relationship: 'root' });
   });
 
+  it('keeps a missing Claude parent as an orphan on the final page without a dangling edge', async () => {
+    const path = await root();
+    const parentId = 'absent-parent';
+    const orphanFile = join(path, 'projects', 'project', parentId, 'subagents', 'agent-orphan.jsonl');
+    const newerFile = join(path, 'projects', 'project', 'newer.jsonl');
+    await transcript(orphanFile, [user(parentId, 'Orphan child', { agentId: 'orphan', isSidechain: true })]);
+    await transcript(newerFile, [user('newer', 'Newer independent session')]);
+    await utimes(orphanFile, 1, 1);
+    await utimes(newerFile, 2, 2);
+    const source = provider(path);
+    const budget = { ...limits, maxEntities: 1, maxFiles: 1 };
+    const first = await source.scanPage!(signal(), budget);
+    expect(first.nextCursor).toBeDefined();
+    const last = await source.scanPage!(signal(), budget, first.nextCursor);
+    expect(last.nextCursor).toBeUndefined();
+    expect(last.snapshot.entities[0]).toMatchObject({ nativeId: 'subagent:' + parentId + ':orphan', relationship: 'orphan' });
+    expect(last.snapshot.relations).toEqual([]);
+    expect(last.snapshot.truncated).toBe(false);
+  });
+
   it('reads prefix previews and latest tail titles from multi-megabyte transcripts with bounded IO', async () => {
     const path = await root();
     const file = join(path, 'large.jsonl');

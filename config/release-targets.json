@@ -27,6 +27,7 @@
     "jsonlView.open",
     "jsonlView.rebuildIndex",
     "jsonlView.diagnoseWebview",
+    "jsonlView.showOutput",
     "jsonlView.editor",
     "jsonlView.hydration.maxBytes",
     "jsonlView.hydration.fullMaxBytes",

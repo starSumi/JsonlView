@@ -172,10 +172,6 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
     const entities: NavigationEntity[] = [];
     const relations: NavigationRelation[] = [];
     const locations: NavigatorLocation[] = [];
-    // A page boundary can hide a legitimate parent. Preserve that edge for
-    // catalog reconciliation, while a complete scan keeps truly missing
-    // parents as explicit orphans without inventing a dangling relation.
-    const canDeferParent = collected.hasMore || pageOffset > 0;
     for (const item of pending.values()) {
       const declaredParent = item.parentNativeId;
       const parentInPage = declaredParent !== undefined && pending.has(declaredParent);
@@ -184,7 +180,9 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       // another page. The catalog can then reconcile the child after that page
       // arrives; the child remains an orphan root until the parent is present.
       const parent = parentInPage && !relationLimited ? declaredParent : undefined;
-      if (declaredParent !== undefined && ((!parentInPage && canDeferParent) || relationLimited)) truncated = true;
+      const parentCanBeDeferred = item.parentExists === true || (item.parentExists === undefined && collected.hasMore);
+      if (declaredParent !== undefined && parentCanBeDeferred && !parentInPage) truncated = true;
+      if (declaredParent !== undefined && relationLimited) truncated = true;
       const entity: NavigationEntity = {
         sourceId: this.sourceId,
         nativeId: item.nativeId,
@@ -201,7 +199,7 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       };
       entities.push(entity);
       locations.push({ nativeId: item.nativeId, relativePath: item.relativePath, rowOrdinal: '0' });
-      if (declaredParent !== undefined && !relationLimited && (parentInPage || canDeferParent)) relations.push({ sourceId: this.sourceId, fromNativeId: item.nativeId, toNativeId: declaredParent, kind: 'parent' });
+      if (declaredParent !== undefined && !relationLimited && (parentInPage || parentCanBeDeferred)) relations.push({ sourceId: this.sourceId, fromNativeId: item.nativeId, toNativeId: declaredParent, kind: 'parent' });
     }
     const snapshot = this.snapshot(entities, relations, locations, new Date().toISOString(), truncated || metadataBudget.truncated);
     return { snapshot, fingerprint, ...(collected.hasMore ? { nextCursor: encodePageCursor(pageOffset + Math.max(1, budget.maxFiles), fingerprint) } : {}) };

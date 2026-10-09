@@ -3,10 +3,10 @@ import { lstat, readdir } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { firstMetadataString as firstString, MetadataBudget, metadataText, readMetadataRecords, userMessagePreview } from './provider-metadata';
 
-export interface ClaudeFile { path: string; relativePath: string; size: number; mtimeMs: number; parentSessionId?: string; agentId?: string }
+export interface ClaudeFile { path: string; relativePath: string; size: number; mtimeMs: number; parentSessionId?: string; parentSessionExists?: boolean; agentId?: string }
 export interface ClaudeMetadata {
   nativeId: string; relativePath: string; vendorTitle?: string; firstMessagePreview?: string;
-  startedAt?: string; activityAt: string; parentNativeId?: string; relationship: 'root' | 'subagent' | 'continuation';
+  startedAt?: string; activityAt: string; parentNativeId?: string; parentExists?: boolean; relationship: 'root' | 'subagent' | 'continuation';
 }
 
 /** Restrict discovery to provider transcript layouts; history/telemetry are not sessions. */
@@ -20,14 +20,14 @@ export async function collectClaudeFiles(rootPath: string, budget: MetadataBudge
   const offset = Math.max(0, Math.floor(pageOffset));
   const pageEnd = offset + Math.max(1, budget.limits.maxFiles);
   const maxEntries = Math.min(32_768, Math.max(2_048, pageEnd * 128));
-  const accept = async (path: string, parentSessionId?: string): Promise<void> => {
+  const accept = async (path: string, parentSessionId?: string, parentSessionExists?: boolean): Promise<void> => {
     if (!/\.(?:jsonl|ndjson)$/iu.test(path) || /\.orphaned-/iu.test(basename(path)) || ['history.jsonl', 'session_index.jsonl'].includes(basename(path))) return;
     const fileInfo = await optionalInfo(path);
     if (fileInfo === undefined) { truncated = true; return; }
     if (!fileInfo.isFile() || fileInfo.isSymbolicLink()) return;
     const agentId = parentSessionId === undefined ? undefined : /^agent-(.+)\.jsonl$/u.exec(basename(path))?.[1];
     if (parentSessionId !== undefined && agentId === undefined) return;
-    files.push({ path, relativePath: info.isFile() ? basename(root) : relative(root, path), size: fileInfo.size, mtimeMs: fileInfo.mtimeMs, ...(parentSessionId === undefined ? {} : { parentSessionId }), ...(agentId === undefined ? {} : { agentId }) });
+    files.push({ path, relativePath: info.isFile() ? basename(root) : relative(root, path), size: fileInfo.size, mtimeMs: fileInfo.mtimeMs, ...(parentSessionId === undefined ? {} : { parentSessionId }), ...(parentSessionExists === undefined ? {} : { parentSessionExists }), ...(agentId === undefined ? {} : { agentId }) });
   };
   const entries = async (path: string) => {
     if (!budget.check() || visited >= maxEntries) { truncated = true; return []; }
@@ -40,9 +40,12 @@ export async function collectClaudeFiles(rootPath: string, budget: MetadataBudge
     return found.slice(0, Math.max(0, maxEntries - (visited - found.length))).filter((entry) => !entry.isSymbolicLink());
   };
   const agents = async (path: string, parent: string, depth = 0): Promise<void> => {
+    const parentTranscript = join(dirname(dirname(path)), parent + '.jsonl');
+    const parentInfo = await optionalInfo(parentTranscript);
+    const parentSessionExists = parentInfo?.isFile() === true && !parentInfo.isSymbolicLink();
     for (const entry of await entries(path)) {
       if (!budget.check()) break;
-      if (entry.isFile()) await accept(join(path, entry.name), parent);
+      if (entry.isFile()) await accept(join(path, entry.name), parent, parentSessionExists);
       else if (entry.isDirectory() && depth < 3) await agents(join(path, entry.name), parent, depth + 1);
     }
   };
@@ -101,6 +104,7 @@ export async function readClaudeMetadata(file: ClaudeFile, budget: MetadataBudge
     ...(vendorTitle === undefined ? {} : { vendorTitle }), ...(preview === undefined ? {} : { firstMessagePreview: preview }),
     ...(startedAt === undefined ? {} : { startedAt }),
     ...(parentRaw === undefined ? {} : { parentNativeId: safeId(parentRaw) }),
+    ...(file.parentSessionExists === undefined ? {} : { parentExists: file.parentSessionExists }),
     relationship: agentId !== undefined || file.parentSessionId !== undefined ? 'subagent' : session?.relationship === 'continuation' ? 'continuation' : 'root',
   };
   return { metadata, sampled };

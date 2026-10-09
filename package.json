@@ -81,6 +81,11 @@
         "icon": "$(question)"
       },
       {
+        "command": "jsonlView.showOutput",
+        "title": "JsonlView: Show Output Log",
+        "icon": "$(output)"
+      },
+      {
         "command": "jsonlView.sessionNavigator.enable",
         "title": "JsonlView: Enable Session Navigator",
         "icon": "$(activate-breakpoints)"
