@@ -32,6 +32,8 @@
   rescanning and retaining cached rows while changed sources rebuild.
 - Keep Claude fingerprint probes stat-only; parse bounded agent sidecars only
   during a metadata scan so probe budgets cannot hide source changes.
+- Let VS Code's native Open With own JSONL editor selection; remove the
+  duplicate JsonlView editor-title button while keeping the Navigator action.
 - Read Claude agent sidecars within a bounded budget so nested parentAgentId
   and toolUseId metadata survives paging and confirmed missing parents remain
   explicit orphans.

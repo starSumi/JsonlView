@@ -13,4 +13,14 @@ describe('Session Navigator layout contract', () => {
     expect(manifest.contributes.views.jsonlViewSessionNavigator[0]).toMatchObject({ type: 'webview', id: 'jsonlView.sourceDrop' });
     expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.sessionNavigator')).toBeTruthy();
   });
+
+  it('leaves JSONL editor choice to VS Code Open With instead of a duplicate title-bar button', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    const titleCommands = manifest.contributes.menus['editor/title'].map((item: { command: string }) => item.command);
+    expect(titleCommands).not.toContain('jsonlView.open');
+    expect(titleCommands).toContain('jsonlView.sessionNavigator.open');
+    expect(manifest.contributes.customEditors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ viewType: 'jsonlView.editor', displayName: 'JsonlView Data Studio' }),
+    ]));
+  });
 });
