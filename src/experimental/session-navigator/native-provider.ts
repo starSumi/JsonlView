@@ -138,7 +138,7 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
 
 class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
   public async probe(signal: AbortSignal): Promise<string> {
-    const { files } = await collectClaudeFiles(this.rootPath, new MetadataBudget(DEFAULT_SESSION_NAVIGATOR_BUDGET, signal));
+    const { files } = await collectClaudeFiles(this.rootPath, new MetadataBudget(DEFAULT_SESSION_NAVIGATOR_BUDGET, signal), 0, { readSidecars: false });
     return claudeFingerprint(files);
   }
 

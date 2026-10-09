@@ -97,6 +97,26 @@ describe('native provider metadata', () => {
     expect(metadata.metadata).toMatchObject({ toolUseId: 'tool-nested', agentType: 'explorer', parentNativeId: 'subagent:' + rootId + ':parent', parentExists: true });
   });
 
+  it('keeps Claude probes stat-only while scans parse bounded sidecar metadata', async () => {
+    const path = await root();
+    const nestedFile = join(path, 'projects', 'project', 'probe-root', 'subagents', 'agent-nested.jsonl');
+    await transcript(join(path, 'projects', 'project', 'probe-root.jsonl'), [user('probe-root', 'Root session')]);
+    await transcript(nestedFile, [user('probe-root', 'Nested worker', { agentId: 'nested', isSidechain: true })]);
+    const sidecar = nestedFile.replace(/\.jsonl$/u, '.meta.json');
+    await writeFile(sidecar, JSON.stringify({ parentAgentId: 'parent', toolUseId: 'tool-nested', description: 'Nested worker' }));
+
+    const probeBudget = new MetadataBudget({ ...limits, maxBytes: 1 }, signal());
+    const probed = await collectClaudeFiles(path, probeBudget, 0, { readSidecars: false });
+    const probedNested = probed.allFiles.find((file) => file.path === nestedFile);
+    expect(probeBudget.bytes).toBe(0);
+    expect(probedNested).toMatchObject({ sidecarSize: (await readFile(sidecar)).byteLength });
+    expect(probedNested?.parentAgentId).toBeUndefined();
+
+    const scanBudget = new MetadataBudget(limits, signal());
+    const scanned = await collectClaudeFiles(path, scanBudget);
+    expect(scanned.allFiles.find((file) => file.path === nestedFile)).toMatchObject({ parentAgentId: 'parent', toolUseId: 'tool-nested' });
+  });
+
   it('keeps a sidecar parent missing from a complete source as an orphan', async () => {
     const path = await root();
     const rootId = 'sidecar-orphan-root';

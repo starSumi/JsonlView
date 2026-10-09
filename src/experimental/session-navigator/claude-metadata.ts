@@ -17,9 +17,10 @@ interface ClaudeAgentSidecar {
 }
 
 const MAX_AGENT_SIDECAR_BYTES = 32 * 1024;
+export interface ClaudeCollectionOptions { readonly readSidecars?: boolean }
 
 /** Restrict discovery to provider transcript layouts; history/telemetry are not sessions. */
-export async function collectClaudeFiles(rootPath: string, budget: MetadataBudget, pageOffset = 0): Promise<{ files: ClaudeFile[]; allFiles: ClaudeFile[]; truncated: boolean; hasMore: boolean }> {
+export async function collectClaudeFiles(rootPath: string, budget: MetadataBudget, pageOffset = 0, options: ClaudeCollectionOptions = {}): Promise<{ files: ClaudeFile[]; allFiles: ClaudeFile[]; truncated: boolean; hasMore: boolean }> {
   const root = resolve(rootPath);
   const info = await lstat(root);
   if (info.isSymbolicLink()) throw new Error('Session navigator refuses a symbolic-link source root.');
@@ -36,7 +37,7 @@ export async function collectClaudeFiles(rootPath: string, budget: MetadataBudge
     if (!fileInfo.isFile() || fileInfo.isSymbolicLink()) return;
     const agentId = parentSessionId === undefined ? undefined : /^agent-(.+)\.jsonl$/u.exec(basename(path))?.[1];
     if (parentSessionId !== undefined && agentId === undefined) return;
-    const sidecar = agentId === undefined ? undefined : await readAgentSidecar(path, budget);
+    const sidecar = agentId === undefined ? undefined : options.readSidecars === false ? await statAgentSidecar(path) : await readAgentSidecar(path, budget);
     files.push({
       path, relativePath: info.isFile() ? basename(root) : relative(root, path), size: fileInfo.size, mtimeMs: fileInfo.mtimeMs,
       ...(parentSessionId === undefined ? {} : { parentSessionId }), ...(parentSessionExists === undefined ? {} : { parentSessionExists }),
@@ -158,7 +159,7 @@ function safeId(value: string): string { return /^[A-Za-z0-9._:-]{1,256}$/u.test
 function sessionPathId(file: ClaudeFile): string { return file.parentSessionId ?? basename(file.path, extname(file.path)); }
 function agentKey(file: ClaudeFile, agentId: string): string { return sessionPathId(file) + '\0' + agentId; }
 async function readAgentSidecar(transcriptPath: string, budget: MetadataBudget): Promise<ClaudeAgentSidecar | undefined> {
-  const sidecarPath = transcriptPath.replace(/\.jsonl$/iu, '.meta.json');
+  const sidecarPath = agentSidecarPath(transcriptPath);
   const info = await optionalInfo(sidecarPath);
   if (info === undefined || !info.isFile() || info.isSymbolicLink()) return undefined;
   // Keep the sidecar identity in the source fingerprint even when a crashed
@@ -188,6 +189,11 @@ async function readAgentSidecar(transcriptPath: string, budget: MetadataBudget):
     };
   } finally { await handle.close(); }
 }
+async function statAgentSidecar(transcriptPath: string): Promise<ClaudeAgentSidecar | undefined> {
+  const info = await optionalInfo(agentSidecarPath(transcriptPath));
+  return info === undefined || !info.isFile() || info.isSymbolicLink() ? undefined : { size: info.size, mtimeMs: info.mtimeMs };
+}
+function agentSidecarPath(transcriptPath: string): string { return transcriptPath.replace(/\.jsonl$/iu, '.meta.json'); }
 function boundedId(value: string | undefined): string | undefined { const text = value?.trim(); return text === undefined || text.length === 0 ? undefined : text.slice(0, 256); }
 export function normalizeMetadataTime(value: unknown): string | undefined {
   if (typeof value !== 'string' && typeof value !== 'number') return undefined;

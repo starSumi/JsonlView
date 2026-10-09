@@ -30,6 +30,8 @@
   render.
 - Reopen the navigator from its durable catalog, probing fingerprints before
   rescanning and retaining cached rows while changed sources rebuild.
+- Keep Claude fingerprint probes stat-only; parse bounded agent sidecars only
+  during a metadata scan so probe budgets cannot hide source changes.
 - Read Claude agent sidecars within a bounded budget so nested parentAgentId
   and toolUseId metadata survives paging and confirmed missing parents remain
   explicit orphans.
