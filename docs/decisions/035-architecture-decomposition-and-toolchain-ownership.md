@@ -70,6 +70,28 @@ size, and native fallback where the slice touches those paths. A changed row
 identity/offset, dropped raw value, stale response, budget overrun, or
 packaging/provenance drift rejects the slice.
 
+## Implementation evidence (2026-10-09)
+
+The first three slices were implemented from the baseline tag and kept the
+facades in place:
+
+- `src/engine/snapshot-fingerprint.ts` owns pure range, stable-baseline, and
+  whole-source hashing; `JsonlFileEngine` still owns mutable generation state.
+- `src/experimental/session-navigator/file-scan.ts` and
+  `provider-factory.ts` separate bounded discovery and dispatch. The legacy
+  `file-provider.ts` remains a compatibility barrel, so existing consumers do
+  not change import paths.
+- `src/extension/insight-query.ts` owns bounded aggregation and cursor
+  accounting. `IntegratedJsonlSession` captures the engine, generation, and
+  enricher before delegation, preserving cancellation and stale-generation
+  checks.
+
+Focused characterization and failure tests cover range hashing, cancellation,
+provider dispatch compatibility, Navigator lifecycle behavior, multi-page
+Insights accounting, invalid budgets, and non-progressing cursors. Full
+repository validation remains a merge gate; installed VS Code host acceptance
+and publication are separate later gates.
+
 ## Boundary and rollback
 
 This ADR authorizes internal, reversible module extraction and toolchain

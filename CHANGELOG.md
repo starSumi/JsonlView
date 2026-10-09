@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Extract the engine snapshot fingerprint helpers, Navigator file scanning and
+  provider dispatch, and the bounded extension Insights query behind their
+  existing facades. Generation fencing, cancellation, read-only source
+  ownership, and the VS Code IPC contract remain unchanged.
 - Keep an explicit Rebuild action in the header toolbar when an appended JSONL
   source leaves the current snapshot pending.
 - Register a dedicated JsonlView Output channel for bounded lifecycle and
