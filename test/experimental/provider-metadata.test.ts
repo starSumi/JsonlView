@@ -69,6 +69,25 @@ describe('native provider metadata', () => {
     expect(result.snapshot.locations.find((location) => location.nativeId === 'subagent:parent:child')?.relativePath).toContain('agent-child.jsonl');
   });
 
+  it('retains Claude parent edges when pagination returns the child before its parent', async () => {
+    const path = await root();
+    const parentId = 'parent-page';
+    const parentFile = join(path, 'projects', 'project', parentId + '.jsonl');
+    const childFile = join(path, 'projects', 'project', parentId, 'subagents', 'agent-child-page.jsonl');
+    await transcript(parentFile, [user(parentId, 'Parent session')]);
+    await transcript(childFile, [user(parentId, 'Child session', { agentId: 'child-page', isSidechain: true })]);
+    await utimes(parentFile, 1, 1);
+    await utimes(childFile, 2, 2);
+    const source = provider(path);
+    const budget = { ...limits, maxEntities: 1, maxFiles: 1 };
+    const first = await source.scanPage!(signal(), budget);
+    expect(first.snapshot.entities[0]).toMatchObject({ nativeId: 'subagent:' + parentId + ':child-page', relationship: 'orphan' });
+    expect(first.snapshot.entities[0]?.parentNativeId).toBeUndefined();
+    expect(first.snapshot.relations).toEqual([expect.objectContaining({ fromNativeId: 'subagent:' + parentId + ':child-page', toNativeId: parentId, kind: 'parent' })]);
+    const second = await source.scanPage!(signal(), budget, first.nextCursor);
+    expect(second.snapshot.entities[0]).toMatchObject({ nativeId: parentId, relationship: 'root' });
+  });
+
   it('reads prefix previews and latest tail titles from multi-megabyte transcripts with bounded IO', async () => {
     const path = await root();
     const file = join(path, 'large.jsonl');

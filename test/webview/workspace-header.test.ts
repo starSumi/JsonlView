@@ -53,7 +53,9 @@ describe('workspace header status', () => {
     expect(markup).toContain('Update pending');
     expect(markup).toContain('The current snapshot remains readable; rebuild to include appended records.');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');
-    expect(markup.match(/>Rebuild<\/button>/g)).toHaveLength(1);
+    expect(markup).toContain('aria-label="Rebuild index to include appended records"');
+    expect(markup).toContain('title="Rebuild index to include appended records"');
+    expect(markup.match(/>Rebuild<\/span>/g)).toHaveLength(1);
   });
 
   it('disables the pending action while rebuilding and keeps incomplete progress visible', () => {
@@ -65,7 +67,7 @@ describe('workspace header status', () => {
       phase: 'indexing',
     });
 
-    expect(markup).toMatch(/<button type="button" disabled="">Rebuild<\/button>/);
+    expect(markup).toMatch(/<button type="button" class="rebuild-action rebuild-action-prominent"[^>]*disabled="">[\s\S]*<span class="rebuild-action-label">Rebuild<\/span><\/button>/);
     expect(markup).toContain('data-complete="false"');
     expect(markup).toContain('indexing');
   });

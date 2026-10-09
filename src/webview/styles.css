@@ -455,6 +455,24 @@ select:focus-visible,
   text-decoration: underline;
 }
 
+.rebuild-action-prominent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.rebuild-action-prominent:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
 .progress-track {
   position: relative;
   width: 84px;
@@ -2582,6 +2600,10 @@ body.is-resizing-column * {
   .follow-toggle span,
   .status-phase[data-complete='true'],
   .status-problems[data-empty='true'] {
+    display: none;
+  }
+
+  .rebuild-action-label {
     display: none;
   }
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, CircleAlert, ListTree, LoaderCircle } from 'lucide-react';
+import { Check, CircleAlert, ListTree, LoaderCircle, RefreshCw } from 'lucide-react';
 import { formatBytes } from './format';
 
 export interface WorkspaceHeaderProps {
@@ -43,7 +43,6 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
           <span className="snapshot-update" title="The current snapshot remains readable; rebuild to include appended records.">
             <span className="snapshot-update-label">Update pending</span>
             <span className="snapshot-update-compact">Pending</span>
-            <button type="button" disabled={status.rebuildBusy} onClick={status.onRebuild}>Rebuild</button>
           </span>
         ) : null}
         <span className="status-phase" data-complete={status.complete}>
@@ -60,6 +59,19 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
         <button type="button" className="icon-button navigator-action" title="Open Agent Sessions" aria-label="Open Agent Sessions" onClick={status.onOpenNavigator}>
           <ListTree size={15} aria-hidden />
         </button>
+        {status.appendPending ? (
+          <button
+            type="button"
+            className="rebuild-action rebuild-action-prominent"
+            title="Rebuild index to include appended records"
+            aria-label="Rebuild index to include appended records"
+            disabled={status.rebuildBusy}
+            onClick={status.onRebuild}
+          >
+            <RefreshCw size={14} className={status.rebuildBusy ? 'spin' : ''} aria-hidden />
+            <span className="rebuild-action-label">Rebuild</span>
+          </button>
+        ) : null}
         {children}
       </div>
     </header>
