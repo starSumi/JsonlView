@@ -88,6 +88,10 @@ describe('session navigator source boundary', () => {
     expect(parseAuthorizedSources([{ ...override, stateRootUri: 'https://invalid.example' }])).toEqual([]);
     const missingState = join(root, 'missing-state');
     expect(discoverDefaultSources({ env: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: missingState }, homeDirectory: root })[0]?.stateRootUri).toBe(pathToFileURL(missingState).toString());
+    const customPiSessions = join(root, 'custom-pi-sessions');
+    await mkdir(customPiSessions, { recursive: true });
+    await writeFile(join(customPiSessions, 'session.jsonl'), JSON.stringify({ type: 'session', id: 'custom-pi', timestamp: '2026-10-09T00:00:00.000Z', cwd: 'E:/work' }), 'utf8');
+    expect(discoverDefaultSources({ env: { PI_CODING_AGENT_DIR: join(root, 'unused-pi-agent'), PI_CODING_AGENT_SESSION_DIR: customPiSessions }, homeDirectory: join(root, 'unused-home') }).find((setting) => setting.provider === 'pi')?.rootUri).toBe(pathToFileURL(customPiSessions).toString());
   });
 
   it('projects pi session headers without transcript bodies and preserves fork parents', async () => {
