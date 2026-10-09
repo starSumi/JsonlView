@@ -159,6 +159,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (node === undefined) {
       store.syncSources(this.settings());
       if (!this.#initialized && this.#treeView?.visible && this.#refreshing === undefined) {
+        for (const setting of this.settings()) this.#sourceStatus.set(sourceIdFor(setting), { phase: 'loading' });
+        this.#changed.fire(undefined);
         this.#initialized = true;
         void this.refresh();
       }
