@@ -58,21 +58,24 @@ describe('session navigator source boundary', () => {
     const codexHome = join(root, 'codex-home');
     const codexStateHome = join(root, 'codex-state');
     const claudeHome = join(root, 'claude-home');
+    const piHome = join(root, 'pi-home');
     await import('node:fs/promises').then(async ({ mkdir }) => {
       await mkdir(join(codexHome, 'sessions'), { recursive: true });
       await mkdir(codexStateHome, { recursive: true });
       await mkdir(join(claudeHome, 'projects'), { recursive: true });
+      await mkdir(join(piHome, 'sessions'), { recursive: true });
     });
     await writeFile(join(codexStateHome, 'state_5.sqlite'), '', 'utf8');
 
     const discovered = discoverDefaultSources({
-      env: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: codexStateHome, CLAUDE_CONFIG_DIR: claudeHome },
+      env: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: codexStateHome, CLAUDE_CONFIG_DIR: claudeHome, PI_CODING_AGENT_DIR: piHome },
       homeDirectory: join(root, 'unused-home'),
     });
-    expect(discovered.map((setting) => setting.provider)).toEqual(['codex', 'claude']);
+    expect(discovered.map((setting) => setting.provider)).toEqual(['codex', 'claude', 'pi']);
     expect(discovered.map((setting) => setting.rootUri)).toEqual([
       pathToFileURL(codexHome).toString(),
       pathToFileURL(claudeHome).toString(),
+      pathToFileURL(piHome).toString(),
     ]);
     expect(discovered[0]?.stateRootUri).toBe(pathToFileURL(codexStateHome).toString());
     const merged = mergeSourceSettings([
@@ -85,6 +88,39 @@ describe('session navigator source boundary', () => {
     expect(parseAuthorizedSources([{ ...override, stateRootUri: 'https://invalid.example' }])).toEqual([]);
     const missingState = join(root, 'missing-state');
     expect(discoverDefaultSources({ env: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: missingState }, homeDirectory: root })[0]?.stateRootUri).toBe(pathToFileURL(missingState).toString());
+  });
+
+  it('projects pi session headers without transcript bodies and preserves fork parents', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-pi-native-'));
+    cleanup.push(root);
+    const sessions = join(root, 'sessions');
+    await mkdir(sessions, { recursive: true });
+    const parent = join(sessions, '2026-10-09T00-00-00Z_parent.jsonl');
+    const child = join(sessions, '2026-10-09T00-01-00Z_child.jsonl');
+    await writeFile(parent, [
+      JSON.stringify({ type: 'session', version: 3, id: 'parent', timestamp: '2026-10-09T00:00:00.000Z', cwd: 'E:/work' }),
+      JSON.stringify({ type: 'session_info', id: 'info-parent', parentId: 'parent', timestamp: '2026-10-09T00:00:01.000Z', name: 'Parent task' }),
+      JSON.stringify({ type: 'message', id: 'm-parent', parentId: 'parent', timestamp: '2026-10-09T00:00:02.000Z', message: { role: 'user', content: [{ type: 'text', text: 'private parent transcript' }] } }),
+    ].join('\n'), 'utf8');
+    await writeFile(child, [
+      JSON.stringify({ type: 'session', version: 3, id: 'child', timestamp: '2026-10-09T00:01:00.000Z', cwd: 'E:/work', parentSession: parent }),
+      JSON.stringify({ type: 'session_info', id: 'info-child', parentId: 'child', timestamp: '2026-10-09T00:01:01.000Z', name: 'Child task' }),
+      JSON.stringify({ type: 'message', id: 'm-child', parentId: 'child', timestamp: '2026-10-09T00:01:02.000Z', message: { role: 'user', content: [{ type: 'text', text: 'private child transcript' }] } }),
+    ].join('\n'), 'utf8');
+
+    const setting: AuthorizedSourceSetting = { provider: 'pi', rootUri: pathToFileURL(root).toString() };
+    const result = await createSessionNavigatorProvider(setting).scan(new AbortController().signal, {
+      maxEntities: 10, maxRelations: 10, maxRecords: 30, maxFiles: 10, maxBytes: 100_000, maxMilliseconds: 2_000,
+    });
+    expect(result.snapshot.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: 'parent', vendorTitle: 'Parent task', relationship: 'root' }),
+      expect.objectContaining({ nativeId: 'child', vendorTitle: 'Child task', relationship: 'fork', parentNativeId: 'parent' }),
+    ]));
+    expect(result.snapshot.relations).toEqual(expect.arrayContaining([expect.objectContaining({ fromNativeId: 'child', toNativeId: 'parent', kind: 'parent' })]));
+    expect(result.snapshot.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: 'child', firstMessagePreview: 'private child transcript' }),
+    ]));
+    expect(JSON.stringify(result.snapshot)).not.toContain(parent);
   });
 
   it('does not fall back to rollout rows when Codex metadata is absent', async () => {

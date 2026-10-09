@@ -18,6 +18,7 @@ export function createNativeSessionNavigatorProvider(setting: AuthorizedSourceSe
   const sourceId = sourceIdFor(setting);
   if (setting.provider === 'codex') return new CodexSessionNavigatorProvider(setting, sourceId);
   if (setting.provider === 'claude') return new ClaudeSessionNavigatorProvider(setting, sourceId);
+  if (setting.provider === 'pi') return new PiSessionNavigatorProvider(setting, sourceId);
   return new FileSessionNavigatorProvider(setting, sourceId);
 }
 
@@ -205,6 +206,134 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
     return { snapshot, fingerprint, ...(collected.hasMore ? { nextCursor: encodePageCursor(pageOffset + Math.max(1, budget.maxFiles), fingerprint) } : {}) };
   }
 }
+
+interface PiSessionMetadata {
+  readonly nativeId: string;
+  readonly relativePath: string;
+  readonly parentSession?: string;
+  readonly vendorTitle?: string;
+  readonly firstMessagePreview?: string;
+  readonly startedAt?: string;
+  readonly activityAt?: string;
+  readonly sampled: boolean;
+}
+
+/**
+ * Pi keeps one append-only JSONL file per session. The header carries the
+ * cross-file fork edge (`parentSession`); entries carry an in-file `parentId`
+ * tree that is intentionally not materialized as navigator entities.
+ */
+class PiSessionNavigatorProvider extends NativeSessionNavigatorProvider {
+  public async probe(signal: AbortSignal): Promise<string> {
+    const files = await collectPiFiles(this.rootPath, signal);
+    return piFingerprint(files);
+  }
+
+  public async scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult> {
+    return this.scanPage(signal, budget);
+  }
+
+  public async scanPage(signal: AbortSignal, budget: SessionNavigatorBudget, cursor?: string): Promise<SessionNavigatorScanResult> {
+    throwIfAborted(signal);
+    const fingerprint = await this.probe(signal);
+    const pageCursor = decodePageCursor(cursor);
+    assertCursorFingerprint(pageCursor, fingerprint);
+    const files = await collectPiFiles(this.rootPath, signal);
+    const pageOffset = pageCursor.offset;
+    const pageFiles = files.slice(pageOffset, pageOffset + Math.max(1, budget.maxFiles));
+    const pending: PiSessionMetadata[] = [];
+    const metadataBudget = new MetadataBudget(budget, signal);
+    let truncated = pageOffset + pageFiles.length < files.length || (files.length >= PI_DISCOVERY_MAX_FILES && pageFiles.length >= budget.maxFiles);
+    for (const file of pageFiles) {
+      throwIfAborted(signal);
+      if (!metadataBudget.available() || pending.length >= budget.maxEntities) { truncated = true; break; }
+      const metadata = await readPiMetadata(file.path, file.relativePath, metadataBudget);
+      if (metadata !== undefined) { pending.push(metadata); truncated ||= metadata.sampled; }
+    }
+
+    const byPath = new Map(pending.map((item) => [normalizeRelative(item.relativePath), item]));
+    const canonicalRoot = canonicalPath(resolve(this.rootPath));
+    const entities: NavigationEntity[] = [];
+    const relations: NavigationRelation[] = [];
+    const locations: NavigatorLocation[] = [];
+    for (const item of pending) {
+      const parentPath = item.parentSession === undefined ? undefined : piParentRelativePath(canonicalRoot, this.rootPath, item.relativePath, item.parentSession);
+      const parent = parentPath === undefined ? undefined : byPath.get(normalizeRelative(parentPath));
+      const parentNativeId = parent?.nativeId ?? (parentPath === undefined ? undefined : piSessionIdFromPath(parentPath));
+      const relationLimited = parent !== undefined && relations.length >= budget.maxRelations;
+      const orphan = item.parentSession !== undefined && (parentNativeId === undefined || relationLimited);
+      const entity: NavigationEntity = {
+        sourceId: this.sourceId, nativeId: item.nativeId, kind: 'session',
+        label: item.vendorTitle ?? item.firstMessagePreview ?? 'Untitled session · ' + shortId(item.nativeId),
+        ...(item.vendorTitle === undefined ? {} : { vendorTitle: item.vendorTitle, titleSource: 'provider' as const }),
+        ...(item.firstMessagePreview === undefined ? {} : { firstMessagePreview: item.firstMessagePreview }),
+        ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
+        ...(item.activityAt === undefined ? {} : { activityAt: item.activityAt, updatedAt: item.activityAt }),
+        ...(parentNativeId === undefined || relationLimited ? {} : { parentNativeId }),
+        relationship: orphan ? 'orphan' : parentNativeId === undefined ? 'root' : 'fork',
+        confidence: 'source', opaqueRef: 'pi-file-' + hash(item.relativePath),
+      };
+      entities.push(entity);
+      locations.push({ nativeId: item.nativeId, relativePath: item.relativePath, rowOrdinal: '0' });
+      if (parentNativeId !== undefined && !relationLimited) relations.push({ sourceId: this.sourceId, fromNativeId: item.nativeId, toNativeId: parentNativeId, kind: 'parent' });
+      if (relationLimited) truncated = true;
+    }
+    const snapshot = this.snapshot(entities, relations, locations, new Date().toISOString(), truncated || metadataBudget.truncated);
+    return { snapshot, fingerprint, ...(pageOffset + pageFiles.length < files.length ? { nextCursor: encodePageCursor(pageOffset + Math.max(1, pageFiles.length), fingerprint) } : {}) };
+  }
+}
+
+const PI_DISCOVERY_MAX_FILES = 4_096;
+
+async function collectPiFiles(rootPath: string, signal: AbortSignal): Promise<readonly import('./file-provider').FileEntry[]> {
+  return collectFiles(rootPath, signal, { ...DEFAULT_SESSION_NAVIGATOR_BUDGET, maxFiles: PI_DISCOVERY_MAX_FILES, maxMilliseconds: 750 }, Date.now());
+}
+
+async function readPiMetadata(path: string, relativePath: string, budget: MetadataBudget): Promise<PiSessionMetadata | undefined> {
+  const sampled = await readMetadataRecords(path, budget, 128 * 1024, 128 * 1024);
+  const header = sampled.values.find((value) => value.type === 'session' && typeof value.id === 'string');
+  if (header === undefined || typeof header.id !== 'string') return undefined;
+  const startedAt = normalizeTime(header.timestamp);
+  let name: string | undefined;
+  let firstMessagePreview: string | undefined;
+  let activityAt = startedAt;
+  for (const value of sampled.values) {
+    if (value.type === 'session_info') name = cleanText(asString(value.name));
+    const preview = userMessagePreview(value);
+    if (firstMessagePreview === undefined && preview !== undefined) firstMessagePreview = cleanText(preview);
+    const timestamp = normalizeTime(value.timestamp);
+    if (timestamp !== undefined && (activityAt === undefined || timestamp > activityAt)) activityAt = timestamp;
+  }
+  return {
+    nativeId: normalizePiId(header.id), relativePath,
+    ...(typeof header.parentSession === 'string' && header.parentSession.trim().length > 0 ? { parentSession: header.parentSession } : {}),
+    ...(name === undefined ? {} : { vendorTitle: name }),
+    ...(firstMessagePreview === undefined ? {} : { firstMessagePreview }),
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(activityAt === undefined ? {} : { activityAt }),
+    sampled: sampled.sampled,
+  };
+}
+
+function piFingerprint(files: readonly import('./file-provider').FileEntry[]): string {
+  return createHash('sha256').update(files.map((file) => `${file.relativePath}\0${file.size.toString()}\0${String(file.mtimeMs)}`).join('\n'), 'utf8').digest('hex');
+}
+
+function piParentRelativePath(canonicalRoot: string, rootPath: string, childRelativePath: string, parentSession: string): string | undefined {
+  const childPath = join(rootPath, childRelativePath);
+  const candidate = isAbsolute(parentSession) ? parentSession : resolve(dirname(childPath), parentSession);
+  return authorizedRelativePath(canonicalRoot, candidate);
+}
+
+function piSessionIdFromPath(path: string): string | undefined {
+  const stem = basename(path).replace(/\.jsonl$/iu, '');
+  const match = /(?:^|_)([A-Za-z0-9][A-Za-z0-9._-]*)$/u.exec(stem);
+  return match?.[1] === undefined ? undefined : normalizePiId(match[1]);
+}
+
+function normalizeRelative(value: string): string { return value.replaceAll('\\', '/').replace(/^\.\//u, ''); }
+function normalizePiId(value: string): string { return SAFE_PI_ID.test(value) ? value : 'id-' + hash(value); }
+const SAFE_PI_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
 async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>, metadataBudget: MetadataBudget, pageOffset = 0): Promise<NavigatorSnapshot> {
   const columns = new Set(tableColumns(db, 'threads'));

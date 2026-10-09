@@ -2,7 +2,7 @@ import type { NavigationEntity, NavigationProvider, NavigationSnapshot } from '.
 
 export const SESSION_NAVIGATOR_SCHEMA_VERSION = 1 as const;
 
-export type SessionNavigatorProviderId = 'codex' | 'claude' | 'generic';
+export type SessionNavigatorProviderId = 'codex' | 'claude' | 'pi' | 'generic';
 export type SessionNavigatorSortKey = 'activity' | 'created' | 'title';
 
 export interface AuthorizedSourceSetting {

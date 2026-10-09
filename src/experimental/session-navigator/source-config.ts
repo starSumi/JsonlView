@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AuthorizedSourceSetting, SessionNavigatorProviderId } from './types';
 
-const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'generic']);
+const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'generic']);
 const MAX_ROOT_URI_LENGTH = 2_048;
 
 export interface DefaultSourceDiscoveryOptions {
@@ -45,9 +45,12 @@ export function discoverDefaultSources(options: DefaultSourceDiscoveryOptions = 
   const homeDirectory = options.homeDirectory ?? homedir();
   const codexRoot = env.CODEX_HOME?.trim() || join(homeDirectory, '.codex');
   const codexStateRoot = env.CODEX_SQLITE_HOME?.trim() || codexRoot;
+  const piAgentRoot = env.PI_CODING_AGENT_DIR?.trim() || join(homeDirectory, '.pi', 'agent');
+  const piSessionRoot = env.PI_CODING_AGENT_SESSION_DIR?.trim() || piAgentRoot;
   const candidates: Array<{ provider: SessionNavigatorProviderId; path: string | undefined; statePath?: string }> = [
     { provider: 'codex', path: codexRoot, statePath: codexStateRoot },
     { provider: 'claude', path: env.CLAUDE_CONFIG_DIR?.trim() || join(homeDirectory, '.claude') },
+    { provider: 'pi', path: piSessionRoot },
   ];
   return parseAuthorizedSources(candidates.flatMap(({ provider, path, statePath }) => {
     if (path === undefined || !isProviderRoot(provider, path)) return [];
@@ -115,6 +118,7 @@ function isProviderRoot(provider: SessionNavigatorProviderId, path: string): boo
     if (provider === 'codex') {
       return [...names].some((name) => /^state(?:_\d+)?\.sqlite$/iu.test(name)) || names.has('sessions') || names.has('archived_sessions');
     }
+    if (provider === 'pi') return names.has('sessions') || names.has('agent') || [...names].some((name) => name.endsWith('.jsonl'));
     return names.has('projects') || names.has('history.jsonl') || names.has('sessions');
   } catch {
     return false;
