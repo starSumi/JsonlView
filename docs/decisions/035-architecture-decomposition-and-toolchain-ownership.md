@@ -88,9 +88,10 @@ facades in place:
 
 Focused characterization and failure tests cover range hashing, cancellation,
 provider dispatch compatibility, Navigator lifecycle behavior, multi-page
-Insights accounting, invalid budgets, and non-progressing cursors. Full
-repository validation remains a merge gate; installed VS Code host acceptance
-and publication are separate later gates.
+Insights accounting, invalid budgets, and non-progressing cursors. The merged
+slice passed the full repository suite (87 files, 844 tests), Biome, typecheck,
+build, contract, changelog, and diff checks. Installed VS Code host acceptance
+and publication remain separate later gates.
 
 ## Boundary and rollback
 
