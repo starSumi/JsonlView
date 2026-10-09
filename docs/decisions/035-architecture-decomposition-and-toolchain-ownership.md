@@ -99,6 +99,9 @@ optional Codex archive probe. It preserves provider read-only behavior and
 passes the focused Navigator suite (120 tests) before the final repository
 regression run.
 
+A no-progress guard also prevents a zero-file Claude discovery cutoff from
+  producing a repeatable empty continuation page.
+
 ## Boundary and rollback
 
 This ADR authorizes internal, reversible module extraction and toolchain
