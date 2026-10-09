@@ -7,7 +7,7 @@ import {
   type RowScanBudget,
   type WebviewRequest,
 } from '../shared/types';
-import { MAX_TABLE_COLUMNS } from '../shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
 
 const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_QUERY_DEPTH = 16;
@@ -174,6 +174,17 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
       }
       break;
     case 'OPEN_SESSION_NAVIGATOR':
+      break;
+    case 'DIAGNOSE_ERROR':
+      if (!isBoundedString(value.payload.code, MAX_DIAGNOSTIC_CODE_LENGTH)) {
+        return failure('Diagnostic code is required.');
+      }
+      if (!isBoundedString(value.payload.message, MAX_DIAGNOSTIC_MESSAGE_LENGTH)) {
+        return failure('Diagnostic message is required.');
+      }
+      if (value.payload.action !== undefined && value.payload.action !== 'explain' && value.payload.action !== 'copy') {
+        return failure('Diagnostic action is invalid.');
+      }
       break;
     case 'CANCEL':
       if (!isBoundedString(value.payload.targetRequestId, MAX_REQUEST_ID_LENGTH)) {

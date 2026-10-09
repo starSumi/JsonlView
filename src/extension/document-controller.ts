@@ -75,6 +75,8 @@ export interface DocumentControllerHooks {
   onReady?: () => Promise<void> | void;
   /** Focus the opt-in Session Navigator without changing the document. */
   onOpenSessionNavigator?: () => Promise<void> | void;
+  /** Hand off a bounded Webview error to the host-owned diagnostic flow. */
+  onDiagnosticError?: (diagnostic: { code: string; message: string; action?: 'explain' | 'copy' }) => Promise<void> | void;
 }
 
 export class DocumentController {
@@ -108,6 +110,13 @@ export class DocumentController {
     // before the generation gate so a rebuild can still stop old work.
     if (request.type === 'CANCEL') {
       this.requests.cancel(request.payload.targetRequestId);
+      return;
+    }
+    // An error banner may outlive the generation that produced it. Keep
+    // the bounded handoff available so the user can still ask the host to
+    // explain or copy the last visible error after a source refresh.
+    if (request.type === 'DIAGNOSE_ERROR') {
+      await this.hooks.onDiagnosticError?.(request.payload);
       return;
     }
     if (request.type !== 'READY' && request.generation !== summary.snapshot.generation) {

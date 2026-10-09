@@ -358,6 +358,11 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
       },
       onReady: () => document.flushPendingReveal(),
       onOpenSessionNavigator: () => this.openSessionNavigator(),
+      onDiagnosticError: ({ code, message, action }) => offerDiagnostic({
+        stage: 'editor-error-banner',
+        name: code,
+        message,
+      }, action),
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
@@ -408,13 +413,30 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
 let lastDiagnostic: JsonlViewDiagnosticEnvelope | undefined;
 let outputChannel: vscode.LogOutputChannel | undefined;
 
-async function offerDiagnostic(input: { stage: string; name: string; message: string }): Promise<void> {
+function currentDiagnostic(): JsonlViewDiagnosticEnvelope {
+  return lastDiagnostic ?? buildDiagnosticEnvelope({
+    stage: 'webview-host-registration',
+    name: 'InvalidStateError',
+    message: 'The VS Code Webview host reported that the document is in an invalid state while registering its service worker. JsonlView does not register a service worker.',
+    extensionId: 'Sumi-Sophia.jsonl-view',
+  });
+}
+
+async function offerDiagnostic(input: { stage: string; name: string; message: string }, preferredAction?: 'explain' | 'copy'): Promise<void> {
   const envelope = buildDiagnosticEnvelope({
     ...input,
     extensionId: 'Sumi-Sophia.jsonl-view',
   });
   lastDiagnostic = envelope;
   appendOutputLog(outputChannel, 'diagnostic', `stage=${envelope.stage} name=${envelope.error.name} message=${envelope.error.message}`);
+  if (preferredAction === 'copy') {
+    await handleDiagnosticAction('Copy diagnostic context', envelope);
+    return;
+  }
+  if (preferredAction === 'explain') {
+    await handleDiagnosticAction('Explain with VS Code Chat', envelope);
+    return;
+  }
   const action = await vscode.window.showErrorMessage(
     'JsonlView detected a bounded Webview error. Source contents were not included.',
     'Explain with VS Code Chat',
@@ -481,17 +503,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('jsonlView.rebuildIndex', async () => provider.rebuildActiveDocument()),
     vscode.commands.registerCommand('jsonlView.diagnoseWebview', async () => {
-      const envelope = lastDiagnostic ?? buildDiagnosticEnvelope({
-        stage: 'webview-host-registration',
-        name: 'InvalidStateError',
-        message: 'The VS Code Webview host reported that the document is in an invalid state while registering its service worker. JsonlView does not register a service worker.',
-        extensionId: 'Sumi-Sophia.jsonl-view',
-      });
+      const envelope = currentDiagnostic();
       lastDiagnostic = envelope;
       const action = await vscode.window.showInformationMessage('JsonlView prepared a bounded Webview diagnosis without source contents.', 'Explain with VS Code Chat', 'Copy diagnostic context');
       await handleDiagnosticAction(action, envelope);
     }),
     vscode.commands.registerCommand('jsonlView.showOutput', () => outputChannel?.show(true)),
+    vscode.commands.registerCommand('jsonlView.explainLastDiagnostic', () => handleDiagnosticAction('Explain with VS Code Chat', currentDiagnostic())),
+    vscode.commands.registerCommand('jsonlView.copyLastDiagnostic', () => vscode.env.clipboard.writeText(formatDiagnosticContext(currentDiagnostic()))),
   );
   appendOutputLog(outputChannel, 'activated', 'commands-and-views=registered');
 }

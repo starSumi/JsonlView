@@ -1,4 +1,6 @@
 export const PROTOCOL_VERSION = 1 as const;
+export const MAX_DIAGNOSTIC_CODE_LENGTH = 128;
+export const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 512;
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonKind =
@@ -345,6 +347,7 @@ export type WebviewRequest =
   | ProtocolEnvelope<'SET_FOLLOW_MODE', { enabled: boolean }>
   | ProtocolEnvelope<'SET_ROW_ORDER', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'OPEN_SESSION_NAVIGATOR', Record<string, never>>
+  | ProtocolEnvelope<'DIAGNOSE_ERROR', { code: string; message: string; action?: 'explain' | 'copy' }>
   | ProtocolEnvelope<'CANCEL', { targetRequestId: string }>
   | ProtocolEnvelope<'REBUILD_INDEX', Record<string, never>>;
 

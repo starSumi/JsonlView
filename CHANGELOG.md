@@ -6,6 +6,8 @@
   source leaves the current snapshot pending.
 - Register a dedicated JsonlView Output channel for bounded lifecycle and
   diagnostic summaries.
+- Add recoverable commands to explain or copy the last bounded diagnostic after
+  its notification is dismissed.
 - Resolve Claude child sessions across activity pages while keeping confirmed
   missing parents as standalone orphans.
 - Fix Codex session links when stored rollout paths use a Windows junction or

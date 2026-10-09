@@ -86,6 +86,16 @@
         "icon": "$(output)"
       },
       {
+        "command": "jsonlView.explainLastDiagnostic",
+        "title": "JsonlView: Explain Last Diagnostic with VS Code Chat",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "jsonlView.copyLastDiagnostic",
+        "title": "JsonlView: Copy Last Diagnostic Context",
+        "icon": "$(copy)"
+      },
+      {
         "command": "jsonlView.sessionNavigator.enable",
         "title": "JsonlView: Enable Session Navigator",
         "icon": "$(activate-breakpoints)"

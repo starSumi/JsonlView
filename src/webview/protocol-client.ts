@@ -54,6 +54,7 @@ const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   SET_FOLLOW_MODE: 'follow',
   SET_ROW_ORDER: 'order',
   OPEN_SESSION_NAVIGATOR: 'ready',
+  DIAGNOSE_ERROR: 'ready',
   CANCEL: 'rows',
   REBUILD_INDEX: 'rebuild',
 };
@@ -248,7 +249,9 @@ export class VsCodeMessageClient {
       requestId,
       payload,
     } as WebviewRequest;
-    if (type !== 'CANCEL') {
+    // Diagnostic handoff is a one-way host action; it has no correlated
+    // response and must not leave an unbounded pending entry behind.
+    if (type !== 'CANCEL' && type !== 'DIAGNOSE_ERROR') {
       this.#pending.set(requestId, request);
     }
     this.#transport.postMessage(envelope);

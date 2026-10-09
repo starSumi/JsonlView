@@ -19,7 +19,7 @@ import type {
   RowSort,
   SortDirection,
 } from '../shared/types';
-import { MAX_TABLE_COLUMNS, PROTOCOL_VERSION } from '../shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS, PROTOCOL_VERSION } from '../shared/types';
 import { DetailDrawer } from './detail-drawer';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -181,6 +181,26 @@ export function App(): React.JSX.Element {
       generation: session.generation,
       requestId,
       payload: {},
+    });
+  }, []);
+
+  const diagnoseError = useCallback((error: NonNullable<WorkspaceState['error']>, action: 'explain' | 'copy'): void => {
+    const session = clientRef.current.session;
+    const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `diagnostic-${Date.now().toString(36)}`;
+    vscode.postMessage({
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'DIAGNOSE_ERROR',
+      documentId: session.documentId,
+      generation: session.generation,
+      ...(session.epoch === undefined ? {} : { epoch: session.epoch }),
+      requestId,
+      payload: {
+        code: error.code.slice(0, MAX_DIAGNOSTIC_CODE_LENGTH),
+        message: error.message.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH),
+        action,
+      },
     });
   }, []);
 
@@ -821,11 +841,15 @@ export function App(): React.JSX.Element {
         <div className={`workspace-banner error-banner${state.error.recoverable ? ' is-recoverable' : ''}`} role="alert">
           <CircleAlert size={15} aria-hidden />
           <span><strong>{state.error.code}</strong> {state.error.message}</span>
-          {state.error.recoverable ? (
-            <button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => dispatch({ type: 'DISMISS_ERROR' })}>
-              <X size={14} aria-hidden />
-            </button>
-          ) : null}
+          <>
+            <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'explain')}>Explain with VS Code Chat</button>
+            <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'copy')}>Copy context</button>
+            {state.error.recoverable ? (
+              <button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => dispatch({ type: 'DISMISS_ERROR' })}>
+                <X size={14} aria-hidden />
+              </button>
+            ) : null}
+          </>
         </div>
       ) : null}
       <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />

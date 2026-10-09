@@ -28,6 +28,8 @@
     "jsonlView.rebuildIndex",
     "jsonlView.diagnoseWebview",
     "jsonlView.showOutput",
+    "jsonlView.explainLastDiagnostic",
+    "jsonlView.copyLastDiagnostic",
     "jsonlView.editor",
     "jsonlView.hydration.maxBytes",
     "jsonlView.hydration.fullMaxBytes",

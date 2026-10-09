@@ -23,6 +23,23 @@ describe('webview message validation', () => {
     expect(validateWebviewRequest(envelope('OPEN_SESSION_NAVIGATOR', {})).ok).toBe(true);
   });
 
+  it('accepts bounded diagnostic handoff actions and rejects oversized context', () => {
+    expect(validateWebviewRequest(envelope('DIAGNOSE_ERROR', {
+      code: 'REQUEST_FAILED',
+      message: 'The bounded request failed.',
+      action: 'explain',
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('DIAGNOSE_ERROR', {
+      code: 'REQUEST_FAILED',
+      message: 'The bounded request failed.',
+      action: 'copy',
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('DIAGNOSE_ERROR', {
+      code: 'REQUEST_FAILED',
+      message: 'x'.repeat(513),
+    })).ok).toBe(false);
+  });
+
   it('rejects an empty Navigator request id like every other inbound request', () => {
     expect(validateWebviewRequest({ ...envelope('OPEN_SESSION_NAVIGATOR', {}), requestId: '' }).ok).toBe(false);
   });
