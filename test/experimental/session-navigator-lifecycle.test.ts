@@ -51,6 +51,12 @@ import { RevealIntentRegistry } from '../../src/experimental/session-navigator/r
 
 let root: string;
 let tree: SessionNavigatorTreeProvider;
+function createTree(): SessionNavigatorTreeProvider {
+  return new SessionNavigatorTreeProvider({
+    globalStorageUri: { fsPath: root },
+    globalState: { get: (key: string, fallback: unknown) => host.state.get(key) ?? fallback, update: async (key: string, value: unknown) => { await host.persist(); host.state.set(key, value); } },
+  } as unknown as vscode.ExtensionContext, new RevealIntentRegistry());
+}
 const snapshot: SessionNavigatorScanResult = {
   fingerprint: 'stable', snapshot: {
     schemaVersion: 1, provider: 'codex', sourceId: 'fixture', snapshotId: 'fixture', sourceGeneration: 'scan-1',
@@ -71,10 +77,7 @@ beforeEach(async () => {
   host.view.message = undefined;
   host.progress.mockReset().mockImplementation(async (_options: unknown, callback: () => Promise<void>) => callback());
   host.view.onDidChangeVisibility.mockImplementation((listener: typeof host.visibility) => { host.visibility = listener; return { dispose() {} }; });
-  tree = new SessionNavigatorTreeProvider({
-    globalStorageUri: { fsPath: root },
-    globalState: { get: (key: string, fallback: unknown) => host.state.get(key) ?? fallback, update: async (key: string, value: unknown) => { await host.persist(); host.state.set(key, value); } },
-  } as unknown as vscode.ExtensionContext, new RevealIntentRegistry());
+  tree = createTree();
   tree.register();
 });
 afterEach(async () => { tree.dispose(); await rm(root, { recursive: true, force: true }); });
@@ -191,6 +194,50 @@ describe('Session Navigator host lifecycle', () => {
     expect(host.scan).toHaveBeenCalledTimes(2);
   });
 
+  it('reopens from the durable catalog and skips a full scan when the source fingerprint is unchanged', async () => {
+    await tree.refresh();
+    expect(host.scan).toHaveBeenCalledTimes(1);
+    tree.dispose();
+    host.scan.mockClear();
+    host.probe.mockClear().mockResolvedValue('stable');
+
+    tree = createTree();
+    tree.register();
+    const [cachedSource] = await tree.getChildren();
+    expect(tree.getTreeItem(cachedSource!).description).toBe('1 session');
+    await tree.refresh();
+
+    expect(host.probe).toHaveBeenCalledTimes(1);
+    expect(host.scan).not.toHaveBeenCalled();
+    const [source] = await tree.getChildren();
+    expect(await tree.getChildren(source)).toHaveLength(1);
+    expect(tree.getTreeItem(source!).description).toBe('1 session');
+  });
+
+  it('keeps cached rows visible while a changed source is being replaced', async () => {
+    await tree.refresh();
+    tree.dispose();
+    host.scan.mockClear();
+    host.probe.mockClear().mockResolvedValue('changed');
+    const replacement = { ...snapshot, fingerprint: 'changed', snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Rebuilt session' }] } };
+    let complete!: (value: SessionNavigatorScanResult) => void;
+    host.scan.mockImplementationOnce(() => new Promise<SessionNavigatorScanResult>((resolve) => { complete = resolve; }));
+
+    tree = createTree();
+    tree.register();
+    const refresh = tree.refresh();
+    await vi.waitFor(() => expect(host.scan).toHaveBeenCalledTimes(1));
+    const [sourceWhileRefreshing] = await tree.getChildren();
+    expect(tree.getTreeItem(sourceWhileRefreshing!).description).toContain('Refreshing');
+    expect((await tree.getChildren(sourceWhileRefreshing!))[0]).toMatchObject({ nodeKind: 'entity', entity: { label: 'A real session boundary' } });
+
+    complete(replacement);
+    await refresh;
+    const [source] = await tree.getChildren();
+    expect((await tree.getChildren(source))[0]).toMatchObject({ nodeKind: 'entity', entity: { label: 'Rebuilt session' } });
+    expect(tree.getTreeItem(source!).description).toBe('1 session');
+  });
+
   it('retries a transient empty Claude page before committing a zero-session partial index', async () => {
     host.roots = [{ ...host.roots[0]!, provider: 'claude' }];
     host.view.visible = true;
@@ -289,6 +336,7 @@ describe('Session Navigator host lifecycle', () => {
   it('coalesces refreshes and discards a late scan after disabling without deleting the catalog', async () => {
     await tree.refresh();
     let complete!: (value: SessionNavigatorScanResult) => void;
+    host.probe.mockResolvedValueOnce('changed');
     host.scan.mockImplementationOnce(() => new Promise<SessionNavigatorScanResult>((resolve) => { complete = resolve; }));
     const first = tree.refresh();
     const second = tree.refresh();

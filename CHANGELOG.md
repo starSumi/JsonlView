@@ -28,6 +28,8 @@
 - Keep an initially empty, truncated Claude scan provisional and reconcile one
   bounded continuation page so parent and subagent rows settle before first
   render.
+- Reopen the navigator from its durable catalog, probing fingerprints before
+  rescanning and retaining cached rows while changed sources rebuild.
 - Read Claude agent sidecars within a bounded budget so nested parentAgentId
   and toolUseId metadata survives paging and confirmed missing parents remain
   explicit orphans.

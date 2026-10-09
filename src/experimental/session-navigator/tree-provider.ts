@@ -241,6 +241,25 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         const sourceId = sourceIdFor(setting);
         try {
           const provider = this.providerFor(setting);
+          // The catalog is durable and already contains the last coherent
+          // projection. Probe it before scanning so reopening the view is a
+          // read-only fingerprint check when the provider has not changed.
+          // A changed source keeps its cached rows visible until replacement
+          // succeeds; the loading status communicates that refresh is pending.
+          const cachedFingerprint = store.getFingerprint(sourceId);
+          if (cachedFingerprint !== undefined) {
+            const currentFingerprint = await provider.probe(signal);
+            if (signal.aborted || this.#disposed || !this.isEnabled()) return;
+            if (currentFingerprint === cachedFingerprint) {
+              store.markUpdateAvailable(sourceId, false);
+              this.#sourceStatus.delete(sourceId);
+              this.#transientEmptyScans.delete(sourceId);
+              this.#changed.fire(undefined);
+              continue;
+            }
+            store.markUpdateAvailable(sourceId, true);
+            this.#changed.fire(undefined);
+          }
           const scan = await provider.scan(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET);
           if (signal.aborted || this.#disposed || !this.isEnabled()) return;
           if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) continue;
