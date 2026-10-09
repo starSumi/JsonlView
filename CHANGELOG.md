@@ -6,6 +6,9 @@
   copying the current generation in-database, applying bounded page rows, and
   reconciling parent edges before the generation switch. Existing catalog rows
   remain readable on page failure.
+- Add a transport-independent, disabled-by-default MCP navigation contract that
+  negotiates 2026-07-28 and 2025-11-25, exposes one bounded read-only metadata
+  query, and keeps v2 wire integration separate from the legacy SDK line.
 - Extract the engine snapshot fingerprint helpers, Navigator file scanning and
   provider dispatch, and the bounded extension Insights query behind their
   existing facades. Generation fencing, cancellation, read-only source
