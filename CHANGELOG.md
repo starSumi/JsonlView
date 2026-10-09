@@ -28,6 +28,9 @@
 - Keep an initially empty, truncated Claude scan provisional and reconcile one
   bounded continuation page so parent and subagent rows settle before first
   render.
+- Read Claude agent sidecars within a bounded budget so nested parentAgentId
+  and toolUseId metadata survives paging and confirmed missing parents remain
+  explicit orphans.
 - Add a no-op-by-default observability contract for future opt-in OTLP export;
   source bodies, paths, prompts, credentials, and arbitrary JSON are rejected.
 

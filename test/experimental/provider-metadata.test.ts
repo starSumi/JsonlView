@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createNativeSessionNavigatorProvider } from '../../src/experimental/session-navigator/native-provider';
-import { collectClaudeFiles } from '../../src/experimental/session-navigator/claude-metadata';
+import { collectClaudeFiles, readClaudeMetadata } from '../../src/experimental/session-navigator/claude-metadata';
 import { MetadataBudget, readMetadataRecords } from '../../src/experimental/session-navigator/provider-metadata';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET } from '../../src/experimental/session-navigator/types';
 
@@ -67,6 +67,48 @@ describe('native provider metadata', () => {
     ]));
     expect(result.snapshot.relations).toEqual([expect.objectContaining({ fromNativeId: 'subagent:parent:child', toNativeId: 'parent' })]);
     expect(result.snapshot.locations.find((location) => location.nativeId === 'subagent:parent:child')?.relativePath).toContain('agent-child.jsonl');
+  });
+
+  it('uses Claude agent sidecars to reconcile nested parents and bounded spawn metadata', async () => {
+    const path = await root();
+    const rootId = 'sidecar-root';
+    const parentFile = join(path, 'projects', 'project', rootId, 'subagents', 'agent-parent.jsonl');
+    const nestedFile = join(path, 'projects', 'project', rootId, 'subagents', 'workflow', 'agent-nested.jsonl');
+    await transcript(join(path, 'projects', 'project', rootId + '.jsonl'), [user(rootId, 'Root session')]);
+    await transcript(parentFile, [user(rootId, 'Parent worker', { agentId: 'parent', isSidechain: true })]);
+    await transcript(nestedFile, [user(rootId, 'Nested worker', { agentId: 'nested', isSidechain: true })]);
+    await writeFile(parentFile.replace(/\.jsonl$/u, '.meta.json'), JSON.stringify({ toolUseId: 'tool-parent', agentType: 'worker', description: 'Parent worker' }));
+    await writeFile(nestedFile.replace(/\.jsonl$/u, '.meta.json'), JSON.stringify({ toolUseId: 'tool-nested', parentAgentId: 'parent', agentType: 'explorer', description: 'Nested worker' }));
+
+    const result = await provider(path).scan(signal(), limits);
+    expect(result.snapshot.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: 'subagent:' + rootId + ':parent', relationship: 'subagent', parentNativeId: rootId }),
+      expect.objectContaining({ nativeId: 'subagent:' + rootId + ':nested', relationship: 'subagent', parentNativeId: 'subagent:' + rootId + ':parent' }),
+    ]));
+    expect(result.snapshot.relations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fromNativeId: 'subagent:' + rootId + ':nested', toNativeId: 'subagent:' + rootId + ':parent' }),
+    ]));
+
+    const collected = await collectClaudeFiles(path, new MetadataBudget(limits, signal()));
+    const nested = collected.allFiles.find((file) => file.path === nestedFile);
+    expect(nested).toMatchObject({ parentAgentId: 'parent', parentAgentExists: true, toolUseId: 'tool-nested' });
+    const metadata = nested === undefined ? undefined : await readClaudeMetadata(nested, new MetadataBudget(limits, signal()));
+    if (metadata?.metadata === undefined) throw new Error('nested Claude sidecar metadata was not projected');
+    expect(metadata.metadata).toMatchObject({ toolUseId: 'tool-nested', agentType: 'explorer', parentNativeId: 'subagent:' + rootId + ':parent', parentExists: true });
+  });
+
+  it('keeps a sidecar parent missing from a complete source as an orphan', async () => {
+    const path = await root();
+    const rootId = 'sidecar-orphan-root';
+    const nestedFile = join(path, 'projects', 'project', rootId, 'subagents', 'agent-nested.jsonl');
+    await transcript(join(path, 'projects', 'project', rootId + '.jsonl'), [user(rootId, 'Root session')]);
+    await transcript(nestedFile, [user(rootId, 'Orphan worker', { agentId: 'nested', isSidechain: true })]);
+    await writeFile(nestedFile.replace(/\.jsonl$/u, '.meta.json'), JSON.stringify({ toolUseId: 'tool-missing', parentAgentId: 'missing-parent' }));
+
+    const result = await provider(path).scan(signal(), limits);
+    expect(result.snapshot.entities.find((entity) => entity.nativeId === 'subagent:' + rootId + ':nested')).toMatchObject({ relationship: 'orphan' });
+    expect(result.snapshot.relations).toEqual([]);
+    expect(result.snapshot.truncated).toBe(false);
   });
 
   it('retains Claude parent edges when pagination returns the child before its parent', async () => {
