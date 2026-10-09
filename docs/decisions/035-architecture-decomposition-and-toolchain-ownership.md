@@ -93,6 +93,12 @@ slice passed the full repository suite (87 files, 844 tests), Biome, typecheck,
 build, contract, changelog, and diff checks. Installed VS Code host acceptance
 and publication remain separate later gates.
 
+The follow-up failure-injection slice also covers Codex `maxRecords` below
+`maxEntities`, Claude discovery budget cutoffs, and cancellation during an
+optional Codex archive probe. It preserves provider read-only behavior and
+passes the focused Navigator suite (120 tests) before the final repository
+regression run.
+
 ## Boundary and rollback
 
 This ADR authorizes internal, reversible module extraction and toolchain

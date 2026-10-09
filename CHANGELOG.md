@@ -6,6 +6,9 @@
   provider dispatch, and the bounded extension Insights query behind their
   existing facades. Generation fencing, cancellation, read-only source
   ownership, and the VS Code IPC contract remain unchanged.
+- Preserve Navigator continuation when provider discovery hits a bounded
+  budget, advance Codex cursors by consumed source rows, and propagate archive
+  probe cancellation instead of silently completing a partial scan.
 - Keep an explicit Rebuild action in the header toolbar when an appended JSONL
   source leaves the current snapshot pending.
 - Register a dedicated JsonlView Output channel for bounded lifecycle and
