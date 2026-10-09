@@ -97,6 +97,7 @@ describe('bounded source intake validation', () => {
       { type: 'drop-uris', uris: Array(33).fill('file:///source.jsonl') }, { type: 'drop-uris', uris: ['x'.repeat(8_193)] }]) {
       expect(() => parseSourceIntakeMessage(message)).toThrow();
     }
+    expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'pi' })).toEqual({ type: 'authorize-agent', provider: 'pi' });
   });
 
   it('checks local file and folder reality while rejecting remote, command, missing and linked paths', async () => {
@@ -238,7 +239,7 @@ describe('Add Source panel host lifecycle', () => {
     host.receive!({ type: 'drop-uris', uris: [pathToFileURL(directory).toString()] });
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     await intake.dispose();
-    expect((onSource.mock.calls[0]?.[1] as AbortSignal).aborted).toBe(true);
+    expect((onSource.mock.calls[0]![1] as AbortSignal).aborted).toBe(true);
     expect(host.post.mock.calls.at(-1)?.[0].state).toBe('busy');
   });
 });
@@ -290,5 +291,6 @@ it('ships a nonce-only static document without HTML injection or automatic clipb
   expect(html).toContain('Send to VS Code AI');
   expect(html).toContain('webview-diagnostic');
   expect(html).toContain('Source files are read-only');
+  expect(html).toContain('Connect pi');
   expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
 });

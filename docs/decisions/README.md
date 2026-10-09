@@ -42,6 +42,7 @@ Read these before changing a shared boundary:
 34. [ADR-033 bounded Webview diagnostics](033-bounded-webview-diagnostics.md)
 35. [ADR-034 opt-in OTLP observability boundary](034-opt-in-otlp-observability.md)
 36. [ADR-035 runtime-bounded decomposition and toolchain ownership](035-architecture-decomposition-and-toolchain-ownership.md)
+37. [ADR-036 pi coding agent session adapter](036-pi-coding-agent-adapter.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.

@@ -15,7 +15,7 @@ type IntakeMessage =
   | { readonly type: 'pick-files' | 'pick-folder' }
   | { readonly type: 'drop-uris'; readonly uris: readonly string[] }
   | { readonly type: 'import-jsonl'; readonly text: string }
-  | { readonly type: 'authorize-agent'; readonly provider: 'codex' | 'claude' }
+  | { readonly type: 'authorize-agent'; readonly provider: 'codex' | 'claude' | 'pi' }
   | { readonly type: 'webview-diagnostic'; readonly name: string; readonly message: string };
 
 export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
@@ -40,7 +40,7 @@ export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
     && typeof message.message === 'string' && message.message.length > 0 && message.message.length <= 512) {
     return { type: 'webview-diagnostic', name: message.name, message: message.message };
   }
-  if (message.type === 'authorize-agent' && keys.length === 2 && (message.provider === 'codex' || message.provider === 'claude')) {
+  if (message.type === 'authorize-agent' && keys.length === 2 && (message.provider === 'codex' || message.provider === 'claude' || message.provider === 'pi')) {
     return { type: 'authorize-agent', provider: message.provider };
   }
   throw new Error('Invalid or oversized source request.');
@@ -79,7 +79,7 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
 }
 
 export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
-export type DetectedAgentHandler = (provider: Extract<SessionNavigatorProviderId, 'codex' | 'claude'>, signal: AbortSignal) => Promise<void>;
+export type DetectedAgentHandler = (provider: Extract<SessionNavigatorProviderId, 'codex' | 'claude' | 'pi'>, signal: AbortSignal) => Promise<void>;
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
 export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewProvider {
@@ -169,7 +169,8 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       if (message.type === 'authorize-agent') {
         if (this.#onDetectedAgent === undefined) throw new Error('Detected agent authorization is unavailable. Use Add Source to choose a local folder.');
         await this.#onDetectedAgent(message.provider, signal);
-        await this.post(webview, signal, 'success', (message.provider === 'codex' ? 'Codex' : 'Claude') + ' source connected.');
+        const providerLabel = message.provider === 'codex' ? 'Codex' : message.provider === 'claude' ? 'Claude' : 'pi';
+        await this.post(webview, signal, 'success', providerLabel + ' source connected.');
         return;
       }
       if (message.type === 'import-jsonl') {

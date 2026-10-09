@@ -329,7 +329,7 @@
         "jsonlView.sessionNavigator.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex and Claude roots are detected automatically; custom roots remain explicit."
+          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex, Claude, and pi roots are detected automatically; custom roots remain explicit."
         },
         "jsonlView.sessionNavigator.sort": {
           "type": "string",
@@ -345,13 +345,13 @@
         "jsonlView.sessionNavigator.sources": {
           "type": "array",
           "default": [],
-          "description": "Additional local Agent source roots. Standard Codex and Claude roots are detected automatically; all paths are read-only.",
+          "description": "Additional local Agent source roots. Standard Codex, Claude, and pi roots are detected automatically; all paths are read-only.",
           "items": {
             "type": "object",
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["codex", "claude", "generic"]
+                "enum": ["codex", "claude", "pi", "generic"]
               },
               "rootUri": {
                 "type": "string",

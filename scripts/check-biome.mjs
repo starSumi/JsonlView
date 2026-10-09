@@ -4,7 +4,19 @@ import { fileURLToPath } from 'node:url';
 
 const root = process.cwd();
 const baseline = process.env.BIOME_BASELINE ?? 'baseline/pre-architecture-20261009';
-const listed = execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMRT', baseline + '...HEAD'], { encoding: 'utf8' })
+const committedDiff = (() => {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', baseline], { cwd: root, stdio: 'ignore' });
+    return execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMRT', baseline + '...HEAD'], { encoding: 'utf8' });
+  } catch {
+    try {
+      return execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMRT', 'HEAD^...HEAD'], { encoding: 'utf8' });
+    } catch {
+      return '';
+    }
+  }
+})();
+const listed = committedDiff
   .split(/\r?\n/u)
   .concat(execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMRT'], { encoding: 'utf8' }).split(/\r?\n/u))
   .concat(execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { encoding: 'utf8' }).split(/\r?\n/u))

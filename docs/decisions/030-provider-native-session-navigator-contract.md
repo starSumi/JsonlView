@@ -29,8 +29,9 @@ hard to find.
   explicit compatibility source; provider-native adapters fail closed with a
   bounded warning when their metadata source is unavailable or incompatible.
 - When the Navigator is enabled, it detects the provider-owned default roots
-  ('CODEX_HOME' or '~/.codex', and 'CLAUDE_CONFIG_DIR' or '~/.claude') without
-  scanning arbitrary home-directory files. Custom roots remain explicit.
+  ('CODEX_HOME' or '~/.codex', 'CLAUDE_CONFIG_DIR' or '~/.claude', and pi's
+  '~/.pi/agent' with its documented overrides) without scanning arbitrary
+  home-directory files. Custom roots remain explicit.
 - Windows junctions are resolved before containment checks, so an explicitly
   authorized Codex home can safely follow its own canonical rollout paths;
   unrelated drives and roots remain rejected. State-file roots resolve to the
@@ -38,7 +39,7 @@ hard to find.
 
 ## Owner
 
-The session-navigator native-provider module owns Codex and Claude metadata
+The session-navigator native-provider module owns Codex, Claude, and pi metadata
 adapters. The catalog store owns the product projection, generation, sort
 policy, and product labels. The tree provider owns the Activity Bar surface
 and explicit authorization. The JsonlView editor owns transcript rendering
