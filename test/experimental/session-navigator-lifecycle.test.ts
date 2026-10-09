@@ -44,7 +44,7 @@ vi.mock('../../src/experimental/session-navigator/source-config', async (origina
   const actual = await original<typeof import('../../src/experimental/session-navigator/source-config')>();
   return { ...actual, discoverDefaultSources: () => host.roots, mergeSourceSettings: (configured: AuthorizedSourceSetting[]) => actual.mergeSourceSettings(configured, host.roots) };
 });
-vi.mock('../../src/experimental/session-navigator/file-provider', () => ({ createSessionNavigatorProvider: () => ({ scan: host.scan, scanPage: host.scanPage, probe: host.probe }) }));
+vi.mock('../../src/experimental/session-navigator/provider-factory', () => ({ createSessionNavigatorProvider: () => ({ scan: host.scan, scanPage: host.scanPage, probe: host.probe }) }));
 vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class { show() { host.intake(); } async dispose() {} } }));
 import { SessionNavigatorTreeProvider } from '../../src/experimental/session-navigator/tree-provider';
 import { RevealIntentRegistry } from '../../src/experimental/session-navigator/reveal-intents';

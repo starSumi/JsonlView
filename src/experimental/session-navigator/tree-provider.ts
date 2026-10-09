@@ -2,7 +2,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 import { lstat, realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { CatalogStore } from './catalog-store';
-import { createSessionNavigatorProvider } from './file-provider';
+import { createSessionNavigatorProvider } from './provider-factory';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import { RevealIntentRegistry } from './reveal-intents';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';

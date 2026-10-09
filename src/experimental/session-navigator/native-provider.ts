@@ -5,7 +5,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import type { NavigationEntity, NavigationRelation } from '../navigation-contract';
-import { collectFiles, FileSessionNavigatorProvider } from './file-provider';
+import { collectFiles, type FileEntry } from './file-scan';
+import { FileSessionNavigatorProvider } from './generic-provider';
 import { sourceIdFor } from './source-config';
 import { claudeFingerprint, collectClaudeFiles, readClaudeMetadata, type ClaudeMetadata } from './claude-metadata';
 import { MetadataBudget, readMetadataRecords, userMessagePreview } from './provider-metadata';
@@ -285,7 +286,7 @@ class PiSessionNavigatorProvider extends NativeSessionNavigatorProvider {
 
 const PI_DISCOVERY_MAX_FILES = 4_096;
 
-async function collectPiFiles(rootPath: string, signal: AbortSignal): Promise<readonly import('./file-provider').FileEntry[]> {
+async function collectPiFiles(rootPath: string, signal: AbortSignal): Promise<readonly FileEntry[]> {
   return collectFiles(rootPath, signal, { ...DEFAULT_SESSION_NAVIGATOR_BUDGET, maxFiles: PI_DISCOVERY_MAX_FILES, maxMilliseconds: 750 }, Date.now());
 }
 
@@ -315,7 +316,7 @@ async function readPiMetadata(path: string, relativePath: string, budget: Metada
   };
 }
 
-function piFingerprint(files: readonly import('./file-provider').FileEntry[]): string {
+function piFingerprint(files: readonly FileEntry[]): string {
   return createHash('sha256').update(files.map((file) => `${file.relativePath}\0${file.size.toString()}\0${String(file.mtimeMs)}`).join('\n'), 'utf8').digest('hex');
 }
 
