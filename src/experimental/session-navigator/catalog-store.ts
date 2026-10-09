@@ -252,23 +252,82 @@ export class CatalogStore {
   }
 
   public appendSnapshot(sourceId: string, page: NavigatorSnapshot, fingerprint: string): NavigatorSnapshot {
-    const previous = this.getSnapshot(sourceId);
-    if (previous === undefined) return this.replaceSnapshot(sourceId, page, fingerprint);
-    const entities = new Map(previous.entities.map((entity) => [entity.nativeId, entity]));
-    for (const entity of page.entities) entities.set(entity.nativeId, entity);
-    const relations = new Map(previous.relations.map((relation) => [relation.fromNativeId + '\0' + relation.toNativeId + '\0' + relation.kind, relation]));
-    for (const relation of page.relations) relations.set(relation.fromNativeId + '\0' + relation.toNativeId + '\0' + relation.kind, relation);
-    const locations = new Map(previous.locations.map((location) => [location.nativeId, location]));
-    for (const location of page.locations) locations.set(location.nativeId, location);
-    const mergedRelations = [...relations.values()];
-    const parentByChild = new Map(mergedRelations.filter((relation) => relation.kind === 'parent').map((relation) => [relation.fromNativeId, relation.toNativeId]));
-    const mergedEntities = [...entities.values()].map((entity) => {
-      const parent = parentByChild.get(entity.nativeId);
-      return parent !== undefined && entities.has(parent)
-        ? { ...entity, parentNativeId: parent, relationship: 'subagent' as const }
-        : entity;
-    });
-    return this.replaceSnapshot(sourceId, { ...page, entities: mergedEntities, relations: mergedRelations, locations: [...locations.values()] }, fingerprint);
+    const source = this.#sourceRow(sourceId);
+    if (source === undefined) throw new Error('Navigation source is not configured.');
+    if (source.generation < 1) return this.replaceSnapshot(sourceId, page, fingerprint);
+
+    const previousGeneration = generationText(source.generation);
+    const nextGenerationNumber = source.generation + 1;
+    const generation = generationText(nextGenerationNumber);
+    const insertEntity = this.#db.prepare(`INSERT INTO entities(
+      source_id, generation, native_id, kind, label, parent_native_id, updated_at, status, confidence, opaque_ref,
+      vendor_title, title_source, first_message_preview, started_at, activity_at, relationship, project
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const deleteEntity = this.#db.prepare('DELETE FROM entities WHERE source_id = ? AND generation = ? AND native_id = ?');
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      // Copy the prior generation inside SQLite. This avoids materializing the
+      // entire catalog in JS for every continuation page.
+      this.#db.prepare(`INSERT INTO entities(
+        source_id, generation, native_id, kind, label, parent_native_id, updated_at, status, confidence, opaque_ref,
+        vendor_title, title_source, first_message_preview, started_at, activity_at, relationship, project
+      ) SELECT source_id, ?, native_id, kind, label, parent_native_id, updated_at, status, confidence, opaque_ref,
+        vendor_title, title_source, first_message_preview, started_at, activity_at, relationship, project
+        FROM entities WHERE source_id = ? AND generation = ?`).run(generation, sourceId, previousGeneration);
+      this.#db.prepare(`INSERT INTO relations(source_id, generation, from_native_id, to_native_id, kind)
+        SELECT source_id, ?, from_native_id, to_native_id, kind
+        FROM relations WHERE source_id = ? AND generation = ?`).run(generation, sourceId, previousGeneration);
+      this.#db.prepare(`INSERT INTO locations(source_id, generation, native_id, relative_path, row_ordinal)
+        SELECT source_id, ?, native_id, relative_path, row_ordinal
+        FROM locations WHERE source_id = ? AND generation = ?`).run(generation, sourceId, previousGeneration);
+
+      for (const entity of page.entities) {
+        deleteEntity.run(sourceId, generation, entity.nativeId);
+        insertEntity.run(
+          sourceId, generation, entity.nativeId, entity.kind, entity.label, entity.parentNativeId ?? null, entity.updatedAt ?? null,
+          entity.status ?? null, entity.confidence, entity.opaqueRef ?? null, entity.vendorTitle ?? null, entity.titleSource ?? null,
+          entity.firstMessagePreview ?? null, entity.startedAt ?? null, entity.activityAt ?? entity.updatedAt ?? null,
+          entity.relationship ?? 'generic', entity.project ?? null,
+        );
+      }
+      const insertRelation = this.#db.prepare('INSERT OR IGNORE INTO relations(source_id, generation, from_native_id, to_native_id, kind) VALUES (?, ?, ?, ?, ?)');
+      for (const relation of page.relations) insertRelation.run(sourceId, generation, relation.fromNativeId, relation.toNativeId, relation.kind);
+      const insertLocation = this.#db.prepare('INSERT OR REPLACE INTO locations(source_id, generation, native_id, relative_path, row_ordinal) VALUES (?, ?, ?, ?, ?)');
+      for (const location of page.locations) insertLocation.run(sourceId, generation, location.nativeId, location.relativePath, location.rowOrdinal);
+
+      // A continuation may introduce a parent after its child. Reconcile only
+      // rows in the new generation; existing rows remain untouched until the
+      // generation switch is committed.
+      this.#db.prepare(`UPDATE entities AS child
+        SET parent_native_id = (SELECT relation.to_native_id FROM relations AS relation
+          JOIN entities AS parent ON parent.source_id = relation.source_id
+            AND parent.generation = relation.generation AND parent.native_id = relation.to_native_id
+          WHERE relation.source_id = child.source_id AND relation.generation = child.generation
+            AND relation.from_native_id = child.native_id AND relation.kind = 'parent'
+          LIMIT 1),
+          relationship = 'subagent'
+        WHERE child.source_id = ? AND child.generation = ?
+          AND EXISTS (SELECT 1 FROM relations AS relation
+            JOIN entities AS parent ON parent.source_id = relation.source_id
+              AND parent.generation = relation.generation AND parent.native_id = relation.to_native_id
+            WHERE relation.source_id = child.source_id AND relation.generation = child.generation
+              AND relation.from_native_id = child.native_id AND relation.kind = 'parent')`).run(sourceId, generation);
+
+      this.#db.prepare('DELETE FROM entities WHERE source_id = ? AND generation = ?').run(sourceId, previousGeneration);
+      this.#db.prepare('DELETE FROM relations WHERE source_id = ? AND generation = ?').run(sourceId, previousGeneration);
+      this.#db.prepare('DELETE FROM locations WHERE source_id = ? AND generation = ?').run(sourceId, previousGeneration);
+      this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0, truncated = ?, next_cursor = ? WHERE source_id = ?').run(
+        nextGenerationNumber, page.capturedAt, fingerprint, page.truncated ? 1 : 0, page.nextCursor ?? null, sourceId,
+      );
+      this.#db.exec('COMMIT');
+    } catch (error) {
+      this.#db.exec('ROLLBACK');
+      throw error;
+    }
+
+    const committed = this.getSnapshot(sourceId);
+    if (committed === undefined) throw new Error('Catalog append committed without a readable snapshot.');
+    return Object.freeze({ ...committed, snapshotId: snapshotId(sourceId, generation, committed), locations: Object.freeze(committed.locations.map((location) => Object.freeze({ ...location }))) });
   }
 
   public replaceSnapshot(sourceId: string, snapshot: NavigatorSnapshot, fingerprint: string): NavigatorSnapshot {

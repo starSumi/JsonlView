@@ -70,3 +70,15 @@ shared rollout locations, cross-page parent resolution, partial status, and
 catalog reopen. Disable the opt-in Navigator or revert this scoped change to
 return to one bounded scan; source files and provider databases are never
 modified.
+
+## Incremental catalog evidence (2026-10-10)
+
+`CatalogStore.appendSnapshot` now copies the active generation with bounded
+SQLite `INSERT ... SELECT` statements, applies only the accepted page rows,
+reconciles parent edges in the new generation, and removes the prior generation
+before switching the source pointer. This avoids reading every prior page into
+JavaScript maps and then rebuilding the entire projection for each continuation.
+The append remains atomic: a page row that violates the catalog schema rolls
+back without changing the previously committed generation, fingerprint, or
+continuation cursor. The returned snapshot still carries the existing facade
+shape and stable generation identity.

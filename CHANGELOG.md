@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Merge Session Navigator continuation pages inside one SQLite transaction by
+  copying the current generation in-database, applying bounded page rows, and
+  reconciling parent edges before the generation switch. Existing catalog rows
+  remain readable on page failure.
 - Extract the engine snapshot fingerprint helpers, Navigator file scanning and
   provider dispatch, and the bounded extension Insights query behind their
   existing facades. Generation fencing, cancellation, read-only source

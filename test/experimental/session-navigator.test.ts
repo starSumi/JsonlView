@@ -237,6 +237,31 @@ describe('session navigator source boundary', () => {
     store.close();
   });
 
+  it('rolls back an incremental catalog page when its row violates the catalog contract', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-page-rollback-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    const entity = { sourceId, nativeId: 'existing', kind: 'thread' as const, label: 'Existing', relationship: 'root' as const, confidence: 'source' as const };
+    store.replaceSnapshot(sourceId, {
+      schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'page-1', snapshotId: 'page-1',
+      capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: true, nextCursor: 'v1:fixture:1',
+      entities: [entity], relations: [], locations: [{ nativeId: 'existing', relativePath: 'existing.jsonl', rowOrdinal: '0' }],
+    }, 'v1:fixture');
+    const invalidPage = {
+      schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'page-2', snapshotId: 'page-2',
+      capturedAt: '2026-10-08T00:01:00.000Z', redaction: 'metadata-only', truncated: false, entities: [{ ...entity, nativeId: 'invalid', kind: undefined }],
+      relations: [], locations: [{ nativeId: 'invalid', relativePath: 'invalid.jsonl', rowOrdinal: '0' }],
+    } as never;
+    expect(() => store.appendSnapshot(sourceId, invalidPage, 'v1:fixture')).toThrow();
+    expect(store.getSnapshot(sourceId)).toMatchObject({ sourceGeneration: 'g-1', entities: [expect.objectContaining({ nativeId: 'existing' })] });
+    expect(store.listSources()[0]).toMatchObject({ generation: 'g-1', truncated: true, nextCursor: 'v1:fixture:1' });
+    store.close();
+  });
+
   it('reads Codex state metadata and spawn edges without writing the provider database', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-codex-native-'));
     cleanup.push(root);
