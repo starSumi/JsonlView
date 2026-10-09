@@ -206,7 +206,7 @@ class ClaudeSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       if (declaredParent !== undefined && !relationLimited && (parentInPage || parentCanBeDeferred)) relations.push({ sourceId: this.sourceId, fromNativeId: item.nativeId, toNativeId: declaredParent, kind: 'parent' });
     }
     const snapshot = this.snapshot(entities, relations, locations, new Date().toISOString(), truncated || metadataBudget.truncated);
-    return { snapshot, fingerprint, ...(collected.hasMore ? { nextCursor: encodePageCursor(pageOffset + Math.max(1, budget.maxFiles), fingerprint) } : {}) };
+    return { snapshot, fingerprint, ...(collected.hasMore && collected.files.length > 0 ? { nextCursor: encodePageCursor(pageOffset + Math.max(1, budget.maxFiles), fingerprint) } : {}) };
   }
 }
 

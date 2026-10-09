@@ -170,12 +170,12 @@ describe('native provider metadata', () => {
     expect(last.snapshot.truncated).toBe(false);
   });
 
-  it('preserves a Claude continuation cursor when discovery stops at the time budget', async () => {
+  it('does not emit an empty Claude continuation page when discovery stops before finding a file', async () => {
     const path = await root();
     await transcript(join(path, 'session.jsonl'), [user('budget-cutoff', 'Continue discovery')]);
     const result = await provider(path).scanPage!(signal(), { ...limits, maxMilliseconds: 0, maxFiles: 1 });
     expect(result.snapshot.truncated).toBe(true);
-    expect(result.nextCursor).toBeDefined();
+    expect(result.nextCursor).toBeUndefined();
   });
 
   it('reads prefix previews and latest tail titles from multi-megabyte transcripts with bounded IO', async () => {
