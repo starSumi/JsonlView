@@ -373,6 +373,38 @@ describe('Agent profile projection', () => {
     ]));
   });
 
+  it('projects Claude prompt snapshots with bounded system prompt and tool descriptions', () => {
+    const registry = new AgentProfileRegistry();
+    const model = registry.project('claude-code-session', { value: {
+      type: 'attachment',
+      attachment: {
+        type: 'prompt_snapshot',
+        systemPrompt: ['System instruction one', 'System instruction two'],
+        tools: [
+          { name: 'Agent', description: 'Launch a bounded child agent.' },
+          { name: 'Read', description: 'Read a file from the workspace.' },
+        ],
+      },
+      rendered: [{ attachment: { type: 'model', text: 'Rendered model attachment text' } }],
+      sessionId: 'session-redacted',
+    } }, context);
+
+    expect(model).toMatchObject({
+      eventKind: 'checkpoint',
+      summary: expect.stringContaining('System instruction one'),
+      derivedFields: {
+        attachmentType: 'prompt_snapshot',
+        systemPrompt: 'System instruction one System instruction two',
+        toolDescriptions: 'Launch a bounded child agent. Read a file from the workspace.',
+        renderedContent: 'Rendered model attachment text',
+      },
+    });
+    expect(model.evidence).toEqual(expect.arrayContaining([
+      { field: 'systemPrompt', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'systemPrompt' }] } },
+      { field: 'toolDescriptions', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'tools' }] } },
+    ]));
+  });
+
   it('uses Claude leafUuid as identity for control records that have no uuid', () => {
     const registry = new AgentProfileRegistry();
     const values = [

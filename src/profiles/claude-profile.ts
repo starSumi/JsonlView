@@ -250,6 +250,8 @@ export class ClaudeCodeProfile implements AgentProfile {
           const attachmentType = stringAt(attachment, 'type');
           const attachmentProjection = projectClaudeAttachment(value, attachment);
           const semanticSummary = attachmentProjection.attachmentText
+            ?? attachmentProjection.systemPrompt
+            ?? attachmentProjection.toolDescriptions
             ?? attachmentProjection.addedBlocks
             ?? attachmentProjection.renderedContent
             ?? attachmentProjection.removedNames;
@@ -263,6 +265,8 @@ export class ClaudeCodeProfile implements AgentProfile {
           setActor(projection, 'system', keyPath('type'));
           if (attachmentType) setDerivedField(projection, 'attachmentType', attachmentType, keyPath('attachment', 'type'));
           if (attachmentProjection.attachmentText) setDerivedField(projection, 'attachmentText', attachmentProjection.attachmentText, keyPath('attachment', 'text'));
+          if (attachmentProjection.systemPrompt) setDerivedField(projection, 'systemPrompt', attachmentProjection.systemPrompt, keyPath('attachment', 'systemPrompt'));
+          if (attachmentProjection.toolDescriptions) setDerivedField(projection, 'toolDescriptions', attachmentProjection.toolDescriptions, keyPath('attachment', 'tools'));
           if (attachmentProjection.renderedContent) setDerivedField(projection, 'renderedContent', attachmentProjection.renderedContent, keyPath('rendered'));
           if (attachmentProjection.addedBlocks) setDerivedField(projection, 'addedBlocks', attachmentProjection.addedBlocks, keyPath('attachment', 'addedBlocks'));
           if (attachmentProjection.removedNames) setDerivedField(projection, 'removedNames', attachmentProjection.removedNames, keyPath('attachment', 'removedNames'));
@@ -319,6 +323,8 @@ function findBlock(blocks: unknown[], type: string): { value: Record<string, unk
 
 interface ClaudeAttachmentProjection {
   attachmentText?: string;
+  systemPrompt?: string;
+  toolDescriptions?: string;
   renderedContent?: string;
   addedBlocks?: string;
   removedNames?: string;
@@ -336,9 +342,13 @@ function projectClaudeAttachment(
   const result: ClaudeAttachmentProjection = {};
   if (attachment !== undefined) {
     const attachmentText = boundedClaudeText(attachment.text);
+    const systemPrompt = boundedClaudeText(attachment.systemPrompt);
+    const toolDescriptions = boundedClaudeToolDescriptions(attachment.tools);
     const addedBlocks = boundedClaudeText(attachment.addedBlocks);
     const removedNames = boundedClaudeText(attachment.removedNames);
     if (attachmentText !== undefined) result.attachmentText = attachmentText;
+    if (systemPrompt !== undefined) result.systemPrompt = systemPrompt;
+    if (toolDescriptions !== undefined) result.toolDescriptions = toolDescriptions;
     if (addedBlocks !== undefined) result.addedBlocks = addedBlocks;
     if (removedNames !== undefined) result.removedNames = removedNames;
   }
@@ -365,7 +375,10 @@ function boundedClaudeText(value: unknown): string | undefined {
       return parts.length > 0 ? parts.join('\n').slice(0, 8_000) : undefined;
     }
     const object = current as Record<string, unknown>;
-    for (const key of ['text', 'content', 'addedBlocks', 'addedLines', 'removedNames']) {
+    // These keys are only reached from an explicitly allow-listed Claude
+    // attachment path. Keep the recursive set narrow so arbitrary JSON keys
+    // never become semantic transcript text.
+    for (const key of ['text', 'content', 'systemPrompt', 'attachment', 'addedBlocks', 'addedLines', 'removedNames']) {
       const text = visit(object[key], depth + 1);
       if (text) return text;
     }
@@ -373,4 +386,17 @@ function boundedClaudeText(value: unknown): string | undefined {
   };
   const text = visit(value, 0);
   return text && text.trim().length > 0 ? text : undefined;
+}
+
+function boundedClaudeToolDescriptions(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parts: string[] = [];
+  for (const item of value.slice(0, 32)) {
+    if (!isObject(item)) continue;
+    const description = boundedClaudeText(item.description);
+    if (description) parts.push(description);
+    if (parts.join('\n').length >= 8_000) break;
+  }
+  const text = parts.join('\n').slice(0, 8_000);
+  return text.trim().length > 0 ? text : undefined;
 }

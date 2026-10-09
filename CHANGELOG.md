@@ -23,6 +23,11 @@
   Codex supports a separate SQLite home and detects WAL-only metadata updates.
 - Restore detected Codex or Claude homes directly from Add Source, and expose
   bounded Webview diagnostics with copy and best-effort VS Code Chat handoff.
+- Project Claude prompt snapshots and tool descriptions into bounded structured
+  detail sections while preserving the full attachment in Raw JSON.
+- Keep an initially empty, truncated Claude scan provisional and reconcile one
+  bounded continuation page so parent and subagent rows settle before first
+  render.
 - Add a no-op-by-default observability contract for future opt-in OTLP export;
   source bodies, paths, prompts, credentials, and arbitrary JSON are rejected.
 

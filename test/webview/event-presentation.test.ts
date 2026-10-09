@@ -878,6 +878,31 @@ describe('structured agent event presentation', () => {
     expect(model?.sections.some((section) => section.title === 'Payload')).toBe(false);
   });
 
+  it('renders Claude prompt snapshots with system prompt, tool descriptions, and nested rendered text', () => {
+    const model = buildAgentEventPresentation({
+      type: 'attachment',
+      attachment: {
+        type: 'prompt_snapshot',
+        systemPrompt: ['System instruction one', 'System instruction two'],
+        tools: [
+          { name: 'Agent', description: 'Launch a bounded child agent.' },
+          { name: 'Read', description: 'Read a file from the workspace.' },
+        ],
+      },
+      rendered: [{ attachment: { type: 'model', text: 'Rendered model attachment text' } }],
+    }, {
+      profileId: 'claude-code-session', eventKind: 'checkpoint' as const, actor: 'system' as const,
+      summary: 'Prompt snapshot', evidence: [], confidence: 'source' as const,
+    });
+
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'System prompt', text: 'System instruction one\nSystem instruction two', richText: true }),
+      expect.objectContaining({ title: 'Tool description · Agent', text: 'Launch a bounded child agent.' }),
+      expect.objectContaining({ title: 'Tool description · Read', text: 'Read a file from the workspace.' }),
+      expect.objectContaining({ title: 'Rendered content', text: 'Rendered model attachment text' }),
+    ]));
+  });
+
   it('keeps an empty Claude timeline text field useful through its detail value', () => {
     const model = buildAgentEventPresentation(
       { at: '2026-08-06T10:33:35.710Z', state: 'working', detail: 'Indexing source', text: '' },

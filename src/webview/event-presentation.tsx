@@ -891,6 +891,8 @@ function claudeAttachmentSections(
   const attachment = objectOf(payload.attachment);
   if (attachment) {
     addTextCandidate(sections, 'Attachment text', own(attachment, 'text'));
+    addTextCandidate(sections, 'System prompt', own(attachment, 'systemPrompt'), true);
+    addClaudeToolDescriptions(sections, own(attachment, 'tools'));
     addTextCandidate(sections, 'Added blocks', own(attachment, 'addedBlocks'));
     addTextCandidate(sections, 'Added lines', own(attachment, 'addedLines'));
     addTextCandidate(sections, 'Removed names', own(attachment, 'removedNames'));
@@ -908,12 +910,48 @@ function addRenderedClaudeContent(
   const visible = Math.min(value.length, 32);
   for (let index = 0; index < visible; index += 1) {
     const rendered = objectOf(value[index]);
-    const content = rendered ? (own(rendered, 'content') ?? own(rendered, 'text')) : value[index];
+    const nestedAttachment = rendered ? objectOf(own(rendered, 'attachment')) : undefined;
+    const content = rendered
+      ? (own(rendered, 'content')
+        ?? own(rendered, 'text')
+        ?? own(nestedAttachment ?? {}, 'text')
+        ?? own(nestedAttachment ?? {}, 'systemPrompt'))
+      : value[index];
     addTextCandidate(sections, visible === 1 ? 'Rendered content' : `Rendered content ${String(index + 1)}`, content);
+    if (nestedAttachment) addClaudeToolDescriptions(sections, own(nestedAttachment, 'tools'));
   }
   if (value.length > visible) {
     sections.push({
       title: 'Additional rendered content',
+      code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
+      truncated: true,
+      previewOnly: true,
+      language: 'json',
+    });
+  }
+}
+
+function addClaudeToolDescriptions(
+  sections: EventPresentationSection[],
+  value: unknown,
+): void {
+  if (!Array.isArray(value)) return;
+  const visible = Math.min(value.length, 32);
+  for (let index = 0; index < visible; index += 1) {
+    const tool = objectOf(value[index]);
+    if (!tool) continue;
+    const description = own(tool, 'description');
+    if (description === undefined) continue;
+    const name = valueLabel(own(tool, 'name'));
+    addTextCandidate(
+      sections,
+      name ? `Tool description · ${name}` : `Tool description · ${String(index + 1)}`,
+      description,
+    );
+  }
+  if (value.length > visible) {
+    sections.push({
+      title: 'Additional tool descriptions',
       code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
       truncated: true,
       previewOnly: true,
