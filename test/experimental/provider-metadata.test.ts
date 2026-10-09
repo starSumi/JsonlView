@@ -170,6 +170,14 @@ describe('native provider metadata', () => {
     expect(last.snapshot.truncated).toBe(false);
   });
 
+  it('preserves a Claude continuation cursor when discovery stops at the time budget', async () => {
+    const path = await root();
+    await transcript(join(path, 'session.jsonl'), [user('budget-cutoff', 'Continue discovery')]);
+    const result = await provider(path).scanPage!(signal(), { ...limits, maxMilliseconds: 0, maxFiles: 1 });
+    expect(result.snapshot.truncated).toBe(true);
+    expect(result.nextCursor).toBeDefined();
+  });
+
   it('reads prefix previews and latest tail titles from multi-megabyte transcripts with bounded IO', async () => {
     const path = await root();
     const file = join(path, 'large.jsonl');
@@ -248,6 +256,23 @@ describe('native provider metadata', () => {
     await expect(collectClaudeFiles(path, new MetadataBudget(limits, controller.signal))).rejects.toThrow('cancelled');
   });
 
+  it('propagates AbortError from an optional Codex archive probe', async () => {
+    const path = await root();
+    await mkdir(join(path, 'sessions'));
+    await mkdir(join(path, 'archived_sessions'));
+    const db = new DatabaseSync(join(path, 'state_5.sqlite'));
+    db.exec('CREATE TABLE threads (id TEXT, rollout_path TEXT);');
+    db.close();
+    const originalReaddir = vi.mocked(fsPromises.readdir).getMockImplementation();
+    if (originalReaddir === undefined) throw new Error('readdir mock implementation is unavailable');
+    const abortError = Object.assign(new Error('archive probe aborted'), { name: 'AbortError', code: 'ABORT_ERR' });
+    vi.mocked(fsPromises.readdir).mockImplementation(async (directory, options) => {
+      if (String(directory).endsWith('archived_sessions')) throw abortError;
+      return originalReaddir(directory, options);
+    });
+    await expect(provider(path, 'codex').probe(signal())).rejects.toBe(abortError);
+  });
+
   it('reports an unreadable Claude projects directory instead of an empty successful scan', async () => {
     const path = await root();
     await mkdir(join(path, 'projects'));
@@ -309,6 +334,25 @@ describe('native provider metadata', () => {
     expect(result.snapshot.entities[0]).toMatchObject({ nativeId: 'child', relationship: 'orphan' });
     expect(result.snapshot.entities[0]?.parentNativeId).toBeUndefined();
     expect(result.snapshot.relations).toEqual([]);
+  });
+
+  it('advances Codex pagination by consumed rows when the record cap is below the entity cap', async () => {
+    const path = await root();
+    const db = new DatabaseSync(join(path, 'state_5.sqlite'));
+    try {
+      db.exec('CREATE TABLE threads (id TEXT, rollout_path TEXT, updated_at INTEGER);');
+      const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?)');
+      insert.run('newest', join(path, 'newest.jsonl'), 3);
+      insert.run('middle', join(path, 'middle.jsonl'), 2);
+      insert.run('oldest', join(path, 'oldest.jsonl'), 1);
+    } finally { db.close(); }
+    const source = provider(path, 'codex');
+    const budget = { ...limits, maxEntities: 3, maxRecords: 1 };
+    const first = await source.scanPage!(signal(), budget);
+    expect(first.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['newest']);
+    expect(first.nextCursor).toBeDefined();
+    const second = await source.scanPage!(signal(), budget, first.nextCursor);
+    expect(second.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['middle']);
   });
 
   it('never relabels Codex children as roots when unrelated edges or a relation cap intervene', async () => {

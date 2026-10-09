@@ -104,7 +104,8 @@ export async function collectClaudeFiles(rootPath: string, budget: MetadataBudge
     const exists = file.parentAgentId === rootId || agentKeys.has(rootId + '\0' + file.parentAgentId) || roots.has(file.parentAgentId);
     return { ...file, ...(complete ? { parentAgentExists: exists } : {}) };
   });
-  return { files: reconciled.slice(offset, pageEnd), allFiles: reconciled, truncated: truncated || budget.truncated || reconciled.length > pageEnd, hasMore: reconciled.length > pageEnd };
+  const discoveryTruncated = truncated || budget.truncated;
+  return { files: reconciled.slice(offset, pageEnd), allFiles: reconciled, truncated: discoveryTruncated || reconciled.length > pageEnd, hasMore: discoveryTruncated || reconciled.length > pageEnd };
 }
 
 export async function readClaudeMetadata(file: ClaudeFile, budget: MetadataBudget): Promise<{ metadata?: ClaudeMetadata; sampled: boolean }> {

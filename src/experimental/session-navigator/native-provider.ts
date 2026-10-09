@@ -98,7 +98,9 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
       try {
         const files = await collectFiles(join(rolloutRoot, directory), signal, { ...DEFAULT_SESSION_NAVIGATOR_BUDGET, maxFiles: 32, maxMilliseconds: 750 }, Date.now());
         parts.push(...files.map((file) => file.path + '\0' + file.size.toString() + '\0' + String(file.mtimeMs)));
-      } catch {
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        throwIfAborted(signal);
         // A missing optional archive directory does not invalidate the state fingerprint.
       }
     }
@@ -122,16 +124,16 @@ class CodexSessionNavigatorProvider extends NativeSessionNavigatorProvider {
     try {
       const titles = await readCodexTitles(join(resolveCodexHome(this.rootPath), 'session_index.jsonl'), metadataBudget);
       db.exec('BEGIN');
-      let snapshot: NavigatorSnapshot;
+      let page: CodexSnapshotPage;
       try {
-        snapshot = await readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles, metadataBudget, pageCursor.offset);
+        page = await readCodexSnapshot(db, this.rootPath, this.sourceId, budget, signal, titles, metadataBudget, pageCursor.offset);
       } finally {
         db.exec('ROLLBACK');
       }
-      snapshot = await fillCodexPreviews(snapshot, this.rootPath, metadataBudget);
+      const snapshot = await fillCodexPreviews(page.snapshot, this.rootPath, metadataBudget);
       // The transaction is coherent even while Codex writes its WAL. This earlier
       // advisory fingerprint lets the next probe flag updates without starving scans.
-      return { snapshot, fingerprint, ...(snapshot.truncatedReason === 'record_limit' ? { nextCursor: encodePageCursor(pageCursor.offset + Math.max(1, budget.maxEntities), fingerprint) } : {}) };
+      return { snapshot, fingerprint, ...(snapshot.truncatedReason === 'record_limit' ? { nextCursor: encodePageCursor(pageCursor.offset + page.consumedRows, fingerprint) } : {}) };
     } finally {
       db.close();
     }
@@ -336,7 +338,12 @@ function normalizeRelative(value: string): string { return value.replaceAll('\\'
 function normalizePiId(value: string): string { return SAFE_PI_ID.test(value) ? value : 'id-' + hash(value); }
 const SAFE_PI_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
-async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>, metadataBudget: MetadataBudget, pageOffset = 0): Promise<NavigatorSnapshot> {
+interface CodexSnapshotPage {
+  readonly snapshot: NavigatorSnapshot;
+  readonly consumedRows: number;
+}
+
+async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: string, budget: SessionNavigatorBudget, signal: AbortSignal, titles: ReadonlyMap<string, string>, metadataBudget: MetadataBudget, pageOffset = 0): Promise<CodexSnapshotPage> {
   const columns = new Set(tableColumns(db, 'threads'));
   if (!columns.has('id') || !columns.has('rollout_path')) throw new Error('Codex state database has no compatible thread table.');
   const selected = ['id', 'rollout_path', 'created_at', 'updated_at', 'created_at_ms', 'updated_at_ms', 'recency_at', 'recency_at_ms', 'title', 'name', 'agent_nickname', 'agent_role', 'preview', 'first_user_message', 'project_id', 'archived'].filter((name) => columns.has(name));
@@ -350,19 +357,20 @@ async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: s
   const rowLimit = Math.max(1, Math.min(budget.maxRecords, budget.maxEntities + 1));
   const rows = db.prepare('SELECT ' + projection.join(', ') + ' FROM threads' + order + ' LIMIT ? OFFSET ?').all(rowLimit, Math.max(0, pageOffset)) as Array<Record<string, unknown>>;
   const canonicalRoot = canonicalPath(resolveRootPath(rootPath));
-  const candidates = rows.flatMap((row) => {
+  const candidates = rows.flatMap((row, rowIndex) => {
     if (typeof row.id !== 'string' || typeof row.rollout_path !== 'string') return [];
     const relativePath = authorizedRelativePath(canonicalRoot, row.rollout_path);
-    return relativePath === undefined ? [] : [{ row, relativePath }];
+    return relativePath === undefined ? [] : [{ row, relativePath, rowIndex }];
   });
-  const ids = new Set(candidates.slice(0, budget.maxEntities).map(({ row }) => String(row.id)));
+  const selectedCandidates = candidates.slice(0, budget.maxEntities);
+  const ids = new Set(selectedCandidates.map(({ row }) => String(row.id)));
   const edges = readCodexEdges(db, [...ids]);
   const entities: NavigationEntity[] = [];
   const relations: NavigationRelation[] = [];
   const locations: NavigatorLocation[] = [];
   const rowOrdinalsByPath = new Map<string, ReadonlyMap<string, string>>();
   let relationsTruncated = false;
-  for (const { row, relativePath } of candidates.slice(0, budget.maxEntities)) {
+  for (const { row, relativePath } of selectedCandidates) {
     throwIfAborted(signal);
     const id = String(row.id);
     const parent = edges.get(id);
@@ -396,11 +404,14 @@ async function readCodexSnapshot(db: DatabaseSync, rootPath: string, sourceId: s
     locations.push({ nativeId: id, relativePath, rowOrdinal: rowOrdinals.get(id) ?? '0' });
     if (parent !== undefined && !orphan) relations.push({ sourceId, fromNativeId: id, toNativeId: parent, kind: 'parent' });
   }
-  return Object.freeze({
+  const consumedRows = selectedCandidates.length < budget.maxEntities
+    ? rows.length
+    : (selectedCandidates[selectedCandidates.length - 1]?.rowIndex ?? rows.length - 1) + 1;
+  return { snapshot: Object.freeze({
     schemaVersion: 1, provider: 'codex', sourceId, sourceGeneration: 'scan-codex', snapshotId: 'scan-' + sourceId + '-' + Date.now().toString(36),
     capturedAt: new Date().toISOString(), redaction: 'metadata-only', entities: Object.freeze(entities), relations: Object.freeze(relations), locations: Object.freeze(locations), truncated: rows.length >= rowLimit || relationsTruncated,
     ...(relationsTruncated ? { truncatedReason: 'relation_limit' as const } : rows.length >= rowLimit ? { truncatedReason: 'record_limit' as const } : {}),
-  });
+  }), consumedRows };
 }
 
 interface PageCursor { offset: number; fingerprint?: string }
@@ -547,4 +558,5 @@ function asString(value: unknown): string | undefined { return typeof value === 
 function shortId(value: string): string { return value.length > 12 ? value.slice(0, 12) : value; }
 function hash(value: string): string { return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 20); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function isAbortError(value: unknown): boolean { return isRecord(value) && (value.name === 'AbortError' || value.code === 'ABORT_ERR'); }
 function throwIfAborted(signal: AbortSignal): void { if (signal.aborted) throw new Error('Session navigator scan cancelled.'); }
