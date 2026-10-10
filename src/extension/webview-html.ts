@@ -36,6 +36,15 @@ export function getWebviewHtml(
   data-row-order="${rowOrder}"
 >
   <div id="root"></div>
+  <script nonce="${nonce}">
+    (() => {
+      const vscode = acquireVsCodeApi();
+      const clean = (value, limit) => String(value || '').replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit);
+      const report = (name, message) => vscode.postMessage({ type: 'JSONLVIEW_DIAGNOSTIC', name: clean(name, 128) || 'Error', message: clean(message, 512) || 'Unknown Webview error' });
+      window.addEventListener('error', event => report('Error', event.message));
+      window.addEventListener('unhandledrejection', event => report('UnhandledRejection', event.reason && event.reason.message ? event.reason.message : event.reason));
+    })();
+  </script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

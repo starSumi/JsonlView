@@ -11,6 +11,8 @@ import {
   codexFixture,
   codexTraceFixture,
   genericAgentFixture,
+  piCustomMessageFixture,
+  piCodingAgentFixture,
 } from './fixtures';
 
 const context = { generation: 'generation-redacted' };
@@ -319,6 +321,31 @@ describe('Agent profile projection', () => {
     expect(rows[4]?.summary).toContain('future_claude_type');
   });
 
+  it('projects Pi session, assistant tool calls, and tool results with source evidence', () => {
+    const registry = new AgentProfileRegistry();
+    const rows = piCodingAgentFixture.map((value) => registry.project('pi-coding-agent', { value }, context));
+    expect(rows.map((row) => row.eventKind)).toEqual(['session', 'checkpoint', 'checkpoint', 'tool_call', 'tool_result']);
+    expect(rows[0]).toMatchObject({ sessionId: '01pi-session-redacted', actor: 'system' });
+    expect(rows[3]).toMatchObject({ actor: 'assistant', toolCallId: 'tool-call-redacted', model: 'model-redacted' });
+    expect(rows[3]?.usage).toEqual({ input: 10, output: 4, total: 14 });
+    expect(rows[4]).toMatchObject({ actor: 'tool', toolCallId: 'tool-call-redacted', status: 'completed' });
+    expect(rows[2]?.derivedFields).toMatchObject({ toolsAdded: '1' });
+  });
+
+  it('projects Pi custom messages as bounded agent messages', () => {
+    const registry = new AgentProfileRegistry();
+    const row = registry.project('pi-coding-agent', { value: piCustomMessageFixture }, context);
+    expect(row).toMatchObject({
+      eventKind: 'message',
+      actor: 'agent',
+      messageId: 'custom-message-redacted',
+      parentId: 'message-assistant-redacted',
+      timestamp: '2026-10-09T02:16:41.000Z',
+      derivedFields: { customType: 'extension_notice', display: true },
+    });
+    expect(row.summary).toContain('Extension context is ready.');
+  });
+
   it('projects current Claude control records instead of labelling them unknown', () => {
     const registry = new AgentProfileRegistry();
     const records = [
@@ -342,6 +369,67 @@ describe('Agent profile projection', () => {
     expect(rows[3]?.derivedFields).toMatchObject({ attachmentType: 'deferred_tools_delta' });
     expect(rows[4]?.derivedFields).toMatchObject({ operation: 'enqueue' });
     expect(rows[8]).toMatchObject({ actor: 'system', summary: 'Progress: hook_progress' });
+  });
+
+  it('projects Claude attachment text and bounded MCP delta fields', () => {
+    const registry = new AgentProfileRegistry();
+    const model = registry.project('claude-code-session', { value: {
+      type: 'attachment',
+      attachment: {
+        type: 'mcp_instructions_delta',
+        addedBlocks: ['# Server instructions', 'Use the read tool'],
+        removedNames: ['old_server'],
+      },
+      rendered: [{ content: 'Rendered attachment content' }],
+      sessionId: 'session-redacted',
+    } }, context);
+
+    expect(model).toMatchObject({
+      eventKind: 'checkpoint',
+      summary: expect.stringContaining('# Server instructions'),
+      derivedFields: {
+        attachmentType: 'mcp_instructions_delta',
+        addedBlocks: '# Server instructions Use the read tool',
+        removedNames: 'old_server',
+        renderedContent: 'Rendered attachment content',
+      },
+    });
+    expect(model.evidence).toEqual(expect.arrayContaining([
+      { field: 'addedBlocks', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'addedBlocks' }] } },
+      { field: 'renderedContent', path: { tokens: [{ kind: 'key', value: 'rendered' }] } },
+    ]));
+  });
+
+  it('projects Claude prompt snapshots with bounded system prompt and tool descriptions', () => {
+    const registry = new AgentProfileRegistry();
+    const model = registry.project('claude-code-session', { value: {
+      type: 'attachment',
+      attachment: {
+        type: 'prompt_snapshot',
+        systemPrompt: ['System instruction one', 'System instruction two'],
+        tools: [
+          { name: 'Agent', description: 'Launch a bounded child agent.' },
+          { name: 'Read', description: 'Read a file from the workspace.' },
+        ],
+      },
+      rendered: [{ attachment: { type: 'model', text: 'Rendered model attachment text' } }],
+      sessionId: 'session-redacted',
+    } }, context);
+
+    expect(model).toMatchObject({
+      eventKind: 'checkpoint',
+      summary: expect.stringContaining('System instruction one'),
+      derivedFields: {
+        attachmentType: 'prompt_snapshot',
+        systemPrompt: 'System instruction one System instruction two',
+        toolDescriptions: 'Launch a bounded child agent. Read a file from the workspace.',
+        renderedContent: 'Rendered model attachment text',
+      },
+    });
+    expect(model.evidence).toEqual(expect.arrayContaining([
+      { field: 'systemPrompt', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'systemPrompt' }] } },
+      { field: 'toolDescriptions', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'tools' }] } },
+    ]));
   });
 
   it('uses Claude leafUuid as identity for control records that have no uuid', () => {

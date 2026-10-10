@@ -71,6 +71,12 @@ export interface DocumentControllerHooks {
   /** Cancel document-owned recovery before a user-triggered rebuild starts. */
   beforeRebuild?: () => void;
   onRowOrderChanged?: (direction: RowSort['direction']) => Promise<void>;
+  /** Deliver host-owned positioning intents only after the Webview handshake. */
+  onReady?: () => Promise<void> | void;
+  /** Focus the opt-in Session Navigator without changing the document. */
+  onOpenSessionNavigator?: () => Promise<void> | void;
+  /** Hand off a bounded Webview error to the host-owned diagnostic flow. */
+  onDiagnosticError?: (diagnostic: { code: string; message: string; action?: 'explain' | 'copy' }) => Promise<void> | void;
 }
 
 export class DocumentController {
@@ -106,6 +112,13 @@ export class DocumentController {
       this.requests.cancel(request.payload.targetRequestId);
       return;
     }
+    // An error banner may outlive the generation that produced it. Keep
+    // the bounded handoff available so the user can still ask the host to
+    // explain or copy the last visible error after a source refresh.
+    if (request.type === 'DIAGNOSE_ERROR') {
+      await this.hooks.onDiagnosticError?.(request.payload);
+      return;
+    }
     if (request.type !== 'READY' && request.generation !== summary.snapshot.generation) {
       await this.postError(request, 'STALE_GENERATION', 'The source file changed. Refreshing the current view is required.', true);
       return;
@@ -130,6 +143,10 @@ export class DocumentController {
       switch (request.type) {
         case 'READY':
           await this.post(request, 'OPENED', summary);
+          await this.hooks.onReady?.();
+          return;
+        case 'OPEN_SESSION_NAVIGATOR':
+          await this.hooks.onOpenSessionNavigator?.();
           return;
         case 'GET_ROWS':
           signal = this.requests.startLatest('viewport', request.requestId);

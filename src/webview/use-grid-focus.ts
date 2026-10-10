@@ -99,7 +99,7 @@ export function useGridFocus(options: GridFocusOptions): {
   };
   return {
     activeCell,
-    enter: () => set(initialGridCell(options)),
+    enter: () => set(activeRef.current ?? initialGridCell(options)),
     move: (key, control) => set(moveGridCell(activeRef.current, key, control, options)),
     setActiveCell: (cell) => { set(reconcileGridCell(cell, options)); },
   };

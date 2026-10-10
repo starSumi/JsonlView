@@ -2,7 +2,7 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "Sumi-Sophia",
   "icon": "images/jsonlview-icon.png",
   "private": false,
@@ -74,8 +74,192 @@
         "command": "jsonlView.rebuildIndex",
         "title": "JsonlView: Rebuild Index",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "jsonlView.diagnoseWebview",
+        "title": "JsonlView: Diagnose Webview Host Error",
+        "icon": "$(question)"
+      },
+      {
+        "command": "jsonlView.showOutput",
+        "title": "JsonlView: Show Output Log",
+        "icon": "$(output)"
+      },
+      {
+        "command": "jsonlView.explainLastDiagnostic",
+        "title": "JsonlView: Explain Last Diagnostic with VS Code Chat",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "jsonlView.copyLastDiagnostic",
+        "title": "JsonlView: Copy Last Diagnostic Context",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.enable",
+        "title": "JsonlView: Enable Session Navigator",
+        "icon": "$(activate-breakpoints)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.disable",
+        "title": "JsonlView: Disable Session Navigator",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.addSource",
+        "title": "JsonlView: Add Source",
+        "icon": "$(add)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.authorizeAgent",
+        "title": "JsonlView: Connect Local Agent"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sort",
+        "title": "JsonlView: Sort Sessions",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.removeSource",
+        "title": "JsonlView: Remove Agent Source",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.loadMore",
+        "title": "JsonlView: Load More Sessions",
+        "icon": "$(fold-down)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.refresh",
+        "title": "JsonlView: Refresh Session Navigator",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.open",
+        "title": "JsonlView: Open Agent Sessions",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sortActivity",
+        "title": "JsonlView: Sort Sessions by Recent Activity"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sortCreated",
+        "title": "JsonlView: Sort Sessions by Created Time"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.sortTitle",
+        "title": "JsonlView: Sort Sessions by Title"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
+        "title": "JsonlView: Paste JSONL Source"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "jsonlViewSessionNavigator",
+          "title": "Agent Sessions",
+          "icon": "$(list-tree)"
+        }
+      ]
+    },
+    "views": {
+      "jsonlViewSessionNavigator": [
+        {
+          "type": "webview",
+          "id": "jsonlView.sourceDrop",
+          "name": "Add source",
+          "when": "config.jsonlView.sessionNavigator.enabled"
+        },
+        {
+          "id": "jsonlView.sessionNavigator",
+          "name": "Sessions",
+          "when": "config.jsonlView.sessionNavigator.enabled"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "jsonlView.sessionNavigator.refresh",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.addSource",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.enable",
+          "when": "view == jsonlView.sessionNavigator && !config.jsonlView.sessionNavigator.enabled",
+          "group": "settings@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.disable",
+          "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
+          "group": "settings@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sort",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sortActivity",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "sort@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sortCreated",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "sort@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.sortTitle",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "sort@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.authorizeAgent",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "sources@1"
+        },
+        {
+          "command": "jsonlView.diagnoseWebview",
+          "when": "view == jsonlView.sessionNavigator",
+          "group": "help@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "jsonlView.open",
+          "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
+          "group": "navigation@jsonlview"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "jsonlView.sessionNavigator.open",
+          "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
+          "group": "navigation@jsonlview"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "jsonlView.sessionNavigator.loadMore",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source.partial",
+          "group": "inline@0"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.removeSource",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source",
+          "group": "inline@1"
+        }
+      ]
+    },
     "customEditors": [
       {
         "viewType": "jsonlView.editor",
@@ -141,6 +325,45 @@
           ],
           "default": "off",
           "description": "Experimental Rust newline scanner. Native failures always fall back to the bounded Node implementation."
+        },
+        "jsonlView.sessionNavigator.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex, Claude, and pi roots are detected automatically; custom roots remain explicit."
+        },
+        "jsonlView.sessionNavigator.sort": {
+          "type": "string",
+          "enum": ["activity", "created", "title"],
+          "enumDescriptions": [
+            "Recent activity first, using provider metadata and a stable ID tie-breaker.",
+            "Session start time first.",
+            "Product or provider title, then stable ID."
+          ],
+          "default": "activity",
+          "description": "Session Navigator ordering. Source folder dates are never used as activity time."
+        },
+        "jsonlView.sessionNavigator.sources": {
+          "type": "array",
+          "default": [],
+          "description": "Additional local Agent source roots. Standard Codex, Claude, and pi roots are detected automatically; all paths are read-only.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["codex", "claude", "pi", "generic"]
+              },
+              "rootUri": {
+                "type": "string",
+                "description": "A local file URI selected through Add Source or Connect Local Agent."
+              },
+              "stateRootUri": {
+                "type": "string",
+                "description": "Optional provider-owned SQLite state home URI detected for Codex."
+              }
+            },
+            "required": ["provider", "rootUri"]
+          }
         }
       }
     }
@@ -173,6 +396,7 @@
     "native:verify": "node scripts/verify-native-addon.mjs",
     "watch": "node esbuild.mjs --watch",
     "check:contract": "node scripts/check-engineering-contract.mjs",
+    "check:biome": "node scripts/check-biome.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -188,6 +412,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@napi-rs/cli": "3.10.5",
     "@types/node": "26.6.2",
     "@types/react": "19.3.0",
@@ -202,9 +427,5 @@
     "vitest": "5.0.1",
     "yauzl": "3.4.0"
   },
-  "packageManager": "pnpm@10.26.0",
-  "volta": {
-    "node": "24.15.0",
-    "pnpm": "10.26.0"
-  }
+  "packageManager": "pnpm@10.26.0"
 }

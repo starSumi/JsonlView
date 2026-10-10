@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import type { BigIntStats } from 'node:fs';
 import { open, stat, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -39,6 +40,14 @@ import {
   type InternalRecordRef,
   type SegmentIndexDiagnostics,
 } from './segment-index';
+import {
+  fingerprintRange,
+  fingerprintStableRange,
+  fingerprintWholeRange,
+  formatFingerprint,
+  type FullSourceFingerprint,
+  type SourceFingerprint,
+} from './snapshot-fingerprint';
 
 const DEFAULT_FINGERPRINT_BYTES = 64 * 1024;
 // Small documents can establish an exact baseline during open. Larger files
@@ -175,16 +184,6 @@ interface NormalizedOptions {
   schemaMaxArrayEntries: number;
   schemaMaxExamples: number;
   newlineScanner: NativeNewlineScannerSetting;
-}
-
-interface SourceFingerprint {
-  length: number;
-  hash: string;
-}
-
-interface FullSourceFingerprint {
-  length: bigint;
-  hash: string;
 }
 
 interface NormalizedRowScanBudget {
@@ -1120,7 +1119,7 @@ export class JsonlFileEngine {
       const guard = this.makeGuard(context);
       guard();
       const observedAt = new Date().toISOString();
-      let currentStat;
+      let currentStat: BigIntStats;
       try {
         currentStat = await stat(this.filePath, { bigint: true });
       } catch (error) {
@@ -1189,7 +1188,7 @@ export class JsonlFileEngine {
         // A writer can advance the file after the range hash was read. Do not
         // publish an append/unchanged classification for that moving target;
         // the next debounced probe will observe a stable generation.
-        let latestStat;
+        let latestStat: BigIntStats;
         try {
           latestStat = await stat(this.filePath, { bigint: true });
         } catch (error) {
@@ -1275,7 +1274,7 @@ export class JsonlFileEngine {
     if (this.invalidated) {
       throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source no longer matches this snapshot.');
     }
-    let pathState;
+    let pathState: BigIntStats;
     try {
       pathState = await stat(this.filePath, { bigint: true });
     } catch {
@@ -1371,7 +1370,7 @@ export class JsonlFileEngine {
   }
 
   private async assertSnapshotMetadataUnchanged(): Promise<void> {
-    let pathState;
+    let pathState: BigIntStats;
     try {
       pathState = await stat(this.filePath, { bigint: true });
     } catch {
@@ -1819,93 +1818,6 @@ function safeScheme(uri: string): string {
   } catch {
     return 'file';
   }
-}
-
-async function fingerprintRange(handle: FileHandle, start: bigint, length: number): Promise<SourceFingerprint> {
-  if (length === 0) return { length: 0, hash: createHash('sha256').digest('hex') };
-  const buffer = Buffer.allocUnsafe(length);
-  let offset = 0;
-  while (offset < length) {
-    const { bytesRead } = await handle.read(buffer, offset, length - offset, start + BigInt(offset));
-    if (bytesRead <= 0) break;
-    offset += bytesRead;
-  }
-  return {
-    length: offset,
-    hash: createHash('sha256').update(buffer.subarray(0, offset)).digest('hex'),
-  };
-}
-
-async function fingerprintStableRange(
-  handle: FileHandle,
-  length: bigint,
-  baselineMtimeNs: bigint,
-  baselineCtimeNs: bigint,
-  signal?: AbortSignal,
-): Promise<FullSourceFingerprint | undefined> {
-  try {
-    const before = await handle.stat({ bigint: true });
-    // Do not establish a baseline after a writer has already moved the file.
-    // The original bytes are then unknowable without a separate snapshot.
-    if (
-      !before.isFile()
-      || before.size !== length
-      || before.mtimeNs !== baselineMtimeNs
-      || before.ctimeNs !== baselineCtimeNs
-    ) return undefined;
-    const fingerprint = await fingerprintWholeRange(handle, length, signal);
-    const after = await handle.stat({ bigint: true });
-    if (
-      after.size !== length
-      || after.mtimeNs !== before.mtimeNs
-      || after.ctimeNs !== before.ctimeNs
-      || fingerprint.length !== length
-    ) {
-      // A concurrent append/rewrite invalidates this one-shot baseline. The
-      // caller must open a new generation once the writer is quiescent.
-      return undefined;
-    }
-    return fingerprint;
-  } catch {
-    return undefined;
-  }
-}
-
-async function fingerprintWholeRange(
-  handle: FileHandle,
-  length: bigint,
-  signal?: AbortSignal,
-  guard?: () => void,
-): Promise<FullSourceFingerprint> {
-  const hash = createHash('sha256');
-  const chunk = Buffer.allocUnsafe(1024 * 1024);
-  let offset = 0n;
-  while (offset < length) {
-    guard?.();
-    if (signal?.aborted) throw new Error('fingerprint aborted');
-    const remaining = length - offset;
-    const requested = Number(remaining < BigInt(chunk.length) ? remaining : BigInt(chunk.length));
-    let filled = 0;
-    while (filled < requested) {
-      const { bytesRead } = await handle.read(
-        chunk,
-        filled,
-        requested - filled,
-        offset + BigInt(filled),
-      );
-      if (bytesRead <= 0) break;
-      filled += bytesRead;
-    }
-    if (filled === 0) break;
-    hash.update(chunk.subarray(0, filled));
-    offset += BigInt(filled);
-  }
-  guard?.();
-  return { length: offset, hash: hash.digest('hex') };
-}
-
-function formatFingerprint(fingerprint: SourceFingerprint): string {
-  return `sha256:${fingerprint.hash}:${String(fingerprint.length)}`;
 }
 
 function hasInitialBom(buffer: Buffer, ordinal: bigint): boolean {

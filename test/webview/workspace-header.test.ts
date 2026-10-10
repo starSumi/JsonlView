@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { WorkspaceHeader, type WorkspaceHeaderProps } from '../../src/webview/workspace-header';
 
 const status: WorkspaceHeaderProps = {
-  children: React.createElement('button', { 'aria-label': 'Rebuild index' }, 'Rebuild'),
+  children: React.createElement('button', { type: 'button', 'aria-label': 'Rebuild index' }, 'Rebuild'),
   indexedBytes: '512',
   sizeBytes: '1024',
   indexedRecords: '24',
@@ -15,6 +15,7 @@ const status: WorkspaceHeaderProps = {
   appendPending: false,
   rebuildBusy: false,
   onRebuild: () => undefined,
+  onOpenNavigator: () => undefined,
 };
 
 function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
@@ -34,7 +35,7 @@ describe('workspace header status', () => {
     const markup = render();
 
     expect(markup).toContain('<header class="workspace-header"');
-    expect(markup).toContain('aria-label="Workspace controls and status"');
+    expect(markup).toContain('aria-label="Open Agent Sessions"');
     expect(markup).toContain('24 rows');
     expect(markup).toContain('512 B / 1.0 KB');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');
@@ -51,7 +52,9 @@ describe('workspace header status', () => {
     expect(markup).toContain('Update pending');
     expect(markup).toContain('The current snapshot remains readable; rebuild to include appended records.');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');
-    expect(markup.match(/>Rebuild<\/button>/g)).toHaveLength(1);
+    expect(markup).toContain('aria-label="Rebuild index to include appended records"');
+    expect(markup).toContain('title="Rebuild index to include appended records"');
+    expect(markup.match(/>Rebuild<\/span>/g)).toHaveLength(1);
   });
 
   it('disables the pending action while rebuilding and keeps incomplete progress visible', () => {
@@ -63,7 +66,7 @@ describe('workspace header status', () => {
       phase: 'indexing',
     });
 
-    expect(markup).toMatch(/<button type="button" disabled="">Rebuild<\/button>/);
+    expect(markup).toMatch(/<button type="button" class="rebuild-action rebuild-action-prominent"[^>]*disabled="">[\s\S]*<span class="rebuild-action-label">Rebuild<\/span><\/button>/);
     expect(markup).toContain('data-complete="false"');
     expect(markup).toContain('indexing');
   });

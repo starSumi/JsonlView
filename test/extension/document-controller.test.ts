@@ -107,6 +107,38 @@ describe('document controller', () => {
     expect(messages[0]?.type).toBe('OPENED');
   });
 
+  it('hands a bounded diagnostic banner action to the host without a data response', async () => {
+    const diagnostics: Array<{ code: string; message: string; action?: 'explain' | 'copy' }> = [];
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => {
+        messages.push(message);
+        return true;
+      },
+    }, {
+      onDiagnosticError: (diagnostic) => { diagnostics.push(diagnostic); },
+    });
+
+    await controller.handleMessage(request('DIAGNOSE_ERROR', {
+      code: 'REQUEST_FAILED',
+      message: 'The request failed.',
+      action: 'copy',
+    }));
+    const stale = request('DIAGNOSE_ERROR', {
+      code: 'STALE_GENERATION',
+      message: 'The banner was retained across a refresh.',
+      action: 'explain',
+    }, 'stale-diagnostic');
+    stale.generation = 'old-generation';
+    await controller.handleMessage(stale);
+
+    expect(diagnostics).toEqual([
+      { code: 'REQUEST_FAILED', message: 'The request failed.', action: 'copy' },
+      { code: 'STALE_GENERATION', message: 'The banner was retained across a refresh.', action: 'explain' },
+    ]);
+    expect(messages).toEqual([]);
+  });
+
   it('acknowledges a saved row-order preference only after the extension hook completes', async () => {
     const messages: ExtensionMessage[] = [];
     const saved: string[] = [];

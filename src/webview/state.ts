@@ -8,6 +8,7 @@ import type {
   ProblemRef,
   ProblemPage,
   RecordDetail,
+  RecordRef,
   RowFilter,
   RowPage,
   RowProjection,
@@ -26,6 +27,13 @@ export type RequestKind = 'ready' | 'rows' | 'problems' | 'detail' | 'schema' | 
 export interface RequestState {
   id: string;
   kind: RequestKind;
+}
+
+interface RebuildDetailIntent {
+  documentId: string;
+  generation: string;
+  epoch?: number;
+  ref: RecordRef;
 }
 
 export interface WorkspaceError {
@@ -65,6 +73,9 @@ export interface WorkspaceState {
   pending: Partial<Record<RequestKind, RequestState>>;
   invalidationReason?: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' | undefined;
   blockedDetailOrdinal?: string | undefined;
+  /** Keeps a selected detail mounted while a manual rebuild opens its new snapshot. */
+  rebuildDetail?: RebuildDetailIntent | undefined;
+  detailStale?: boolean | undefined;
   error?: WorkspaceError | undefined;
 }
 
@@ -194,6 +205,10 @@ function reconcileColumnOrder(columns: ColumnSpec[], current: readonly string[])
   return ordered;
 }
 
+function sameRebuildRecord(left: RecordRef, right: RecordRef): boolean {
+  return left.ordinal === right.ordinal && left.byteStart === right.byteStart;
+}
+
 export interface ReconciledProfileQueryState {
   sort?: RowSort;
   filter?: RowFilter;
@@ -281,6 +296,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       if (state.invalidationReason !== undefined && !snapshotChanged) return { ...state, pending };
       const preserveFollowViewport = snapshotChanged && state.followMode && state.rows.length > 0
         && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
+      const preserveRebuildDetail = snapshotChanged && !preserveFollowViewport
+        && state.rebuildDetail !== undefined
+        && state.pending.rebuild !== undefined
+        && state.rebuildDetail.documentId === message.payload.snapshot.documentId;
       return {
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
@@ -289,8 +308,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         columns: snapshotChanged && !preserveFollowViewport ? [] : state.columns,
         page: snapshotChanged && !preserveFollowViewport ? undefined : state.page,
         problems: snapshotChanged ? undefined : state.problems,
-        selectedOrdinal: snapshotChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
-        detail: snapshotChanged ? undefined : state.detail,
+        selectedOrdinal: preserveRebuildDetail
+          ? state.rebuildDetail?.ref.ordinal
+          : snapshotChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
+        detail: preserveRebuildDetail ? state.detail : snapshotChanged ? undefined : state.detail,
         schema: snapshotChanged ? [] : state.schema,
         schemaTotal: snapshotChanged ? 0 : state.schemaTotal,
         schemaComplete: snapshotChanged ? false : state.schemaComplete,
@@ -298,13 +319,23 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending: snapshotChanged ? {} : pending,
         invalidationReason: undefined,
         blockedDetailOrdinal: undefined,
+        rebuildDetail: preserveRebuildDetail ? state.rebuildDetail : undefined,
+        detailStale: preserveRebuildDetail ? true : false,
         error: undefined,
       };
     }
     case 'ROWS': {
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
+      const retainedRebuildRow = state.rebuildDetail === undefined ? undefined : message.payload.rows.find(
+        (row) => sameRebuildRecord(row.ref, state.rebuildDetail!.ref),
+      );
+      const preserveRebuildDetail = retainedRebuildRow !== undefined;
       const selectedOrdinal = state.followMode
         ? message.payload.rows.at(-1)?.ref.ordinal
+        : state.rebuildDetail !== undefined && (preserveRebuildDetail || message.payload.rows.length === 0)
+          ? state.rebuildDetail.ref.ordinal
+        : state.rebuildDetail !== undefined
+          ? message.payload.rows[0]?.ref.ordinal
         : state.selectedOrdinal && message.payload.rows.some(
           (row) => row.ref.ordinal === state.selectedOrdinal,
         )
@@ -331,8 +362,14 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           ...(message.payload.scan === undefined ? {} : { scan: message.payload.scan }),
         },
         selectedOrdinal,
-        detail: state.detail?.ref.ordinal === selectedOrdinal ? state.detail : undefined,
+        detail: state.detail?.ref.ordinal === selectedOrdinal
+          && (state.rebuildDetail === undefined || preserveRebuildDetail || message.payload.rows.length === 0)
+          ? state.detail : undefined,
         blockedDetailOrdinal: state.blockedDetailOrdinal === selectedOrdinal ? state.blockedDetailOrdinal : undefined,
+        rebuildDetail: state.rebuildDetail === undefined
+          || preserveRebuildDetail || message.payload.rows.length === 0 ? state.rebuildDetail : undefined,
+        detailStale: state.detailStale === true
+          && (preserveRebuildDetail || message.payload.rows.length === 0),
         columnVisibility: reconcileVisibility(message.payload.columns, state.columnVisibility),
         columnOrder: reconcileColumnOrder(message.payload.columns, state.columnOrder),
         sortOffset,
@@ -350,6 +387,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         detail: message.payload,
         selectedOrdinal: message.payload.ref.ordinal,
         blockedDetailOrdinal: undefined,
+        rebuildDetail: undefined,
+        detailStale: false,
         pending,
         error: undefined,
       };
@@ -423,6 +462,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
     }
     case 'ROW_ORDER_CHANGED':
       return { ...state, pending };
+    case 'REVEAL':
+      return { ...state, pending };
     case 'SOURCE_INVALIDATED': {
       const reason = nextInvalidationReason(state.invalidationReason, message.payload.reason);
       return {
@@ -443,6 +484,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           blockedDetailOrdinal: state.pending.detail?.id === message.requestId && state.detail === undefined
             ? state.selectedOrdinal
             : state.blockedDetailOrdinal,
+          rebuildDetail: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildDetail,
+          detailStale: state.pending.rebuild?.id === message.requestId ? false : state.detailStale,
           error: message.payload,
           pending,
         };
@@ -450,6 +493,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       return {
         ...state,
         phase: message.payload.recoverable ? 'degraded' : 'error',
+        rebuildDetail: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildDetail,
+        detailStale: state.pending.rebuild?.id === message.requestId ? false : state.detailStale,
         error: message.payload,
         pending,
       };
@@ -466,6 +511,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ...state.pending,
           [action.request.kind]: action.request,
         },
+        ...(action.request.kind === 'rebuild' && !state.followMode && state.summary !== undefined && state.selectedOrdinal !== undefined
+          ? {
+            rebuildDetail: state.detail !== undefined
+              ? {
+                documentId: state.summary.snapshot.documentId,
+                generation: state.summary.snapshot.generation,
+                ...(state.summary.snapshot.epoch === undefined ? {} : { epoch: state.summary.snapshot.epoch }),
+                ref: state.detail.ref,
+              }
+              : state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal) === undefined
+                ? undefined
+                : {
+                  documentId: state.summary.snapshot.documentId,
+                  generation: state.summary.snapshot.generation,
+                  ...(state.summary.snapshot.epoch === undefined ? {} : { epoch: state.summary.snapshot.epoch }),
+                  ref: state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal)!.ref,
+                },
+          }
+          : {}),
       };
     case 'REQUEST_FINISHED':
       return {
@@ -473,6 +537,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         pending: state.pending[action.kind]?.id === action.requestId
           ? { ...state.pending, [action.kind]: undefined }
           : state.pending,
+        ...(action.kind === 'rebuild' && state.pending.rebuild?.id === action.requestId
+          ? { rebuildDetail: undefined, detailStale: false }
+          : {}),
       };
     case 'MESSAGE_RECEIVED':
       return receiveMessage(state, action.message);
@@ -534,6 +601,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         selectedOrdinal: action.ordinal,
         detail: state.detail?.ref.ordinal === action.ordinal ? state.detail : undefined,
+        rebuildDetail: state.selectedOrdinal === action.ordinal ? state.rebuildDetail : undefined,
+        detailStale: state.selectedOrdinal === action.ordinal ? state.detailStale : false,
         blockedDetailOrdinal: !canReadSnapshot(state.invalidationReason)
           && action.ordinal !== undefined
           && state.detail?.ref.ordinal !== action.ordinal
@@ -541,7 +610,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           : undefined,
       };
     case 'CLOSE_DETAIL':
-      return { ...state, detail: undefined, blockedDetailOrdinal: undefined };
+      return { ...state, detail: undefined, blockedDetailOrdinal: undefined, rebuildDetail: undefined, detailStale: false };
     case 'DISMISS_ERROR':
       if (state.invalidationReason !== undefined) {
         return { ...state, error: undefined, phase: 'invalidated' };

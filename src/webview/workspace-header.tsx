@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, CircleAlert, LoaderCircle } from 'lucide-react';
+import { Check, CircleAlert, ListTree, LoaderCircle, RefreshCw } from 'lucide-react';
 import { formatBytes } from './format';
 
 export interface WorkspaceHeaderProps {
@@ -14,6 +14,7 @@ export interface WorkspaceHeaderProps {
   appendPending: boolean;
   rebuildBusy: boolean;
   onRebuild: () => void;
+  onOpenNavigator: () => void;
 }
 
 export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): React.JSX.Element {
@@ -23,12 +24,13 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
     ? Math.max(0, Math.min(100, (indexed / size) * 100)) : 0;
 
   return (
-    <header className="workspace-header" aria-label="Workspace controls and status">
+    <header className="workspace-header">
       <div className="status-strip" role="status" aria-live="polite">
         <span className="status-metric status-records">{status.indexedRecords} rows</span>
         <span className="status-metric status-bytes">{formatBytes(status.indexedBytes)} / {formatBytes(status.sizeBytes)}</span>
         <span className="status-metric status-valid"><Check size={13} aria-hidden />{status.validRecords}</span>
         <span
+          role="status"
           className={`status-metric status-problems${status.problemRecords === '0' ? '' : ' status-problem'}`}
           data-empty={status.problemRecords === '0'}
           title="Problem records observed during hydration for this document generation; this is not a complete-file total"
@@ -42,7 +44,6 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
           <span className="snapshot-update" title="The current snapshot remains readable; rebuild to include appended records.">
             <span className="snapshot-update-label">Update pending</span>
             <span className="snapshot-update-compact">Pending</span>
-            <button type="button" disabled={status.rebuildBusy} onClick={status.onRebuild}>Rebuild</button>
           </span>
         ) : null}
         <span className="status-phase" data-complete={status.complete}>
@@ -55,7 +56,25 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
           <span style={{ width: `${progress}%` }} />
         </span>
       </div>
-      <div className="toolbar">{children}</div>
+      <div className="toolbar">
+        <button type="button" className="icon-button navigator-action" title="Open Agent Sessions" aria-label="Open Agent Sessions" onClick={status.onOpenNavigator}>
+          <ListTree size={15} aria-hidden />
+        </button>
+        {status.appendPending ? (
+          <button
+            type="button"
+            className="rebuild-action rebuild-action-prominent"
+            title="Rebuild index to include appended records"
+            aria-label="Rebuild index to include appended records"
+            disabled={status.rebuildBusy}
+            onClick={status.onRebuild}
+          >
+            <RefreshCw size={14} className={status.rebuildBusy ? 'spin' : ''} aria-hidden />
+            <span className="rebuild-action-label">Rebuild</span>
+          </button>
+        ) : null}
+        {children}
+      </div>
     </header>
   );
 }

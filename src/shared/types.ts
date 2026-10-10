@@ -1,4 +1,6 @@
 export const PROTOCOL_VERSION = 1 as const;
+export const MAX_DIAGNOSTIC_CODE_LENGTH = 128;
+export const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 512;
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonKind =
@@ -344,6 +346,8 @@ export type WebviewRequest =
   | ProtocolEnvelope<'SET_PROFILE', { profileId: string }>
   | ProtocolEnvelope<'SET_FOLLOW_MODE', { enabled: boolean }>
   | ProtocolEnvelope<'SET_ROW_ORDER', { direction: RowSort['direction'] }>
+  | ProtocolEnvelope<'OPEN_SESSION_NAVIGATOR', Record<string, never>>
+  | ProtocolEnvelope<'DIAGNOSE_ERROR', { code: string; message: string; action?: 'explain' | 'copy' }>
   | ProtocolEnvelope<'CANCEL', { targetRequestId: string }>
   | ProtocolEnvelope<'REBUILD_INDEX', Record<string, never>>;
 
@@ -357,6 +361,7 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'INDEX_PROGRESS', DocumentSummary>
   | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; columns: ColumnSpec[] }>
   | ProtocolEnvelope<'ROW_ORDER_CHANGED', { direction: RowSort['direction'] }>
+  | ProtocolEnvelope<'REVEAL', { sourceId: string; generation: string; nativeId: string; anchorOrdinal: string }>
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>
   | ProtocolEnvelope<'ERROR', { code: string; message: string; recoverable: boolean }>;
 

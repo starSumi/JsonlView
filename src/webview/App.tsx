@@ -19,7 +19,7 @@ import type {
   RowSort,
   SortDirection,
 } from '../shared/types';
-import { MAX_TABLE_COLUMNS } from '../shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS, PROTOCOL_VERSION } from '../shared/types';
 import { DetailDrawer } from './detail-drawer';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -169,6 +169,40 @@ export function App(): React.JSX.Element {
   const schemaRequestKeyRef = useRef('');
   const schemaRequestIdRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
+  const openNavigator = useCallback((): void => {
+    const session = clientRef.current.session;
+    const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'navigator-' + Date.now().toString(36);
+    vscode.postMessage({
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'OPEN_SESSION_NAVIGATOR',
+      documentId: session.documentId,
+      generation: session.generation,
+      requestId,
+      payload: {},
+    });
+  }, []);
+
+  const diagnoseError = useCallback((error: NonNullable<WorkspaceState['error']>, action: 'explain' | 'copy'): void => {
+    const session = clientRef.current.session;
+    const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `diagnostic-${Date.now().toString(36)}`;
+    vscode.postMessage({
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'DIAGNOSE_ERROR',
+      documentId: session.documentId,
+      generation: session.generation,
+      ...(session.epoch === undefined ? {} : { epoch: session.epoch }),
+      requestId,
+      payload: {
+        code: error.code.slice(0, MAX_DIAGNOSTIC_CODE_LENGTH),
+        message: error.message.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH),
+        action,
+      },
+    });
+  }, []);
 
   useEffect(() => {
     stateRef.current = state;
@@ -270,7 +304,7 @@ export function App(): React.JSX.Element {
       ...(predicate ? { predicate } : {}),
     });
     dispatch({ type: 'REQUEST_SENT', request });
-  }, [finishCancelled]);
+  }, [finishCancelled, queryController.query]);
 
   const requestDetail = useCallback((ref: RecordRef, full = false): void => {
     const client = clientRef.current;
@@ -328,6 +362,7 @@ export function App(): React.JSX.Element {
       if (message.type === 'SOURCE_INVALIDATED') {
         invalidationRef.current = nextInvalidationReason(invalidationRef.current, message.payload.reason);
       } else if (openedGenerationChanged) invalidationRef.current = undefined;
+      if (message.type === 'REVEAL') queryController.revealOrdinal(message.payload.anchorOrdinal);
       if (message.type === 'OPENED') {
         if (openedGenerationChanged) setSchemaLoadFailed(false);
         indexingCompleteRef.current = message.payload.indexingComplete;
@@ -393,7 +428,7 @@ export function App(): React.JSX.Element {
     const viewport = queryController.currentViewportOptions();
     requestRows({ ...viewport, columns: selected }, { preserveOnRebuild: true });
   }, [requestRows, state.columnVisibility, state.columns, state.invalidationReason,
-    state.page, state.pending.rows, state.schema, state.summary]);
+    state.page, state.pending.rows, state.schema, state.summary, queryController.currentViewportOptions]);
 
   useEffect(() => {
     if (
@@ -456,11 +491,25 @@ export function App(): React.JSX.Element {
   const drawerOpen = Boolean(state.detail || state.pending.detail || state.blockedDetailOrdinal);
 
   useEffect(() => {
+    if (!state.detailStale || state.rebuildDetail === undefined || state.pending.detail
+      || !state.summary || !canReadSnapshot(state.invalidationReason)
+      || !canReadSnapshot(invalidationRef.current)) return;
+    const row = state.rows.find((candidate) => candidate.ref.ordinal === state.rebuildDetail?.ref.ordinal
+      && candidate.ref.byteStart === state.rebuildDetail.ref.byteStart);
+    if (row === undefined) return;
+    const key = `rebuild:${state.summary.snapshot.generation}:${row.ref.ordinal}:${row.ref.byteStart}`;
+    if (automaticFullDetailKeyRef.current === key) return;
+    automaticFullDetailKeyRef.current = key;
+    requestDetail(row.ref, true);
+  }, [requestDetail, state.detailStale, state.invalidationReason, state.pending.detail, state.rebuildDetail, state.rows, state.summary]);
+
+  useEffect(() => {
     const detail = state.detail;
     if (detail === undefined || state.selectedOrdinal !== detail.ref.ordinal) {
       automaticFullDetailKeyRef.current = undefined;
       return;
     }
+    if (state.detailStale) return;
     if (
       !canReadSnapshot(state.invalidationReason)
       || !canReadSnapshot(invalidationRef.current)
@@ -478,7 +527,7 @@ export function App(): React.JSX.Element {
     if (automaticFullDetailKeyRef.current === key) return;
     automaticFullDetailKeyRef.current = key;
     requestDetail(detail.ref, true);
-  }, [drawerOpen, requestDetail, state.detail, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
+  }, [drawerOpen, requestDetail, state.detail, state.detailStale, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
 
   const workspaceWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
   const displayedDetailWidth = workspaceWidth > 900
@@ -662,8 +711,9 @@ export function App(): React.JSX.Element {
         appendPending={state.invalidationReason === 'append'}
         rebuildBusy={Boolean(state.pending.rebuild)}
         onRebuild={rebuild}
+        onOpenNavigator={openNavigator}
       >
-        <div className="toolbar-context" title="File identity is provided by the VS Code editor tab" aria-label="JSONL workspace">
+        <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
         </div>
         <label className="compact-field profile-field">
@@ -805,11 +855,15 @@ export function App(): React.JSX.Element {
         <div className={`workspace-banner error-banner${state.error.recoverable ? ' is-recoverable' : ''}`} role="alert">
           <CircleAlert size={15} aria-hidden />
           <span><strong>{state.error.code}</strong> {state.error.message}</span>
-          {state.error.recoverable ? (
-            <button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => dispatch({ type: 'DISMISS_ERROR' })}>
-              <X size={14} aria-hidden />
-            </button>
-          ) : null}
+          <>
+            <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'explain')}>Explain with VS Code Chat</button>
+            <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'copy')}>Copy context</button>
+            {state.error.recoverable ? (
+              <button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => dispatch({ type: 'DISMISS_ERROR' })}>
+                <X size={14} aria-hidden />
+              </button>
+            ) : null}
+          </>
         </div>
       ) : null}
       <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
@@ -962,7 +1016,9 @@ export function App(): React.JSX.Element {
         </section>
         {drawerOpen ? (
           <>
-            {!narrowViewport ? <div
+            {!narrowViewport ? <>
+              {/* biome-ignore lint/a11y/useSemanticElements: the splitter is an interactive resize control, not a document rule */}
+              <div
               className="detail-splitter"
               role="separator"
               aria-label="Resize record detail"
@@ -983,13 +1039,14 @@ export function App(): React.JSX.Element {
                 const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
                 dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(DEFAULT_DETAIL_WIDTH, containerWidth) });
               }}
-            /> : null}
+              />
+            </> : null}
             <DetailDrawer
               id={drawerId}
               modal={narrowViewport}
               detail={state.detail}
               loading={Boolean(state.pending.detail)}
-              readBlocked={!canReadSnapshot(state.invalidationReason)}
+              readBlocked={state.detailStale || !canReadSnapshot(state.invalidationReason)}
               blockedOrdinal={state.blockedDetailOrdinal}
               activeTab={state.detailTab}
               onTabChange={(tab) => dispatch({ type: 'SET_DETAIL_TAB', tab })}

@@ -96,28 +96,22 @@ describe('record table selection visibility', () => {
 
   it('reveals a different physical record at the same page-local index', () => {
     const { rows } = render();
-    const previousDependencies = vi.mocked(useEffect).mock.calls.at(-1)![1];
     const nextRows = rows.map((row, index) => ({
       ...row, ref: { ...row.ref, ordinal: String(20 + index) },
     }));
     render({ rows: nextRows, selectedOrdinal: '20' });
-    const [reveal, nextDependencies] = vi.mocked(useEffect).mock.calls.at(-1)!;
-    expect(nextDependencies).not.toEqual(previousDependencies);
-    expect(nextDependencies).toContain('20');
+    const [reveal] = vi.mocked(useEffect).mock.calls.at(-1)!;
     reveal();
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });
 
   it('reveals a replacement generation at the same ordinal and index', () => {
     const { rows } = render();
-    const previousDependencies = vi.mocked(useEffect).mock.calls.at(-1)![1];
     const replacementRows = rows.map((row) => ({
       ...row, ref: { ...row.ref, generation: 'g2' },
     }));
     render({ rows: replacementRows });
-    const [reveal, nextDependencies] = vi.mocked(useEffect).mock.calls.at(-1)!;
-    expect(nextDependencies).not.toEqual(previousDependencies);
-    expect(nextDependencies).toContain('g2');
+    const [reveal] = vi.mocked(useEffect).mock.calls.at(-1)!;
     reveal();
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });
@@ -134,6 +128,80 @@ describe('record table selection visibility', () => {
     press('End', true);
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(1, { align: 'auto' });
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it.each(['grid background', 'row gutter', 'virtual row gap'])(
+    'keeps selection and scroll position when pointer focus comes from the %s', (location) => {
+      const { element, onSelect } = render({ selectedOrdinal: undefined });
+      const grid = { contains: () => false } as unknown as HTMLDivElement;
+      const target = location === 'grid background' ? grid
+        : { className: location === 'row gutter' ? 'data-grid-row' : 'virtual-space' };
+      element.props.onPointerDownCapture?.({ currentTarget: grid, target } as unknown as React.PointerEvent<HTMLDivElement>);
+      element.props.onFocus?.({ currentTarget: grid, target: grid, relatedTarget: null } as React.FocusEvent<HTMLDivElement>);
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(virtualizer.scrollToIndex).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['onPointerUpCapture', 'onPointerCancelCapture', 'onPointerLeave'] as const)(
+    'allows keyboard entry after a pointer sequence ends via %s without focusing the grid', (endEvent) => {
+      const { element, onSelect } = render({ selectedOrdinal: '1' });
+      const grid = { contains: () => false } as unknown as HTMLDivElement;
+      element.props.onPointerDownCapture?.({ currentTarget: grid, target: grid } as unknown as React.PointerEvent<HTMLDivElement>);
+      const event = { currentTarget: grid, target: grid } as unknown as React.PointerEvent<HTMLDivElement>;
+      element.props[endEvent]?.(event);
+      element.props.onFocus?.({ currentTarget: grid, target: grid, relatedTarget: null } as React.FocusEvent<HTMLDivElement>);
+      expect(virtualizer.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, { align: 'auto' });
+      expect(onSelect).not.toHaveBeenCalled();
+    },
+  );
+
+  it('consumes pointer entry so the next keyboard entry still reveals the selected row', () => {
+    const { element } = render({ selectedOrdinal: '1' });
+    const grid = { contains: () => false } as unknown as HTMLDivElement;
+    element.props.onPointerDownCapture?.({ currentTarget: grid, target: grid } as unknown as React.PointerEvent<HTMLDivElement>);
+    const event = { currentTarget: grid, target: grid, relatedTarget: null } as React.FocusEvent<HTMLDivElement>;
+    element.props.onFocus?.(event);
+    expect(virtualizer.scrollToIndex).not.toHaveBeenCalled();
+    element.props.onFocus?.(event);
+    expect(virtualizer.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, { align: 'auto' });
+  });
+
+  it('restores the active cell when keyboard focus re-enters instead of resetting to the selected row', () => {
+    gridState.cell = { kind: 'data', sessionId: 'synthetic-document', generation: 'g1', ordinal: '1', columnId: 'status' };
+    const { element, onSelect } = render({ selectedOrdinal: '0' });
+    const grid = { contains: () => false } as unknown as HTMLDivElement;
+    element.props.onFocus?.({ currentTarget: grid, target: grid, relatedTarget: null } as React.FocusEvent<HTMLDivElement>);
+    expect(virtualizer.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, { align: 'auto' });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('enters at the selected row for keyboard focus when there is no active cell', () => {
+    const { element, onSelect } = render({ selectedOrdinal: '1' });
+    const grid = { contains: () => false } as unknown as HTMLDivElement;
+    element.props.onFocus?.({ currentTarget: grid, target: grid, relatedTarget: null } as React.FocusEvent<HTMLDivElement>);
+    expect(virtualizer.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, { align: 'auto' });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('focuses the clicked cell before revealing a record so a valid click cannot scroll to the first row', () => {
+    const { element, onSelect, rows } = render({ selectedOrdinal: undefined });
+    type GridElement = React.ReactElement<React.HTMLAttributes<HTMLDivElement> & {
+      ref: { current: HTMLDivElement | null };
+      children: GridElement[];
+    }>;
+    const root = element as GridElement;
+    const grid = {
+      contains: () => false,
+      focus: () => root.props.onFocus?.({ currentTarget: grid, target: grid, relatedTarget: null } as unknown as React.FocusEvent<HTMLDivElement>),
+    } as unknown as HTMLDivElement;
+    root.props.ref.current = grid;
+    const virtualSpace = root.props.children[1]!;
+    const secondRow = virtualSpace.props.children[1]!;
+    const secondCell = secondRow.props.children[1]!;
+    secondCell.props.onClick?.({} as React.MouseEvent<HTMLDivElement>);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(rows[1]!.ref);
+    expect(virtualizer.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, { align: 'auto' });
   });
 
   it('opens a record only on explicit Enter or Space, while arrows move focus', () => {

@@ -99,6 +99,20 @@ describe('structured agent event presentation', () => {
     expect(model?.sections[0]?.text).toContain('first line\nsecond line');
   });
 
+  it('renders one section for a single Codex function_call_output item', () => {
+    const value = {
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        output: '{"agents":[{"agent_name":"/root","agent_status":"running"}]}',
+      },
+    };
+    const model = buildAgentEventPresentation(value, {
+      profileId: 'codex-rollout', eventKind: 'tool_result', summary: 'output', evidence: [], confidence: 'source',
+    });
+    expect(model?.sections.filter((section) => section.title === 'Tool result')).toHaveLength(1);
+  });
+
   it('uses Markdown by default only for assistant Responses message content', () => {
     const assistant = buildAgentEventPresentation({
       type: 'response_item',
@@ -854,6 +868,104 @@ describe('structured agent event presentation', () => {
     expect(markup).toContain('Tool result');
   });
 
+  it('projects bounded top-level Claude toolUseResult fields into typed sections', () => {
+    const cases = [
+      {
+        result: {
+          type: 'text',
+          file: { filePath: 'F:/fixture/read.txt', content: 'line one\nline two', startLine: 1, numLines: 2, totalLines: 2 },
+        },
+        expected: ['Read · F:/fixture/read.txt · from line 1 · 2 lines', 'Read metadata'],
+      },
+      {
+        result: {
+          filePath: 'F:/fixture/edit.txt',
+          oldString: 'before',
+          newString: 'after',
+          structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-before', '+after'] }],
+          originalFile: 'do not render this complete source',
+        },
+        expected: ['Changes'],
+      },
+      { result: { stdout: 'out', stderr: 'err', interrupted: false }, expected: ['stdout', 'stderr', 'Tool source metadata'] },
+      { result: { filenames: ['F:/fixture/a.txt'], content: 'a.txt:1:match' }, expected: ['Files', 'Matches'] },
+      { result: { old_source: 'print(1)', new_source: 'print(2)', notebook_path: 'F:/fixture/demo.ipynb' }, expected: ['Cell changes'] },
+      { result: { taskId: 'task-redacted', backgroundTaskId: 'bg-redacted', interrupted: true }, expected: ['Tool source metadata'] },
+    ];
+    for (const { result, expected } of cases) {
+      const value = {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-redacted', content: 'ok' }] },
+        toolUseResult: result,
+      };
+      const model = buildAgentEventPresentation(value, {
+        profileId: 'claude-code-session', eventKind: 'tool_result', actor: 'tool',
+        summary: 'tool result', evidence: [], confidence: 'source',
+      });
+      for (const title of expected) expect(model?.sections.some((section) => section.title === title)).toBe(true);
+      expect(model?.sections.some((section) => section.title === 'Tool metadata' && section.code?.includes('original source'))).toBe(false);
+    }
+    const diffModel = buildAgentEventPresentation({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-redacted', content: 'ok' }] },
+      toolUseResult: { filePath: 'F:/fixture/edit.txt', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-before', '+after'] }] },
+    }, { profileId: 'claude-code-session', eventKind: 'tool_result', actor: 'tool', summary: 'edit', evidence: [], confidence: 'source' });
+    expect(renderToStaticMarkup(React.createElement(AgentEventPresentation, { value: {
+      type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+      toolUseResult: { filePath: 'F:/fixture/edit.txt', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-before', '+after'] }] },
+    }, profile: { profileId: 'claude-code-session', eventKind: 'tool_result', actor: 'tool', summary: 'edit', evidence: [], confidence: 'source' } }))).toContain('diff-line-add');
+    expect(diffModel?.sections.find((section) => section.title === 'Changes')).toMatchObject({ language: 'diff' });
+  });
+
+  it('renders Claude attachment text, rendered content, and MCP added blocks', () => {
+    const value = {
+      type: 'attachment',
+      attachment: {
+        type: 'mcp_instructions_delta',
+        text: 'Model attachment text',
+        addedBlocks: ['# MCP Server Instructions', 'Use the tool safely'],
+      },
+      rendered: [{ content: 'Rendered attachment text' }],
+    };
+    const profile = {
+      profileId: 'claude-code-session', eventKind: 'checkpoint' as const, actor: 'system' as const,
+      summary: 'Attachment', evidence: [], confidence: 'source' as const,
+    };
+
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Attachment text', text: 'Model attachment text' }),
+      expect.objectContaining({ title: 'Added blocks', text: '# MCP Server Instructions\nUse the tool safely' }),
+      expect.objectContaining({ title: 'Rendered content', text: 'Rendered attachment text' }),
+    ]));
+    expect(model?.sections.some((section) => section.title === 'Payload')).toBe(false);
+  });
+
+  it('renders Claude prompt snapshots with system prompt, tool descriptions, and nested rendered text', () => {
+    const model = buildAgentEventPresentation({
+      type: 'attachment',
+      attachment: {
+        type: 'prompt_snapshot',
+        systemPrompt: ['System instruction one', 'System instruction two'],
+        tools: [
+          { name: 'Agent', description: 'Launch a bounded child agent.' },
+          { name: 'Read', description: 'Read a file from the workspace.' },
+        ],
+      },
+      rendered: [{ attachment: { type: 'model', text: 'Rendered model attachment text' } }],
+    }, {
+      profileId: 'claude-code-session', eventKind: 'checkpoint' as const, actor: 'system' as const,
+      summary: 'Prompt snapshot', evidence: [], confidence: 'source' as const,
+    });
+
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'System prompt', text: 'System instruction one\nSystem instruction two', richText: true }),
+      expect.objectContaining({ title: 'Tool description · Agent', text: 'Launch a bounded child agent.' }),
+      expect.objectContaining({ title: 'Tool description · Read', text: 'Read a file from the workspace.' }),
+      expect.objectContaining({ title: 'Rendered content', text: 'Rendered model attachment text' }),
+    ]));
+  });
+
   it('keeps an empty Claude timeline text field useful through its detail value', () => {
     const model = buildAgentEventPresentation(
       { at: '2026-08-06T10:33:35.710Z', state: 'working', detail: 'Indexing source', text: '' },
@@ -874,6 +986,167 @@ describe('structured agent event presentation', () => {
     });
     expect(model?.sections[0]).toMatchObject({ title: 'Message', text: 'Inspect the failing parser', richText: false });
     expect(model?.metadata).toContainEqual({ label: 'project', value: 'C:/redacted/project' });
+  });
+
+  it('renders Pi thinking, tool calls, tool results, and system tool declarations', () => {
+    const profile = {
+      profileId: 'pi-coding-agent', eventKind: 'message' as const, actor: 'assistant' as const,
+      toolCallId: 'tool-call-redacted', summary: 'Pi assistant', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Inspect the source' },
+          { type: 'toolCall', id: 'tool-call-redacted', name: 'read', arguments: { path: 'README.md' } },
+          { type: 'text', text: 'Done' },
+        ],
+      },
+    }, profile);
+    expect(model?.title).toBe('Pi · message');
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'thinking 1', text: 'Inspect the source' }),
+      expect.objectContaining({ title: 'Tool call · read', code: expect.stringContaining('README.md') }),
+      expect.objectContaining({ title: 'text 3', text: 'Done' }),
+    ]));
+
+    const system = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'system',
+        content: '',
+        sections: { preamble: 'System preamble' },
+        toolsAdded: [{ name: 'read', description: 'Read files', parameters: { type: 'object' } }],
+      },
+    }, { ...profile, eventKind: 'checkpoint', actor: 'system' });
+    expect(system?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'System section · preamble', text: 'System preamble' }),
+      expect.objectContaining({ title: 'Tool declaration · read', text: 'Read files' }),
+      expect.objectContaining({ title: 'Tool schema · read', code: expect.stringContaining('object') }),
+    ]));
+
+    const result = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'tool-call-redacted',
+        content: [{ type: 'text', text: 'file contents' }, { type: 'image', data: 'redacted', mimeType: 'image/png' }],
+        details: { truncated: false },
+        nestedCalls: { complete: true, calls: [] },
+        isError: false,
+      },
+    }, { ...profile, eventKind: 'tool_result', actor: 'tool' });
+    expect(result?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'text 1', text: 'file contents' }),
+      expect.objectContaining({ title: 'image 2', code: expect.stringContaining('image/png') }),
+      expect.objectContaining({ title: 'Tool details', code: expect.stringContaining('truncated') }),
+      expect.objectContaining({ title: 'Nested tool calls', code: expect.stringContaining('complete') }),
+    ]));
+  });
+
+  it('renders Pi tool-result detail diffs and patches through the shared DiffView without changing source values', () => {
+    const diff = ' 1 CRUD demo file\n-3 Counter: 0\n+3 Updated at step 2\n+4 Counter: 1\n';
+    const patch = '--- redacted/demo.txt\n+++ redacted/demo.txt\n@@ -1,2 +1,3 @@\n CRUD demo file\n-Counter: 0\n+Updated at step 2\n+Counter: 1\n';
+    const value = {
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'tool-call-redacted',
+        toolName: 'edit',
+        content: [{ type: 'text', text: 'Successfully replaced 1 block.' }],
+        details: { diff, patch, firstChangedLine: 3, providerExtension: { complete: true } },
+        isError: false,
+      },
+    };
+    const original = JSON.stringify(value);
+    const profile = {
+      profileId: 'pi-coding-agent', eventKind: 'tool_result' as const, actor: 'tool' as const,
+      toolCallId: 'tool-call-redacted', toolName: 'edit', summary: 'Pi edit result', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Details diff', language: 'diff', code: diff, fullText: diff, truncated: false }),
+      expect.objectContaining({ title: 'Details patch', language: 'diff', code: patch, fullText: patch, truncated: false }),
+      expect.objectContaining({ title: 'Tool details', language: 'json', code: expect.stringContaining('providerExtension') }),
+    ]));
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, { value, profile }));
+    expect(markup.match(/class="diff-toolbar"/g)).toHaveLength(2);
+    expect(markup).toContain('diff-line-add');
+    expect(markup).toContain('diff-line-remove');
+    expect(markup).toContain('Details patch unified diff');
+    expect(markup).toContain('>Updated at step 2</span>');
+    expect(JSON.stringify(value)).toBe(original);
+  });
+
+  it('bounds Pi detail diff previews and preserves complete source only within the expanded budget', () => {
+    const withinBudget = '+' + 'a'.repeat(9_000);
+    const overBudget = '-' + 'b'.repeat(256 * 1024);
+    const model = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        details: { diff: withinBudget, patch: overBudget },
+      },
+    }, {
+      profileId: 'pi-coding-agent', eventKind: 'tool_result', actor: 'tool', summary: 'bounded result', evidence: [], confidence: 'source',
+    });
+    const diff = model?.sections.find((section) => section.title === 'Details diff');
+    const patch = model?.sections.find((section) => section.title === 'Details patch');
+    expect(diff).toMatchObject({ language: 'diff', fullText: withinBudget, truncated: true, previewOnly: false });
+    expect(diff?.code).toBe(withinBudget.slice(0, 8_000) + '\n... [preview truncated]');
+    expect(patch).toMatchObject({ language: 'diff', truncated: true, previewOnly: true });
+    expect(patch?.fullText).toBeUndefined();
+    expect(patch?.code).toBe(overBudget.slice(0, 8_000) + '\n... [preview truncated]');
+  });
+
+  it('keeps unknown Pi detail values in JSON and limits diff promotion to Pi tool results', () => {
+    const value = {
+      type: 'message',
+      message: { role: 'toolResult', details: { diff: { unknown: true }, patch: 42, firstChangedLine: 3 } },
+    };
+    const profile = {
+      profileId: 'pi-coding-agent', eventKind: 'tool_result' as const, actor: 'tool' as const,
+      summary: 'unknown result', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Details diff', language: 'json', code: expect.stringContaining('unknown') }),
+      expect.objectContaining({ title: 'Details patch', language: 'json', code: '42' }),
+      expect.objectContaining({ title: 'Tool details', language: 'json', code: expect.stringContaining('firstChangedLine') }),
+    ]));
+    const assistant = buildAgentEventPresentation({
+      ...value, message: { role: 'assistant', details: { diff: '+text' } },
+    }, { ...profile, eventKind: 'message', actor: 'assistant' });
+    const generic = buildAgentEventPresentation({
+      ...value, message: { role: 'toolResult', details: { diff: '+text' } },
+    }, { ...profile, profileId: 'generic-jsonl' });
+    expect(assistant?.sections.some((section) => section.language === 'diff')).toBe(false);
+    expect(generic?.sections.some((section) => section.language === 'diff') ?? false).toBe(false);
+  });
+
+  it('renders Pi custom message text, images, type, display flag, and details', () => {
+    const model = buildAgentEventPresentation({
+      type: 'custom_message',
+      id: 'custom-message-redacted',
+      customType: 'extension_notice',
+      display: true,
+      content: [
+        { type: 'text', text: 'Extension context is ready.' },
+        { type: 'image', data: 'redacted-image-data', mimeType: 'image/png' },
+      ],
+      details: { source: 'extension-redacted', revision: 2 },
+    }, {
+      profileId: 'pi-coding-agent', eventKind: 'message', actor: 'agent', summary: 'custom message', evidence: [], confidence: 'source',
+    });
+    expect(model?.title).toBe('Pi · custom message');
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Custom type', text: 'extension_notice' }),
+      expect.objectContaining({ title: 'Display', code: 'true' }),
+      expect.objectContaining({ title: 'Custom text 1', text: 'Extension context is ready.' }),
+      expect.objectContaining({ title: 'Custom image 2', code: expect.stringContaining('image/png') }),
+      expect.objectContaining({ title: 'Custom details', code: expect.stringContaining('extension-redacted') }),
+    ]));
   });
 
   it('does not inspect high-cardinality event fields beyond their display budgets', () => {

@@ -16,6 +16,10 @@ import {
   type FollowRecoveryProbe,
 } from './follow-recovery';
 import { getWebviewHtml } from './webview-html';
+import { RevealIntentRegistry, type RevealIntent } from '../experimental';
+import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
+import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
+import { appendOutputLog, type JsonlViewOutputChannel } from './output-log';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 
@@ -27,6 +31,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private reconcilePending = false;
   private disposed = false;
   private publishedProfileId: string;
+  private pendingReveal: RevealIntent | undefined;
   private readonly recovery: FollowRecoveryCoordinator;
   private readonly followModeRegistration: { dispose(): void };
 
@@ -115,6 +120,23 @@ class JsonlViewDocument implements vscode.CustomDocument {
     this.recovery.reset();
   }
 
+  public setPendingReveal(intent: RevealIntent): void {
+    this.pendingReveal = intent;
+  }
+
+  public async flushPendingReveal(): Promise<void> {
+    const intent = this.pendingReveal;
+    this.pendingReveal = undefined;
+    if (intent === undefined) return;
+    const current = this.session.getSummary().snapshot;
+    await this.broadcast('REVEAL', {
+      sourceId: intent.sourceId,
+      generation: current.generation,
+      nativeId: intent.nativeId,
+      anchorOrdinal: intent.anchorOrdinal,
+    });
+  }
+
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -155,8 +177,10 @@ class JsonlViewDocument implements vscode.CustomDocument {
         return;
       }
       if (this.recovery.isRunning) this.recovery.cancel();
+      appendOutputLog(outputChannel, 'source-invalidated', `reason=${refresh.kind}`);
       await this.broadcast('SOURCE_INVALIDATED', { reason: refresh.kind });
     } catch (error) {
+      appendOutputLog(outputChannel, 'source-reconcile-failed', error instanceof Error ? error.message : String(error));
       await this.broadcast('ERROR', {
         code: 'SOURCE_RECONCILE_FAILED',
         message: error instanceof Error ? error.message : String(error),
@@ -261,6 +285,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
         // A panel can disappear between snapshot adoption and delivery. Keep
         // the successful generation authoritative while retaining a bounded
         // diagnostic for the disposed/failed recipient.
+        appendOutputLog(outputChannel, 'webview-delivery-failed', `type=${type} panel=${String(index)} error=${detail}`);
         console.warn(`[JsonlView] ${type} delivery failed for panel ${String(index)}: ${detail}`);
       },
     );
@@ -288,19 +313,27 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
   private lastResolvedDocument: JsonlViewDocument | undefined;
   private rowOrderWrite: Promise<void> = Promise.resolve();
 
-  public constructor(private readonly context: vscode.ExtensionContext) {}
+  public constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly revealRegistry: RevealIntentRegistry,
+    private readonly openSessionNavigator: () => Promise<void>,
+    private readonly output: JsonlViewOutputChannel | undefined,
+  ) {}
 
   public openCustomDocument(
     uri: vscode.Uri,
     _openContext: vscode.CustomDocumentOpenContext,
     token: vscode.CancellationToken,
   ): Promise<JsonlViewDocument> {
+    appendOutputLog(this.output, 'open-document', `name=${basename(uri.path)}`);
     return JsonlViewDocument.create(uri, token);
   }
 
   public resolveCustomEditor(document: JsonlViewDocument, panel: vscode.WebviewPanel): void {
     this.resolvedDocuments.add(document);
     this.lastResolvedDocument = document;
+    const pendingReveal = this.revealRegistry.take(document.uri.toString());
+    if (pendingReveal !== undefined) document.setPendingReveal(pendingReveal);
     panel.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist')],
@@ -323,10 +356,27 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
         );
         return this.rowOrderWrite;
       },
+      onReady: () => document.flushPendingReveal(),
+      onOpenSessionNavigator: () => this.openSessionNavigator(),
+      onDiagnosticError: ({ code, message, action }) => offerDiagnostic({
+        stage: 'editor-error-banner',
+        name: code,
+        message,
+      }, action),
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
-      void controller.handleMessage(message);
+      if (isWebviewDiagnostic(message)) {
+        void offerDiagnostic({ stage: 'editor-webview', name: message.name, message: message.message });
+        return;
+      }
+      void controller.handleMessage(message).catch((error: unknown) => {
+        void offerDiagnostic({
+          stage: 'editor-message',
+          name: error instanceof Error ? error.name : 'Error',
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     });
     const viewStateRegistration = panel.onDidChangeViewState((event) => {
       if (!event.webviewPanel.visible) {
@@ -349,24 +399,90 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
 
   public async rebuildActiveDocument(): Promise<void> {
     if (this.lastResolvedDocument === undefined) {
+      appendOutputLog(this.output, 'rebuild-skipped', 'reason=no-active-document');
       void vscode.window.showInformationMessage('Open a JSONL file in JsonlView before rebuilding its index.');
       return;
     }
+    appendOutputLog(this.output, 'rebuild-requested');
     await this.lastResolvedDocument.rebuild();
+    appendOutputLog(this.output, 'rebuild-complete');
   }
 
 }
 
+let lastDiagnostic: JsonlViewDiagnosticEnvelope | undefined;
+let outputChannel: vscode.LogOutputChannel | undefined;
+
+function currentDiagnostic(): JsonlViewDiagnosticEnvelope {
+  return lastDiagnostic ?? buildDiagnosticEnvelope({
+    stage: 'webview-host-registration',
+    name: 'InvalidStateError',
+    message: 'The VS Code Webview host reported that the document is in an invalid state while registering its service worker. JsonlView does not register a service worker.',
+    extensionId: 'Sumi-Sophia.jsonl-view',
+  });
+}
+
+async function offerDiagnostic(input: { stage: string; name: string; message: string }, preferredAction?: 'explain' | 'copy'): Promise<void> {
+  const envelope = buildDiagnosticEnvelope({
+    ...input,
+    extensionId: 'Sumi-Sophia.jsonl-view',
+  });
+  lastDiagnostic = envelope;
+  appendOutputLog(outputChannel, 'diagnostic', `stage=${envelope.stage} name=${envelope.error.name} message=${envelope.error.message}`);
+  if (preferredAction === 'copy') {
+    await handleDiagnosticAction('Copy diagnostic context', envelope);
+    return;
+  }
+  if (preferredAction === 'explain') {
+    await handleDiagnosticAction('Explain with VS Code Chat', envelope);
+    return;
+  }
+  const action = await vscode.window.showErrorMessage(
+    'JsonlView detected a bounded Webview error. Source contents were not included.',
+    'Explain with VS Code Chat',
+    'Copy diagnostic context',
+    'Open JsonlView Log',
+  );
+  await handleDiagnosticAction(action, envelope);
+}
+
+async function handleDiagnosticAction(action: string | undefined, envelope: JsonlViewDiagnosticEnvelope): Promise<void> {
+  if (action === 'Copy diagnostic context') {
+    await vscode.env.clipboard.writeText(formatDiagnosticContext(envelope));
+    return;
+  }
+  if (action === 'Open JsonlView Log') {
+    outputChannel?.show(true);
+    return;
+  }
+  if (action !== 'Explain with VS Code Chat') return;
+  const prompt = formatDiagnosticPrompt(envelope);
+  await vscode.env.clipboard.writeText(prompt);
+  try {
+    await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
+  } catch {
+    void vscode.window.showInformationMessage('VS Code Chat is unavailable. The bounded diagnostic prompt was copied instead.');
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+  outputChannel = vscode.window.createOutputChannel('JsonlView', { log: true });
+  context.subscriptions.push(outputChannel);
+  appendOutputLog(outputChannel, 'activated', 'output-channel=JsonlView');
   const conflict = findExtensionContributionConflict(context.extension.id, vscode.extensions.all);
   if (conflict !== undefined) {
+    appendOutputLog(outputChannel, 'activation-blocked', `conflict=${conflict.extensionId}`);
     void vscode.window.showErrorMessage(
       `JsonlView cannot activate while ${conflict.extensionId} is enabled because both extensions declare ${conflict.contributionIds.join(', ')}. Disable or uninstall one JsonlView build, then reload the window.`,
     );
     return;
   }
-  const provider = new JsonlViewProvider(context);
+  const revealRegistry = new RevealIntentRegistry();
+  const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
+  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open(), outputChannel);
   context.subscriptions.push(
+    ...navigator.register(),
+    navigator,
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {
       supportsMultipleEditorsPerDocument: false,
       webviewOptions: { retainContextWhenHidden: false },
@@ -386,10 +502,23 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.commands.executeCommand('vscode.openWith', target, 'jsonlView.editor');
     }),
     vscode.commands.registerCommand('jsonlView.rebuildIndex', async () => provider.rebuildActiveDocument()),
+    vscode.commands.registerCommand('jsonlView.diagnoseWebview', async () => {
+      const envelope = currentDiagnostic();
+      lastDiagnostic = envelope;
+      const action = await vscode.window.showInformationMessage('JsonlView prepared a bounded Webview diagnosis without source contents.', 'Explain with VS Code Chat', 'Copy diagnostic context');
+      await handleDiagnosticAction(action, envelope);
+    }),
+    vscode.commands.registerCommand('jsonlView.showOutput', () => outputChannel?.show(true)),
+    vscode.commands.registerCommand('jsonlView.explainLastDiagnostic', () => handleDiagnosticAction('Explain with VS Code Chat', currentDiagnostic())),
+    vscode.commands.registerCommand('jsonlView.copyLastDiagnostic', () => vscode.env.clipboard.writeText(formatDiagnosticContext(currentDiagnostic()))),
   );
+  appendOutputLog(outputChannel, 'activated', 'commands-and-views=registered');
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  appendOutputLog(outputChannel, 'deactivated');
+  outputChannel = undefined;
+}
 
 function cancellationSignal(token: vscode.CancellationToken): AbortSignal {
   const controller = new AbortController();
@@ -401,6 +530,13 @@ function cancellationSignal(token: vscode.CancellationToken): AbortSignal {
 function isJsonlResource(uri: vscode.Uri): boolean {
   const name = basename(uri.path).toLowerCase();
   return name.endsWith('.jsonl') || name.endsWith('.ndjson');
+}
+
+function isWebviewDiagnostic(value: unknown): value is { readonly type: 'JSONLVIEW_DIAGNOSTIC'; readonly name: string; readonly message: string } {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const message = value as Record<string, unknown>;
+  return message.type === 'JSONLVIEW_DIAGNOSTIC' && typeof message.name === 'string' && message.name.length > 0 && message.name.length <= 128
+    && typeof message.message === 'string' && message.message.length > 0 && message.message.length <= 512;
 }
 
 function activeResourceUri(): vscode.Uri | undefined {

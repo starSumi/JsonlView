@@ -26,11 +26,27 @@ export type NavigationEntityKind =
 
 export type NavigationRelationKind = 'parent' | 'child' | 'fork' | 'spawn' | 'contains' | 'uses';
 
+/** Provenance for a title shown by the Session Navigator. */
+export type NavigationTitleSource = 'product' | 'provider' | 'first-message' | 'id';
+
+/** Stable relationship labels shared by provider adapters. */
+export type NavigationRelationship = 'root' | 'subagent' | 'fork' | 'continuation' | 'orphan' | 'generic';
+
 export interface NavigationEntity {
   sourceId: string;
   nativeId: string;
   kind: NavigationEntityKind;
   label: string;
+  /** Provider-owned title, such as Codex thread metadata or Claude session name. */
+  vendorTitle?: string;
+  /** Product-owned title. It is stored in the JsonlView catalog only. */
+  productTitle?: string;
+  titleSource?: NavigationTitleSource;
+  firstMessagePreview?: string;
+  startedAt?: string;
+  activityAt?: string;
+  relationship?: NavigationRelationship;
+  project?: string;
   parentNativeId?: string;
   updatedAt?: string;
   status?: string;
@@ -69,6 +85,8 @@ export interface NavigationBudget {
 export interface NavigationQuery {
   sourceId?: string;
   snapshotId?: string;
+  /** Bounded entity offset used by transport adapters for snapshot paging. */
+  offset?: number;
   kind?: NavigationEntityKind;
   parentNativeId?: string;
   text?: string;

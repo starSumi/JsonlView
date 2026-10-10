@@ -1,7 +1,9 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { RowProjection } from '../../src/shared/types';
 import {
-  gridCellId, gridCellRowIndex, initialGridCell, moveGridCell, pinActiveGridRow, reconcileGridCell,
+  gridCellId, gridCellRowIndex, initialGridCell, moveGridCell, pinActiveGridRow, reconcileGridCell, useGridFocus,
   type GridCell, type GridFocusOptions,
 } from '../../src/webview/use-grid-focus';
 
@@ -14,7 +16,43 @@ const options: GridFocusOptions = {
   columns: [{ id: '__ordinal', label: '#', source: 'system' }, { id: 'status', label: 'Status', source: 'profile' }],
 };
 
+// Mount the real hook without mocking React; ref updates are synchronous between events.
+function renderGridFocusHook(focusOptions: GridFocusOptions): ReturnType<typeof useGridFocus> {
+  let focus: ReturnType<typeof useGridFocus> | undefined;
+  function Probe(): null {
+    focus = useGridFocus(focusOptions);
+    return null;
+  }
+  renderToStaticMarkup(createElement(Probe));
+  return focus!;
+}
+
 describe('ephemeral grid cell focus', () => {
+  it('retains a clicked physical cell when the grid receives focus before a rerender', () => {
+    const focus = renderGridFocusHook({ ...options, selectedOrdinal: '10' });
+    const clicked: GridCell = { kind: 'data', sessionId: options.sessionId,
+      generation: 'g1', ordinal: '30', columnId: 'status' };
+    focus.setActiveCell(clicked);
+    expect(focus.enter()).toEqual(clicked);
+    expect(focus.enter()).toEqual(clicked);
+  });
+
+  it('retains keyboard navigation when focus re-enters the grid', () => {
+    const focus = renderGridFocusHook(options);
+    const last = focus.move('End', true);
+    expect(last).toMatchObject({ ordinal: '30', columnId: 'status' });
+    expect(focus.enter()).toEqual(last);
+    const header = focus.move('Home', true);
+    expect(focus.enter()).toEqual(header);
+  });
+
+  it('rejects stale physical focus and enters at the selected row', () => {
+    const focus = renderGridFocusHook({ ...options, selectedOrdinal: '20' });
+    focus.setActiveCell({ kind: 'data', sessionId: options.sessionId,
+      generation: 'old', ordinal: '30', columnId: 'status' });
+    expect(focus.enter()).toMatchObject({ generation: 'g1', ordinal: '20', columnId: '__ordinal' });
+  });
+
   it('enters at the selected row first column, or the first data row', () => {
     expect(initialGridCell({ ...options, selectedOrdinal: '20' })).toMatchObject({ ordinal: '20', columnId: '__ordinal' });
     expect(initialGridCell({ ...options, selectedOrdinal: 'missing' })).toMatchObject({ ordinal: '10', columnId: '__ordinal' });

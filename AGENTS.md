@@ -6,7 +6,7 @@ queries, schema summaries, and timelines are disposable projections.
 
 ## Toolchain
 
-- Use the Volta-pinned Node and pnpm versions from `package.json`.
+- Use the fnm-selected Node version from `.node-version` and the pnpm version from `package.json`.
 - The development toolchain requires Node `>=22.12.0`; the repository pins
   Node `24.15.0` because Vitest 5 and `@types/node` 26 no longer support the
   older Node 20 baseline. Keep CI and local probes on that same major line.

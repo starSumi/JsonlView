@@ -34,6 +34,7 @@ export { createCorrelationState, correlationStateKey } from './correlation';
 export { GenericAgentEventsProfile } from './generic-agent-profile';
 export { GENERIC_PROFILE_ID, GenericProfile } from './generic-profile';
 export { OpenTelemetryProfile } from './opentelemetry-profile';
+export { PiCodingAgentProfile, isPiMessageEntry, isPiSessionHeader } from './pi-profile';
 export { AgentProfileRegistry } from './profile-registry';
 export { SoftwareEngineeringAgentProfile } from './software-engineering-agent-profile';
 export { StructuredApplicationLogProfile } from './structured-application-log-profile';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DocumentSummary, ExtensionMessage, RowProjection } from '../../src/shared/types';
+import type { DocumentSummary, ExtensionMessage, RecordDetail, RowProjection } from '../../src/shared/types';
 import { keyPath, PROTOCOL_VERSION } from '../../src/shared/types';
 import {
   createInitialState,
@@ -160,6 +160,79 @@ describe('workspace reducer', () => {
     expect(next.rows).toEqual([]);
     expect(next.selectedOrdinal).toBeUndefined();
     expect(next.summary?.snapshot.generation).toBe('g2');
+  });
+
+  it('keeps the selected detail mounted through a manual rebuild and refreshes it by physical identity', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', { rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }),
+    });
+    const oldDetail: RecordDetail = {
+      ref: rows[1]!.ref, rawPreview: '{"event":"old"}', rawComplete: true, problems: [],
+    };
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('DETAIL', oldDetail) });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'rebuild', id: 'rebuild-1' } });
+
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2, requestId: 'rebuild-1' },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toEqual(oldDetail);
+    expect(state.detailStale).toBe(true);
+
+    const refreshedRows = rows.map((row) => ({ ...row, ref: { ...row.ref, generation: 'g2' } }));
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: {
+        ...envelope('ROWS', { rows: refreshedRows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }),
+        generation: 'g2', requestId: 'rows-g2',
+      },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toEqual(oldDetail);
+    expect(state.detailStale).toBe(true);
+
+    const newDetail: RecordDetail = {
+      ...oldDetail, ref: refreshedRows[1]!.ref, rawPreview: '{"event":"new"}',
+    };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('DETAIL', newDetail), generation: 'g2', requestId: 'detail-g2' },
+    });
+    expect(state.detail).toEqual(newDetail);
+    expect(state.detailStale).toBe(false);
+    expect(state.rebuildDetail).toBeUndefined();
+  });
+
+  it('falls back when a rebuild reuses an ordinal at a different physical offset', () => {
+    let state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', { rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'rebuild', id: 'rebuild-2' } });
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2, requestId: 'rebuild-2' },
+    });
+    const movedRows = rows.map((row, index) => ({
+      ...row, ref: { ...row.ref, generation: 'g2', byteStart: String(index * 30), byteEndExclusive: String(index * 30 + 20) },
+    }));
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('ROWS', { rows: movedRows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }), generation: 'g2' },
+    });
+    expect(state.selectedOrdinal).toBe('1');
+    expect(state.detail).toBeUndefined();
+    expect(state.rebuildDetail).toBeUndefined();
   });
 
   it('keeps the prior follow viewport visible until the new tail page swaps in', () => {

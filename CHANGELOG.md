@@ -2,16 +2,58 @@
 
 ## Unreleased
 
-- Make Windows native release builds reproducible with the MSVC /Brepro
-  linker flag while preserving debug metadata and portable builds.
-- Add a synthetic in-memory staged-mutation benchmark with an independent byte
-  oracle, p50/p95 summaries, and deterministic failure replay receipts.
-- Add a dormant, opt-in-only read-only navigation facade for bounded local
-  agent metadata projections; no provider scanning, MCP process, or source
-  mutation is enabled by default.
-- Add a synthetic provider and immutable navigation-index contract for bounded
-  topology, redaction, diagnostics, and generation-rebuild experiments; no
-  producer store is read and no runtime activation is added.
+- Continue the staged vertical migration behind the existing facades, with
+  isolated barrel exports and tests colocated with their owning modules.
+- Evaluate additional provider adapters and opt-in observability surfaces under
+  the same bounded, read-only contracts.
+- Track follow-up release work in the decision records and reviewed showcase
+  acceptance notes.
+
+## 0.2.8 - 2026-10-10
+
+- Render Codex function-call output once, project Claude top-level tools and
+  prompt attachments, and render Pi thinking, text, tool calls, tool results,
+  diffs, and patches through bounded shared detail components while preserving
+  each source payload in Raw.
+- Keep record, cell, and scroll selection stable across pointer focus, keyboard
+  navigation, empty grid space, append invalidation, and manual rebuilds;
+  preserve the selected detail drawer by physical record identity.
+- Add bounded Session Navigator pagination with transactional SQLite generation
+  swaps, parent-edge reconciliation, cancellation, non-progress guards,
+  durable catalog reuse, stat-only fingerprint probes, and explicit loading,
+  retry, partial-index, and pending-Rebuild states.
+- Add provider-native Codex and Claude projections with activity-first sorting,
+  native titles, child-session and orphan relationships, junction and home-alias
+  resolution, bounded sidecar metadata, default-root detection, and read-only
+  custom source intake with a keyboard-accessible drop target and paste preview.
+- Add an opt-in pi coding-agent adapter for the standard agent home and
+  `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR` overrides, preserving
+  bounded titles, activity times, and cross-file fork relationships without
+  copying transcript bodies.
+- Add a disabled-by-default, transport-independent MCP navigation contract
+  negotiating 2026-07-28 and 2025-11-25 with one bounded read-only metadata
+  query, while keeping v2 wire integration separate from the legacy SDK line.
+- Register a dedicated bounded JsonlView Output channel and recoverable
+  commands to explain or copy the last diagnostic, with best-effort VS Code
+  Chat handoff from the Navigator.
+- Add a no-op-by-default OTLP observability contract that rejects source bodies,
+  paths, prompts, credentials, and arbitrary JSON.
+- Extract engine fingerprinting, Navigator scanning and provider dispatch, and
+  the extension Insights query behind existing facades without changing
+  generation fencing, cancellation, read-only ownership, or VS Code IPC.
+- Establish the fnm-owned Node pin, runtime-bounded decomposition plan, and
+  changed-file Biome lint gate; let VS Code's native Open With own JSONL editor
+  selection while retaining the Navigator action.
+- Keep the source file authoritative while adding a synthetic immutable provider
+  index contract, staged-mutation benchmark with byte oracle and p50/p95
+  receipts, and a dormant opt-in read-only navigation facade; none reads a
+  producer store or enables source mutation.
+- Make Windows native release builds reproducible with MSVC `/Brepro`, and make
+  VSIX candidate archives reproducible when `SOURCE_DATE_EPOCH` is fixed with
+  the selected epoch recorded in provenance.
+- Improve interaction coverage for menu dismissal, paging, semantic views, and
+  nested details, and add a synthetic Codex rollout Insights showcase for
+  category and time distributions.
 
 ## 0.2.7 - 2026-10-06
 

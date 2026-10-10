@@ -11,10 +11,8 @@ import type {
   RecordRef,
   RowPage,
   RowScanBudget,
-  ScanTruncationReason,
 } from '../shared/types';
 import { MAX_TABLE_COLUMNS } from '../shared/types';
-import { CategoricalAggregator, TimeBucketAggregator } from '../aggregation';
 import {
   JsonlEngineError,
   JsonlFileEngine,
@@ -25,6 +23,7 @@ import {
 } from '../engine';
 import { createProfileRegistry, type AgentProfileRegistry, type GenericRecordSample } from '../profiles';
 import type { JsonlSessionPort, ProblemsRequest, RowsRequest } from './document-controller';
+import { runInsightQuery } from './insight-query';
 import {
   FollowRecoveryTerminalError,
   FollowRecoveryTransientError,
@@ -36,14 +35,6 @@ const DETECTION_TAIL_SAMPLE_LIMIT = 32;
 const DETECTION_STRATUM_SAMPLE_LIMIT = 8;
 const DETECTION_STRATUM_PERCENTAGES = [25n, 50n, 75n] as const;
 const PROGRESS_THROTTLE_MS = 100;
-const INSIGHT_PAGE_SIZE = 500;
-const INSIGHT_BUCKET_WIDTH_MS = 5 * 60 * 1_000;
-const DEFAULT_INSIGHT_MAX_EXAMINED_RECORDS = 100_000;
-const DEFAULT_INSIGHT_MAX_EXAMINED_BYTES = 64 * 1024 * 1024;
-const DEFAULT_INSIGHT_MAX_MILLISECONDS = 5_000;
-const HARD_INSIGHT_MAX_EXAMINED_RECORDS = 1_000_000;
-const HARD_INSIGHT_MAX_EXAMINED_BYTES = 512 * 1024 * 1024;
-const HARD_INSIGHT_MAX_MILLISECONDS = 60_000;
 
 export interface IntegratedSessionOptions {
   documentId?: string;
@@ -224,115 +215,19 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     const engine = this.engine;
     const generation = engine.snapshot.generation;
     const enricher = this.createEnricher();
-    const categories = new CategoricalAggregator({
-      selector: { kind: 'common', dimension },
-      signal,
-    });
-    const time = new TimeBucketAggregator({
-      bucketWidthMs: INSIGHT_BUCKET_WIDTH_MS,
-      maxBuckets: 64,
-      signal,
-    });
-    let anchorOrdinal: string | undefined;
-    let examinedRecords = 0n;
-    let examinedBytes = 0n;
-    let truncatedReason: ScanTruncationReason | undefined;
-    const maxExaminedRecords = boundedInsightLimit(
-      this.options.insightsMaxExaminedRecords,
-      DEFAULT_INSIGHT_MAX_EXAMINED_RECORDS,
-      HARD_INSIGHT_MAX_EXAMINED_RECORDS,
-      'insightsMaxExaminedRecords',
-    );
-    const maxExaminedBytes = boundedInsightLimit(
-      this.options.insightsMaxExaminedBytes,
-      DEFAULT_INSIGHT_MAX_EXAMINED_BYTES,
-      HARD_INSIGHT_MAX_EXAMINED_BYTES,
-      'insightsMaxExaminedBytes',
-    );
-    const maxMilliseconds = boundedInsightLimit(
-      this.options.insightsMaxMilliseconds,
-      DEFAULT_INSIGHT_MAX_MILLISECONDS,
-      HARD_INSIGHT_MAX_MILLISECONDS,
-      'insightsMaxMilliseconds',
-    );
-    const deadlineEpochMs = Date.now() + maxMilliseconds;
-
-    while (true) {
-      throwIfAborted(signal);
-      const remainingRecords = BigInt(maxExaminedRecords) - examinedRecords;
-      const remainingBytes = BigInt(maxExaminedBytes) - examinedBytes;
-      if (remainingRecords <= 0n) {
-        truncatedReason = 'record_limit';
-        break;
-      }
-      if (remainingBytes <= 0n) {
-        truncatedReason = 'byte_limit';
-        break;
-      }
-      const page = await engine.getRows({
-        ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
-        limit: INSIGHT_PAGE_SIZE,
-        ...(predicate === undefined ? {} : { predicate }),
-        enricher,
-        generation,
-        signal,
-        scanBudget: {
-          maxExaminedRecords: Number(remainingRecords),
-          maxExaminedBytes: remainingBytes,
-          deadlineEpochMs,
-        },
-      });
-      const scan = page.scan;
-      if (scan === undefined) {
-        throw new Error('The JSONL engine did not return scan accounting for an Insights request.');
-      }
-      examinedRecords += BigInt(scan.examinedRecords);
-      examinedBytes += BigInt(scan.examinedBytes);
-      let continueScanning = true;
-      for (const row of page.rows) {
-        if (!categories.add(row) || !time.add(row)) {
-          continueScanning = false;
-          truncatedReason = 'record_limit';
-          break;
-        }
-      }
-      if (!continueScanning) break;
-      if (scan.truncatedReason !== undefined) {
-        truncatedReason = scan.truncatedReason;
-        break;
-      }
-      if (!page.hasAfter) break;
-      if (scan.cursorOrdinal === undefined || scan.examinedRecords === '0') {
-        throw new Error('The JSONL engine returned a non-progressing Insights cursor.');
-      }
-      anchorOrdinal = scan.cursorOrdinal;
-    }
-
-    const categoryResult = categories.finish();
-    const timeResult = time.finish();
-    return {
+    return runInsightQuery({
+      source: engine,
+      generation,
+      enricher,
       dimension,
-      categories: categoryResult.groups.map((group) => ({
-        label: group.label,
-        count: group.count,
-      })),
-      timeBuckets: timeResult.buckets.map((bucket) => ({
-        start: bucket.label,
-        count: bucket.count,
-      })),
-      processedRecords: String(Math.min(
-        categoryResult.meta.processedRecords,
-        timeResult.meta.processedRecords,
-      )),
-      examinedRecords: examinedRecords.toString(),
-      examinedBytes: examinedBytes.toString(),
-      truncated: truncatedReason !== undefined
-        || categoryResult.meta.truncatedByRecordLimit
-        || timeResult.meta.truncatedByRecordLimit,
-      ...(truncatedReason === undefined ? {} : { truncatedReason }),
-      capacityReached: categoryResult.meta.capacityReached || timeResult.meta.capacityReached,
-      bucketWidthMs: INSIGHT_BUCKET_WIDTH_MS,
-    };
+      predicate,
+      signal,
+      limits: {
+        maxExaminedRecords: this.options.insightsMaxExaminedRecords,
+        maxExaminedBytes: this.options.insightsMaxExaminedBytes,
+        maxMilliseconds: this.options.insightsMaxMilliseconds,
+      },
+    });
   }
 
   public async setProfile(profileId: string, signal: AbortSignal): Promise<DocumentSummary> {
@@ -1003,19 +898,6 @@ function sameExpectedSnapshot(
   expected: FollowRecoveryIdentity,
 ): boolean {
   return snapshot.generation === expected.generation && sameFileIdentity(snapshot, expected);
-}
-
-function boundedInsightLimit(
-  value: number | undefined,
-  fallback: number,
-  maximum: number,
-  name: string,
-): number {
-  const candidate = value ?? fallback;
-  if (!Number.isSafeInteger(candidate) || candidate < 1 || candidate > maximum) {
-    throw new Error(`${name} must be an integer between 1 and ${String(maximum)}.`);
-  }
-  return candidate;
 }
 
 function waitForOperation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {

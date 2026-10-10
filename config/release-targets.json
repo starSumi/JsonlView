@@ -26,13 +26,32 @@
   "sharedContributionIds": [
     "jsonlView.open",
     "jsonlView.rebuildIndex",
+    "jsonlView.diagnoseWebview",
+    "jsonlView.showOutput",
+    "jsonlView.explainLastDiagnostic",
+    "jsonlView.copyLastDiagnostic",
     "jsonlView.editor",
     "jsonlView.hydration.maxBytes",
     "jsonlView.hydration.fullMaxBytes",
     "jsonlView.hydration.pageMaxBytes",
     "jsonlView.pageSize",
     "jsonlView.profile.autoDetect",
-    "jsonlView.native.newlineScanner"
+    "jsonlView.native.newlineScanner",
+    "jsonlView.sessionNavigator.enable",
+    "jsonlView.sessionNavigator.disable",
+    "jsonlView.sessionNavigator.addSource",
+    "jsonlView.sessionNavigator.authorizeAgent",
+    "jsonlView.sessionNavigator.removeSource",
+    "jsonlView.sessionNavigator.loadMore",
+    "jsonlView.sessionNavigator.refresh",
+    "jsonlView.sessionNavigator.open",
+    "jsonlView.sessionNavigator.sortActivity",
+    "jsonlView.sessionNavigator.sortCreated",
+    "jsonlView.sessionNavigator.sortTitle",
+    "jsonlView.sessionNavigator.addSourceFromClipboard",
+    "jsonlView.sessionNavigator.enabled",
+    "jsonlView.sessionNavigator.sources",
+    "jsonlView.sessionNavigator.sort"
   ],
   "coInstallSupported": false
 }

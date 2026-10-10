@@ -38,6 +38,7 @@ const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
   'INDEX_PROGRESS',
   'PROFILE_CHANGED',
   'ROW_ORDER_CHANGED',
+  'REVEAL',
   'SOURCE_INVALIDATED',
   'ERROR',
 ]);
@@ -52,6 +53,8 @@ const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   SET_PROFILE: 'profile',
   SET_FOLLOW_MODE: 'follow',
   SET_ROW_ORDER: 'order',
+  OPEN_SESSION_NAVIGATOR: 'ready',
+  DIAGNOSE_ERROR: 'ready',
   CANCEL: 'rows',
   REBUILD_INDEX: 'rebuild',
 };
@@ -140,6 +143,13 @@ export function shouldAcceptMessage(
   }
   if (message.type === 'SOURCE_INVALIDATED') {
     return message.requestId === '';
+  }
+  if (message.type === 'REVEAL') {
+    return message.requestId === ''
+      && message.payload.sourceId.length > 0
+      && message.payload.generation === message.generation
+      && message.payload.nativeId.length > 0
+      && message.payload.anchorOrdinal.length > 0;
   }
   return false;
 }
@@ -239,7 +249,9 @@ export class VsCodeMessageClient {
       requestId,
       payload,
     } as WebviewRequest;
-    if (type !== 'CANCEL') {
+    // Diagnostic handoff is a one-way host action; it has no correlated
+    // response and must not leave an unbounded pending entry behind.
+    if (type !== 'CANCEL' && type !== 'DIAGNOSE_ERROR') {
       this.#pending.set(requestId, request);
     }
     this.#transport.postMessage(envelope);

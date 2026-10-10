@@ -32,6 +32,8 @@ export function resolvePnpmInvocation() {
   if (process.platform !== 'win32') return { command: 'pnpm', prefix: [] };
   const executable = findWindowsExecutable('pnpm');
   if (executable !== undefined) return { command: executable, prefix: [] };
+  const bundledCli = findWindowsBundledCli('pnpm');
+  if (bundledCli !== undefined) return { command: process.execPath, prefix: [bundledCli] };
   throw new Error('pnpm CLI could not be resolved without invoking a shell shim');
 }
 
@@ -43,6 +45,20 @@ function findWindowsExecutable(name) {
   } catch {
     return undefined;
   }
+}
+
+function findWindowsBundledCli(name) {
+  try {
+    const output = execFileSync('where.exe', [name], { encoding: 'utf8', windowsHide: true });
+    for (const entry of output.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+      const base = dirname(entry);
+      const candidate = resolve(base, 'node_modules', name, 'bin', `${name}.cjs`);
+      if (isRegularFile(candidate)) return candidate;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function isRegularFile(path) {
