@@ -54,11 +54,10 @@ sessions.
 
 ## Evidence
 
-- Pi source study: F:/playground/pi.
-- Pi path and configuration notes:
-  E:/Zero_Base/01-Vault/Syntax/00_Project/JsonlView/pi/packages coding-agent src utils paths.ts config.ts.md.
-- The adapter tests use synthetic JSONL fixtures and do not read private user
-  sessions.
+- Normative references: the [JSON Lines specification](https://jsonlines.org/),
+  [VS Code custom editor guide](https://code.visualstudio.com/api/extension-guides/custom-editors),
+  and [VS Code Tree View guide](https://code.visualstudio.com/api/extension-guides/tree-view).
+- The adapter tests do not read private user sessions.
 
 ## Boundary
 

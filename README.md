@@ -3,9 +3,9 @@
 **A read-only event data studio for VS Code.**
 
 JsonlView turns large JSONL and NDJSON files into a workbench for logs,
-telemetry, traces, and coding-agent runs. Browse physical records quickly,
-understand their meaning, and inspect the exact source without changing the
-file.
+telemetry, traces, coding-agent runs, and local agent session history. Browse
+physical records quickly, understand their meaning, and inspect the exact source
+without changing the file.
 
 ## Why JsonlView
 
@@ -23,31 +23,19 @@ record available in Raw.
 The screenshots use public-shaped, redacted fixtures prepared in the companion
 harness; they contain no private transcript bodies or machine paths.
 
-### Event analysis
-
-![Codex rollout event insights with category and time distribution views](docs/assets/rollout-event-insights.png)
-
-### Record detail
-
-![Structured JSON record with raw detail and derived fields](docs/assets/struct-desc.png)
-
-### Telemetry schema
-
-![OpenTelemetry schema with Tree detail](docs/assets/opentelemetry-schema-tree.png)
-
-### Agent profile timelines
-
-![Codex agent timeline with turns, messages, reasoning, and tool calls](docs/assets/codex-timeline.png)
-
-![Codex exec timeline with custom tool calls and Tree detail](docs/assets/codex-timeline-exec.png)
-
-![pi coding agent timeline with checkpoints, tool calls, and results](docs/assets/pi-timeline.png)
-
 ### Diff and prompt detail
 
 ![Claude Code tool result with a long TypeScript unified diff and patch](docs/assets/claude-diff.png)
 
 ![pi system prompt sections rendered as Markdown](docs/assets/pi-system-prompt.png)
+
+### Agent profile timelines
+
+![Codex exec timeline with custom tool calls and Tree detail](docs/assets/codex-timeline-exec.png)
+
+### Event analysis
+
+![Codex rollout event insights with category and time distribution views](docs/assets/rollout-event-insights.png)
 
 ## What You Get
 
