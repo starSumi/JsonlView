@@ -165,8 +165,11 @@ second consumer and release contract justify it.
 
 ## Documentation
 
+- [Product documentation map](docs/README.md)
 - [Format and profile boundaries](docs/format-and-profile-boundaries.md)
 - [Decision records](docs/decisions/README.md)
+- [Reliability service levels](docs/reliability/service-levels.md)
+- [Security threat model](docs/security/threat-model.md)
 - [Release and publication notes](docs/marketplace-publishing.md)
 - [Changelog](CHANGELOG.md)
 
