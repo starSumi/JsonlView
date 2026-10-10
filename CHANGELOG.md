@@ -11,6 +11,8 @@
   preserving bounded previews and unknown metadata alongside the original Raw.
 - Keep record selection and scroll position when a pointer focuses the grid
   gutter or empty space, and preserve the active cell when keyboard focus returns.
+- Preserve the selected record and detail drawer across a manual index rebuild,
+  refreshing by physical record identity and falling back only when that record moved or disappeared.
 - Merge Session Navigator continuation pages inside one SQLite transaction by
   copying the current generation in-database, applying bounded page rows, and
   reconciling parent edges before the generation switch. Existing catalog rows

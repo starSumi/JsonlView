@@ -491,11 +491,25 @@ export function App(): React.JSX.Element {
   const drawerOpen = Boolean(state.detail || state.pending.detail || state.blockedDetailOrdinal);
 
   useEffect(() => {
+    if (!state.detailStale || state.rebuildDetail === undefined || state.pending.detail
+      || !state.summary || !canReadSnapshot(state.invalidationReason)
+      || !canReadSnapshot(invalidationRef.current)) return;
+    const row = state.rows.find((candidate) => candidate.ref.ordinal === state.rebuildDetail?.ref.ordinal
+      && candidate.ref.byteStart === state.rebuildDetail.ref.byteStart);
+    if (row === undefined) return;
+    const key = `rebuild:${state.summary.snapshot.generation}:${row.ref.ordinal}:${row.ref.byteStart}`;
+    if (automaticFullDetailKeyRef.current === key) return;
+    automaticFullDetailKeyRef.current = key;
+    requestDetail(row.ref, true);
+  }, [requestDetail, state.detailStale, state.invalidationReason, state.pending.detail, state.rebuildDetail, state.rows, state.summary]);
+
+  useEffect(() => {
     const detail = state.detail;
     if (detail === undefined || state.selectedOrdinal !== detail.ref.ordinal) {
       automaticFullDetailKeyRef.current = undefined;
       return;
     }
+    if (state.detailStale) return;
     if (
       !canReadSnapshot(state.invalidationReason)
       || !canReadSnapshot(invalidationRef.current)
@@ -513,7 +527,7 @@ export function App(): React.JSX.Element {
     if (automaticFullDetailKeyRef.current === key) return;
     automaticFullDetailKeyRef.current = key;
     requestDetail(detail.ref, true);
-  }, [drawerOpen, requestDetail, state.detail, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
+  }, [drawerOpen, requestDetail, state.detail, state.detailStale, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
 
   const workspaceWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
   const displayedDetailWidth = workspaceWidth > 900
@@ -1029,7 +1043,7 @@ export function App(): React.JSX.Element {
               modal={narrowViewport}
               detail={state.detail}
               loading={Boolean(state.pending.detail)}
-              readBlocked={!canReadSnapshot(state.invalidationReason)}
+              readBlocked={state.detailStale || !canReadSnapshot(state.invalidationReason)}
               blockedOrdinal={state.blockedDetailOrdinal}
               activeTab={state.detailTab}
               onTabChange={(tab) => dispatch({ type: 'SET_DETAIL_TAB', tab })}
