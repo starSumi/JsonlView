@@ -982,6 +982,30 @@ describe('structured agent event presentation', () => {
     ]));
   });
 
+  it('renders Pi custom message text, images, type, display flag, and details', () => {
+    const model = buildAgentEventPresentation({
+      type: 'custom_message',
+      id: 'custom-message-redacted',
+      customType: 'extension_notice',
+      display: true,
+      content: [
+        { type: 'text', text: 'Extension context is ready.' },
+        { type: 'image', data: 'redacted-image-data', mimeType: 'image/png' },
+      ],
+      details: { source: 'extension-redacted', revision: 2 },
+    }, {
+      profileId: 'pi-coding-agent', eventKind: 'message', actor: 'agent', summary: 'custom message', evidence: [], confidence: 'source',
+    });
+    expect(model?.title).toBe('Pi · custom message');
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Custom type', text: 'extension_notice' }),
+      expect.objectContaining({ title: 'Display', code: 'true' }),
+      expect.objectContaining({ title: 'Custom text 1', text: 'Extension context is ready.' }),
+      expect.objectContaining({ title: 'Custom image 2', code: expect.stringContaining('image/png') }),
+      expect.objectContaining({ title: 'Custom details', code: expect.stringContaining('extension-redacted') }),
+    ]));
+  });
+
   it('does not inspect high-cardinality event fields beyond their display budgets', () => {
     let outOfBudgetReads = 0;
     const guarded = <T,>(length: number, value: T, boundary: number): T[] => {

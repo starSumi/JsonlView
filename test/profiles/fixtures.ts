@@ -590,3 +590,17 @@ export const piCodingAgentFixture = [
     },
   },
 ] as const;
+
+export const piCustomMessageFixture = {
+  type: 'custom_message',
+  id: 'custom-message-redacted',
+  parentId: 'message-assistant-redacted',
+  timestamp: '2026-10-09T02:16:41.000Z',
+  customType: 'extension_notice',
+  display: true,
+  content: [
+    { type: 'text', text: 'Extension context is ready.' },
+    { type: 'image', data: 'redacted-image-data', mimeType: 'image/png' },
+  ],
+  details: { source: 'extension-redacted', revision: 2 },
+} as const;

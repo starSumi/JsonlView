@@ -98,6 +98,17 @@ export class PiCodingAgentProfile implements AgentProfile {
       projection = createProjection(this.id, 'session', boundedSummary(name ?? value, 'Session info'), typePath, name ? keyPath('name') : typePath);
       setActor(projection, 'system', typePath ?? keyPath());
       setDerivedField(projection, 'name', name, keyPath('name'));
+    } else if (type === 'custom_message') {
+      const content = own(value, 'content');
+      const customType = stringAt(value, 'customType');
+      const display = own(value, 'display');
+      projection = createProjection(this.id, 'message', boundedSummary(content ?? value, 'Pi custom message'), typePath, content !== undefined ? keyPath('content') : typePath);
+      setActor(projection, 'agent', typePath ?? keyPath());
+      setStringField(projection, 'timestamp', stringAt(value, 'timestamp'), keyPath('timestamp'));
+      setStringField(projection, 'messageId', stringAt(value, 'id'), keyPath('id'));
+      setStringField(projection, 'parentId', stringAt(value, 'parentId'), keyPath('parentId'));
+      setDerivedField(projection, 'customType', customType, keyPath('customType'));
+      setDerivedField(projection, 'display', typeof display === 'boolean' ? display : undefined, keyPath('display'));
     } else if (type === 'message' && isObject(own(value, 'message'))) {
       const message = objectAt(value, 'message')!;
       const role = stringAt(message, 'role');

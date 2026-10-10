@@ -11,6 +11,7 @@ import {
   codexFixture,
   codexTraceFixture,
   genericAgentFixture,
+  piCustomMessageFixture,
   piCodingAgentFixture,
 } from './fixtures';
 
@@ -329,6 +330,20 @@ describe('Agent profile projection', () => {
     expect(rows[3]?.usage).toEqual({ input: 10, output: 4, total: 14 });
     expect(rows[4]).toMatchObject({ actor: 'tool', toolCallId: 'tool-call-redacted', status: 'completed' });
     expect(rows[2]?.derivedFields).toMatchObject({ toolsAdded: '1' });
+  });
+
+  it('projects Pi custom messages as bounded agent messages', () => {
+    const registry = new AgentProfileRegistry();
+    const row = registry.project('pi-coding-agent', { value: piCustomMessageFixture }, context);
+    expect(row).toMatchObject({
+      eventKind: 'message',
+      actor: 'agent',
+      messageId: 'custom-message-redacted',
+      parentId: 'message-assistant-redacted',
+      timestamp: '2026-10-09T02:16:41.000Z',
+      derivedFields: { customType: 'extension_notice', display: true },
+    });
+    expect(row.summary).toContain('Extension context is ready.');
   });
 
   it('projects current Claude control records instead of labelling them unknown', () => {

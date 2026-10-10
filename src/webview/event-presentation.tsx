@@ -895,6 +895,34 @@ function piMessageSections(
   profile?: AgentRowProjection,
 ): EventPresentationSection[] {
   if (profile?.profileId !== 'pi-coding-agent') return [];
+  if (valueLabel(payload.type)?.toLowerCase() === 'custom_message') {
+    const sections: EventPresentationSection[] = [];
+    addTextCandidate(sections, 'Custom type', own(payload, 'customType'));
+    addCodeCandidate(sections, 'Display', own(payload, 'display'), 'json');
+    const content = own(payload, 'content');
+    if (Array.isArray(content)) {
+      const visible = Math.min(content.length, 32);
+      for (let index = 0; index < visible; index += 1) {
+        const block = content[index];
+        const blockObject = objectOf(block);
+        const type = valueLabel(blockObject?.type)?.toLowerCase() ?? 'content';
+        const title = content.length === 1 && type === 'text'
+          ? 'Custom message'
+          : `Custom ${type.replaceAll('_', ' ')} ${String(index + 1)}`;
+        appendAgentContentBlock(sections, block, title, 'agent');
+      }
+      if (content.length > visible) {
+        sections.push({ title: 'Additional custom message content', code: JSON.stringify({ omittedBlocks: content.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
+      }
+    } else if (content !== undefined) {
+      addTextCandidate(sections, 'Custom message', content, false);
+      if (!sections.some((section) => section.title === 'Custom message')) {
+        addCodeCandidate(sections, 'Custom content', content, 'json');
+      }
+    }
+    addCodeCandidate(sections, 'Custom details', own(payload, 'details'), 'json');
+    return sections;
+  }
   const message = objectOf(payload.message);
   if (!message) return [];
   const sections: EventPresentationSection[] = [];
