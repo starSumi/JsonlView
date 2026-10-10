@@ -4,6 +4,9 @@
 
 - Render each Codex function-call output once in the structured detail view,
   while preserving the single source payload in Raw.
+- Project Claude top-level tool results into bounded Read, Write/Edit patch,
+  Search, shell, NotebookEdit, and source-metadata sections while preserving
+  unknown fields and complete source records in Raw.
 - Render Pi tool-result detail diffs and patches with the shared diff view,
   preserving bounded previews and unknown metadata alongside the original Raw.
 - Keep record selection and scroll position when a pointer focuses the grid

@@ -14,6 +14,7 @@ import { classifyContent, ContentView, inferCodeLanguage, type ContentMode } fro
 import { formatJavaScriptForDisplay, HighlightedCode } from './code-syntax';
 import { DEFAULT_MAX_CHARS } from './code-syntax-core';
 import { DiffView } from './diff-view';
+import { claudeToolSections, type ClaudeToolSection } from '../profiles/claude-tool-projection';
 
 const MAX_TEXT = 8_000;
 // Keep the first paint cheap, but allow an explicit Show full action to render
@@ -874,20 +875,28 @@ function claudeMessageSections(
 ): EventPresentationSection[] {
   if (profile?.profileId !== 'claude-code-session') return [];
   const message = objectOf(payload.message);
-  if (!message || !Object.hasOwn(message, 'content')) return [];
+  if (!message || !Object.hasOwn(message, 'content')) {
+    return Object.hasOwn(payload, 'toolUseResult')
+      ? claudeToolSections(payload).map(toEventPresentationSection)
+      : [];
+  }
   const role = valueLabel(message.role)?.toLowerCase();
   const content = own(message, 'content');
   if (!Array.isArray(content)) {
     if (typeof content === 'string') {
-      return [{ title: 'Message', ...textSection(content), richText: role === 'assistant' }];
+      const sections: EventPresentationSection[] = [{ title: 'Message', ...textSection(content), richText: role === 'assistant' }];
+      if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
+      return sections;
     }
     const sections: EventPresentationSection[] = [];
     addCodeCandidate(sections, 'Content', content, 'json');
+    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
     return sections;
   }
   if (content.length === 0) {
     const sections: EventPresentationSection[] = [];
     addCodeCandidate(sections, 'Content', content, 'json');
+    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
     return sections;
   }
   const sections: EventPresentationSection[] = [];
@@ -907,6 +916,9 @@ function claudeMessageSections(
           : `${type.replaceAll('_', ' ')}${content.length > 1 ? ` ${String(index + 1)}` : ''}`;
     appendAgentContentBlock(sections, block, title, role);
   }
+  if (Object.hasOwn(payload, 'toolUseResult')) {
+    sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
+  }
   if (content.length > 32) {
     sections.push({
       title: 'Additional content blocks',
@@ -917,6 +929,42 @@ function claudeMessageSections(
     });
   }
   return sections;
+}
+
+function toEventPresentationSection(section: ClaudeToolSection): EventPresentationSection {
+  if (section.kind === 'json') {
+    const rendered = codeSectionValue(section.value);
+    return {
+      title: section.title,
+      ...(rendered
+        ? { code: rendered.code, ...(rendered.fullCode !== undefined ? { fullText: rendered.fullCode } : {}) }
+        : { code: '{}' }),
+      language: 'json',
+      truncated: section.truncated ?? rendered?.truncated ?? false,
+      previewOnly: section.truncated ?? rendered?.previewOnly ?? false,
+    };
+  }
+  if (section.kind === 'diff') {
+    const source = typeof section.value === 'string' ? section.value : JSON.stringify(section.value, null, 2);
+    const added: EventPresentationSection[] = [];
+    addTextDiffCandidate(added, section.title, source ?? '', section.truncated);
+    return added[0] ?? { title: section.title, code: '', language: 'diff', truncated: true, previewOnly: true };
+  }
+  const text = typeof section.value === 'string' ? section.value : textOf(section.value);
+  if (section.kind === 'code') {
+    const rendered = codeSectionValue(text ?? section.value);
+    return {
+      title: section.title,
+      ...(rendered
+        ? { code: rendered.code, ...(rendered.fullCode !== undefined ? { fullText: rendered.fullCode } : {}) }
+        : { code: '' }),
+      ...(section.language ? { language: section.language } : {}),
+      truncated: section.truncated ?? rendered?.truncated ?? false,
+      previewOnly: section.truncated ?? rendered?.previewOnly ?? false,
+    };
+  }
+  const bounded = textSection(text ?? section.value);
+  return { title: section.title, ...bounded, ...(section.language ? { language: section.language } : {}) };
 }
 
 /** Pi AgentMessage is a nested, typed content contract rather than a flat text field. */

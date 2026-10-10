@@ -868,6 +868,55 @@ describe('structured agent event presentation', () => {
     expect(markup).toContain('Tool result');
   });
 
+  it('projects bounded top-level Claude toolUseResult fields into typed sections', () => {
+    const cases = [
+      {
+        result: {
+          type: 'text',
+          file: { filePath: 'F:/fixture/read.txt', content: 'line one\nline two', startLine: 1, numLines: 2, totalLines: 2 },
+        },
+        expected: ['Read · F:/fixture/read.txt · from line 1 · 2 lines', 'Read metadata'],
+      },
+      {
+        result: {
+          filePath: 'F:/fixture/edit.txt',
+          oldString: 'before',
+          newString: 'after',
+          structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-before', '+after'] }],
+          originalFile: 'do not render this complete source',
+        },
+        expected: ['Changes'],
+      },
+      { result: { stdout: 'out', stderr: 'err', interrupted: false }, expected: ['stdout', 'stderr', 'Tool source metadata'] },
+      { result: { filenames: ['F:/fixture/a.txt'], content: 'a.txt:1:match' }, expected: ['Files', 'Matches'] },
+      { result: { old_source: 'print(1)', new_source: 'print(2)', notebook_path: 'F:/fixture/demo.ipynb' }, expected: ['Cell changes'] },
+      { result: { taskId: 'task-redacted', backgroundTaskId: 'bg-redacted', interrupted: true }, expected: ['Tool source metadata'] },
+    ];
+    for (const { result, expected } of cases) {
+      const value = {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-redacted', content: 'ok' }] },
+        toolUseResult: result,
+      };
+      const model = buildAgentEventPresentation(value, {
+        profileId: 'claude-code-session', eventKind: 'tool_result', actor: 'tool',
+        summary: 'tool result', evidence: [], confidence: 'source',
+      });
+      for (const title of expected) expect(model?.sections.some((section) => section.title === title)).toBe(true);
+      expect(model?.sections.some((section) => section.title === 'Tool metadata' && section.code?.includes('original source'))).toBe(false);
+    }
+    const diffModel = buildAgentEventPresentation({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-redacted', content: 'ok' }] },
+      toolUseResult: { filePath: 'F:/fixture/edit.txt', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-before', '+after'] }] },
+    }, { profileId: 'claude-code-session', eventKind: 'tool_result', actor: 'tool', summary: 'edit', evidence: [], confidence: 'source' });
+    expect(renderToStaticMarkup(React.createElement(AgentEventPresentation, { value: {
+      type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+      toolUseResult: { filePath: 'F:/fixture/edit.txt', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-before', '+after'] }] },
+    }, profile: { profileId: 'claude-code-session', eventKind: 'tool_result', actor: 'tool', summary: 'edit', evidence: [], confidence: 'source' } }))).toContain('diff-line-add');
+    expect(diffModel?.sections.find((section) => section.title === 'Changes')).toMatchObject({ language: 'diff' });
+  });
+
   it('renders Claude attachment text, rendered content, and MCP added blocks', () => {
     const value = {
       type: 'attachment',
