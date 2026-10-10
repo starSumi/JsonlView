@@ -710,9 +710,21 @@ body.is-resizing-detail {
   font-weight: 600;
 }
 
-.data-grid-scroll:focus-within .is-active-cell {
+/*
+ * The grid owns focus through aria-activedescendant. A pointer click therefore
+ * focuses the grid container without being keyboard navigation. Keep the
+ * strong focus ring for keyboard users only. Pointer selection keeps a quiet
+ * inset cue so the active cell remains discoverable without a saturated blue
+ * outline after every click.
+ */
+.data-grid-scroll .is-active-cell {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 26%, transparent);
+}
+
+.data-grid-scroll:focus-visible .is-active-cell {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -2px;
+  box-shadow: none;
 }
 
 .data-grid-sort {
