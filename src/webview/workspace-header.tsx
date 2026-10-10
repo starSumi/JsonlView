@@ -24,12 +24,13 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
     ? Math.max(0, Math.min(100, (indexed / size) * 100)) : 0;
 
   return (
-    <header className="workspace-header" aria-label="Workspace controls and status">
+    <header className="workspace-header">
       <div className="status-strip" role="status" aria-live="polite">
         <span className="status-metric status-records">{status.indexedRecords} rows</span>
         <span className="status-metric status-bytes">{formatBytes(status.indexedBytes)} / {formatBytes(status.sizeBytes)}</span>
         <span className="status-metric status-valid"><Check size={13} aria-hidden />{status.validRecords}</span>
         <span
+          role="status"
           className={`status-metric status-problems${status.problemRecords === '0' ? '' : ' status-problem'}`}
           data-empty={status.problemRecords === '0'}
           title="Problem records observed during hydration for this document generation; this is not a complete-file total"

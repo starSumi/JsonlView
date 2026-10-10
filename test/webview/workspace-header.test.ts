@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { WorkspaceHeader, type WorkspaceHeaderProps } from '../../src/webview/workspace-header';
 
 const status: WorkspaceHeaderProps = {
-  children: React.createElement('button', { 'aria-label': 'Rebuild index' }, 'Rebuild'),
+  children: React.createElement('button', { type: 'button', 'aria-label': 'Rebuild index' }, 'Rebuild'),
   indexedBytes: '512',
   sizeBytes: '1024',
   indexedRecords: '24',
@@ -35,7 +35,6 @@ describe('workspace header status', () => {
     const markup = render();
 
     expect(markup).toContain('<header class="workspace-header"');
-    expect(markup).toContain('aria-label="Workspace controls and status"');
     expect(markup).toContain('aria-label="Open Agent Sessions"');
     expect(markup).toContain('24 rows');
     expect(markup).toContain('512 B / 1.0 KB');
