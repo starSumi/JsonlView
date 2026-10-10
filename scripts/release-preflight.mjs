@@ -478,6 +478,10 @@ async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdenti
   if (unexpectedVsixPaths.length > 0) {
     fail('vsixCandidate.scope', `VSIX contains files outside the release allowlist: ${unexpectedVsixPaths.join(', ')}`);
   }
+  const unreferencedVsixAssets = findUnreferencedVsixAssets(archiveFiles?.map((file) => file.path), publicSurface.referencedAssets);
+  if (unreferencedVsixAssets.length > 0) {
+    fail('vsixCandidate.scope', `VSIX contains retired or unreferenced showcase assets: ${unreferencedVsixAssets.join(', ')}`);
+  }
   if (archiveIdentity !== undefined) {
     for (const issue of compareVsixArchiveIdentity(archiveIdentity, manifest.package, 'sidecar package')) {
       fail('vsixCandidate.archiveIdentity', issue);
@@ -749,8 +753,8 @@ export function findForbiddenDistributionPaths(paths, prefix = '') {
     }
     const normalized = value.replaceAll('\\', '/');
     const path = normalized.startsWith(normalizedPrefix) ? normalized.slice(normalizedPrefix.length) : normalized;
-    if (/^(?:src|test|scripts|\.github|report|showcase|harness)(?:\/|$)/i.test(path)
-      || /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|.*\.(?:pem|key|p12|pfx)|.*\.provenance\.json)$/i.test(path)) {
+    if (/(?:^|\/)(?:src|source|test|scripts|target|\.github|report|showcase|harness)(?:\/|$)/i.test(path)
+      || /(?:^|\/)(?:\.vscodeignore|Cargo(?:\.lock|\.toml)?|build\.rs|\.env(?:\..*)?|\.npmrc|.*\.(?:pem|key|p12|pfx)|.*\.provenance\.json)$/i.test(path)) {
       forbidden.push(normalized);
     }
   }
@@ -764,6 +768,19 @@ export function findUnexpectedVsixDistributionPaths(paths) {
     .filter((path) => typeof path !== 'string' || !isAllowedVsixPath(path.replaceAll('\\', '/')))
     .map((path) => typeof path === 'string' ? path : '<invalid-path>')
     .sort(stableCompare);
+}
+
+/** Reject showcase screenshots that are no longer part of the README surface. */
+export function findUnreferencedVsixAssets(paths, referencedAssets) {
+  if (!Array.isArray(paths) || !Array.isArray(referencedAssets)) return ['<missing-inventory>'];
+  const referenced = new Set(referencedAssets
+    .filter((asset) => typeof asset === 'string')
+    .map((asset) => asset.replaceAll('\\', '/')));
+  return [...new Set(paths
+    .filter((path) => typeof path === 'string')
+    .map((path) => path.replaceAll('\\', '/'))
+    .filter((path) => path.toLowerCase().startsWith('extension/docs/assets/'))
+    .filter((path) => !referenced.has(path.slice('extension/'.length))))].sort(stableCompare);
 }
 
 function isAllowedVsixPath(path) {
