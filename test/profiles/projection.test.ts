@@ -11,6 +11,7 @@ import {
   codexFixture,
   codexTraceFixture,
   genericAgentFixture,
+  piCodingAgentFixture,
 } from './fixtures';
 
 const context = { generation: 'generation-redacted' };
@@ -317,6 +318,17 @@ describe('Agent profile projection', () => {
     expect(rows[2]).toMatchObject({ toolCallId: 'tool-redacted', actor: 'tool' });
     expect(rows[3]).toMatchObject({ severity: 'error' });
     expect(rows[4]?.summary).toContain('future_claude_type');
+  });
+
+  it('projects Pi session, assistant tool calls, and tool results with source evidence', () => {
+    const registry = new AgentProfileRegistry();
+    const rows = piCodingAgentFixture.map((value) => registry.project('pi-coding-agent', { value }, context));
+    expect(rows.map((row) => row.eventKind)).toEqual(['session', 'checkpoint', 'checkpoint', 'tool_call', 'tool_result']);
+    expect(rows[0]).toMatchObject({ sessionId: '01pi-session-redacted', actor: 'system' });
+    expect(rows[3]).toMatchObject({ actor: 'assistant', toolCallId: 'tool-call-redacted', model: 'model-redacted' });
+    expect(rows[3]?.usage).toEqual({ input: 10, output: 4, total: 14 });
+    expect(rows[4]).toMatchObject({ actor: 'tool', toolCallId: 'tool-call-redacted', status: 'completed' });
+    expect(rows[2]?.derivedFields).toMatchObject({ toolsAdded: '1' });
   });
 
   it('projects current Claude control records instead of labelling them unknown', () => {

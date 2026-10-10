@@ -18,6 +18,7 @@ import {
   codexTraceFixture,
   genericAgentFixture,
   ordinaryJsonlFixture,
+  piCodingAgentFixture,
 } from './fixtures';
 
 const samples = (values: readonly unknown[]): GenericRecordSample[] => values.map((value, index) => ({ value, ordinal: String(index + 1) }));
@@ -33,6 +34,7 @@ describe('AgentProfileRegistry detection', () => {
       'codex-history',
       'codex-session-index',
       'claude-code-session',
+      'pi-coding-agent',
       'generic-agent-events',
       'opentelemetry',
       'software-engineering-agent',
@@ -253,6 +255,17 @@ describe('AgentProfileRegistry detection', () => {
     const decision = new AgentProfileRegistry().detect(samples(claudeFixture));
     expect(decision.selectedProfileId).toBe('claude-code-session');
     expect(decision.detections.find((result) => result.profileId === 'codex-rollout')?.requiredEvidenceMet).toBe(false);
+  });
+
+  it('detects Pi coding-agent sessions from their versioned header and nested message contract', () => {
+    const registry = new AgentProfileRegistry();
+    const decision = registry.detect(samples(piCodingAgentFixture));
+    expect(decision.selectedProfileId).toBe('pi-coding-agent');
+    expect(decision.detections.find((result) => result.profileId === 'pi-coding-agent')?.requiredEvidenceMet).toBe(true);
+    expect(registry.detect(samples([
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'ordinary' }] } },
+      { type: 'message', message: { role: 'user', content: 'ordinary' } },
+    ])).selectedProfileId).toBe('generic');
   });
 
   it('detects Claude job timelines from their distinct lifecycle envelope', () => {

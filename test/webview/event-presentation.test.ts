@@ -925,6 +925,63 @@ describe('structured agent event presentation', () => {
     expect(model?.metadata).toContainEqual({ label: 'project', value: 'C:/redacted/project' });
   });
 
+  it('renders Pi thinking, tool calls, tool results, and system tool declarations', () => {
+    const profile = {
+      profileId: 'pi-coding-agent', eventKind: 'message' as const, actor: 'assistant' as const,
+      toolCallId: 'tool-call-redacted', summary: 'Pi assistant', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Inspect the source' },
+          { type: 'toolCall', id: 'tool-call-redacted', name: 'read', arguments: { path: 'README.md' } },
+          { type: 'text', text: 'Done' },
+        ],
+      },
+    }, profile);
+    expect(model?.title).toBe('Pi · message');
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'thinking 1', text: 'Inspect the source' }),
+      expect.objectContaining({ title: 'Tool call · read', code: expect.stringContaining('README.md') }),
+      expect.objectContaining({ title: 'text 3', text: 'Done' }),
+    ]));
+
+    const system = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'system',
+        content: '',
+        sections: { preamble: 'System preamble' },
+        toolsAdded: [{ name: 'read', description: 'Read files', parameters: { type: 'object' } }],
+      },
+    }, { ...profile, eventKind: 'checkpoint', actor: 'system' });
+    expect(system?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'System section · preamble', text: 'System preamble' }),
+      expect.objectContaining({ title: 'Tool declaration · read', text: 'Read files' }),
+      expect.objectContaining({ title: 'Tool schema · read', code: expect.stringContaining('object') }),
+    ]));
+
+    const result = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'tool-call-redacted',
+        content: [{ type: 'text', text: 'file contents' }, { type: 'image', data: 'redacted', mimeType: 'image/png' }],
+        details: { truncated: false },
+        nestedCalls: { complete: true, calls: [] },
+        isError: false,
+      },
+    }, { ...profile, eventKind: 'tool_result', actor: 'tool' });
+    expect(result?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'text 1', text: 'file contents' }),
+      expect.objectContaining({ title: 'image 2', code: expect.stringContaining('image/png') }),
+      expect.objectContaining({ title: 'Tool details', code: expect.stringContaining('truncated') }),
+      expect.objectContaining({ title: 'Nested tool calls', code: expect.stringContaining('complete') }),
+    ]));
+  });
+
   it('does not inspect high-cardinality event fields beyond their display budgets', () => {
     let outOfBudgetReads = 0;
     const guarded = <T,>(length: number, value: T, boundary: number): T[] => {

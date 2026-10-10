@@ -337,6 +337,7 @@ function own(object: EventObject, key: string): unknown {
 function presentationProduct(profile?: AgentRowProjection): string {
   if (profile?.profileId === 'codex-rollout' || profile?.profileId === 'codex-exec-jsonl' || profile?.profileId === 'codex-trace') return 'Codex';
   if (profile?.profileId === 'claude-code-session') return 'Claude';
+  if (profile?.profileId === 'pi-coding-agent') return 'Pi';
   return 'Agent';
 }
 
@@ -755,7 +756,7 @@ function addDiffCandidate(sections: EventPresentationSection[], title: string, v
   return true;
 }
 
-function appendClaudeContentBlock(
+function appendAgentContentBlock(
   sections: EventPresentationSection[],
   block: unknown,
   title: string,
@@ -789,7 +790,7 @@ function appendClaudeContentBlock(
     if (Array.isArray(result)) {
       const count = Math.min(result.length, 32);
       for (let index = 0; index < count; index += 1) {
-        appendClaudeContentBlock(sections, result[index], `${title} · ${String(index + 1)}`, role);
+        appendAgentContentBlock(sections, result[index], `${title} · ${String(index + 1)}`, role);
       }
     } else if (typeof result === 'string') {
       addTextCandidate(sections, title, result, false);
@@ -804,6 +805,18 @@ function appendClaudeContentBlock(
   if (type === 'tool_use' || type === 'server_tool_use') {
     const input = own(object, 'input') ?? own(object, 'arguments');
     addCodeCandidate(sections, title, input ?? object, 'json');
+    return;
+  }
+
+  if (type === 'toolcall' || type === 'tool_call') {
+    const name = valueLabel(own(object, 'name'));
+    const argumentsValue = own(object, 'arguments') ?? own(object, 'input');
+    addCodeCandidate(sections, name ? ('Tool call · ' + name) : title, argumentsValue ?? object, 'json');
+    return;
+  }
+
+  if (type === 'image') {
+    addCodeCandidate(sections, title, object, 'json');
     return;
   }
 
@@ -862,7 +875,7 @@ function claudeMessageSections(
         : type === 'tool_use' || type === 'server_tool_use'
           ? `Tool input${content.length > 1 ? ` ${String(index + 1)}` : ''}`
           : `${type.replaceAll('_', ' ')}${content.length > 1 ? ` ${String(index + 1)}` : ''}`;
-    appendClaudeContentBlock(sections, block, title, role);
+    appendAgentContentBlock(sections, block, title, role);
   }
   if (content.length > 32) {
     sections.push({
@@ -873,6 +886,88 @@ function claudeMessageSections(
       language: 'json',
     });
   }
+  return sections;
+}
+
+/** Pi AgentMessage is a nested, typed content contract rather than a flat text field. */
+function piMessageSections(
+  payload: EventObject,
+  profile?: AgentRowProjection,
+): EventPresentationSection[] {
+  if (profile?.profileId !== 'pi-coding-agent') return [];
+  const message = objectOf(payload.message);
+  if (!message) return [];
+  const sections: EventPresentationSection[] = [];
+  const role = valueLabel(message.role)?.toLowerCase();
+  const content = own(message, 'content');
+  if (Array.isArray(content)) {
+    const visible = Math.min(content.length, 32);
+    for (let index = 0; index < visible; index += 1) {
+      const block = content[index];
+      const blockObject = objectOf(block);
+      const type = valueLabel(blockObject?.type)?.toLowerCase() ?? 'content';
+      const name = valueLabel(blockObject?.name);
+      const title = type === 'toolcall'
+        ? (name ? 'Tool call · ' + name : 'Tool call')
+        : content.length === 1 ? (type === 'text' ? 'Message' : type.replaceAll('_', ' ')) : type.replaceAll('_', ' ') + ' ' + String(index + 1);
+      appendAgentContentBlock(sections, block, title, role);
+    }
+    if (content.length > visible) {
+      sections.push({ title: 'Additional content blocks', code: JSON.stringify({ omittedBlocks: content.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
+    }
+  } else if (typeof content === 'string' && content.length > 0) {
+    addTextCandidate(sections, role === 'system' ? 'System message' : 'Message', content, role === 'assistant');
+  }
+
+  if (role === 'bashexecution') {
+    addCodeCandidate(sections, 'Command', own(message, 'command'), 'shell');
+    addOutputCandidate(sections, 'Output', own(message, 'output'));
+    addCodeCandidate(sections, 'Execution details', message, 'json');
+  } else if (role === 'custom') {
+    addTextCandidate(sections, 'Custom message', own(message, 'content'), false);
+    addCodeCandidate(sections, 'Custom details', own(message, 'details'), 'json');
+  } else if (role === 'branchsummary' || role === 'compactionsummary') {
+    addTextCandidate(sections, role === 'branchsummary' ? 'Branch summary' : 'Compaction summary', own(message, 'summary'), true);
+    addCodeCandidate(sections, 'Summary details', own(message, 'details'), 'json');
+  }
+
+  const namedSections = objectOf(message.sections);
+  if (namedSections) {
+    let count = 0;
+    for (const key of Object.keys(namedSections)) {
+      if (count >= 32) break;
+      const value = own(namedSections, key);
+      if (value === null) {
+        addCodeCandidate(sections, 'System section · ' + key, null, 'json');
+      } else {
+        addTextCandidate(sections, 'System section · ' + key, value, true);
+      }
+      count += 1;
+    }
+  }
+
+  const toolsAdded = own(message, 'toolsAdded');
+  if (Array.isArray(toolsAdded)) {
+    const visible = Math.min(toolsAdded.length, 32);
+    for (let index = 0; index < visible; index += 1) {
+      const tool = objectOf(toolsAdded[index]);
+      if (!tool) continue;
+      const name = valueLabel(own(tool, 'name')) ?? String(index + 1);
+      addTextCandidate(sections, 'Tool declaration · ' + name, own(tool, 'description'));
+      addCodeCandidate(sections, 'Tool schema · ' + name, own(tool, 'parameters'), 'json');
+    }
+    if (toolsAdded.length > visible) {
+      sections.push({ title: 'Additional tool declarations', code: JSON.stringify({ omittedTools: toolsAdded.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
+    }
+  }
+
+  const toolsRemoved = own(message, 'toolsRemoved');
+  if (Array.isArray(toolsRemoved)) {
+    const names = toolsRemoved.slice(0, 32).map((item) => valueLabel(objectOf(item)?.name) ?? valueLabel(item)).filter((name): name is string => Boolean(name));
+    if (names.length > 0) addTextCandidate(sections, 'Tools removed', names.join(', '));
+  }
+  addCodeCandidate(sections, 'Tool details', own(message, 'details'), 'json');
+  addCodeCandidate(sections, 'Nested tool calls', own(message, 'nestedCalls'), 'json');
   return sections;
 }
 
@@ -1280,12 +1375,14 @@ export function buildAgentEventPresentation(
     ...claudeMessageSections(payload, profile),
     ...claudeAttachmentSections(payload, profile),
   ];
-  const messageText = claudeSections.length > 0 ? {} : textSection(content);
+  const piSections = piMessageSections(payload, profile);
+  const specializedSections = claudeSections.length > 0 ? claudeSections : piSections;
+  const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
   const isPrompt = lowerKind === 'last-prompt' || lowerKind === 'prompt';
   const isObservation = profile?.eventKind === 'observation' || lowerKind === 'observation';
-  if (claudeSections.length > 0) {
-    sections.push(...claudeSections);
+  if (specializedSections.length > 0) {
+    sections.push(...specializedSections);
   } else if (messageText.text && (
     profile?.eventKind === 'message'
     || lowerKind.includes('message')
@@ -1425,7 +1522,7 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
       ) : null}
       <div className="event-sections">
         {model.sections.map((section, index) => (
-          <section className="event-section" key={`${section.title}:${index}`}>
+          <section className="event-section" key={`${section.title}:${section.fullText ?? section.text ?? section.code ?? section.language ?? "empty"}:${section.contentMode ?? "auto"}:${section.copyText ?? ""}`}>
             <div className="event-section-header">
               <h3>{section.title}</h3>
               <div className="event-section-actions">

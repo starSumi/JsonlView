@@ -529,3 +529,64 @@ export const tracingSubscriberLogFixture = [
     target: 'codex_app_server::transport',
   },
 ] as const;
+
+export const piCodingAgentFixture = [
+  {
+    type: 'session',
+    version: 3,
+    id: '01pi-session-redacted',
+    timestamp: '2026-10-09T02:15:57.533Z',
+    cwd: 'E:/redacted',
+  },
+  {
+    type: 'model_change',
+    id: 'model-change-redacted',
+    parentId: null,
+    timestamp: '2026-10-09T02:15:57.533Z',
+    provider: 'provider-redacted',
+    modelId: 'model-redacted',
+  },
+  {
+    type: 'message',
+    id: 'message-system-redacted',
+    parentId: 'model-change-redacted',
+    timestamp: '2026-10-09T02:16:09.569Z',
+    message: {
+      role: 'system',
+      content: '',
+      sections: { preamble: 'System preamble', tools: 'Tool instructions' },
+      toolsAdded: [{ name: 'read', description: 'Read a file', parameters: { type: 'object' } }],
+    },
+  },
+  {
+    type: 'message',
+    id: 'message-assistant-redacted',
+    parentId: 'message-system-redacted',
+    timestamp: '2026-10-09T02:16:39.910Z',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'Inspect the source first', thinkingSignature: 'signature-redacted' },
+        { type: 'toolCall', id: 'tool-call-redacted', name: 'read', arguments: { path: 'README.md' } },
+        { type: 'text', text: 'I will inspect the file.' },
+      ],
+      model: 'model-redacted',
+      usage: { input: 10, output: 4, total: 14 },
+      stopReason: 'toolUse',
+    },
+  },
+  {
+    type: 'message',
+    id: 'message-tool-redacted',
+    parentId: 'message-assistant-redacted',
+    timestamp: '2026-10-09T02:16:40.000Z',
+    message: {
+      role: 'toolResult',
+      toolCallId: 'tool-call-redacted',
+      toolName: 'read',
+      content: [{ type: 'text', text: 'file contents' }, { type: 'image', data: 'redacted', mimeType: 'image/png' }],
+      details: { truncated: false },
+      isError: false,
+    },
+  },
+] as const;
