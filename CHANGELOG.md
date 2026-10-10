@@ -2,107 +2,58 @@
 
 ## Unreleased
 
-- Render each Codex function-call output once in the structured detail view,
-  while preserving the single source payload in Raw.
-- Project Claude top-level tool results into bounded Read, Write/Edit patch,
-  Search, shell, NotebookEdit, and source-metadata sections while preserving
-  unknown fields and complete source records in Raw.
-- Render Pi tool-result detail diffs and patches with the shared diff view,
-  preserving bounded previews and unknown metadata alongside the original Raw.
-- Keep record selection and scroll position when a pointer focuses the grid
-  gutter or empty space, and preserve the active cell when keyboard focus returns.
-- Preserve the selected record and detail drawer across a manual index rebuild,
-  refreshing by physical record identity and falling back only when that record moved or disappeared.
-- Merge Session Navigator continuation pages inside one SQLite transaction by
-  copying the current generation in-database, applying bounded page rows, and
-  reconciling parent edges before the generation switch. Existing catalog rows
-  remain readable on page failure.
-- Add a transport-independent, disabled-by-default MCP navigation contract that
-  negotiates 2026-07-28 and 2025-11-25, exposes one bounded read-only metadata
-  query, and keeps v2 wire integration separate from the legacy SDK line.
-- Extract the engine snapshot fingerprint helpers, Navigator file scanning and
-  provider dispatch, and the bounded extension Insights query behind their
-  existing facades. Generation fencing, cancellation, read-only source
-  ownership, and the VS Code IPC contract remain unchanged.
-- Preserve Navigator continuation when provider discovery hits a bounded
-  budget, advance Codex cursors by consumed source rows, and propagate archive
-  probe cancellation instead of silently completing a partial scan.
-- Avoid emitting an empty Claude continuation when discovery stops before a
-  page makes progress.
-- Keep an explicit Rebuild action in the header toolbar when an appended JSONL
-  source leaves the current snapshot pending.
-- Register a dedicated JsonlView Output channel for bounded lifecycle and
-  diagnostic summaries.
-- Add recoverable commands to explain or copy the last bounded diagnostic after
-  its notification is dismissed.
-- Resolve Claude child sessions across activity pages while keeping confirmed
-  missing parents as standalone orphans.
-- Fix Codex session links when stored rollout paths use a Windows junction or
-  home-directory alias. Rebuilt indexes resolve links within the authorized home.
-- Show initial session loading, retry and partial-index states; use native agent
-  names and Claude subagent layouts, with concise tree labels and one sort menu.
-- Add a local source form for files, folders, drops, and bounded JSONL paste
-  previews. Pasted content stays temporary and never changes provider data.
-- Keep a dashed, keyboard-accessible source drop target above the session list,
-  with a file-picker fallback and the same explicit source authorization.
-- Detect standard Agent homes after Navigator opt-in, keep removed sources
-  excluded, and show sessions instead of falling back to raw rollout rows.
-  Codex supports a separate SQLite home and detects WAL-only metadata updates.
-- Restore detected Codex or Claude homes directly from Add Source, and expose
-  bounded Webview diagnostics with copy and best-effort VS Code Chat handoff.
-- Project Claude prompt snapshots and tool descriptions into bounded structured
-  detail sections while preserving the full attachment in Raw JSON.
-- Keep an initially empty, truncated Claude scan provisional and reconcile one
-  bounded continuation page so parent and subagent rows settle before first
-  render.
-- Reopen the navigator from its durable catalog, probing fingerprints before
-  rescanning and retaining cached rows while changed sources rebuild.
-- Keep Claude fingerprint probes stat-only; parse bounded agent sidecars only
-  during a metadata scan so probe budgets cannot hide source changes.
-- Add an opt-in pi coding-agent session adapter for the standard `~/.pi/agent`
-  home and `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR` overrides, preserving bounded titles, activity
-  times, and cross-file fork relationships without copying transcript bodies.
-- Project Pi AgentMessage thinking, text, image, and tool-call blocks, system
-  sections, tool declarations, and tool-result metadata into bounded detail
-  sections while keeping the original JSONL authoritative in Raw.
-- Establish the runtime-bounded decomposition plan, fnm-owned Node project pin,
-  and changed-file Biome lint gate before further module extraction.
-- Let VS Code's native Open With own JSONL editor selection; remove the
-  duplicate JsonlView editor-title button while keeping the Navigator action.
-- Read Claude agent sidecars within a bounded budget so nested parentAgentId
-  and toolUseId metadata survives paging and confirmed missing parents remain
-  explicit orphans.
-- Add a no-op-by-default observability contract for future opt-in OTLP export;
-  source bodies, paths, prompts, credentials, and arbitrary JSON are rejected.
+- Continue the staged vertical migration behind the existing facades, with
+  isolated barrel exports and tests colocated with their owning modules.
+- Evaluate additional provider adapters and opt-in observability surfaces under
+  the same bounded, read-only contracts.
+- Track follow-up release work in the decision records and reviewed showcase
+  acceptance notes.
 
-- Make Windows native release builds reproducible with the MSVC /Brepro
-  linker flag while preserving debug metadata and portable builds.
-- Add a synthetic in-memory staged-mutation benchmark with an independent byte
-  oracle, p50/p95 summaries, and deterministic failure replay receipts.
-- Add a dormant, opt-in-only read-only navigation facade for bounded local
-  agent metadata projections; no provider scanning, MCP process, or source
-  mutation is enabled by default.
-- Add a synthetic provider and immutable navigation-index contract for bounded
-  topology, redaction, diagnostics, and generation-rebuild experiments; no
-  producer store is read and no runtime activation is added.
-- Add a disabled-by-default Session Navigator TreeView experiment with explicit
-  file roots, bounded metadata-only JSONL adapters, a global SQLite catalog, and
-  read-only reveal intents into Data Studio; no MCP transport or source writes
-  are enabled.
-- Add provider-native Codex and Claude session projections with activity-first
-  sorting, title provenance, parent/subagent/orphan relationships, explicit
-  Navigator focus actions, default-root detection, and confirmed custom-root
-  drops and source intake; provider stores remain read-only and no
-  transcript bytes are copied into the product catalog.
+## 0.2.7 - 2026-10-10
 
-## 0.2.7 - 2026-10-06
-
+- Render Codex function-call output once, project Claude top-level tools and
+  prompt attachments, and render Pi thinking, text, tool calls, tool results,
+  diffs, and patches through bounded shared detail components while preserving
+  each source payload in Raw.
+- Keep record, cell, and scroll selection stable across pointer focus, keyboard
+  navigation, empty grid space, append invalidation, and manual rebuilds;
+  preserve the selected detail drawer by physical record identity.
+- Add bounded Session Navigator pagination with transactional SQLite generation
+  swaps, parent-edge reconciliation, cancellation, non-progress guards,
+  durable catalog reuse, stat-only fingerprint probes, and explicit loading,
+  retry, partial-index, and pending-Rebuild states.
+- Add provider-native Codex and Claude projections with activity-first sorting,
+  native titles, child-session and orphan relationships, junction and home-alias
+  resolution, bounded sidecar metadata, default-root detection, and read-only
+  custom source intake with a keyboard-accessible drop target and paste preview.
+- Add an opt-in pi coding-agent adapter for the standard agent home and
+  `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR` overrides, preserving
+  bounded titles, activity times, and cross-file fork relationships without
+  copying transcript bodies.
+- Add a disabled-by-default, transport-independent MCP navigation contract
+  negotiating 2026-07-28 and 2025-11-25 with one bounded read-only metadata
+  query, while keeping v2 wire integration separate from the legacy SDK line.
+- Register a dedicated bounded JsonlView Output channel and recoverable
+  commands to explain or copy the last diagnostic, with best-effort VS Code
+  Chat handoff from the Navigator.
+- Add a no-op-by-default OTLP observability contract that rejects source bodies,
+  paths, prompts, credentials, and arbitrary JSON.
+- Extract engine fingerprinting, Navigator scanning and provider dispatch, and
+  the extension Insights query behind existing facades without changing
+  generation fencing, cancellation, read-only ownership, or VS Code IPC.
+- Establish the fnm-owned Node pin, runtime-bounded decomposition plan, and
+  changed-file Biome lint gate; let VS Code's native Open With own JSONL editor
+  selection while retaining the Navigator action.
+- Keep the source file authoritative while adding a synthetic immutable provider
+  index contract, staged-mutation benchmark with byte oracle and p50/p95
+  receipts, and a dormant opt-in read-only navigation facade; none reads a
+  producer store or enables source mutation.
+- Make Windows native release builds reproducible with MSVC `/Brepro`, and make
+  VSIX candidate archives reproducible when `SOURCE_DATE_EPOCH` is fixed with
+  the selected epoch recorded in provenance.
 - Improve interaction coverage for menu dismissal, paging, semantic views, and
-  nested record details.
-- Make VSIX candidate archives reproducible when `SOURCE_DATE_EPOCH` is fixed,
-  with the selected epoch recorded in candidate provenance.
-- Add a synthetic Codex rollout Insights showcase covering category and time
-  distribution views.
+  nested details, and add a synthetic Codex rollout Insights showcase for
+  category and time distributions.
 
 ## 0.2.6 - 2026-10-06
 
