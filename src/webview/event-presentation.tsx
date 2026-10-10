@@ -1527,7 +1527,7 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
           const occurrence = sectionKeyOccurrences.get(sectionKeyBase) ?? 0;
           sectionKeyOccurrences.set(sectionKeyBase, occurrence + 1);
           return (
-          <section className="event-section" key={`${sectionKeyBase}:${occurrence}`}> 
+            <section className="event-section" key={`${sectionKeyBase}:${occurrence}`}>
             <div className="event-section-header">
               <h3>{section.title}</h3>
               <div className="event-section-actions">
@@ -1586,7 +1586,7 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
                 ? <div className="event-code-language"><HighlightedCode key={`code:${section.code}`} source={expandedSections.has(index) ? section.fullText ?? section.code : section.code} language={section.language} ariaLabel={`${section.title} code`} {...(section.codeWrap ? { className: 'is-wrapped' } : {})} /></div>
                 : <ContentView key={`code:${section.code}`} text={expandedSections.has(index) ? section.fullText ?? section.code : section.code} truncated={section.truncated === true && !expandedSections.has(index)} ariaLabel={`${section.title} code`} />
             ) : null}
-          </section>
+            </section>
           );
         })}
       </div>
