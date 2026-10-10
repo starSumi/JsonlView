@@ -369,8 +369,8 @@ describe('session navigator source boundary', () => {
       maxEntities: 10, maxRelations: 10, maxRecords: 20, maxFiles: 4, maxBytes: 100_000, maxMilliseconds: 2_000,
     });
     expect(result.snapshot.locations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ nativeId: 'root-1', relativePath: 'sessions\\rollout-shared.jsonl', rowOrdinal: '0' }),
-      expect.objectContaining({ nativeId: 'child-1', relativePath: 'sessions\\rollout-shared.jsonl', rowOrdinal: '1' }),
+      expect.objectContaining({ nativeId: 'root-1', relativePath: join('sessions', 'rollout-shared.jsonl'), rowOrdinal: '0' }),
+      expect.objectContaining({ nativeId: 'child-1', relativePath: join('sessions', 'rollout-shared.jsonl'), rowOrdinal: '1' }),
     ]));
   });
 
