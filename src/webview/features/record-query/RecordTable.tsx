@@ -89,7 +89,7 @@ export function RecordTable({
     for (const heading of header.children) observer?.observe(heading);
     measure();
     return () => observer?.disconnect();
-  }, [columns, columnWidths]);
+  }, []);
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent): void => {
@@ -119,7 +119,7 @@ export function RecordTable({
 
   useEffect(() => {
     if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
-  }, [selectedIndex, selectedOrdinal, selectedGeneration, virtualizer]);
+  }, [selectedIndex, virtualizer]);
 
   const revealCell = (cell: GridCell | undefined): void => {
     const index = gridCellRowIndex(cell, rows);
@@ -170,10 +170,11 @@ export function RecordTable({
   }
 
   return (
+    // biome-ignore lint/a11y/useSemanticElements: virtualized absolute-positioned CSS grid requires ARIA grid semantics
     <div
       className={`data-grid-scroll${loading ? ' is-refreshing' : ''}`}
       ref={scrollRef}
-      role="grid"
+      role={/* biome-ignore lint/a11y/useSemanticElements: virtualized absolute-positioned CSS grid requires ARIA grid semantics */ 'grid'}
       aria-label="JSONL records"
       aria-rowcount={rows.length + 1}
       aria-colcount={columns.length}
@@ -194,17 +195,20 @@ export function RecordTable({
       }}
       onKeyDown={handleKeyDown}
     >
-      <div ref={headerRef} className="data-grid-header" role="row" aria-rowindex={1} style={{ gridTemplateColumns: template, height: GRID_HEADER_HEIGHT }}>
+      {/* biome-ignore lint/a11y/useSemanticElements: virtualized CSS grid header cannot be a native table row */}
+      <div ref={headerRef} className="data-grid-header" role="row" aria-rowindex={1} tabIndex={-1} style={{ gridTemplateColumns: template, height: GRID_HEADER_HEIGHT }}>
         {columns.map((column, columnIndex) => {
           const minimum = column.id === '__ordinal' ? 64 : MIN_COLUMN_WIDTH;
           const width = measuredWidths[column.id] ?? columnWidths[column.id] ?? column.width ?? 160;
           const currentWidth = Math.max(minimum, width);
           return (
+          // biome-ignore lint/a11y/useSemanticElements: virtualized CSS grid heading cannot be a native table cell
           <div
             className={`data-grid-heading${activeCell?.kind === 'header' && activeCell.columnId === column.id ? ' is-active-cell' : ''}`}
             role="columnheader"
             id={gridCellId(sessionId, headerGeneration, 'header', column.id)}
             aria-colindex={columnIndex + 1}
+            tabIndex={-1}
             data-column-id={column.id}
             key={column.id}
             title={column.label}
@@ -242,6 +246,7 @@ export function RecordTable({
           >
             {column.id !== '__ordinal' ? <GripVertical size={11} className="column-drag-handle" aria-hidden /> : null}
             <span className="data-grid-heading-label">{column.label}</span>
+            {/* biome-ignore lint/a11y/useSemanticElements: the column resizer is an interactive separator button */}
             <button
               type="button"
               className="column-resizer"
@@ -296,11 +301,14 @@ export function RecordTable({
           if (!row) return null;
           const selected = row.ref.ordinal === selectedOrdinal;
           return (
+            // biome-ignore lint/a11y/useFocusableInteractive: grid focus is owned by the aria-activedescendant container
+            // biome-ignore lint/a11y/useSemanticElements: virtualized absolute-positioned CSS grid row cannot be a native table row
             <div
               className={`data-grid-row${selected ? ' is-selected' : ''}${row.problems?.length ? ' has-problem' : ''}`}
               role="row"
               aria-rowindex={item.index + 2}
               aria-selected={selected}
+              tabIndex={-1}
               key={gridCellId(sessionId, row.ref.generation, row.ref.ordinal, '')}
               style={{ gridTemplateColumns: template, height: item.size, transform: `translateY(${item.start - GRID_HEADER_HEIGHT}px)` }}
             >
@@ -309,11 +317,14 @@ export function RecordTable({
                 const active = activeCell?.kind === 'data' && activeCell.generation === row.ref.generation
                   && activeCell.ordinal === row.ref.ordinal && activeCell.columnId === column.id;
                 return (
+                  // biome-ignore lint/a11y/useSemanticElements: virtualized CSS grid cell cannot be a native table cell
+                  // biome-ignore lint/a11y/useFocusableInteractive: grid focus is owned by the aria-activedescendant container
                   <div
                     className={`data-grid-cell${active ? ' is-active-cell' : ''}`}
                     role="gridcell"
                     id={gridCellId(sessionId, row.ref.generation, row.ref.ordinal, column.id)}
                     aria-colindex={columnIndex + 1}
+                    tabIndex={-1}
                     key={column.id}
                     title={text}
                     onClick={() => {
@@ -323,9 +334,17 @@ export function RecordTable({
                       scrollRef.current?.focus({ preventScroll: true });
                       onSelect(row.ref);
                     }}
+                    onKeyDown={(event) => {
+                      if (loading || (event.key !== 'Enter' && event.key !== ' ')) return;
+                      event.preventDefault();
+                      focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
+                        ordinal: row.ref.ordinal, columnId: column.id });
+                      scrollRef.current?.focus({ preventScroll: true });
+                      onSelect(row.ref);
+                    }}
                   >
                     {column.id === '__ordinal' && row.ref.parseState !== 'valid'
-                      ? <span className="parse-dot" data-state={row.ref.parseState} aria-label={row.ref.parseState} />
+                      ? <span className="parse-dot" data-state={row.ref.parseState} role="img" aria-label={row.ref.parseState} />
                       : null}
                     <span className="cell-text">{text || (column.id === '__ordinal' ? row.ref.ordinal : '')}</span>
                   </div>

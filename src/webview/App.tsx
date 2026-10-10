@@ -304,7 +304,7 @@ export function App(): React.JSX.Element {
       ...(predicate ? { predicate } : {}),
     });
     dispatch({ type: 'REQUEST_SENT', request });
-  }, [finishCancelled]);
+  }, [finishCancelled, queryController.query]);
 
   const requestDetail = useCallback((ref: RecordRef, full = false): void => {
     const client = clientRef.current;
@@ -428,7 +428,7 @@ export function App(): React.JSX.Element {
     const viewport = queryController.currentViewportOptions();
     requestRows({ ...viewport, columns: selected }, { preserveOnRebuild: true });
   }, [requestRows, state.columnVisibility, state.columns, state.invalidationReason,
-    state.page, state.pending.rows, state.schema, state.summary]);
+    state.page, state.pending.rows, state.schema, state.summary, queryController.currentViewportOptions]);
 
   useEffect(() => {
     if (
@@ -713,7 +713,7 @@ export function App(): React.JSX.Element {
         onRebuild={rebuild}
         onOpenNavigator={openNavigator}
       >
-        <div className="toolbar-context" title="File identity is provided by the VS Code editor tab" aria-label="JSONL workspace">
+        <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
         </div>
         <label className="compact-field profile-field">
@@ -1016,7 +1016,9 @@ export function App(): React.JSX.Element {
         </section>
         {drawerOpen ? (
           <>
-            {!narrowViewport ? <div
+            {!narrowViewport ? <>
+              {/* biome-ignore lint/a11y/useSemanticElements: the splitter is an interactive resize control, not a document rule */}
+              <div
               className="detail-splitter"
               role="separator"
               aria-label="Resize record detail"
@@ -1037,7 +1039,8 @@ export function App(): React.JSX.Element {
                 const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
                 dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(DEFAULT_DETAIL_WIDTH, containerWidth) });
               }}
-            /> : null}
+              />
+            </> : null}
             <DetailDrawer
               id={drawerId}
               modal={narrowViewport}

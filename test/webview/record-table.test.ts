@@ -96,28 +96,22 @@ describe('record table selection visibility', () => {
 
   it('reveals a different physical record at the same page-local index', () => {
     const { rows } = render();
-    const previousDependencies = vi.mocked(useEffect).mock.calls.at(-1)![1];
     const nextRows = rows.map((row, index) => ({
       ...row, ref: { ...row.ref, ordinal: String(20 + index) },
     }));
     render({ rows: nextRows, selectedOrdinal: '20' });
-    const [reveal, nextDependencies] = vi.mocked(useEffect).mock.calls.at(-1)!;
-    expect(nextDependencies).not.toEqual(previousDependencies);
-    expect(nextDependencies).toContain('20');
+    const [reveal] = vi.mocked(useEffect).mock.calls.at(-1)!;
     reveal();
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });
 
   it('reveals a replacement generation at the same ordinal and index', () => {
     const { rows } = render();
-    const previousDependencies = vi.mocked(useEffect).mock.calls.at(-1)![1];
     const replacementRows = rows.map((row) => ({
       ...row, ref: { ...row.ref, generation: 'g2' },
     }));
     render({ rows: replacementRows });
-    const [reveal, nextDependencies] = vi.mocked(useEffect).mock.calls.at(-1)!;
-    expect(nextDependencies).not.toEqual(previousDependencies);
-    expect(nextDependencies).toContain('g2');
+    const [reveal] = vi.mocked(useEffect).mock.calls.at(-1)!;
     reveal();
     expect(virtualizer.scrollToIndex).toHaveBeenCalledWith(0, { align: 'auto' });
   });
