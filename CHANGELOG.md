@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Extract the Integrated Session profile policy behind a pure, facade-preserving
+  module with focused column and predicate-field coverage.
 - Continue the staged vertical migration behind the existing facades, with
   isolated barrel exports and tests colocated with their owning modules.
 - Evaluate additional provider adapters and opt-in observability surfaces under
