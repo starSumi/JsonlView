@@ -99,6 +99,20 @@ describe('structured agent event presentation', () => {
     expect(model?.sections[0]?.text).toContain('first line\nsecond line');
   });
 
+  it('renders one section for a single Codex function_call_output item', () => {
+    const value = {
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        output: '{"agents":[{"agent_name":"/root","agent_status":"running"}]}',
+      },
+    };
+    const model = buildAgentEventPresentation(value, {
+      profileId: 'codex-rollout', eventKind: 'tool_result', summary: 'output', evidence: [], confidence: 'source',
+    });
+    expect(model?.sections.filter((section) => section.title === 'Tool result')).toHaveLength(1);
+  });
+
   it('uses Markdown by default only for assistant Responses message content', () => {
     const assistant = buildAgentEventPresentation({
       type: 'response_item',

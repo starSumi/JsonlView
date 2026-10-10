@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Render each Codex function-call output once in the structured detail view,
+  while preserving the single source payload in Raw.
 - Render Pi tool-result detail diffs and patches with the shared diff view,
   preserving bounded previews and unknown metadata alongside the original Raw.
 - Keep record selection and scroll position when a pointer focuses the grid

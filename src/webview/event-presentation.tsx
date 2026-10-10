@@ -1225,9 +1225,6 @@ function codexItemSections(
     case 'image_view':
       addTextCandidate(sections, 'Path', own(item, 'path'));
       break;
-    case 'function_call_output':
-      addOutputCandidate(sections, 'Tool result', own(item, 'output'));
-      break;
     default:
       break;
   }
