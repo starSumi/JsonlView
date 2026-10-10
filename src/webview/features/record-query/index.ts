@@ -21,3 +21,5 @@ export { RecordQueryControls } from './RecordQueryControls';
 export type { FilterOperatorOption, RecordQueryControlsProps } from './RecordQueryControls';
 export { RecordTable } from './RecordTable';
 export type { RecordTableProps } from './RecordTable';
+export * from './row-query-controller';
+export * from './row-query-recovery-policy';
