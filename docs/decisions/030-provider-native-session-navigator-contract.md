@@ -107,19 +107,9 @@ preview, not a session source.
 - [VS Code TreeView API and TreeDragAndDropController](https://code.visualstudio.com/api/references/vscode-api#TreeDragAndDropController)
 - [VS Code custom editor guide](https://code.visualstudio.com/api/extension-guides/custom-editors)
 - [VS Code contribution points](https://code.visualstudio.com/api/references/contribution-points)
-- Codex source study: F:/playground/codex/codex-rs/rollout,
-  F:/playground/codex/codex-rs/agent-graph-store, and the observed
-  state_5.sqlite schema. These are implementation observations, not a
-  third-party extension API contract.
-- Claude source study: F:/playground/Claude_source. This recovered tree is
-  learning evidence only and is not treated as an official Claude contract.
-- AgentsView study at F:/playground/agentsview (pinned local checkout
-  86a7682c3f78b4ecbc3ce99e2b32d231d3f15646) for normalized session metadata,
-  effective activity sorting, provider title provenance, and orphan retention.
 
 The official VS Code references define host contribution and drag/drop
-contracts. The local source studies explain observed producer shapes; they do
-not authorize access to private state or guarantee future compatibility.
+contracts.
 
 ## SQLite lifecycle and future update notifications
 

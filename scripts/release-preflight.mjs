@@ -12,6 +12,7 @@ import { computeSourceManifest, validateProvenanceSourceBinding } from './verify
 import { compareVsixArchiveIdentity, compareVsixArchiveIdentityEvidence, inspectVsixArchive } from './vsix-archive-integrity.mjs';
 import { getExtensionTarget, getReleaseTargets, resolveExtensionTarget } from './release-targets.mjs';
 import { canonicalVsixPairEvidence, computeVsixPairSha256, verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
+import { checkPublicSurface } from './check-public-surface.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -58,6 +59,17 @@ async function main() {
   const licenseText = await readFile(resolve(root, 'LICENSE.txt'), 'utf8');
   const sourceLegalFiles = await inventorySourceLegalFiles(root);
   const packageIdentity = checkPublicPackage(packageJson, licenseText);
+  const publicSurface = await checkPublicSurface(root);
+  for (const issue of publicSurface.pathLeaks) {
+    fail('publicSurface', `${issue.file}:${issue.line} contains an absolute local path marker`);
+  }
+  for (const issue of publicSurface.showcase.failures) {
+    fail('publicSurface', issue);
+  }
+  for (const asset of publicSurface.missingAssets) {
+    fail('publicSurface', `README references a missing showcase asset: ${asset}`);
+  }
+  checks.publicSurface = publicSurface;
   const extensionTarget = options.vsixTarget === undefined ? undefined : await resolveExtensionTarget(options.vsixTarget);
   const gitIdentity = await checkGitIdentity();
   const revision = gitIdentity.revision;
