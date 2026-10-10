@@ -740,20 +740,50 @@ function fileChangeDiff(value: unknown): { source: string; truncated: boolean } 
 
 function addDiffCandidate(sections: EventPresentationSection[], title: string, value: unknown): boolean {
   const diff = fileChangeDiff(value);
-  if (!diff || sections.some((section) => section.title === title)) return false;
-  const code = diff.source.length > MAX_TEXT
-    ? `${diff.source.slice(0, MAX_TEXT)}\n... [preview truncated]`
-    : diff.source;
-  const hasFullSource = !diff.truncated && diff.source.length <= MAX_EXPANDED_STRUCTURED_TEXT;
+  return diff ? addTextDiffCandidate(sections, title, diff.source, diff.truncated) : false;
+}
+
+/**
+ * Present an agent-owned textual diff through the same bounded DiffView path
+ * used by Codex FileChange records. The source remains authoritative in Raw;
+ * this helper only creates a preview and never interprets patch operations.
+ */
+function addTextDiffCandidate(
+  sections: EventPresentationSection[],
+  title: string,
+  value: unknown,
+  alreadyTruncated = false,
+): boolean {
+  if (typeof value !== 'string' || value.length === 0 || sections.some((section) => section.title === title)) return false;
+  const expanded = value.slice(0, MAX_EXPANDED_STRUCTURED_TEXT);
+  const source = expanded.length > MAX_TEXT
+    ? expanded.slice(0, MAX_TEXT) + '\n... [preview truncated]'
+    : expanded;
+  const sourceTruncated = alreadyTruncated || expanded.length < value.length;
+  const hasFullSource = !sourceTruncated;
   sections.push({
     title,
-    code,
-    ...(hasFullSource ? { fullText: diff.source } : {}),
-    truncated: diff.truncated || diff.source.length > MAX_TEXT,
+    code: source,
+    ...(hasFullSource ? { fullText: expanded } : {}),
+    truncated: sourceTruncated || expanded.length > MAX_TEXT,
     previewOnly: !hasFullSource,
     language: 'diff',
   });
   return true;
+}
+
+function addPiToolDetailDiffs(sections: EventPresentationSection[], details: unknown): void {
+  const detailObject = objectOf(details);
+  if (!detailObject) return;
+  for (const key of ['diff', 'patch'] as const) {
+    const value = own(detailObject, key);
+    const title = 'Details ' + key;
+    if (typeof value === 'string') {
+      addTextDiffCandidate(sections, title, value);
+    } else if (!addDiffCandidate(sections, title, value) && value !== undefined) {
+      addCodeCandidate(sections, title, value, 'json');
+    }
+  }
 }
 
 function appendAgentContentBlock(
@@ -994,6 +1024,7 @@ function piMessageSections(
     const names = toolsRemoved.slice(0, 32).map((item) => valueLabel(objectOf(item)?.name) ?? valueLabel(item)).filter((name): name is string => Boolean(name));
     if (names.length > 0) addTextCandidate(sections, 'Tools removed', names.join(', '));
   }
+  if (role === 'toolresult') addPiToolDetailDiffs(sections, own(message, 'details'));
   addCodeCandidate(sections, 'Tool details', own(message, 'details'), 'json');
   addCodeCandidate(sections, 'Nested tool calls', own(message, 'nestedCalls'), 'json');
   return sections;

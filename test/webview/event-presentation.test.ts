@@ -982,6 +982,86 @@ describe('structured agent event presentation', () => {
     ]));
   });
 
+  it('renders Pi tool-result detail diffs and patches through the shared DiffView without changing source values', () => {
+    const diff = ' 1 CRUD demo file\n-3 Counter: 0\n+3 Updated at step 2\n+4 Counter: 1\n';
+    const patch = '--- redacted/demo.txt\n+++ redacted/demo.txt\n@@ -1,2 +1,3 @@\n CRUD demo file\n-Counter: 0\n+Updated at step 2\n+Counter: 1\n';
+    const value = {
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'tool-call-redacted',
+        toolName: 'edit',
+        content: [{ type: 'text', text: 'Successfully replaced 1 block.' }],
+        details: { diff, patch, firstChangedLine: 3, providerExtension: { complete: true } },
+        isError: false,
+      },
+    };
+    const original = JSON.stringify(value);
+    const profile = {
+      profileId: 'pi-coding-agent', eventKind: 'tool_result' as const, actor: 'tool' as const,
+      toolCallId: 'tool-call-redacted', toolName: 'edit', summary: 'Pi edit result', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Details diff', language: 'diff', code: diff, fullText: diff, truncated: false }),
+      expect.objectContaining({ title: 'Details patch', language: 'diff', code: patch, fullText: patch, truncated: false }),
+      expect.objectContaining({ title: 'Tool details', language: 'json', code: expect.stringContaining('providerExtension') }),
+    ]));
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, { value, profile }));
+    expect(markup.match(/class="diff-toolbar"/g)).toHaveLength(2);
+    expect(markup).toContain('diff-line-add');
+    expect(markup).toContain('diff-line-remove');
+    expect(markup).toContain('Details patch unified diff');
+    expect(markup).toContain('>Updated at step 2</span>');
+    expect(JSON.stringify(value)).toBe(original);
+  });
+
+  it('bounds Pi detail diff previews and preserves complete source only within the expanded budget', () => {
+    const withinBudget = '+' + 'a'.repeat(9_000);
+    const overBudget = '-' + 'b'.repeat(256 * 1024);
+    const model = buildAgentEventPresentation({
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        details: { diff: withinBudget, patch: overBudget },
+      },
+    }, {
+      profileId: 'pi-coding-agent', eventKind: 'tool_result', actor: 'tool', summary: 'bounded result', evidence: [], confidence: 'source',
+    });
+    const diff = model?.sections.find((section) => section.title === 'Details diff');
+    const patch = model?.sections.find((section) => section.title === 'Details patch');
+    expect(diff).toMatchObject({ language: 'diff', fullText: withinBudget, truncated: true, previewOnly: false });
+    expect(diff?.code).toBe(withinBudget.slice(0, 8_000) + '\n... [preview truncated]');
+    expect(patch).toMatchObject({ language: 'diff', truncated: true, previewOnly: true });
+    expect(patch?.fullText).toBeUndefined();
+    expect(patch?.code).toBe(overBudget.slice(0, 8_000) + '\n... [preview truncated]');
+  });
+
+  it('keeps unknown Pi detail values in JSON and limits diff promotion to Pi tool results', () => {
+    const value = {
+      type: 'message',
+      message: { role: 'toolResult', details: { diff: { unknown: true }, patch: 42, firstChangedLine: 3 } },
+    };
+    const profile = {
+      profileId: 'pi-coding-agent', eventKind: 'tool_result' as const, actor: 'tool' as const,
+      summary: 'unknown result', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Details diff', language: 'json', code: expect.stringContaining('unknown') }),
+      expect.objectContaining({ title: 'Details patch', language: 'json', code: '42' }),
+      expect.objectContaining({ title: 'Tool details', language: 'json', code: expect.stringContaining('firstChangedLine') }),
+    ]));
+    const assistant = buildAgentEventPresentation({
+      ...value, message: { role: 'assistant', details: { diff: '+text' } },
+    }, { ...profile, eventKind: 'message', actor: 'assistant' });
+    const generic = buildAgentEventPresentation({
+      ...value, message: { role: 'toolResult', details: { diff: '+text' } },
+    }, { ...profile, profileId: 'generic-jsonl' });
+    expect(assistant?.sections.some((section) => section.language === 'diff')).toBe(false);
+    expect(generic?.sections.some((section) => section.language === 'diff') ?? false).toBe(false);
+  });
+
   it('renders Pi custom message text, images, type, display flag, and details', () => {
     const model = buildAgentEventPresentation({
       type: 'custom_message',
