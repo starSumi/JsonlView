@@ -51,6 +51,9 @@
 - Add an opt-in pi coding-agent session adapter for the standard `~/.pi/agent`
   home and `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR` overrides, preserving bounded titles, activity
   times, and cross-file fork relationships without copying transcript bodies.
+- Project Pi AgentMessage thinking, text, image, and tool-call blocks, system
+  sections, tool declarations, and tool-result metadata into bounded detail
+  sections while keeping the original JSONL authoritative in Raw.
 - Establish the runtime-bounded decomposition plan, fnm-owned Node project pin,
   and changed-file Biome lint gate before further module extraction.
 - Let VS Code's native Open With own JSONL editor selection; remove the
