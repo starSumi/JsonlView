@@ -23,10 +23,6 @@ record available in Raw.
 The screenshots use public-shaped, redacted fixtures prepared in the companion
 harness; they contain no private transcript bodies or machine paths.
 
-### Agent workflow
-
-![Codex agent workflow table](docs/assets/codex-rollout-table.png)
-
 ### Event analysis
 
 ![Codex rollout event insights with category and time distribution views](docs/assets/rollout-event-insights.png)
@@ -39,13 +35,19 @@ harness; they contain no private transcript bodies or machine paths.
 
 ![OpenTelemetry schema with Tree detail](docs/assets/opentelemetry-schema-tree.png)
 
-### Claude session timeline
+### Agent profile timelines
 
-![Claude agent session timeline](docs/assets/claude-timeline.png)
+![Codex agent timeline with turns, messages, reasoning, and tool calls](docs/assets/codex-timeline.png)
 
-### File changes
+![Codex exec timeline with custom tool calls and Tree detail](docs/assets/codex-timeline-exec.png)
 
-![JsonlView rendering a Codex FileChange unified diff](docs/assets/unified-diff-filechange.png)
+![pi coding agent timeline with checkpoints, tool calls, and results](docs/assets/pi-timeline.png)
+
+### Diff and prompt detail
+
+![Claude Code tool result with a long TypeScript unified diff and patch](docs/assets/claude-diff.png)
+
+![pi system prompt sections rendered as Markdown](docs/assets/pi-system-prompt.png)
 
 ## What You Get
 
@@ -56,6 +58,9 @@ harness; they contain no private transcript bodies or machine paths.
 - **Useful semantics:** automatic profiles for Codex, Claude Code, pi coding
   agent, OpenTelemetry, structured application logs, software-engineering
   trajectories, and generic JSONL fallback.
+- **Provider-aware details:** tool results, diff and patch payloads, thinking,
+  checkpoints, and nested system prompt sections remain inspectable in the
+  shared Tree, Raw, Markdown, and JSON detail surfaces.
 - **Safe inspection:** malformed records remain visible, unknown events fall
   back to generic JSON, and the exact source stays available for copying.
 - **Focused analysis:** typed filters, text search, physical paging, row-order
@@ -71,7 +76,11 @@ metadata-bounded view of supported agent session homes. It starts disabled,
 asks for explicit source authorization, and keeps transcript bodies in their
 provider files.
 
-![Opt-in Session Navigator view](docs/assets/claude-code-insights.png)
+![Opt-in Session Navigator with local agent discovery and drag-and-drop source entry](docs/assets/session-navigator-opt-in.png)
+
+### Source entry
+
+![Paste JSONL source with file, folder, agent connection, and drag-and-drop entry points](docs/assets/paste-jsonl-source.png)
 
 ## Install
 
