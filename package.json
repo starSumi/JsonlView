@@ -2,7 +2,7 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for software logs, telemetry, traces, and Agent trajectories.",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "Sumi-Sophia",
   "icon": "images/jsonlview-icon.png",
   "private": false,

@@ -9,7 +9,7 @@
 - Track follow-up release work in the decision records and reviewed showcase
   acceptance notes.
 
-## 0.2.7 - 2026-10-10
+## 0.2.8 - 2026-10-10
 
 - Render Codex function-call output once, project Claude top-level tools and
   prompt attachments, and render Pi thinking, text, tool calls, tool results,
@@ -54,6 +54,15 @@
 - Improve interaction coverage for menu dismissal, paging, semantic views, and
   nested details, and add a synthetic Codex rollout Insights showcase for
   category and time distributions.
+
+## 0.2.7 - 2026-10-06
+
+- Improve interaction coverage for menu dismissal, paging, semantic views, and
+  nested record details.
+- Make VSIX candidate archives reproducible when `SOURCE_DATE_EPOCH` is fixed,
+  with the selected epoch recorded in candidate provenance.
+- Add a synthetic Codex rollout Insights showcase covering category and time
+  distribution views.
 
 ## 0.2.6 - 2026-10-06
 
