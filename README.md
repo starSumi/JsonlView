@@ -20,6 +20,9 @@ detail loading.
 The same workbench adapts to different event shapes while keeping the source
 record available in Raw.
 
+The screenshots use public-shaped, redacted fixtures prepared in the companion
+harness; they contain no private transcript bodies or machine paths.
+
 ### Agent workflow
 
 ![Codex agent workflow table](docs/assets/codex-rollout-table.png)
@@ -60,6 +63,15 @@ record available in Raw.
 - **Agent session navigation:** an optional read-only tree for supported local
   Codex, Claude, and pi session homes, with parent/child relationships and
   incremental loading.
+
+### Session Navigator (opt-in)
+
+Enable `jsonlView.sessionNavigator.enabled` only when you want a local,
+metadata-bounded view of supported agent session homes. It starts disabled,
+asks for explicit source authorization, and keeps transcript bodies in their
+provider files.
+
+![Opt-in Session Navigator view](docs/assets/claude-code-insights.png)
 
 ## Install
 
