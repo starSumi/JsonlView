@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record the native scanner measurement boundary and its portable fallback
+  trigger conditions for staged architecture work.
 - Extract the Integrated Session profile policy behind a pure, facade-preserving
   module with focused column and predicate-field coverage.
 - Continue the staged vertical migration behind the existing facades, with

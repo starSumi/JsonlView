@@ -45,6 +45,7 @@ Read these before changing a shared boundary:
 37. [ADR-036 pi coding agent session adapter](036-pi-coding-agent-adapter.md)
 38. [ADR-038 Claude tool-result presentation](038-claude-tool-result-presentation.md)
 39. [ADR-039 architecture evolution slices](039-architecture-evolution-slices.md)
+40. [ADR-040 native scanner measurement boundary](040-native-scanner-measurement-boundary.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.
