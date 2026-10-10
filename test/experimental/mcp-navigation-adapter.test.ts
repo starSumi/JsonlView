@@ -88,6 +88,31 @@ describe('MCP read-only navigation contract adapter', () => {
     expect(JSON.stringify(page)).not.toMatch(/(?:prompt|body|args|results?|path|location)/iu);
   });
 
+  it('keeps a truncated filtered prefix incomplete without emitting a non-progressing cursor', async () => {
+    const filteredSnapshot: NavigationSnapshot = {
+      ...snapshot,
+      truncated: true,
+      truncatedReason: 'entity_limit',
+      entities: snapshot.entities.map((entity) => ({ ...entity, label: `unmatched-${entity.nativeId}` })),
+    };
+    const facade = new ReadOnlyNavigationFacade({
+      providers: [provider(filteredSnapshot)],
+      allowedSourceIds: ['codex-local'],
+    });
+    const query = vi.fn(facade.query.bind(facade));
+    const value = new McpReadOnlyNavigationAdapter({ query, allowedSourceIds: ['codex-local'] });
+
+    const page = await value.querySessions(
+      '2026-07-28',
+      { sourceId: 'codex-local', text: 'does-not-match', limit: 1 },
+      new AbortController().signal,
+    );
+
+    expect(page).toMatchObject({ entities: [], relations: [], truncated: true, truncatedReason: 'entity_limit' });
+    expect(page).not.toHaveProperty('nextCursor');
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it('checks the source allowlist before invoking the supplied facade', async () => {
     const query = vi.fn(async () => { throw new Error('must not probe'); });
     const value = new McpReadOnlyNavigationAdapter({ query, allowedSourceIds: ['codex-local'] });

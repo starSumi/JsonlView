@@ -299,10 +299,13 @@ export class McpReadOnlyNavigationAdapter {
       throw new McpNavigationAdapterError('stale_cursor', 'The continuation cursor snapshot changed.');
     }
     const projected = projectPage(result, effectiveQuery.budget, this.#sourceProviders[sourceId], protocolVersion);
-    const hasMore = result.truncated && result.entities.length > 0;
+    // A provider can return a truncated filtered prefix with no visible
+    // entities. Treat that as incomplete evidence, but never mint a cursor
+    // that points at the same logical offset; a caller would loop forever.
+    const hasMore = result.truncated;
     const response = this.fitResponse(projected, effectiveQuery.budget.maxBytes, hasMore, offset);
     if (previousCursor !== undefined) this.#cursors.delete(previousCursor);
-    if (response.nextOffset !== undefined) {
+    if (response.nextOffset !== undefined && response.nextOffset > offset) {
       const cursor = this.writeCursor({
         sourceId,
         snapshotId: result.snapshotId,
