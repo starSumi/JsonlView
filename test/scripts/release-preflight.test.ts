@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // The release gate is intentionally a JavaScript CLI; keep its pure integrity
 // helpers covered without making the production script a TypeScript build input.
 // @ts-expect-error release-preflight.mjs has no emitted declaration file.
-import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, findUnreferencedVsixAssets, normalizeRepositoryIdentity, projectVsixPairCheck, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
+import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, findUnreferencedNpmAssets, findUnreferencedVsixAssets, normalizeRepositoryIdentity, projectVsixPairCheck, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { bundleFromCandidateInventory, bundleInventoryDigest, compareBundleInventories } from '../../scripts/bundle-integrity.mjs';
 // @ts-expect-error verify-native-provenance.mjs has no emitted declaration file.
@@ -238,6 +238,10 @@ describe('release candidate integrity', () => {
       'extension/docs/assets/codex-timeline.png',
     ]);
     expect(findUnreferencedVsixAssets(['extension/docs/assets/kept.png'], undefined)).toEqual(['<missing-inventory>']);
+    expect(findUnreferencedNpmAssets([
+      'docs/assets/codex-timeline-exec.png',
+      'docs/assets/pi-timeline.png',
+    ], ['docs/assets/codex-timeline-exec.png'])).toEqual(['docs/assets/pi-timeline.png']);
   });
 
   it('binds embedded VSIX package license, privacy, and repository metadata', () => {

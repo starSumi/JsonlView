@@ -86,7 +86,7 @@ async function main() {
   if (options.npmManifest === undefined) {
     fail('npmCandidate', 'pass --npm-manifest <prepared npm candidate manifest>');
   } else {
-    npmCandidate = await checkNpmManifest(options.npmManifest, options.npmCandidate, options.npmTarball, revision, gitIdentity, options.approvedNpmName, nativeProvenance, sourceLegalFiles);
+    npmCandidate = await checkNpmManifest(options.npmManifest, options.npmCandidate, options.npmTarball, revision, gitIdentity, options.approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface);
   }
   if (options.vsixManifest === undefined) {
     fail('vsixCandidate', 'pass --vsix-manifest <packaged VSIX manifest>');
@@ -276,7 +276,7 @@ async function checkNativeProvenance(path, gitIdentity) {
   };
 }
 
-async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revision, gitIdentity, approvedNpmName, nativeProvenance, sourceLegalFiles) {
+async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revision, gitIdentity, approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface) {
   const manifest = await readJson(resolve(manifestPath), 'npm candidate manifest');
   const files = Array.isArray(manifest.files) ? manifest.files : [];
   if (!isApprovedPublicLicense(manifest.package?.license)) fail('npmCandidate.license', 'npm candidate does not carry an approved public license');
@@ -349,6 +349,8 @@ async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revisi
     .map((file) => normalizeInventoryPath(file?.path));
   const forbiddenPaths = findForbiddenDistributionPaths(forbidden);
   if (forbiddenPaths.length > 0) fail('npmCandidate.scope', `npm candidate contains development or sensitive paths: ${forbiddenPaths.join(', ')}`);
+  const unreferencedAssets = findUnreferencedNpmAssets(files.map((file) => file.path), publicSurface?.referencedAssets);
+  if (unreferencedAssets.length > 0) fail('npmCandidate.scope', `npm candidate contains retired or unreferenced showcase assets: ${unreferencedAssets.join(', ')}`);
 
   let integrity;
   if (candidatePath !== undefined && !isOutsideProductCheckout(candidatePath)) {
@@ -772,15 +774,25 @@ export function findUnexpectedVsixDistributionPaths(paths) {
 
 /** Reject showcase screenshots that are no longer part of the README surface. */
 export function findUnreferencedVsixAssets(paths, referencedAssets) {
+  return findUnreferencedShowcaseAssets(paths, referencedAssets, 'extension/');
+}
+
+/** Apply the same README asset contract to npm's package-relative inventory. */
+export function findUnreferencedNpmAssets(paths, referencedAssets) {
+  return findUnreferencedShowcaseAssets(paths, referencedAssets);
+}
+
+function findUnreferencedShowcaseAssets(paths, referencedAssets, prefix = '') {
   if (!Array.isArray(paths) || !Array.isArray(referencedAssets)) return ['<missing-inventory>'];
+  const normalizedPrefix = prefix.replaceAll('\\', '/');
   const referenced = new Set(referencedAssets
     .filter((asset) => typeof asset === 'string')
     .map((asset) => asset.replaceAll('\\', '/')));
   return [...new Set(paths
     .filter((path) => typeof path === 'string')
     .map((path) => path.replaceAll('\\', '/'))
-    .filter((path) => path.toLowerCase().startsWith('extension/docs/assets/'))
-    .filter((path) => !referenced.has(path.slice('extension/'.length))))].sort(stableCompare);
+    .filter((path) => path.toLowerCase().startsWith(normalizedPrefix.toLowerCase() + 'docs/assets/'))
+    .filter((path) => !referenced.has(path.slice(normalizedPrefix.length))))].sort(stableCompare);
 }
 
 function isAllowedVsixPath(path) {

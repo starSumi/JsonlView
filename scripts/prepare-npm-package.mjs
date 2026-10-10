@@ -12,6 +12,7 @@ import { validateProjectLicense } from './license-policy.mjs';
 import { resolveNpmInvocation, resolvePnpmInvocation } from './package-manager-invocation.mjs';
 import { getReleaseTargets } from './release-targets.mjs';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
+import { extractReferencedAssets } from './check-public-surface.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -191,7 +192,15 @@ try {
   ]) {
     await cp(resolve(root, relativePath), resolve(output, relativePath));
   }
-  await cp(resolve(root, 'docs/assets'), resolve(output, 'docs/assets'), { recursive: true });
+  // Keep npm's public asset payload aligned with README; retired screenshots
+  // may remain in the checkout but are excluded from the candidate package.
+  const readme = await readFile(resolve(root, 'README.md'), 'utf8');
+  for (const asset of extractReferencedAssets(readme)) {
+    const sourceAsset = resolve(root, asset);
+    const stagedAsset = resolve(output, asset);
+    await mkdir(dirname(stagedAsset), { recursive: true });
+    await cp(sourceAsset, stagedAsset);
+  }
   await cp(resolve(root, 'docs/decisions'), resolve(output, 'docs/decisions'), { recursive: true });
   await cp(resolve(root, 'third_party/licenses'), resolve(output, 'third_party/licenses'), { recursive: true });
   for (const file of ['README.md', 'CHANGELOG.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt']) {
