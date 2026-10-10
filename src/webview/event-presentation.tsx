@@ -1506,6 +1506,7 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
     });
   }, [automaticSectionIndex]);
   if (!model) return null;
+  const sectionKeyOccurrences = new Map<string, number>();
   return (
     <section className="event-presentation" aria-label="Structured event view">
       <header className="event-presentation-header">
@@ -1521,8 +1522,12 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
         </dl>
       ) : null}
       <div className="event-sections">
-        {model.sections.map((section, index) => (
-          <section className="event-section" key={`${section.title}:${section.fullText ?? section.text ?? section.code ?? section.language ?? "empty"}:${section.contentMode ?? "auto"}:${section.copyText ?? ""}`}>
+        {model.sections.map((section, index) => {
+          const sectionKeyBase = `${section.title}:${section.fullText ?? section.text ?? section.code ?? section.language ?? 'empty'}:${section.contentMode ?? 'auto'}:${section.copyText ?? ''}`;
+          const occurrence = sectionKeyOccurrences.get(sectionKeyBase) ?? 0;
+          sectionKeyOccurrences.set(sectionKeyBase, occurrence + 1);
+          return (
+          <section className="event-section" key={`${sectionKeyBase}:${occurrence}`}> 
             <div className="event-section-header">
               <h3>{section.title}</h3>
               <div className="event-section-actions">
@@ -1582,7 +1587,8 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
                 : <ContentView key={`code:${section.code}`} text={expandedSections.has(index) ? section.fullText ?? section.code : section.code} truncated={section.truncated === true && !expandedSections.has(index)} ariaLabel={`${section.title} code`} />
             ) : null}
           </section>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
