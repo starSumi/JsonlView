@@ -51,6 +51,7 @@ export function RecordTable({
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const resizersRef = useRef(new Map<string, HTMLButtonElement>());
+  const pointerFocusRef = useRef(false);
   const [measuredWidths, setMeasuredWidths] = useState<Record<string, number>>({});
   const focus = useGridFocus({ sessionId, rows, columns, selectedOrdinal });
   const activeIndex = gridCellRowIndex(focus.activeCell, rows);
@@ -102,6 +103,7 @@ export function RecordTable({
     };
     const stopResize = (): void => {
       resizeRef.current = undefined;
+      pointerFocusRef.current = false;
       document.body.classList.remove('is-resizing-column');
     };
     window.addEventListener('pointermove', onPointerMove);
@@ -124,6 +126,7 @@ export function RecordTable({
     if (index >= 0) virtualizer.scrollToIndex(index, { align: 'auto' });
     else if (cell?.kind === 'header') scrollRef.current?.scrollTo({ top: 0 });
   };
+  const clearPointerFocus = (): void => { pointerFocusRef.current = false; };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (loading || event.target !== event.currentTarget || event.altKey || event.metaKey) return;
@@ -178,8 +181,15 @@ export function RecordTable({
       aria-activedescendant={activeDescendant}
       aria-description="Arrow keys move cell focus. Enter or Space opens a record. Enter on a header enables column resizing; Escape returns to grid navigation."
       tabIndex={0}
+      onPointerDownCapture={() => { pointerFocusRef.current = true; }}
+      onPointerUpCapture={clearPointerFocus}
+      onPointerCancelCapture={clearPointerFocus}
+      onPointerLeave={clearPointerFocus}
       onFocus={(event) => {
-        if (!loading && event.target === event.currentTarget
+        // Pointer focus on the gutter or virtual space must not reveal a default row.
+        const pointerEntry = pointerFocusRef.current;
+        clearPointerFocus();
+        if (!loading && !pointerEntry && event.target === event.currentTarget
           && !event.currentTarget.contains(event.relatedTarget as Node | null)) revealCell(focus.enter());
       }}
       onKeyDown={handleKeyDown}
@@ -308,9 +318,9 @@ export function RecordTable({
                     title={text}
                     onClick={() => {
                       if (loading) return;
-                      scrollRef.current?.focus({ preventScroll: true });
                       focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
                         ordinal: row.ref.ordinal, columnId: column.id });
+                      scrollRef.current?.focus({ preventScroll: true });
                       onSelect(row.ref);
                     }}
                   >
