@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Define product documentation ownership for reliability, security, and
+  architecture records while keeping benchmarks, host evidence, and incident
+  instances in the sibling harness.
 - Record the native scanner measurement boundary and its portable fallback
   trigger conditions for staged architecture work.
 - Extract the Integrated Session profile policy behind a pure, facade-preserving
