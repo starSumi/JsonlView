@@ -92,6 +92,7 @@ let nativeOutput;
 let nativeTarget;
 let nativeProvenancePath;
 let operationError;
+let cleanupError;
 try {
   if (options.dist === undefined) await run('pnpm', ['build']);
   const frozenDist = resolve(options.dist ?? resolve(root, 'dist'));
@@ -271,10 +272,11 @@ try {
   const cleanupErrors = cleanupResults.filter((result) => result.status === 'rejected');
   if (cleanupErrors.length > 0) {
     const message = `failed to clean temporary native staging directories (${cleanupErrors.length})`;
-    if (operationError === undefined) throw new Error(message, { cause: cleanupErrors[0].reason });
-    console.error(message);
+    if (operationError === undefined) cleanupError = new Error(message, { cause: cleanupErrors[0].reason });
+    else console.error(message);
   }
 }
+if (cleanupError !== undefined) throw cleanupError;
 
 }
 
