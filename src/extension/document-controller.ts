@@ -9,12 +9,12 @@ import type {
   ProblemPage,
   RecordDetail,
   RecordRef,
-  RowPage,
   RowScanBudget,
   RowSort,
   WebviewRequest,
 } from '../shared/types';
 import { PROTOCOL_VERSION } from '../shared/types';
+import { LoadRecordPage, type RecordPageReader, type RecordPageRequest } from '../application';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
 
@@ -24,16 +24,8 @@ type ExtensionMessageByType = {
 
 type ExtensionPayload<TType extends ExtensionMessage['type']> = ExtensionMessageByType[TType]['payload'];
 
-export interface RowsRequest {
-  anchorOrdinal?: string;
-  direction?: 'forward' | 'backward';
-  limit: number;
-  predicate?: Predicate;
-  columns?: ColumnSpec[];
-  sort?: RowSort;
-  sortOffset?: string;
-  scanBudget?: RowScanBudget;
-}
+/** @deprecated Import RecordPageRequest from application ports for new code. */
+export type RowsRequest = RecordPageRequest;
 
 export interface ProblemsRequest {
   anchorOrdinal?: string;
@@ -42,10 +34,9 @@ export interface ProblemsRequest {
   scanBudget?: RowScanBudget;
 }
 
-export interface JsonlSessionPort {
+export interface JsonlSessionPort extends RecordPageReader {
   getSummary(): DocumentSummary;
   getProfileColumns(): readonly ColumnSpec[];
-  getRows(request: RowsRequest, signal: AbortSignal): Promise<RowPage>;
   getProblems(request: ProblemsRequest, signal: AbortSignal): Promise<ProblemPage>;
   getDetail(ref: RecordRef, full: boolean, signal: AbortSignal): Promise<RecordDetail>;
   getSchema(offset: number, limit: number, signal: AbortSignal): Promise<{
@@ -81,6 +72,7 @@ export interface DocumentControllerHooks {
 
 export class DocumentController {
   private readonly requests = new RequestRegistry();
+  private readonly loadRecordPage: LoadRecordPage;
   private disposed = false;
   private rebuildRequestSequence = 0;
 
@@ -88,7 +80,9 @@ export class DocumentController {
     private readonly session: JsonlSessionPort,
     private readonly channel: MessageChannel,
     private readonly hooks: DocumentControllerHooks = {},
-  ) {}
+  ) {
+    this.loadRecordPage = new LoadRecordPage(session);
+  }
 
   public async handleMessage(value: unknown): Promise<void> {
     if (this.disposed) {
@@ -154,7 +148,7 @@ export class DocumentController {
             request,
             operationGeneration,
             'ROWS',
-            await this.session.getRows(request.payload, signal),
+            await this.loadRecordPage.execute(request.payload, signal),
           );
           return;
         case 'GET_PROBLEMS':
