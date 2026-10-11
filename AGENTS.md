@@ -55,7 +55,8 @@ Run these commands for a normal product change:
     pnpm test
     pnpm build
 
-The CI form of check:agent-spec receives --base <commit> --head <commit>.
+The CI form of check:agent-spec (the agent-spec-lint guard) receives --base
+<commit> --head <commit>.
 It fails when a core source or build contract changes without a corresponding
 update to this file. Add or remove a mandatory command only by updating this
 section and the checker in the same change.

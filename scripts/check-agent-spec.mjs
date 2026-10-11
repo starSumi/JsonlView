@@ -67,8 +67,8 @@ if (base) {
   });
   if (diff.error) failures.push('unable to inspect Git diff: ' + diff.error.message);
   if (diff.status !== 0) failures.push('Git diff failed: ' + ((diff.stderr || '').trim() || ('exit ' + diff.status)));
-  for (const line of (diff.stdout || '').split(/\\r?\\n/).filter(Boolean)) {
-    const fields = line.split('\\t');
+  for (const line of (diff.stdout || '').split(/\r?\n/).filter(Boolean)) {
+    const fields = line.split('\t');
     const status = fields[0] || '';
     const paths = fields.slice(1);
     for (const path of paths) changed.push({ status, path: path.replaceAll('\\\\', '/') });

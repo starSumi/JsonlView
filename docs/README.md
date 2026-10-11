@@ -3,7 +3,8 @@
 This directory is the public documentation surface for JsonlView. It describes
 the product contract, architecture decisions, format/profile behavior,
 security boundaries, and reliability gates. It must remain readable from a
-clean product checkout without access to a developer machine or the harness.
+clean product checkout without access to a developer machine or an evidence
+workspace.
 
 ## Ownership
 
@@ -15,10 +16,10 @@ clean product checkout without access to a developer machine or the harness.
 - `assets/` contains reviewed public screenshots used by the README.
 - Root documents cover format boundaries, the roadmap, and publication flow.
 
-The sibling `JsonlView-harness` owns synthetic fixtures, benchmark records,
+An external validation workspace owns synthetic fixtures, benchmark records,
 host acceptance evidence, screenshots awaiting review, release readbacks, and
-postmortem instances. Harness state is never a product runtime dependency or
-a release input.
+postmortem instances. Its state is never a product runtime dependency or a
+release input.
 
 ## Reading order
 
