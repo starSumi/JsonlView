@@ -9,11 +9,10 @@ import type {
   ProblemPage,
   RecordDetail,
   RecordRef,
-  RowScanBudget,
   RowSort,
   WebviewRequest,
 } from '../shared/types';
-import { LoadRecordPage, type RecordPageReader, type RecordPageRequest } from '../application';
+import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
 import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transport';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
@@ -27,14 +26,10 @@ type ExtensionPayload<TType extends ExtensionMessage['type']> = ExtensionMessage
 /** @deprecated Import RecordPageRequest from application ports for new code. */
 export type RowsRequest = RecordPageRequest;
 
-export interface ProblemsRequest {
-  anchorOrdinal?: string;
-  direction?: 'forward' | 'backward';
-  limit: number;
-  scanBudget?: RowScanBudget;
-}
+/** @deprecated Import ProblemPageRequest from application ports for new code. */
+export type ProblemsRequest = ProblemPageRequest;
 
-export interface JsonlSessionPort extends RecordPageReader {
+export interface JsonlSessionPort extends RecordPageReader, ProblemPageReader {
   getSummary(): DocumentSummary;
   getProfileColumns(): readonly ColumnSpec[];
   getProblems(request: ProblemsRequest, signal: AbortSignal): Promise<ProblemPage>;
@@ -73,6 +68,7 @@ export interface DocumentControllerHooks {
 export class DocumentController {
   private readonly requests = new RequestRegistry();
   private readonly loadRecordPage: LoadRecordPage;
+  private readonly loadProblemPage: LoadProblemPage;
   private disposed = false;
   private rebuildRequestSequence = 0;
 
@@ -82,6 +78,7 @@ export class DocumentController {
     private readonly hooks: DocumentControllerHooks = {},
   ) {
     this.loadRecordPage = new LoadRecordPage(session);
+    this.loadProblemPage = new LoadProblemPage(session);
   }
 
   public async handleMessage(value: unknown): Promise<void> {
@@ -157,7 +154,7 @@ export class DocumentController {
             request,
             operationGeneration,
             'PROBLEMS',
-            await this.session.getProblems(request.payload, signal),
+            await this.loadProblemPage.execute(request.payload, signal),
           );
           return;
         case 'GET_DETAIL':
