@@ -53,8 +53,11 @@ Each vertical slice must identify one user-visible capability, its owner, input
 and output contracts, cancellation behavior, and rollback commit. The slice must
 pass focused characterization tests before merge, then the full typecheck, build,
 contract, changelog, public-surface, and diff gates. A slice touching transport
-must also prove malformed-message rejection, request identity, generation
-fencing, and cancellation without unbounded pending state.
+must also prove direction-specific malformed-message rejection, request identity,
+generation fencing, and cancellation without unbounded pending state. Application
+use-cases must enforce the invariants that apply independently of the transport
+caller; shared predicate AST validation remains owned by the transport/engine
+contract.
 
 ## Decision
 
@@ -79,9 +82,22 @@ Adopt a staged hybrid architecture:
 ## Evidence
 
 The first provider-specific presentation slice is the Claude event builder in
-`src/webview/providers/claude-event-builder.ts`. The next slices are the typed
-transport and one application use-case, each merged only after isolated review
-and candidate-bound harness evidence.
+`src/webview/providers/claude-event-builder.ts`. The typed transport and bounded
+record-page application use-case are now merged behind the existing facades.
+Transport validation covers every host-to-Webview message variant, and the
+application port rejects out-of-budget page requests before reaching a reader.
+The candidate-bound harness run records the structural checks; the paired
+workload measurement below is retained as a separate harness artifact so the
+product does not depend on harness storage at runtime.
+
+For the fixed synthetic mixed-profile corpus (100,000 records, 47,167,597
+bytes), a single paired Node-scanner run on Windows x64 / Node v24.15.0 measured
+the candidate runtime snapshot at 28.047 ms for the first 100 rows, 143.657 ms
+for complete indexing, 11.341 ms for a reverse page, and 44.4 MiB peak RSS
+delta. The comparison snapshot measured 28.564 ms, 143.685 ms, 11.369 ms,
+and 43.0 MiB. Both runs produced the same boundary digest and the candidate
+bundle was 803,065 bytes versus 800,640 bytes. This is one local paired
+measurement, not a cross-platform or statistically bounded performance claim.
 
 ## Normative References
 
@@ -109,7 +125,9 @@ behavior beyond its recorded budget.
 
 ## Rollback
 
-Revert the latest vertical slice commit and keep the prior facade and harness
-receipt. Do not delete the old contract or rewrite historical evidence. A
-candidate-bound run is invalidated when source, package, lockfile, or gate input
-hashes change; create a new run instead.
+The application slice is pinned at `670cd6a` (rollback parent `04c0a61`) and the
+transport hardening slice at `cd733e1` (rollback parent `3b626cd`). Revert one
+vertical slice at a time and keep the prior facade and harness receipt. Do not
+delete the old contract or rewrite historical evidence. A candidate-bound run is
+invalidated when source, package, lockfile, or gate input hashes change; create
+a new run instead.
