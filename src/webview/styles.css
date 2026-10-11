@@ -289,8 +289,12 @@ select:focus-visible,
   width: 220px;
   max-width: calc(100vw - 16px);
   max-height: 320px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
   padding: 5px;
   border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
   border-radius: 4px;
@@ -298,9 +302,32 @@ select:focus-visible,
   background: var(--vscode-menu-background);
 }
 
+.columns-popover::-webkit-scrollbar {
+  width: 8px;
+}
+
+.columns-popover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.columns-popover::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: var(--vscode-scrollbarSlider-background);
+  background-clip: padding-box;
+}
+
+.columns-popover::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+  background-clip: padding-box;
+}
+
 .columns-popover label {
   display: flex;
   align-items: center;
+  width: 100%;
+  min-width: 0;
   gap: 7px;
   min-height: 28px;
   padding: 4px 6px;
@@ -313,6 +340,7 @@ select:focus-visible,
 }
 
 .columns-popover span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
