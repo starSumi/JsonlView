@@ -114,6 +114,25 @@ describe('record-query vertical slice', () => {
     });
   });
 
+  it('keeps a first-level type field available alongside profile-derived Event', () => {
+    const typePath = keyPath('type');
+    const typeField: FieldStats = {
+      ...nestedField,
+      path: typePath,
+      displayPath: '$.type',
+    };
+    const profileEvent: ColumnSpec = { id: 'eventKind', label: 'Event', source: 'profile' };
+    const options = recordColumnOptions([profileEvent], [typeField]);
+
+    expect(options.map((column) => column.label)).toEqual(['Event', '$.type']);
+    expect(options[1]).toMatchObject({
+      id: JSON.stringify(typePath.tokens),
+      label: '$.type',
+      source: 'record',
+      path: typePath,
+    });
+  });
+
   it('builds only supported structured filters with captured source and path', () => {
     expect(buildStructuredFilter({
       columnId: columns[0]!.id,
