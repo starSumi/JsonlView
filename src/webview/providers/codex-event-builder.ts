@@ -72,7 +72,6 @@ export function buildCodexContextSections(
   }
   return sections;
 }
-
 export function buildCodexItemSections(
   item: CodexEventObject | undefined,
   normalizedType: string | undefined,
