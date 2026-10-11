@@ -1,9 +1,8 @@
 import {
-  PROTOCOL_VERSION,
   type ExtensionMessage,
-  type ProtocolEnvelope,
   type WebviewRequest,
 } from '../shared/types';
+import { createProtocolEnvelope, isProtocolEnvelope } from '../shared/transport';
 import type { RequestKind } from './state';
 
 export interface MessageTransport {
@@ -70,18 +69,8 @@ function createRequestId(): string {
 }
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const candidate = value as Partial<ProtocolEnvelope<string, unknown>>;
-  return candidate.protocolVersion === PROTOCOL_VERSION
-    && typeof candidate.type === 'string'
-    && EXTENSION_MESSAGE_TYPES.has(candidate.type as ExtensionMessage['type'])
-    && typeof candidate.documentId === 'string'
-    && typeof candidate.generation === 'string'
-    && (candidate.epoch === undefined || (Number.isSafeInteger(candidate.epoch) && candidate.epoch >= 0))
-    && typeof candidate.requestId === 'string'
-    && 'payload' in candidate;
+  if (!isProtocolEnvelope(value)) return false;
+  return EXTENSION_MESSAGE_TYPES.has(value.type as ExtensionMessage['type']);
 }
 
 export function shouldAcceptMessage(
@@ -240,15 +229,14 @@ export class VsCodeMessageClient {
       generation: this.#session.generation,
       ...(this.#session.epoch === undefined ? {} : { epoch: this.#session.epoch }),
     };
-    const envelope = {
-      protocolVersion: PROTOCOL_VERSION,
+    const envelope = createProtocolEnvelope({
       type,
       documentId: this.#session.documentId,
       generation: this.#session.generation,
       ...(this.#session.epoch === undefined ? {} : { epoch: this.#session.epoch }),
       requestId,
       payload,
-    } as WebviewRequest;
+    }) as WebviewRequest;
     // Diagnostic handoff is a one-way host action; it has no correlated
     // response and must not leave an unbounded pending entry behind.
     if (type !== 'CANCEL' && type !== 'DIAGNOSE_ERROR') {

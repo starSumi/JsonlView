@@ -19,7 +19,8 @@ import type {
   RowSort,
   SortDirection,
 } from '../shared/types';
-import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS, PROTOCOL_VERSION } from '../shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
+import { createProtocolEnvelope } from '../shared/transport';
 import { DetailDrawer } from './detail-drawer';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -174,14 +175,13 @@ export function App(): React.JSX.Element {
     const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : 'navigator-' + Date.now().toString(36);
-    vscode.postMessage({
-      protocolVersion: PROTOCOL_VERSION,
+    vscode.postMessage(createProtocolEnvelope({
       type: 'OPEN_SESSION_NAVIGATOR',
       documentId: session.documentId,
       generation: session.generation,
       requestId,
       payload: {},
-    });
+    }));
   }, []);
 
   const diagnoseError = useCallback((error: NonNullable<WorkspaceState['error']>, action: 'explain' | 'copy'): void => {
@@ -189,8 +189,7 @@ export function App(): React.JSX.Element {
     const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `diagnostic-${Date.now().toString(36)}`;
-    vscode.postMessage({
-      protocolVersion: PROTOCOL_VERSION,
+    vscode.postMessage(createProtocolEnvelope({
       type: 'DIAGNOSE_ERROR',
       documentId: session.documentId,
       generation: session.generation,
@@ -201,7 +200,7 @@ export function App(): React.JSX.Element {
         message: error.message.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH),
         action,
       },
-    });
+    }));
   }, []);
 
   useEffect(() => {

@@ -13,8 +13,8 @@ import type {
   RowSort,
   WebviewRequest,
 } from '../shared/types';
-import { PROTOCOL_VERSION } from '../shared/types';
 import { LoadRecordPage, type RecordPageReader, type RecordPageRequest } from '../application';
+import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transport';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
 
@@ -90,7 +90,7 @@ export class DocumentController {
     }
     const validation = validateWebviewRequest(value);
     if (!validation.ok || validation.request === undefined) {
-      await this.postError(identityFromUnknown(value), 'INVALID_REQUEST', validation.error ?? 'Invalid request.', false);
+      await this.postError(readProtocolIdentity(value), 'INVALID_REQUEST', validation.error ?? 'Invalid request.', false);
       return;
     }
     const request = validation.request;
@@ -266,8 +266,7 @@ export class DocumentController {
     payload: ExtensionPayload<TType>,
     generation: string,
   ): Promise<void> {
-    const message = {
-      protocolVersion: PROTOCOL_VERSION,
+    const message = createProtocolEnvelope({
       type,
       documentId: request.documentId,
       generation,
@@ -276,7 +275,7 @@ export class DocumentController {
         : { epoch: this.session.getSummary().snapshot.epoch }),
       requestId: request.requestId,
       payload,
-    } as ExtensionMessageByType[TType];
+    }) as unknown as ExtensionMessageByType[TType];
     await this.channel.postMessage(message);
   }
 
@@ -312,8 +311,7 @@ export class DocumentController {
     message: string,
     recoverable: boolean,
   ): Promise<void> {
-    await this.channel.postMessage({
-      protocolVersion: PROTOCOL_VERSION,
+    await this.channel.postMessage(createProtocolEnvelope({
       type: 'ERROR',
       documentId: request.documentId,
       generation: this.session.getSummary().snapshot.generation,
@@ -322,21 +320,6 @@ export class DocumentController {
         : { epoch: this.session.getSummary().snapshot.epoch }),
       requestId: request.requestId,
       payload: { code, message, recoverable },
-    });
+    }));
   }
-}
-
-function identityFromUnknown(value: unknown): Pick<
-  WebviewRequest,
-  'documentId' | 'generation' | 'requestId'
-> {
-  if (value !== null && typeof value === 'object') {
-    const candidate = value as Record<string, unknown>;
-    return {
-      documentId: typeof candidate.documentId === 'string' ? candidate.documentId : 'unknown',
-      generation: typeof candidate.generation === 'string' ? candidate.generation : 'unknown',
-      requestId: typeof candidate.requestId === 'string' ? candidate.requestId : 'unknown',
-    };
-  }
-  return { documentId: 'unknown', generation: 'unknown', requestId: 'unknown' };
 }
