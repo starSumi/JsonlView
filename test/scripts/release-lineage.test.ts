@@ -63,6 +63,16 @@ describe('release lineage gate', () => {
     expect(result.warnings).toContain('registry readback is absent for an unpublished candidate; publication remains gated');
   });
 
+  it('normalizes conventional repository URLs at the external evidence boundary', () => {
+    const result = validateReleaseLineage({
+      candidate: candidate({ source: { ...candidate().source, repository: 'https://github.com/starSumi/JsonlView.git' } }),
+      ledger: ledger(),
+      readback: readback(),
+      git: git(),
+    });
+    expect(result).toMatchObject({ ok: true, candidate: { source: { repository: 'github.com/starsumi/jsonlview' } } });
+  });
+
   it('accepts an exact same-version replay and exposes the idempotency decision', () => {
     const existing = { version: '0.2.9', source: { gitSha: commit }, artifacts: artifacts() };
     const result = validateReleaseLineage({

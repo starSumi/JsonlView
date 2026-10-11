@@ -13,6 +13,8 @@ import { compareVsixArchiveIdentity, compareVsixArchiveIdentityEvidence, inspect
 import { getExtensionTarget, getReleaseTargets, resolveExtensionTarget } from './release-targets.mjs';
 import { canonicalVsixPairEvidence, computeVsixPairSha256, verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
 import { checkPublicSurface } from './check-public-surface.mjs';
+import { normalizeRepositoryIdentity } from './repository-identity.mjs';
+export { normalizeRepositoryIdentity } from './repository-identity.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -823,30 +825,6 @@ export function compareSourceProvenance(left, right) {
     if (left[field] !== right[field]) issues.push(`${field} differs between candidate manifests`);
   }
   return issues;
-}
-
-export function normalizeRepositoryIdentity(value) {
-  if (typeof value !== 'string') return undefined;
-  let source = value.trim();
-  if (source.length === 0) return undefined;
-  const scp = source.match(/^[^@\s]+@([^:\s]+):(.+)$/);
-  let host;
-  let path;
-  if (scp !== null) {
-    host = scp[1];
-    path = scp[2];
-  } else {
-    source = source.replace(/^git\+/i, '');
-    let parsed;
-    try { parsed = new URL(source); } catch { return undefined; }
-    if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.search.length > 0 || parsed.hash.length > 0) return undefined;
-    host = parsed.hostname;
-    path = parsed.pathname;
-  }
-  if (typeof host !== 'string' || typeof path !== 'string') return undefined;
-  path = path.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
-  if (path.length === 0 || path.split('/').some((part) => part === '' || part === '.' || part === '..')) return undefined;
-  return `${host.toLowerCase()}/${path.toLowerCase()}`;
 }
 
 function repositoryUrl(value) {

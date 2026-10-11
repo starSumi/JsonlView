@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { normalizeRepositoryIdentity } from './repository-identity.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -118,7 +119,8 @@ export function normalizeCandidate(value, failures = []) {
   if (state !== 'candidate' && state !== 'published') failures.push('candidate.state must be candidate or published');
   const source = isRecord(value.source) ? value.source : {};
   const gitSha = stringValue(source.gitSha);
-  const repository = stringValue(source.repository);
+  const repositoryInput = stringValue(source.repository);
+  const repository = repositoryInput === undefined ? undefined : normalizeRepositoryIdentity(repositoryInput);
   if (!SHA1.test(gitSha ?? '')) failures.push('candidate.source.gitSha must be a full commit id');
   if (repository === undefined) failures.push('candidate.source.repository is required');
   const tag = stringValue(source.tag) ?? (version === undefined ? undefined : `v${version}`);
@@ -404,8 +406,8 @@ export function parseArgs(args) {
 }
 
 function normalizeRepository(value) {
-  if (typeof value === 'string') return value.replace(/^https?:\/\//i, '').replace(/^git@([^:]+):/i, '$1/').replace(/\.git$/i, '').toLowerCase();
-  if (isRecord(value) && typeof value.url === 'string') return normalizeRepository(value.url);
+  if (typeof value === 'string') return normalizeRepositoryIdentity(value);
+  if (isRecord(value) && typeof value.url === 'string') return normalizeRepositoryIdentity(value.url);
   return undefined;
 }
 
