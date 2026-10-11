@@ -1,54 +1,73 @@
 # JsonlView Working Agreement
 
+## Scope and Ownership
+
 JsonlView is a read-only VS Code JSONL/NDJSON data studio with optional Agent
-semantic profiles. The source JSONL file is always the authority; indexes,
-queries, schema summaries, and timelines are disposable projections.
+semantic profiles. This file governs the product checkout: source code, tests,
+build scripts, CI workflows, public documentation, and decision records.
+
+The product owns runtime behavior, source contracts, package manifests, and
+reproducible build commands. An external validation workspace owns synthetic
+fixtures, screenshots awaiting review, benchmark runs, host acceptance
+receipts, and release readbacks. Those are evidence inputs, never product
+runtime dependencies. Do not add state/, showcase/, private transcripts,
+machine paths, credentials, or generated release candidates to this checkout.
+
+The source JSONL file is always the authority; indexes, queries, schema
+summaries, timelines, and session catalog rows are disposable projections.
+
+## Runtime Model
+
+- src/extension/ owns VS Code lifecycle, commands, source generations,
+  cancellation, message validation, and delivery to the Webview.
+- src/application/ owns bounded use cases and ports. It must not import VS
+  Code APIs, Webview code, or provider-private storage.
+- src/engine/ owns bounded reads, byte/record indexes, parsing, schema, and
+  query execution. It never writes the source file.
+- src/profiles/ owns additive Agent semantics. Profiles preserve unknown
+  records and expose evidence paths for derived fields.
+- src/webview/ owns bounded UI state and rendering. It never receives or
+  retains the complete source file.
+- src/shared/ owns versioned contracts and typed transport messages.
+- native/jsonl-core/ is an optional accelerator with a portable fallback.
+
+The runtime has no required network listener, hosted control plane, source
+mutation path, arbitrary command execution, or provider database write.
 
 ## Toolchain
 
-- Use the fnm-selected Node version from `.node-version` and the pnpm version from `package.json`.
-- The development toolchain requires Node `>=22.12.0`; the repository pins
-  Node `24.15.0` because Vitest 5 and `@types/node` 26 no longer support the
-  older Node 20 baseline. Keep CI and local probes on that same major line.
-- Install with `pnpm install --frozen-lockfile` after the lockfile exists.
-- Start a change with `pnpm check:contract` when the repository contract or
-  decision records may be affected.
-- Validate with `pnpm typecheck`, `pnpm test`, and `pnpm build`.
-- Package locally with `pnpm package:vsix`. Publishing requires separate user
-  authorization.
+- Use the fnm-selected Node version from .node-version and the pnpm version
+  from package.json.
+- The development toolchain requires Node >=22.12.0; the repository pins
+  Node 24.15.0.
+- Install with pnpm install --frozen-lockfile.
+- Do not make CI or cloud jobs depend on a developer PATH or FNM_DIR.
 
-## Promotion Synchronization
+## Mandatory Commands
 
-When a reviewed change is ready for distribution, synchronize the surfaces in
-this order and record each readback separately:
+Run these commands for a normal product change:
 
-1. Put the release change through a pull request and required checks. Protect
-   `main` before merge, then freeze the reviewed merge commit, run the release
-   preflight, and build the VSIX candidates outside this checkout.
-2. Install the candidate with the actual portable VS Code `code.cmd`, verify
-   the active extension id/version/path and bundle digest, then reload the
-   affected window before calling the local plugin updated.
-3. Prepare and inspect the npm candidate; publish only with an explicit
-   `--registry=https://registry.npmjs.org --access public` authorization and
-   read back the exact package/version.
-4. Push the reviewed Git ref and create or update the GitHub release only after
-   the remote and commit identities are verified; read back the published ref.
-5. Treat Open VSX and Marketplace as independent targets with their own stable
-   coordinates, authorization, artifact, and registry readback. Verify the two
-   VSIX files differ only in their declared registry identity. Success on one
-   surface never implies that another surface was updated.
+    pnpm check:agent-spec
+    pnpm check:docs-index
+    pnpm check:contract
+    pnpm check:biome
+    pnpm typecheck
+    pnpm test
+    pnpm build
 
-For routine local updates, use `pnpm sync:local -- --target <open-vsx|marketplace>
---version <version> --install`. The command is intentionally local-only and
-must report `reloadRequired` until the active VS Code window is reloaded. The
-two target IDs share contribution identifiers and are not supported as a
-co-install; uninstall or disable one before accepting the other. Do not replace
-this flow with a file-watch hook that publishes a registry or pushes a remote.
+The CI form of check:agent-spec receives --base <commit> --head <commit>.
+It fails when a core source or build contract changes without a corresponding
+update to this file. Add or remove a mandatory command only by updating this
+section and the checker in the same change.
 
-The local VSIX identity override (`--publisher`/`--version` on
-`package-vsix-candidate.mjs`) is for same-id acceptance installs only; it does
-not make a private or unlicensed source checkout publishable. Never put tokens,
-temporary credentials, or generated release artifacts in this repository.
+Use narrower gates when appropriate:
+
+- pnpm test -- <pattern> for a focused behavior change.
+- pnpm native:check, pnpm native:fmt, pnpm native:clippy, and pnpm native:test
+  for native changes.
+- pnpm check:changelog -- --base <commit> when implementation files change.
+- pnpm package:vsix:candidate and pnpm package:npm only for an explicitly
+  authorized release candidate; keep their outputs outside this checkout.
 
 ## Change Contract
 
@@ -56,69 +75,25 @@ Before editing, classify the highest applicable change class:
 
 | Class | Scope | Required gate |
 | --- | --- | --- |
-| C0 | Wording or isolated fixture | focused check |
+| C0 | Wording or product-local test fixture | focused check |
 | C1 | One-owner behavior | unit tests, negative case, rollback |
 | C2 | Shared contract, lifecycle, format, or concurrency | ADR or update, integration and failure tests |
-| C3 | Parser, native code, dependency, security, or performance boundary | official-source refresh, baseline benchmark, fault injection, audit |
+| C3 | Parser, native code, dependency, security, or performance boundary | current primary-source check, baseline benchmark, fault injection, audit |
 | C4 | Release, migration, credentials, or irreversible external action | independent review, provenance, authorization, remote readback |
 
-Every non-trivial task brief must state:
+Every non-trivial task brief states:
 
-```text
-goal / scope / owner / invariant / change class
-current source identity / standards or ecosystem checks
-accepted alternative / probe and expected metric
-failure cases / validation level / known unknowns / rollback
-```
+    goal / scope / owner / invariant / change class
+    current source identity / standards or ecosystem checks
+    accepted alternative / probe and expected metric
+    failure cases / validation level / known unknowns / rollback
 
-Do not claim a library or framework is "best" from version recency alone.
-When a change touches a language, runtime, dependency, public format, security
-boundary, or performance claim, consult primary current sources and record the
-compatibility and maintenance trade-off in `docs/decisions/`.
+Do not call a library or framework best from version recency alone. For a
+language, runtime, dependency, public format, security boundary, or
+performance claim, consult a current primary source and record compatibility,
+maintenance, and rollback trade-offs in docs/decisions/.
 
-## Release Notes
-
-Keep consumer-facing release notes curated in `CHANGELOG.md` under
-`## Unreleased`; do not generate them directly from commit subjects. CI runs
-`pnpm check:changelog` and requires a new bullet when `src/` or
-`native/jsonl-core/src/` changes. Tests, harness files, and documentation-only
-changes do not trigger the guard. This is an omission check, not release
-automation or publication authorization.
-
-## Completion Levels
-
-Report the highest level reached; do not collapse them into one `done` state:
-
-- **L1:** compile, format, and focused tests pass.
-- **L2:** contract, negative, cancellation, and failure cases pass.
-- **L3:** real VS Code host, Webview, or integration behavior observed.
-- **L4:** representative performance, compatibility, and resource evidence exists.
-- **L5:** packaged artifact, provenance, authorization, and remote readback pass.
-
-The companion `JsonlView-harness` owns synthetic fixtures, screenshots,
-benchmarks, operational notes, and release evidence. Keep only intentionally
-shipped documentation and approved assets in this product checkout.
-
-## Architecture Boundaries
-
-- `src/extension/` owns VS Code lifecycle, source generations, cancellation,
-  message validation, and Webview delivery.
-- `src/engine/` owns bounded reads, byte/record indexes, parsing, schema, and
-  query execution. It never writes the source file.
-- `src/profiles/` owns derived Agent semantics. Profiles must preserve unknown
-  records and provide evidence paths for derived fields.
-- `src/webview/` owns bounded UI state and rendering. It never receives or
-  retains the complete source file.
-- `src/shared/` owns versioned contracts. Changes require supervisor review.
-
-## Parallel Work
-
-Writable team lanes use separate Git worktrees and branches. Each worker edits
-only its assigned subtree and tests. Workers are not alone in the repository;
-they must preserve unrelated changes and must not reset, clean, or rewrite
-another lane.
-
-## Correctness
+## Correctness and Security
 
 - Use absolute byte offsets. Serialize values that may exceed safe JavaScript
   integer precision as decimal strings across IPC.
@@ -128,14 +103,49 @@ another lane.
 - Do not silently drop blank, malformed, oversized, unknown, or uncorrelated
   records.
 - Do not execute source content, arbitrary JavaScript, or concatenated SQL.
+- Keep Webview CSP, nonce, resource roots, and message validation in force.
+- Native failures degrade to the portable scanner and never make unchecked
+  offsets or unbounded memory trusted.
+
+## Architecture and Parallel Work
+
+The Webview uses feature-first slices. The Extension Host uses
+ports-and-adapters. Provider adapters are vertical slices over shared record,
+presentation, and transport contracts. Avoid a global services bucket and
+avoid premature package or workspace splitting until an independently
+buildable boundary and consumer contract exist.
+
+Writable team lanes use separate Git worktrees and branches. Workers edit only
+their assigned subtree and tests. Workers are not alone in the repository;
+they must preserve unrelated changes and must not reset, clean, or rewrite
+another lane.
+
+## Development, Runtime, and Evidence
+
+Development commands, CI workflows, tests, and ADRs live in this product
+checkout. Runtime code must not load reports, fixtures, screenshots, local
+editor settings, or generated evidence. Evidence may be linked by immutable
+revision or receipt identifier, but documentation must not copy machine-local
+paths, private conversation bodies, credentials, or raw operational logs.
+
+## Completion Levels
+
+Report the highest completion level reached:
+
+- L1: compile, format, and focused tests pass.
+- L2: contract, negative, cancellation, and failure cases pass.
+- L3: real VS Code host, Webview, or integration behavior observed.
+- L4: representative performance, compatibility, and resource evidence exists.
+- L5: packaged artifact, provenance, authorization, and remote readback pass.
 
 ## Decision Records
 
-Accepted cross-cutting decisions live in `docs/decisions/`. Each record keeps
+Durable cross-cutting choices live in docs/decisions/. Each record keeps
 pressure, invariant, owner, alternatives, probe, decision, evidence, boundary,
-revisit trigger, and rollback visible. Volatile machine facts and temporary
-credentials belong in the sibling harness, not in an ADR or product source.
+revisit trigger, and rollback visible. Volatile measurements and release
+readbacks remain external evidence; the product records only the claim,
+revision, boundary, and how to reproduce it.
 
 When an ADR becomes stale, supersede it explicitly; do not silently rewrite a
-historical decision. Use `pnpm check:contract` to verify the required project
-contract and ADR shape.
+historical decision. Use pnpm check:contract and pnpm check:agent-spec to
+verify the project contract and instruction ownership.

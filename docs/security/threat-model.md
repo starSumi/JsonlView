@@ -7,6 +7,14 @@ JSONL/NDJSON source files, the disposable index, the optional native scanner,
 Session Navigator provider roots, and bounded diagnostic handoff to VS Code.
 The source JSONL remains provider-owned and read-only.
 
+## Ownership and Evidence
+
+Product engineering owns this threat model, the controls named here, and the
+negative tests that protect them. Validation produces immutable receipts for
+host or release observations. Private paths, transcript bodies, screenshots,
+raw logs, and incident timelines are never copied into this document; a
+receipt ID may be cited as an audit pointer only.
+
 ## Trust boundaries
 
 1. A local source file crosses into the bounded engine as untrusted bytes.

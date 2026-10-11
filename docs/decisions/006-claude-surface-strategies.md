@@ -1,4 +1,4 @@
-# ADR-006 Claude surface strategies
+# ADR-006: Claude surface strategies
 
 ## Pressure
 

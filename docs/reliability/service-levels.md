@@ -7,14 +7,22 @@ does not offer an availability SLA. This document defines engineering SLI/SLO
 signals and release error-budget rules for the extension, its Webview, and its
 optional native scanner.
 
+## Ownership and Evidence
+
+Product engineering owns the indicators, acceptance policy, and rollback
+conditions. A separately governed validation workspace produces immutable
+receipts containing candidate revision, workload, host/runtime, command,
+digest, and measurement boundary. The product does not read an evidence path
+at runtime and does not treat one host sample as a universal promise.
+
 ## Service-level indicators
 
-| SLI | Measurement owner | Evidence |
+| SLI | Product owner | Evidence producer |
 | --- | --- | --- |
 | Contract correctness | `src/shared/types.ts` and runtime validation | contract tests, typecheck |
 | Operation recovery | Extension Host generation and cancellation fencing | stale-response, cancellation, rebuild tests |
 | Scanner parity | Node/native newline offsets and fallback behavior | native verification and scanner tests |
-| Resource boundedness | first page, full index, RSS, and scan budget | pinned harness benchmark record |
+| Resource boundedness | first page, full index, RSS, and scan budget | external receipt with corpus and boundary |
 | Release integrity | VSIX/npm allowlist, native ABI, and public-surface scan | release preflight and candidate archive checks |
 
 ## Objectives
@@ -41,5 +49,7 @@ workspace, or transport requires a separate measurement and rollback record.
 ## Non-goals
 
 This policy does not promise a cloud SLA, a universal latency target, or native
-performance on an unsupported platform. Harness benchmark and host evidence
-remain separate from this product contract.
+performance on an unsupported platform. Validation benchmark and host evidence
+remain separate from this product contract. Incident instances, raw logs,
+screenshots, and timelines belong to the evidence workspace; only immutable
+receipt IDs may be referenced.

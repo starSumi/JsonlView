@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "instructionFile": "AGENTS.md",
+  "requiredSections": [
+    "## Scope and Ownership",
+    "## Runtime Model",
+    "## Toolchain",
+    "## Mandatory Commands",
+    "## Change Contract",
+    "## Correctness and Security",
+    "## Architecture and Parallel Work",
+    "## Development, Runtime, and Evidence",
+    "## Decision Records"
+  ],
+  "mandatoryCommands": [
+    { "script": "check:agent-spec", "text": "pnpm check:agent-spec" },
+    { "script": "check:docs-index", "text": "pnpm check:docs-index" },
+    { "script": "check:contract", "text": "pnpm check:contract" },
+    { "script": "check:biome", "text": "pnpm check:biome" },
+    { "script": "typecheck", "text": "pnpm typecheck" },
+    { "script": "test", "text": "pnpm test" },
+    { "script": "build", "text": "pnpm build" }
+  ],
+  "architectureMarkers": [
+    "src/extension/",
+    "src/application/",
+    "src/engine/",
+    "src/profiles/",
+    "src/webview/",
+    "src/shared/",
+    "native/jsonl-core/"
+  ],
+  "sensitivePaths": {
+    "always": [
+      "AGENTS.md",
+      "package.json",
+      "pnpm-lock.yaml",
+      ".node-version",
+      "tsconfig.json",
+      "biome.json",
+      "esbuild.mjs",
+      ".vscodeignore",
+      "config/agent-spec.json",
+      "scripts/**",
+      ".github/workflows/**"
+    ],
+    "topologyRoots": [
+      "src/",
+      "native/"
+    ]
+  },
+  "forbiddenInstructionPatterns": [
+    {
+      "name": "absolute-local-path",
+      "pattern": "(?:[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\/]+[\\\\/])"
+    },
+    {
+      "name": "harness-checkout-path",
+      "pattern": "JsonlView-harness[\\\\/]"
+    },
+    {
+      "name": "retained-evidence-path",
+      "pattern": "(?:^|[\\\\/])(?:state|showcase|release-evidence|benchmark-artifacts)[\\\\/](?:runs|assets|release|benchmark|)"
+    }
+  ]
+}
