@@ -46,6 +46,7 @@ Read these before changing a shared boundary:
 38. [ADR-038 Claude tool-result presentation](038-claude-tool-result-presentation.md)
 39. [ADR-039 architecture evolution slices](039-architecture-evolution-slices.md)
 40. [ADR-040 native scanner measurement boundary](040-native-scanner-measurement-boundary.md)
+41. [ADR-041 typed RPC and ports-adapters slices](041-typed-rpc-and-ports-adapters-slices.md)
 
 Every ADR uses the same fields: pressure, invariant, owner, alternatives,
 probe, decision, evidence, boundary, revisit trigger, and rollback.
