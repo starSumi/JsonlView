@@ -96,7 +96,7 @@ the candidate runtime snapshot at 28.047 ms for the first 100 rows, 143.657 ms
 for complete indexing, 11.341 ms for a reverse page, and 44.4 MiB peak RSS
 delta. The comparison snapshot measured 28.564 ms, 143.685 ms, 11.369 ms,
 and 43.0 MiB. Both runs produced the same boundary digest and the candidate
-bundle was 803,065 bytes versus 800,640 bytes. This is one local paired
+bundle was 812,102 bytes versus 800,640 bytes. This is one local paired
 measurement, not a cross-platform or statistically bounded performance claim.
 
 ## Normative References

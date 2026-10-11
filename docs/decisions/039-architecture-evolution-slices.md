@@ -71,7 +71,7 @@ The paired measurement for these slices used the fixed 100,000-record,
 47,167,597-byte synthetic corpus with the Node scanner on Windows x64 / Node
 v24.15.0. The candidate measured 28.047 ms for the first page, 143.657 ms for
 complete indexing, 11.341 ms for a reverse page, 44.4 MiB peak RSS delta, and
-803,065 bundle bytes. The comparison measured 28.564 ms, 143.685 ms,
+812,102 bundle bytes. The comparison measured 28.564 ms, 143.685 ms,
 11.369 ms, 43.0 MiB, and 800,640 bytes respectively; the boundary digest was
 identical. The measurement is a single paired local observation and is retained
 in the harness run evidence, not a general performance promise.
