@@ -14,7 +14,8 @@ the read-only source boundary.
 - The benchmark uses deterministic in-memory bytes only; it does not open,
   write, watch, or replace a source file and it does not start VS Code, MCP, or
   a provider process. The optional `--out` argument is report output only and
-  is guarded to `JsonlView-harness/state/runs`; it validates canonical
+  is guarded to an explicit external artifact root supplied by the validation
+  wrapper; it validates canonical
   ancestors, rejects symlink/junction escapes, and creates a new report with an
   exclusive flag so it cannot overwrite an existing evidence file.
 - The source snapshot remains unchanged after every stage or rejected replay.
@@ -86,5 +87,6 @@ This decision adds benchmark code and synthetic tests only. It does not add a
 runtime mutation path, a source adapter, a database, an MCP server, a VS Code
 contribution, or release permission. Remove this wrapper, runner, test, and ADR
 to roll back; no source file or published artifact is changed. Report output is
-optional harness evidence under `JsonlView-harness/state/runs` and is not a
-product artifact.
+optional external validation evidence and is not a product artifact. The
+validation wrapper supplies `JSONLVIEW_ARTIFACT_DIR`; the product runner does not
+discover or depend on a sibling validation checkout.

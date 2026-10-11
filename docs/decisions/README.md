@@ -64,6 +64,7 @@ Read these before changing a shared boundary:
 40. [ADR-039 architecture evolution slices](039-architecture-evolution-slices.md)
 41. [ADR-040 native scanner measurement boundary](040-native-scanner-measurement-boundary.md)
 42. [ADR-041 typed RPC and ports-adapters slices](041-typed-rpc-and-ports-adapters-slices.md)
+43. [ADR-042 documentation ownership and external evidence](042-documentation-ownership-and-external-evidence.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

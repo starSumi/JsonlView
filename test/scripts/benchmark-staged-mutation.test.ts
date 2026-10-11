@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   benchmarkMutationCase,
-  assertHarnessReportPath,
+  assertArtifactReportPath,
   createSyntheticBase,
   createSyntheticEdits,
   createSyntheticNewlineCorpora,
@@ -13,7 +13,7 @@ import {
   replayFailureScenarios,
   runBenchmark,
   summarize,
-  writeHarnessReport,
+  writeArtifactReport,
 } from '../../scripts/benchmark-staged-mutation-runner';
 
 describe('staged mutation benchmark and replay oracle', () => {
@@ -83,34 +83,34 @@ describe('staged mutation benchmark and replay oracle', () => {
     expect(report.timingInterpretation.status).toBe('partial');
   });
 
-  it('rejects report output outside the harness state/runs boundary', async () => {
+  it('rejects report output outside the explicit artifact boundary', async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'jsonlview-mutation-boundary-'));
-    const root = join(tempRoot, 'JsonlView-harness');
-    const run = join(root, 'state', 'runs', 'run');
+    const root = join(tempRoot, 'external-artifacts');
+    const run = join(root, 'run');
     mkdirSync(run, { recursive: true });
     const allowed = join(run, 'report.json');
     try {
-      expect(assertHarnessReportPath(allowed, root)).toBe(allowed);
-      await writeHarnessReport(allowed, '{}\n');
-      await expect(writeHarnessReport(allowed, '{}\n')).rejects.toThrow(/already exists/);
-      expect(() => assertHarnessReportPath(allowed, root)).toThrow(/already exists/);
+      expect(assertArtifactReportPath(allowed, root)).toBe(allowed);
+      await writeArtifactReport(allowed, '{}\n');
+      await expect(writeArtifactReport(allowed, '{}\n')).rejects.toThrow(/already exists/);
+      expect(() => assertArtifactReportPath(allowed, root)).toThrow(/already exists/);
       rmSync(allowed);
-      expect(() => assertHarnessReportPath(join(root, '..', 'JsonlView', 'report.json'), root)).toThrow(/state[\\/]+runs/);
-      expect(() => assertHarnessReportPath(join(root, 'state', 'runs', '..', '..', 'secret.json'), root)).toThrow(/state[\\/]+runs/);
-      expect(() => assertHarnessReportPath(String.raw`C:\evidence\outside.json`, root)).toThrow(/Windows absolute|state[\\/]+runs/);
-      expect(() => assertHarnessReportPath(String.raw`\\server\share\outside.json`, root)).toThrow(/UNC|state[\\/]+runs/);
+      expect(() => assertArtifactReportPath(join(root, '..', 'outside.json'), root)).toThrow(/external artifact root/);
+      expect(() => assertArtifactReportPath(join(root, 'run', '..', '..', 'secret.json'), root)).toThrow(/external artifact root/);
+      expect(() => assertArtifactReportPath(String.raw`C:\evidence\outside.json`, root)).toThrow(/Windows absolute|external artifact root/);
+      expect(() => assertArtifactReportPath(String.raw`\\server\share\outside.json`, root)).toThrow(/UNC|external artifact root/);
       const outside = join(tempRoot, 'outside');
       mkdirSync(outside);
-      const escape = join(root, 'state', 'runs', 'escape');
+      const escapedArtifact = join(root, 'escape');
       let symlinkCreated = false;
       try {
-        symlinkSync(outside, escape, process.platform === 'win32' ? 'junction' : 'dir');
+        symlinkSync(outside, escapedArtifact, process.platform === 'win32' ? 'junction' : 'dir');
         symlinkCreated = true;
       } catch {
         // Some Windows runners disallow link creation; the lexical checks above remain active.
       }
       if (symlinkCreated) {
-        expect(() => assertHarnessReportPath(join(escape, 'report.json'), root)).toThrow(/symlink|junction|escape/);
+        expect(() => assertArtifactReportPath(join(escapedArtifact, 'report.json'), root)).toThrow(/symlink|junction|escape/);
       }
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });

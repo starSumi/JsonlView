@@ -39,7 +39,7 @@ New physical formats require adapters; new meanings require profiles.
 ## Evidence
 
 Source contract: `docs/format-and-profile-boundaries.md`; engine/profile tests;
-synthetic fixtures in `JsonlView-harness/showcase/`.
+synthetic fixtures in the external validation workspace showcase area.
 
 ## Boundary
 
