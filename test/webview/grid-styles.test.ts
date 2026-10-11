@@ -24,4 +24,14 @@ describe('record grid presentation styles', () => {
     expect(styles).toContain('scrollbar-gutter: stable;');
     expect(styles).toContain('.data-grid-scroll::-webkit-scrollbar-thumb:hover');
   });
+
+  it('keeps pointer-active cells quiet and reserves the focus ring for keyboard entry', () => {
+    const activeCell = cssBlock('.data-grid-scroll .is-active-cell');
+    expect(activeCell).toContain('background: transparent;');
+    expect(activeCell).toContain('outline: none;');
+    expect(activeCell).toContain('box-shadow: none;');
+
+    const keyboardCell = cssBlock('.data-grid-scroll:focus-visible .is-active-cell');
+    expect(keyboardCell).toContain('outline: 1px solid var(--vscode-focusBorder);');
+  });
 });
