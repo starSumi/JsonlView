@@ -43,6 +43,7 @@ describe('LoadRecordPage', () => {
     [{ ...request, anchorOrdinal: '01' }, 'anchor'],
     [{ ...request, sortOffset: '1' }, 'sort offset'],
     [{ ...sortedBase, sort: { columnId: 'payload', direction: 'asc' }, sortOffset: '2040' }, 'sort window'],
+    [{ ...request, columns: null as unknown as NonNullable<RecordPageRequest['columns']> }, 'null columns'],
     [{ ...request, columns: Array.from({ length: 65 }, () => ({ id: 'x', label: 'x', source: 'record' as const })) }, 'columns'],
   ])('rejects an unbounded %s request before invoking the reader', async (invalid, label) => {
     const getRows = vi.fn().mockResolvedValue(page);

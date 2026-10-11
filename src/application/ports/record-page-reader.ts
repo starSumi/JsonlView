@@ -76,13 +76,17 @@ function isRowSort(value: RowSort): boolean {
     && (value.direction === 'asc' || value.direction === 'desc');
 }
 
-function isColumns(value: ColumnSpec[]): boolean {
-  return value.length <= 64 && value.every((column) => (
+function isColumns(value: unknown): value is ColumnSpec[] {
+  return Array.isArray(value) && value.length <= 64 && value.every((column: unknown) => (
     isObject(column)
     && isBoundedString(column.id, 256)
     && isBoundedString(column.label, 256)
     && (column.source === 'record' || column.source === 'profile' || column.source === 'system')
-    && (column.width === undefined || (Number.isFinite(column.width) && column.width >= 1 && column.width <= 2_000))
+    && (column.width === undefined
+      || (typeof column.width === 'number'
+        && Number.isFinite(column.width)
+        && column.width >= 1
+        && column.width <= 2_000))
   ));
 }
 
