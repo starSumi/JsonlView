@@ -13,6 +13,12 @@ import { classifyContent, inferCodeLanguage } from './content-view';
 import { formatJavaScriptForDisplay } from './code-syntax';
 import { DEFAULT_MAX_CHARS } from './code-syntax-core';
 import { buildClaudeEventSections, type ClaudeEventBuilderContext } from './providers/claude-event-builder';
+import {
+  buildCodexContextSections,
+  buildCodexItemSections,
+  buildCodexResponseItemSections,
+  type CodexEventBuilderContext,
+} from './providers/codex-event-builder';
 import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
@@ -958,164 +964,17 @@ function piMessageSections(
   return sections;
 }
 
-/**
- * These are deliberately explicit Codex-owned paths. A generic `text` key is
- * not enough evidence to turn arbitrary application data into Markdown.
- */
-function codexContextSections(
-  envelopeType: string | undefined,
-  payload: EventObject,
-): EventPresentationSection[] {
-  const sections: EventPresentationSection[] = [];
-  if (envelopeType === 'world_state') {
-    const fields: Array<{ title: string; path: string[]; richText: boolean }> = [
-      { title: 'AGENTS.md', path: ['state', 'agents_md', 'text'], richText: true },
-      { title: 'Host skills', path: ['state', 'host_skills', 'body'], richText: true },
-      { title: 'Orchestrator skills', path: ['state', 'orchestrator_skills', 'body'], richText: true },
-      { title: 'Permission instructions', path: ['state', 'permissions', 'instructions'], richText: true },
-      { title: 'Collaboration instructions', path: ['state', 'collaboration_mode', 'settings', 'developer_instructions'], richText: true },
-      { title: 'Developer instructions', path: ['state', 'developer_instructions'], richText: true },
-      { title: 'Managed developer instructions', path: ['state', 'managed_developer_instructions'], richText: true },
-      { title: 'Multi-agent usage hint', path: ['state', 'multi_agent_usage_hint'], richText: false },
-      { title: 'Skills', path: ['state', 'skills', 'body'], richText: true },
-      { title: 'Skills instructions', path: ['state', 'skills', 'instructions'], richText: true },
-      { title: 'Context window guidance', path: ['state', 'context_window_guidance'], richText: false },
-    ];
-    for (const field of fields) addTextCandidate(sections, field.title, valueAtPath(payload, field.path), field.richText);
-  } else if (envelopeType === 'thread_settings_applied') {
-    const fields: Array<{ title: string; path: string[] }> = [
-      { title: 'Developer instructions', path: ['thread_settings', 'collaboration_mode', 'settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['thread_settings', 'settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['thread_settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['collaboration_mode', 'settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['developer_instructions'] },
-      { title: 'Instructions', path: ['instructions'] },
-    ];
-    for (const field of fields) addTextCandidate(sections, field.title, valueAtPath(payload, field.path), true);
-  } else if (envelopeType === 'session_meta') {
-    addTextCandidate(sections, 'Base instructions', valueAtPath(payload, ['base_instructions']), true);
-  } else if (envelopeType === 'compacted') {
-    addTextCandidate(sections, 'Compaction message', own(payload, 'message'), true);
-  } else if (envelopeType === 'inter_agent_communication') {
-    addTextCandidate(sections, 'Agent message', own(payload, 'content'), true);
-  } else if (envelopeType === 'task_complete' || envelopeType === 'turn_complete') {
-    // Codex keeps the terminal turn message beside the lifecycle envelope,
-    // rather than wrapping it in a response-item content block.
-    addTextCandidate(sections, 'Last agent message', own(payload, 'last_agent_message'), true);
-    addTextCandidate(sections, 'Error', own(payload, 'error'), true);
-    const timing: EventObject = {};
-    for (const key of ['started_at', 'completed_at', 'duration_ms', 'time_to_first_token_ms']) {
-      if (own(payload, key) !== undefined) timing[key] = own(payload, key);
-    }
-    if (Object.keys(timing).length > 0) addCodeCandidate(sections, 'Timing', timing, 'json');
-  }
-  return sections;
+/** Provider-only Codex projection; the builder owns provider-specific field semantics. */
+function codexContextSections(envelopeType: string | undefined, payload: EventObject): EventPresentationSection[] {
+  return buildCodexContextSections(envelopeType, payload, codexEventBuilderContext);
 }
 
-function codexItemSections(
-  item: EventObject | undefined,
-  normalizedType: string | undefined,
-): EventPresentationSection[] {
-  if (!item || !normalizedType) return [];
-  const sections: EventPresentationSection[] = [];
-  switch (normalizedType) {
-    case 'reasoning':
-      addTextCandidate(sections, 'Reasoning summary', own(item, 'summary_text'), true);
-      addTextCandidate(sections, 'Reasoning content', own(item, 'raw_content'), true);
-      break;
-    case 'command_execution':
-      addCommandCandidate(sections, own(item, 'command'));
-      for (const key of ['stdout', 'stderr', 'aggregated_output', 'formatted_output']) {
-        addCommandOutputCandidate(sections, key.replaceAll('_', ' '), own(item, key));
-      }
-      break;
-    case 'file_change':
-      if (!addDiffCandidate(sections, 'Changes', own(item, 'changes'))) {
-        if (typeof own(item, 'unified_diff') === 'string' || typeof own(item, 'diff') === 'string') {
-          addDiffCandidate(sections, 'Changes', item);
-        } else {
-          addCodeCandidate(sections, 'Changes', own(item, 'changes'));
-        }
-      }
-      addTextCandidate(sections, 'stdout', own(item, 'stdout'), true);
-      addTextCandidate(sections, 'stderr', own(item, 'stderr'), true);
-      break;
-    case 'mcp_tool_call':
-    case 'dynamic_tool_call':
-      addCodeCandidate(sections, 'Arguments', own(item, 'arguments'));
-      addTextCandidate(sections, 'Result', own(item, 'result'));
-      addTextCandidate(sections, 'Error', own(item, 'error'));
-      addTextCandidate(sections, 'Output', own(item, 'content_items'));
-      break;
-    case 'collab_agent_tool_call':
-    case 'collab_tool_call':
-    case 'sub_agent_activity':
-      addTextCandidate(sections, 'Prompt', own(item, 'prompt'), true);
-      break;
-    case 'plan':
-      addTextCandidate(sections, 'Plan', own(item, 'text'), true);
-      break;
-    case 'hook_prompt':
-      addTextCandidate(sections, 'Prompt', own(item, 'fragments'), true);
-      break;
-    case 'extension':
-      addTextCandidate(sections, 'Query', own(item, 'query'));
-      addCodeCandidate(sections, 'Action', own(item, 'action'));
-      addTextCandidate(sections, 'Results', own(item, 'results'));
-      addTextCandidate(sections, 'Result', own(item, 'result'));
-      addTextCandidate(sections, 'Output', own(item, 'output'));
-      break;
-    case 'image_view':
-      addTextCandidate(sections, 'Path', own(item, 'path'));
-      break;
-    default:
-      break;
-  }
-  return sections;
+function codexItemSections(item: EventObject | undefined, normalizedType: string | undefined): EventPresentationSection[] {
+  return buildCodexItemSections(item, normalizedType, codexEventBuilderContext);
 }
 
-function codexResponseItemSections(
-  itemType: string | undefined,
-  item: EventObject,
-): EventPresentationSection[] {
-  const sections: EventPresentationSection[] = [];
-  switch (itemType) {
-    case 'custom_tool_call': {
-      const name = valueLabel(own(item, 'name'));
-      const input = own(item, 'input');
-      if ((name === 'exec' || name === 'js_repl') && typeof input === 'string') {
-        addJavaScriptCandidate(sections, `JavaScript · ${name}`, input);
-      } else {
-        addTextCandidate(sections, name ? `Freeform input · ${name}` : 'Freeform input', input);
-      }
-      break;
-    }
-    case 'custom_tool_call_output':
-    case 'function_call_output':
-      addOutputCandidate(sections, 'Tool result', own(item, 'output'));
-      break;
-    case 'function_call': {
-      const rawArguments = own(item, 'arguments');
-      const decodedArguments = decodeSerializedJsonValue(rawArguments);
-      addCodeCandidate(
-        sections,
-        'Arguments',
-        decodedArguments,
-        'json',
-        typeof rawArguments === 'string' ? rawArguments : undefined,
-      );
-      const argumentsSection = sections.find((section) => section.title === 'Arguments');
-      if (argumentsSection) addExecCommandView(argumentsSection, valueLabel(own(item, 'name')), decodedArguments);
-      break;
-    }
-    case 'mcp_tool_call_output':
-      addCodeCandidate(sections, 'Tool result', own(item, 'output'), 'json');
-      break;
-    default:
-      break;
-  }
-  return sections;
+function codexResponseItemSections(itemType: string | undefined, item: EventObject): EventPresentationSection[] {
+  return buildCodexResponseItemSections(itemType, item, codexEventBuilderContext);
 }
 
 function roleLabel(value: unknown, fallback: string): string {
@@ -1193,6 +1052,21 @@ const claudeEventBuilderContext: ClaudeEventBuilderContext = {
   addCodeCandidate,
   addTextDiffCandidate,
   appendAgentContentBlock,
+};
+
+const codexEventBuilderContext: CodexEventBuilderContext = {
+  own,
+  valueAtPath,
+  valueLabel,
+  addTextCandidate,
+  addOutputCandidate,
+  addCodeCandidate,
+  addDiffCandidate,
+  addCommandCandidate,
+  addCommandOutputCandidate,
+  addJavaScriptCandidate,
+  decodeSerializedJsonValue,
+  addExecCommandView,
 };
 
 export function buildAgentEventPresentation(
