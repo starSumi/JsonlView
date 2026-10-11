@@ -19,6 +19,7 @@ import {
   buildCodexResponseItemSections,
   type CodexEventBuilderContext,
 } from './providers/codex-event-builder';
+import { buildPiEventSections, type PiEventBuilderContext } from './providers/pi-event-builder';
 import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
@@ -757,20 +758,6 @@ function addTextDiffCandidate(
   return true;
 }
 
-function addPiToolDetailDiffs(sections: EventPresentationSection[], details: unknown): void {
-  const detailObject = objectOf(details);
-  if (!detailObject) return;
-  for (const key of ['diff', 'patch'] as const) {
-    const value = own(detailObject, key);
-    const title = 'Details ' + key;
-    if (typeof value === 'string') {
-      addTextDiffCandidate(sections, title, value);
-    } else if (!addDiffCandidate(sections, title, value) && value !== undefined) {
-      addCodeCandidate(sections, title, value, 'json');
-    }
-  }
-}
-
 function appendAgentContentBlock(
   sections: EventPresentationSection[],
   block: unknown,
@@ -851,117 +838,6 @@ function appendAgentContentBlock(
     return;
   }
   addCodeCandidate(sections, title, object, 'json');
-}
-
-/** Pi AgentMessage is a nested, typed content contract rather than a flat text field. */
-function piMessageSections(
-  payload: EventObject,
-  profile?: AgentRowProjection,
-): EventPresentationSection[] {
-  if (profile?.profileId !== 'pi-coding-agent') return [];
-  if (valueLabel(payload.type)?.toLowerCase() === 'custom_message') {
-    const sections: EventPresentationSection[] = [];
-    addTextCandidate(sections, 'Custom type', own(payload, 'customType'));
-    addCodeCandidate(sections, 'Display', own(payload, 'display'), 'json');
-    const content = own(payload, 'content');
-    if (Array.isArray(content)) {
-      const visible = Math.min(content.length, 32);
-      for (let index = 0; index < visible; index += 1) {
-        const block = content[index];
-        const blockObject = objectOf(block);
-        const type = valueLabel(blockObject?.type)?.toLowerCase() ?? 'content';
-        const title = content.length === 1 && type === 'text'
-          ? 'Custom message'
-          : `Custom ${type.replaceAll('_', ' ')} ${String(index + 1)}`;
-        appendAgentContentBlock(sections, block, title, 'agent');
-      }
-      if (content.length > visible) {
-        sections.push({ title: 'Additional custom message content', code: JSON.stringify({ omittedBlocks: content.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
-      }
-    } else if (content !== undefined) {
-      addTextCandidate(sections, 'Custom message', content, false);
-      if (!sections.some((section) => section.title === 'Custom message')) {
-        addCodeCandidate(sections, 'Custom content', content, 'json');
-      }
-    }
-    addCodeCandidate(sections, 'Custom details', own(payload, 'details'), 'json');
-    return sections;
-  }
-  const message = objectOf(payload.message);
-  if (!message) return [];
-  const sections: EventPresentationSection[] = [];
-  const role = valueLabel(message.role)?.toLowerCase();
-  const content = own(message, 'content');
-  if (Array.isArray(content)) {
-    const visible = Math.min(content.length, 32);
-    for (let index = 0; index < visible; index += 1) {
-      const block = content[index];
-      const blockObject = objectOf(block);
-      const type = valueLabel(blockObject?.type)?.toLowerCase() ?? 'content';
-      const name = valueLabel(blockObject?.name);
-      const title = type === 'toolcall'
-        ? (name ? 'Tool call · ' + name : 'Tool call')
-        : content.length === 1 ? (type === 'text' ? 'Message' : type.replaceAll('_', ' ')) : type.replaceAll('_', ' ') + ' ' + String(index + 1);
-      appendAgentContentBlock(sections, block, title, role);
-    }
-    if (content.length > visible) {
-      sections.push({ title: 'Additional content blocks', code: JSON.stringify({ omittedBlocks: content.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
-    }
-  } else if (typeof content === 'string' && content.length > 0) {
-    addTextCandidate(sections, role === 'system' ? 'System message' : 'Message', content, role === 'assistant');
-  }
-
-  if (role === 'bashexecution') {
-    addCodeCandidate(sections, 'Command', own(message, 'command'), 'shell');
-    addOutputCandidate(sections, 'Output', own(message, 'output'));
-    addCodeCandidate(sections, 'Execution details', message, 'json');
-  } else if (role === 'custom') {
-    addTextCandidate(sections, 'Custom message', own(message, 'content'), false);
-    addCodeCandidate(sections, 'Custom details', own(message, 'details'), 'json');
-  } else if (role === 'branchsummary' || role === 'compactionsummary') {
-    addTextCandidate(sections, role === 'branchsummary' ? 'Branch summary' : 'Compaction summary', own(message, 'summary'), true);
-    addCodeCandidate(sections, 'Summary details', own(message, 'details'), 'json');
-  }
-
-  const namedSections = objectOf(message.sections);
-  if (namedSections) {
-    let count = 0;
-    for (const key of Object.keys(namedSections)) {
-      if (count >= 32) break;
-      const value = own(namedSections, key);
-      if (value === null) {
-        addCodeCandidate(sections, 'System section · ' + key, null, 'json');
-      } else {
-        addTextCandidate(sections, 'System section · ' + key, value, true);
-      }
-      count += 1;
-    }
-  }
-
-  const toolsAdded = own(message, 'toolsAdded');
-  if (Array.isArray(toolsAdded)) {
-    const visible = Math.min(toolsAdded.length, 32);
-    for (let index = 0; index < visible; index += 1) {
-      const tool = objectOf(toolsAdded[index]);
-      if (!tool) continue;
-      const name = valueLabel(own(tool, 'name')) ?? String(index + 1);
-      addTextCandidate(sections, 'Tool declaration · ' + name, own(tool, 'description'));
-      addCodeCandidate(sections, 'Tool schema · ' + name, own(tool, 'parameters'), 'json');
-    }
-    if (toolsAdded.length > visible) {
-      sections.push({ title: 'Additional tool declarations', code: JSON.stringify({ omittedTools: toolsAdded.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
-    }
-  }
-
-  const toolsRemoved = own(message, 'toolsRemoved');
-  if (Array.isArray(toolsRemoved)) {
-    const names = toolsRemoved.slice(0, 32).map((item) => valueLabel(objectOf(item)?.name) ?? valueLabel(item)).filter((name): name is string => Boolean(name));
-    if (names.length > 0) addTextCandidate(sections, 'Tools removed', names.join(', '));
-  }
-  if (role === 'toolresult') addPiToolDetailDiffs(sections, own(message, 'details'));
-  addCodeCandidate(sections, 'Tool details', own(message, 'details'), 'json');
-  addCodeCandidate(sections, 'Nested tool calls', own(message, 'nestedCalls'), 'json');
-  return sections;
 }
 
 /** Provider-only Codex projection; the builder owns provider-specific field semantics. */
@@ -1069,6 +945,18 @@ const codexEventBuilderContext: CodexEventBuilderContext = {
   addExecCommandView,
 };
 
+const piEventBuilderContext: PiEventBuilderContext = {
+  objectOf,
+  own,
+  valueLabel,
+  addTextCandidate,
+  addOutputCandidate,
+  addCodeCandidate,
+  addTextDiffCandidate,
+  addDiffCandidate,
+  appendAgentContentBlock,
+};
+
 export function buildAgentEventPresentation(
   value: unknown,
   profile?: AgentRowProjection,
@@ -1168,7 +1056,7 @@ export function buildAgentEventPresentation(
     ?? payload.lastPrompt
     ?? payload.prompt;
   const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
-  const piSections = piMessageSections(payload, profile);
+  const piSections = buildPiEventSections(payload, profile, piEventBuilderContext);
   const specializedSections = claudeSections.length > 0 ? claudeSections : piSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
