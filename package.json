@@ -391,6 +391,7 @@
     "check:cargo-policy": "cargo deny --manifest-path native/jsonl-core/Cargo.toml --config deny.toml check advisories licenses bans sources",
     "discover:producers": "node scripts/discover-producer-surfaces.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
+    "check:release-lineage": "node scripts/check-release-lineage.mjs",
     "promotion:plan": "node scripts/promotion-plan.mjs",
     "promotion:join": "node scripts/promotion-join.mjs",
     "marketplace:publish": "node scripts/marketplace-publish.mjs",
