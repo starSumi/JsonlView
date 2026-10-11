@@ -83,6 +83,17 @@ The first provider-specific presentation slice is the Claude event builder in
 transport and one application use-case, each merged only after isolated review
 and candidate-bound harness evidence.
 
+## Normative References
+
+- [JSON Lines specification](https://jsonlines.org/) defines the source format
+  boundary and record framing assumptions.
+- [VS Code Webview API](https://code.visualstudio.com/api/references/vscode-api#Webview)
+  defines the host-to-Webview message surface.
+- [VS Code Webview guide](https://code.visualstudio.com/api/extension-guides/webview)
+  defines the sandbox and lifecycle constraints for the presentation runtime.
+- [VS Code custom editor guide](https://code.visualstudio.com/api/extension-guides/custom-editors)
+  defines the document/editor integration contract used by the product.
+
 ## Boundary
 
 This decision does not authorize a package split, network service, provider
