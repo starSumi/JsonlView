@@ -12,7 +12,7 @@ import { stringifyJsonBounded } from './json-syntax';
 import { classifyContent, inferCodeLanguage } from './content-view';
 import { formatJavaScriptForDisplay } from './code-syntax';
 import { DEFAULT_MAX_CHARS } from './code-syntax-core';
-import { claudeToolSections, type ClaudeToolSection } from '../profiles/claude-tool-projection';
+import { buildClaudeEventSections, type ClaudeEventBuilderContext } from './providers/claude-event-builder';
 import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
@@ -847,104 +847,6 @@ function appendAgentContentBlock(
   addCodeCandidate(sections, title, object, 'json');
 }
 
-function claudeMessageSections(
-  payload: EventObject,
-  profile?: AgentRowProjection,
-): EventPresentationSection[] {
-  if (profile?.profileId !== 'claude-code-session') return [];
-  const message = objectOf(payload.message);
-  if (!message || !Object.hasOwn(message, 'content')) {
-    return Object.hasOwn(payload, 'toolUseResult')
-      ? claudeToolSections(payload).map(toEventPresentationSection)
-      : [];
-  }
-  const role = valueLabel(message.role)?.toLowerCase();
-  const content = own(message, 'content');
-  if (!Array.isArray(content)) {
-    if (typeof content === 'string') {
-      const sections: EventPresentationSection[] = [{ title: 'Message', ...textSection(content), richText: role === 'assistant' }];
-      if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-      return sections;
-    }
-    const sections: EventPresentationSection[] = [];
-    addCodeCandidate(sections, 'Content', content, 'json');
-    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-    return sections;
-  }
-  if (content.length === 0) {
-    const sections: EventPresentationSection[] = [];
-    addCodeCandidate(sections, 'Content', content, 'json');
-    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-    return sections;
-  }
-  const sections: EventPresentationSection[] = [];
-  const singleTextBlock = content.length === 1
-    && objectOf(content[0])?.type === 'text';
-  const visibleBlocks = Math.min(content.length, 32);
-  for (let index = 0; index < visibleBlocks; index += 1) {
-    const block = content[index];
-    const object = objectOf(block);
-    const type = valueLabel(object?.type)?.toLowerCase() ?? 'content';
-    const title = singleTextBlock
-      ? 'Message'
-      : type === 'tool_result'
-        ? `Tool result${content.length > 1 ? ` ${String(index + 1)}` : ''}`
-        : type === 'tool_use' || type === 'server_tool_use'
-          ? `Tool input${content.length > 1 ? ` ${String(index + 1)}` : ''}`
-          : `${type.replaceAll('_', ' ')}${content.length > 1 ? ` ${String(index + 1)}` : ''}`;
-    appendAgentContentBlock(sections, block, title, role);
-  }
-  if (Object.hasOwn(payload, 'toolUseResult')) {
-    sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-  }
-  if (content.length > 32) {
-    sections.push({
-      title: 'Additional content blocks',
-      code: JSON.stringify({ omittedBlocks: content.length - 32 }, null, 2),
-      truncated: true,
-      previewOnly: true,
-      language: 'json',
-    });
-  }
-  return sections;
-}
-
-function toEventPresentationSection(section: ClaudeToolSection): EventPresentationSection {
-  if (section.kind === 'json') {
-    const rendered = codeSectionValue(section.value);
-    return {
-      title: section.title,
-      ...(rendered
-        ? { code: rendered.code, ...(rendered.fullCode !== undefined ? { fullText: rendered.fullCode } : {}) }
-        : { code: '{}' }),
-      language: 'json',
-      truncated: section.truncated ?? rendered?.truncated ?? false,
-      previewOnly: section.truncated ?? rendered?.previewOnly ?? false,
-    };
-  }
-  if (section.kind === 'diff') {
-    const source = typeof section.value === 'string' ? section.value : JSON.stringify(section.value, null, 2);
-    const added: EventPresentationSection[] = [];
-    addTextDiffCandidate(added, section.title, source ?? '', section.truncated);
-    return added[0] ?? { title: section.title, code: '', language: 'diff', truncated: true, previewOnly: true };
-  }
-  const text = typeof section.value === 'string' ? section.value : textOf(section.value);
-  if (section.kind === 'code') {
-    const rendered = codeSectionValue(text ?? section.value);
-    return {
-      title: section.title,
-      ...(rendered
-        ? { code: rendered.code, ...(rendered.fullCode !== undefined ? { fullText: rendered.fullCode } : {}) }
-        : { code: '' }),
-      ...(section.language ? { language: section.language } : {}),
-      truncated: section.truncated ?? rendered?.truncated ?? false,
-      previewOnly: section.truncated ?? rendered?.previewOnly ?? false,
-    };
-  }
-  const bounded = textSection(text ?? section.value);
-  return { title: section.title, ...bounded, ...(section.language ? { language: section.language } : {}) };
-}
-
 /** Pi AgentMessage is a nested, typed content contract rather than a flat text field. */
 function piMessageSections(
   payload: EventObject,
@@ -1054,90 +956,6 @@ function piMessageSections(
   addCodeCandidate(sections, 'Tool details', own(message, 'details'), 'json');
   addCodeCandidate(sections, 'Nested tool calls', own(message, 'nestedCalls'), 'json');
   return sections;
-}
-
-/**
- * Claude control records such as model and MCP attachments carry their
- * human-readable payload outside `message.content`. Keep these paths explicit
- * so arbitrary attachment objects remain available in Tree/Raw without being
- * flattened into an unbounded transcript.
- */
-function claudeAttachmentSections(
-  payload: EventObject,
-  profile?: AgentRowProjection,
-): EventPresentationSection[] {
-  if (profile?.profileId !== 'claude-code-session' || valueLabel(payload.type)?.toLowerCase() !== 'attachment') return [];
-  const sections: EventPresentationSection[] = [];
-  const attachment = objectOf(payload.attachment);
-  if (attachment) {
-    addTextCandidate(sections, 'Attachment text', own(attachment, 'text'));
-    addTextCandidate(sections, 'System prompt', own(attachment, 'systemPrompt'), true);
-    addClaudeToolDescriptions(sections, own(attachment, 'tools'));
-    addTextCandidate(sections, 'Added blocks', own(attachment, 'addedBlocks'));
-    addTextCandidate(sections, 'Added lines', own(attachment, 'addedLines'));
-    addTextCandidate(sections, 'Removed names', own(attachment, 'removedNames'));
-    addRenderedClaudeContent(sections, own(attachment, 'rendered'));
-  }
-  addRenderedClaudeContent(sections, own(payload, 'rendered'));
-  return sections;
-}
-
-function addRenderedClaudeContent(
-  sections: EventPresentationSection[],
-  value: unknown,
-): void {
-  if (!Array.isArray(value)) return;
-  const visible = Math.min(value.length, 32);
-  for (let index = 0; index < visible; index += 1) {
-    const rendered = objectOf(value[index]);
-    const nestedAttachment = rendered ? objectOf(own(rendered, 'attachment')) : undefined;
-    const content = rendered
-      ? (own(rendered, 'content')
-        ?? own(rendered, 'text')
-        ?? own(nestedAttachment ?? {}, 'text')
-        ?? own(nestedAttachment ?? {}, 'systemPrompt'))
-      : value[index];
-    addTextCandidate(sections, visible === 1 ? 'Rendered content' : `Rendered content ${String(index + 1)}`, content);
-    if (nestedAttachment) addClaudeToolDescriptions(sections, own(nestedAttachment, 'tools'));
-  }
-  if (value.length > visible) {
-    sections.push({
-      title: 'Additional rendered content',
-      code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
-      truncated: true,
-      previewOnly: true,
-      language: 'json',
-    });
-  }
-}
-
-function addClaudeToolDescriptions(
-  sections: EventPresentationSection[],
-  value: unknown,
-): void {
-  if (!Array.isArray(value)) return;
-  const visible = Math.min(value.length, 32);
-  for (let index = 0; index < visible; index += 1) {
-    const tool = objectOf(value[index]);
-    if (!tool) continue;
-    const description = own(tool, 'description');
-    if (description === undefined) continue;
-    const name = valueLabel(own(tool, 'name'));
-    addTextCandidate(
-      sections,
-      name ? `Tool description · ${name}` : `Tool description · ${String(index + 1)}`,
-      description,
-    );
-  }
-  if (value.length > visible) {
-    sections.push({
-      title: 'Additional tool descriptions',
-      code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
-      truncated: true,
-      previewOnly: true,
-      language: 'json',
-    });
-  }
 }
 
 /**
@@ -1355,6 +1173,28 @@ function genericDatasetKind(
   return undefined;
 }
 
+const claudeEventBuilderContext: ClaudeEventBuilderContext = {
+  objectOf,
+  own,
+  valueLabel,
+  textOf,
+  textSection,
+  codeSectionValue: (value) => {
+    const rendered = codeSectionValue(value);
+    if (!rendered) return undefined;
+    return {
+      code: rendered.code,
+      ...(rendered.fullCode !== undefined ? { fullCode: rendered.fullCode } : {}),
+      truncated: rendered.truncated,
+      previewOnly: rendered.previewOnly,
+    };
+  },
+  addTextCandidate,
+  addCodeCandidate,
+  addTextDiffCandidate,
+  appendAgentContentBlock,
+};
+
 export function buildAgentEventPresentation(
   value: unknown,
   profile?: AgentRowProjection,
@@ -1453,10 +1293,7 @@ export function buildAgentEventPresentation(
     ?? plainText
     ?? payload.lastPrompt
     ?? payload.prompt;
-  const claudeSections = [
-    ...claudeMessageSections(payload, profile),
-    ...claudeAttachmentSections(payload, profile),
-  ];
+  const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
   const piSections = piMessageSections(payload, profile);
   const specializedSections = claudeSections.length > 0 ? claudeSections : piSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
