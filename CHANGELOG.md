@@ -5,6 +5,8 @@
 - Isolate the event presentation view and bounded section model behind the
   existing facade, preserving provider payloads, Raw authority, and Webview
   protocol behavior.
+- Extract bounded content analysis into a React-free module while preserving
+  the content-view facade and its characterization coverage.
 - Define product documentation ownership for reliability, security, and
   architecture records while keeping benchmarks, host evidence, and incident
   instances in the sibling harness.

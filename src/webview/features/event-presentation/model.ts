@@ -1,4 +1,4 @@
-import type { ContentMode } from '../../content-view';
+import type { ContentMode } from '../../content-analysis';
 
 export interface FunctionCallView {
   name: string;
