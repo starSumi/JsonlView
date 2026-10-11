@@ -51,17 +51,21 @@ The proposed next stage uses three small, reversible practices:
 
 ## Recorded progress
 
-The profile policy, record-query, event-presentation, and content-analysis
-slices have now been completed on isolated candidates. Each keeps the original
-facade and records focused characterization coverage before any owner
-retirement. The event presentation slice moves the renderer and bounded section
-model into a feature directory while leaving the provider-specific builder in
-the compatibility facade. The content analysis slice moves bounded JSON,
-Markdown, and language classification into a React-free owner while retaining
-the content-view exports for a later consumer migration.
+The profile policy, record-query, event-presentation, content-analysis, and
+provider-specific event-builder slices have now been completed on isolated
+candidates. Each keeps the original facade and records focused
+characterization coverage before any owner retirement. The event presentation
+slice moves the renderer and bounded section model into a feature directory,
+while the provider builder remains a pure, provider-owned projection. The
+content analysis slice moves bounded JSON, Markdown, and language
+classification into a React-free owner.
 
-The next slice is the provider-specific event builder, after measuring its
-remaining facade dependencies and preserving Raw, lifecycle, and IPC seams.
+The current candidate also contains the first transport and application
+vertical slices. Shared envelope validation and cancellation now have one
+typed transport owner, while bounded record-page loading is expressed as an
+application use-case behind a reader port. The existing facades and wire shape
+remain in place for rollback; filesystem, provider, native, and domain roots
+remain deferred until their own contracts and evidence are ready.
 
 ## Revisit trigger
 
