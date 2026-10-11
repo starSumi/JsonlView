@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Isolate the event presentation view and bounded section model behind the
+  existing facade, preserving provider payloads, Raw authority, and Webview
+  protocol behavior.
 - Define product documentation ownership for reliability, security, and
   architecture records while keeping benchmarks, host evidence, and incident
   instances in the sibling harness.

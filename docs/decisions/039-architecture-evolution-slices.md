@@ -1,6 +1,6 @@
 # ADR-039: Architecture Evolution Slices
 
-Status: proposed
+Status: accepted
 
 ## Pressure
 
@@ -48,6 +48,15 @@ The proposed next stage uses three small, reversible practices:
   records the current modular-monolith boundary and compatibility-barrel rule.
 - [ADR-015: Curated release-note CI guard](015-changelog-ci-guard.md) and the
   focused suites provide the current change and validation gates.
+
+## Recorded progress
+
+The profile policy, record-query, and event-presentation slices have now been
+completed on isolated candidates. Each keeps the original facade and records
+focused characterization coverage before any owner retirement. The event
+presentation slice moves the renderer and bounded section model into a feature
+directory while leaving the provider-specific builder in the compatibility
+facade for a later, separately measured extraction.
 
 ## Revisit trigger
 
