@@ -673,6 +673,55 @@ body.is-resizing-detail {
   contain: layout paint style;
 }
 
+/* Keep WebView scrollbars compact while preserving a visible hover target. */
+.data-grid-scroll,
+.timeline-scroll,
+.schema-scroll,
+.problems-scroll,
+.filter-popover {
+  scrollbar-width: thin;
+  scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.45)) transparent;
+}
+
+.data-grid-scroll::-webkit-scrollbar,
+.timeline-scroll::-webkit-scrollbar,
+.schema-scroll::-webkit-scrollbar,
+.problems-scroll::-webkit-scrollbar,
+.filter-popover::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.data-grid-scroll::-webkit-scrollbar-track,
+.timeline-scroll::-webkit-scrollbar-track,
+.schema-scroll::-webkit-scrollbar-track,
+.problems-scroll::-webkit-scrollbar-track,
+.filter-popover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.data-grid-scroll::-webkit-scrollbar-thumb,
+.timeline-scroll::-webkit-scrollbar-thumb,
+.schema-scroll::-webkit-scrollbar-thumb,
+.problems-scroll::-webkit-scrollbar-thumb,
+.filter-popover::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.45));
+  background-clip: padding-box;
+}
+
+.data-grid-scroll::-webkit-scrollbar-thumb:hover,
+.timeline-scroll::-webkit-scrollbar-thumb:hover,
+.schema-scroll::-webkit-scrollbar-thumb:hover,
+.problems-scroll::-webkit-scrollbar-thumb:hover,
+.filter-popover::-webkit-scrollbar-thumb:hover {
+  border-width: 1px;
+  background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.65)));
+  background-clip: padding-box;
+}
+
 .virtual-space {
   position: relative;
   min-width: 100%;
@@ -686,10 +735,14 @@ body.is-resizing-detail {
 
 .data-grid-header {
   position: sticky;
+  isolation: isolate;
   z-index: 4;
   top: 0;
   border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+  /* Custom themes may provide a translucent group-header token. The sticky
+   * grid header must fully occlude virtual rows underneath it. */
+  background: var(--vscode-editor-background);
+  box-shadow: 0 1px 0 var(--vscode-panel-border);
 }
 
 .data-grid-heading,
