@@ -3,6 +3,7 @@ import { PROTOCOL_VERSION } from '../../src/shared/types';
 import {
   CancellationRegistry,
   createProtocolEnvelope,
+  isExtensionMessage,
   isProtocolEnvelope,
   readProtocolIdentity,
   validateProtocolEnvelope,
@@ -100,6 +101,28 @@ describe('shared transport boundary', () => {
     expect(() => registry.start('r'.repeat(129))).toThrow('Invalid request id');
   });
 
+  it('keeps the active channel request when startLatest receives an invalid id', () => {
+    const registry = new CancellationRegistry();
+    const current = registry.startLatest('rows', 'request-1');
+
+    expect(() => registry.startLatest('rows', '')).toThrow('Invalid request id');
+    expect(current.aborted).toBe(false);
+    expect(registry.size).toBe(1);
+    expect(registry.cancel('request-1')).toBe(true);
+  });
+
+  it('keeps both channel and prior request when startLatest receives a duplicate id', () => {
+    const registry = new CancellationRegistry();
+    const current = registry.startLatest('rows', 'request-1');
+    const other = registry.startLatest('detail', 'request-2');
+
+    expect(() => registry.startLatest('rows', 'request-2')).toThrow('Duplicate request id');
+    expect(current.aborted).toBe(false);
+    expect(other.aborted).toBe(false);
+    expect(registry.size).toBe(2);
+    registry.cancelAll();
+  });
+
   it('keeps only the latest request in a cancellation channel', () => {
     const registry = new CancellationRegistry();
     const first = registry.startLatest('rows', 'request-1');
@@ -110,5 +133,20 @@ describe('shared transport boundary', () => {
     expect(registry.size).toBe(1);
     registry.finish('request-2');
     expect(registry.size).toBe(0);
+  });
+
+  it.each([
+    ['OPENED', { profileId: 'generic' }],
+    ['ROWS', { rows: [{ genericSummary: 'missing ref', cells: [] }], columns: [], anchorOrdinal: '0', hasBefore: false, hasAfter: false, indexedRecords: '1' }],
+    ['DETAIL', { ref: {}, rawPreview: '{}', rawComplete: true, problems: [] }],
+    ['INSIGHTS', { dimension: 'eventKind', categories: [], timeBuckets: [], processedRecords: 1, examinedRecords: '1', examinedBytes: '1', truncated: false, capacityReached: false, bucketWidthMs: 1 }],
+  ] as const)('rejects malformed %s response payloads before Webview acceptance', (type, payload) => {
+    expect(isExtensionMessage(createProtocolEnvelope({
+      type,
+      documentId: 'document',
+      generation: 'generation',
+      requestId: 'request',
+      payload,
+    }))).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 export { CancellationRegistry } from './cancellation';
+export { isExtensionMessage } from './extension-message';
 export {
   createProtocolEnvelope,
   isProtocolEnvelope,

@@ -2,8 +2,10 @@ import {
   type ExtensionMessage,
   type WebviewRequest,
 } from '../shared/types';
-import { createProtocolEnvelope, isProtocolEnvelope } from '../shared/transport';
+import { createProtocolEnvelope, isExtensionMessage } from '../shared/transport';
 import type { RequestKind } from './state';
+
+export { isExtensionMessage };
 
 export interface MessageTransport {
   postMessage(message: WebviewRequest): void;
@@ -26,21 +28,6 @@ export type RequestPayload<TType extends WebviewRequest['type']> = Extract<
   WebviewRequest,
   { type: TType }
 >['payload'];
-
-const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
-  'OPENED',
-  'ROWS',
-  'PROBLEMS',
-  'DETAIL',
-  'SCHEMA',
-  'INSIGHTS',
-  'INDEX_PROGRESS',
-  'PROFILE_CHANGED',
-  'ROW_ORDER_CHANGED',
-  'REVEAL',
-  'SOURCE_INVALIDATED',
-  'ERROR',
-]);
 
 const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   READY: 'ready',
@@ -66,11 +53,6 @@ function createRequestId(): string {
   }
   requestCounter += 1;
   return `jsonl-view-${Date.now().toString(36)}-${requestCounter.toString(36)}`;
-}
-
-export function isExtensionMessage(value: unknown): value is ExtensionMessage {
-  if (!isProtocolEnvelope(value)) return false;
-  return EXTENSION_MESSAGE_TYPES.has(value.type as ExtensionMessage['type']);
 }
 
 export function shouldAcceptMessage(

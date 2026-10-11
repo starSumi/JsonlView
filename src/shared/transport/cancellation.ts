@@ -9,9 +9,7 @@ export class CancellationRegistry {
   private readonly channels = new Map<string, string>();
 
   public start(requestId: string): AbortSignal {
-    if (requestId.length === 0 || requestId.length > MAX_PROTOCOL_REQUEST_ID_LENGTH) {
-      throw new Error('Invalid request id.');
-    }
+    assertRequestId(requestId);
     if (this.requests.has(requestId)) {
       throw new Error(`Duplicate request id: ${requestId}`);
     }
@@ -21,12 +19,21 @@ export class CancellationRegistry {
   }
 
   public startLatest(channel: string, requestId: string): AbortSignal {
+    // Validate and reserve the new request before touching the previous
+    // channel owner. Invalid or duplicate starts must leave active work
+    // unchanged.
+    assertRequestId(requestId);
+    if (this.requests.has(requestId)) {
+      throw new Error(`Duplicate request id: ${requestId}`);
+    }
+    const controller = new AbortController();
     const previous = this.channels.get(channel);
+    this.requests.set(requestId, controller);
+    this.channels.set(channel, requestId);
     if (previous !== undefined) {
       this.cancel(previous);
     }
-    this.channels.set(channel, requestId);
-    return this.start(requestId);
+    return controller.signal;
   }
 
   public finish(requestId: string): void {
@@ -58,5 +65,13 @@ export class CancellationRegistry {
 
   public get size(): number {
     return this.requests.size;
+  }
+}
+
+function assertRequestId(requestId: string): void {
+  if (typeof requestId !== 'string'
+    || requestId.length === 0
+    || requestId.length > MAX_PROTOCOL_REQUEST_ID_LENGTH) {
+    throw new Error('Invalid request id.');
   }
 }
