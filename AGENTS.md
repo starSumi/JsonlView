@@ -129,6 +129,18 @@ editor settings, or generated evidence. Evidence may be linked by immutable
 revision or receipt identifier, but documentation must not copy machine-local
 paths, private conversation bodies, credentials, or raw operational logs.
 
+Product visual design is registered in `docs/designs/`. The accepted theme
+baseline is `docs/designs/theme-adaptation.md`; `src/webview/` owns its runtime
+implementation and focused interaction tests, while product maintainers own
+the document lifecycle. Update the design in the same change when semantic
+token roles, selection/focus behavior, scrollbar visibility, responsive
+affordances, or host-theme ownership changes. Run `pnpm check:agent-spec` and
+`pnpm check:docs-index` for documentation-only changes; implementation changes
+also use the mandatory commands below. Design documents must remain free of
+harness paths, private transcripts, credentials, and generated screenshots.
+The harness may retain review variants as external evidence, but the product
+must not load them at runtime.
+
 ## Completion Levels
 
 Report the highest completion level reached:
