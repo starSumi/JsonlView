@@ -73,7 +73,9 @@ export interface WorkspaceState {
   pending: Partial<Record<RequestKind, RequestState>>;
   invalidationReason?: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' | undefined;
   blockedDetailOrdinal?: string | undefined;
-  /** Keeps a selected detail mounted while a manual rebuild opens its new snapshot. */
+  /** Keeps the selected row identity while a manual rebuild opens its new snapshot. */
+  rebuildSelection?: RebuildDetailIntent | undefined;
+  /** Keeps an open detail mounted while a manual rebuild opens its new snapshot. */
   rebuildDetail?: RebuildDetailIntent | undefined;
   detailStale?: boolean | undefined;
   error?: WorkspaceError | undefined;
@@ -310,6 +312,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         problems: snapshotChanged ? undefined : state.problems,
         selectedOrdinal: preserveRebuildDetail
           ? state.rebuildDetail?.ref.ordinal
+          : snapshotChanged && !preserveFollowViewport && state.rebuildSelection !== undefined
+            && state.rebuildSelection.documentId === message.payload.snapshot.documentId
+            ? state.rebuildSelection.ref.ordinal
           : snapshotChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
         detail: preserveRebuildDetail ? state.detail : snapshotChanged ? undefined : state.detail,
         schema: snapshotChanged ? [] : state.schema,
@@ -319,6 +324,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending: snapshotChanged ? {} : pending,
         invalidationReason: undefined,
         blockedDetailOrdinal: undefined,
+        rebuildSelection: preserveRebuildDetail || (snapshotChanged && !preserveFollowViewport
+          && state.rebuildSelection?.documentId === message.payload.snapshot.documentId)
+          ? state.rebuildSelection : undefined,
         rebuildDetail: preserveRebuildDetail ? state.rebuildDetail : undefined,
         detailStale: preserveRebuildDetail ? true : false,
         error: undefined,
@@ -326,15 +334,19 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
     }
     case 'ROWS': {
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
-      const retainedRebuildRow = state.rebuildDetail === undefined ? undefined : message.payload.rows.find(
+      const retainedRebuildRow = state.rebuildSelection === undefined ? undefined : message.payload.rows.find(
+        (row) => sameRebuildRecord(row.ref, state.rebuildSelection!.ref),
+      );
+      const preserveRebuildSelection = retainedRebuildRow !== undefined;
+      const retainedRebuildDetail = state.rebuildDetail === undefined ? undefined : message.payload.rows.find(
         (row) => sameRebuildRecord(row.ref, state.rebuildDetail!.ref),
       );
-      const preserveRebuildDetail = retainedRebuildRow !== undefined;
+      const preserveRebuildDetail = retainedRebuildDetail !== undefined;
       const selectedOrdinal = state.followMode
         ? message.payload.rows.at(-1)?.ref.ordinal
-        : state.rebuildDetail !== undefined && (preserveRebuildDetail || message.payload.rows.length === 0)
-          ? state.rebuildDetail.ref.ordinal
-        : state.rebuildDetail !== undefined
+        : state.rebuildSelection !== undefined && (preserveRebuildSelection || message.payload.rows.length === 0)
+          ? state.rebuildSelection.ref.ordinal
+        : state.rebuildSelection !== undefined
           ? message.payload.rows[0]?.ref.ordinal
         : state.selectedOrdinal && message.payload.rows.some(
           (row) => row.ref.ordinal === state.selectedOrdinal,
@@ -366,6 +378,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           && (state.rebuildDetail === undefined || preserveRebuildDetail || message.payload.rows.length === 0)
           ? state.detail : undefined,
         blockedDetailOrdinal: state.blockedDetailOrdinal === selectedOrdinal ? state.blockedDetailOrdinal : undefined,
+        rebuildSelection: state.rebuildSelection === undefined
+          || preserveRebuildSelection || message.payload.rows.length === 0 ? state.rebuildSelection : undefined,
         rebuildDetail: state.rebuildDetail === undefined
           || preserveRebuildDetail || message.payload.rows.length === 0 ? state.rebuildDetail : undefined,
         detailStale: state.detailStale === true
@@ -387,6 +401,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         detail: message.payload,
         selectedOrdinal: message.payload.ref.ordinal,
         blockedDetailOrdinal: undefined,
+        rebuildSelection: undefined,
         rebuildDetail: undefined,
         detailStale: false,
         pending,
@@ -485,6 +500,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
             ? state.selectedOrdinal
             : state.blockedDetailOrdinal,
           rebuildDetail: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildDetail,
+          rebuildSelection: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildSelection,
           detailStale: state.pending.rebuild?.id === message.requestId ? false : state.detailStale,
           error: message.payload,
           pending,
@@ -494,6 +510,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         ...state,
         phase: message.payload.recoverable ? 'degraded' : 'error',
         rebuildDetail: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildDetail,
+        rebuildSelection: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildSelection,
         detailStale: state.pending.rebuild?.id === message.requestId ? false : state.detailStale,
         error: message.payload,
         pending,
@@ -503,7 +520,17 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
-    case 'REQUEST_SENT':
+    case 'REQUEST_SENT': {
+      const selectedRow = action.request.kind === 'rebuild' && !state.followMode && state.summary !== undefined
+        && state.selectedOrdinal !== undefined
+        ? state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal)
+        : undefined;
+      const rebuildSelection = selectedRow === undefined || state.summary === undefined ? undefined : {
+        documentId: state.summary.snapshot.documentId,
+        generation: state.summary.snapshot.generation,
+        ...(state.summary.snapshot.epoch === undefined ? {} : { epoch: state.summary.snapshot.epoch }),
+        ref: selectedRow.ref,
+      };
       return {
         ...state,
         phase: action.request.kind === 'ready' || action.request.kind === 'rebuild' ? 'loading' : state.phase,
@@ -511,26 +538,12 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ...state.pending,
           [action.request.kind]: action.request,
         },
-        ...(action.request.kind === 'rebuild' && !state.followMode && state.summary !== undefined && state.selectedOrdinal !== undefined
-          ? {
-            rebuildDetail: state.detail !== undefined
-              ? {
-                documentId: state.summary.snapshot.documentId,
-                generation: state.summary.snapshot.generation,
-                ...(state.summary.snapshot.epoch === undefined ? {} : { epoch: state.summary.snapshot.epoch }),
-                ref: state.detail.ref,
-              }
-              : state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal) === undefined
-                ? undefined
-                : {
-                  documentId: state.summary.snapshot.documentId,
-                  generation: state.summary.snapshot.generation,
-                  ...(state.summary.snapshot.epoch === undefined ? {} : { epoch: state.summary.snapshot.epoch }),
-                  ref: state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal)!.ref,
-                },
-          }
-          : {}),
+        ...(action.request.kind === 'rebuild' ? {
+          rebuildSelection,
+          rebuildDetail: rebuildSelection !== undefined && state.detail !== undefined ? rebuildSelection : undefined,
+        } : {}),
       };
+    }
     case 'REQUEST_FINISHED':
       return {
         ...state,
@@ -539,6 +552,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           : state.pending,
         ...(action.kind === 'rebuild' && state.pending.rebuild?.id === action.requestId
           ? { rebuildDetail: undefined, detailStale: false }
+          : {}),
+        ...(action.kind === 'rebuild' && state.pending.rebuild?.id === action.requestId
+          ? { rebuildSelection: undefined }
           : {}),
       };
     case 'MESSAGE_RECEIVED':
@@ -601,6 +617,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         selectedOrdinal: action.ordinal,
         detail: state.detail?.ref.ordinal === action.ordinal ? state.detail : undefined,
+        rebuildSelection: state.selectedOrdinal === action.ordinal ? state.rebuildSelection : undefined,
         rebuildDetail: state.selectedOrdinal === action.ordinal ? state.rebuildDetail : undefined,
         detailStale: state.selectedOrdinal === action.ordinal ? state.detailStale : false,
         blockedDetailOrdinal: !canReadSnapshot(state.invalidationReason)
@@ -610,7 +627,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           : undefined,
       };
     case 'CLOSE_DETAIL':
-      return { ...state, detail: undefined, blockedDetailOrdinal: undefined, rebuildDetail: undefined, detailStale: false };
+      return { ...state, detail: undefined, blockedDetailOrdinal: undefined, rebuildSelection: undefined, rebuildDetail: undefined, detailStale: false };
     case 'DISMISS_ERROR':
       if (state.invalidationReason !== undefined) {
         return { ...state, error: undefined, phase: 'invalidated' };
