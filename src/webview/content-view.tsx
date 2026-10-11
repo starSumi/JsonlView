@@ -260,23 +260,30 @@ function MarkdownView({ source }: { source: string }): React.JSX.Element {
   return (
     <div className="content-markdown">
       {blocks.map((block, index) => {
+        const blockKey = block.kind + ':' + JSON.stringify(block) + ':' + index;
+        const childKeys = new Map<string, number>();
+        const childKey = (prefix: string, value: string): string => {
+          const occurrence = childKeys.get(prefix + ':' + value) ?? 0;
+          childKeys.set(prefix + ':' + value, occurrence + 1);
+          return prefix + ':' + value + ':' + occurrence;
+        };
         if (block.kind === 'heading') {
           const Heading = `h${String(block.level)}` as keyof React.JSX.IntrinsicElements;
-          return <Heading key={index}>{renderInline(block.text, `heading:${index}`)}</Heading>;
+          return <Heading key={blockKey}>{renderInline(block.text, `heading:${index}`)}</Heading>;
         }
-        if (block.kind === 'paragraph') return <p key={index}>{block.lines.map((line, lineIndex) => <React.Fragment key={lineIndex}>{lineIndex ? <br /> : null}{renderInline(line, `paragraph:${index}:${lineIndex}`)}</React.Fragment>)}</p>;
-        if (block.kind === 'quote') return <blockquote key={index}>{block.lines.map((line, lineIndex) => <React.Fragment key={lineIndex}>{lineIndex ? <br /> : null}{renderInline(line, `quote:${index}:${lineIndex}`)}</React.Fragment>)}</blockquote>;
+        if (block.kind === 'paragraph') return <p key={blockKey}>{block.lines.map((line, lineIndex) => <React.Fragment key={childKey('paragraph', line)}>{lineIndex ? <br /> : null}{renderInline(line, `paragraph:${index}:${lineIndex}`)}</React.Fragment>)}</p>;
+        if (block.kind === 'quote') return <blockquote key={blockKey}>{block.lines.map((line, lineIndex) => <React.Fragment key={childKey('quote', line)}>{lineIndex ? <br /> : null}{renderInline(line, `quote:${index}:${lineIndex}`)}</React.Fragment>)}</blockquote>;
         if (block.kind === 'list') {
           const List = block.ordered ? 'ol' : 'ul';
-          return <List key={index}>{block.items.map((item, itemIndex) => <li key={itemIndex}>{renderInline(item, `list:${index}:${itemIndex}`)}</li>)}</List>;
+          return <List key={blockKey}>{block.items.map((item, itemIndex) => <li key={childKey('list', item)}>{renderInline(item, `list:${index}:${itemIndex}`)}</li>)}</List>;
         }
-        if (block.kind === 'rule') return <hr key={index} />;
+        if (block.kind === 'rule') return <hr key={blockKey} />;
         if (block.kind === 'table') return (
-          <div className="content-table-wrap" key={index}>
-            <table className="content-table"><thead><tr>{block.header.map((cell, cellIndex) => <th key={cellIndex}>{renderInline(cell, `table-head:${index}:${cellIndex}`)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.header.map((_, cellIndex) => <td key={cellIndex}>{renderInline(row[cellIndex] ?? '', `table:${index}:${rowIndex}:${cellIndex}`)}</td>)}</tr>)}</tbody></table>
+          <div className="content-table-wrap" key={blockKey}>
+            <table className="content-table"><thead><tr>{block.header.map((cell, cellIndex) => <th key={childKey('head', cell)}>{renderInline(cell, `table-head:${index}:${cellIndex}`)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={childKey('row', row.join('|'))}>{block.header.map((_, cellIndex) => <td key={childKey('cell', row[cellIndex] ?? '')}>{renderInline(row[cellIndex] ?? '', `table:${index}:${rowIndex}:${cellIndex}`)}</td>)}</tr>)}</tbody></table>
           </div>
         );
-        return <MarkdownCodeBlock key={index} {...block} />;
+        return <MarkdownCodeBlock key={blockKey} {...block} />;
       })}
     </div>
   );
@@ -316,9 +323,9 @@ function autoPresentation(source: string): React.JSX.Element {
     const parts: React.ReactNode[] = [];
     let cursor = 0;
     candidates.forEach((candidate, index) => {
-      if (candidate.start > cursor) parts.push(<span className="content-text-inline" key={`text:${index}`}>{source.slice(cursor, candidate.start)}</span>);
+      if (candidate.start > cursor) parts.push(<span className="content-text-inline" key={`text:${candidate.start}`}>{source.slice(cursor, candidate.start)}</span>);
       const rendered = jsonPresentation(candidate.source);
-      if (rendered) parts.push(<React.Fragment key={`json:${index}`}>{rendered}</React.Fragment>);
+      if (rendered) parts.push(<React.Fragment key={`json:${candidate.start}:${candidate.end}`}>{rendered}</React.Fragment>);
       cursor = candidate.end;
     });
     if (cursor < source.length) parts.push(<span className="content-text-inline" key="text:tail">{source.slice(cursor)}</span>);
@@ -345,9 +352,10 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
   else body = autoPresentation(bounded);
 
   return (
-    <div className="content-view" aria-label={ariaLabel}>
+    <section className="content-view" aria-label={ariaLabel}>
       <div className="content-toolbar">
-        <div className="content-mode-switch" role="group" aria-label="Content format">
+        <fieldset className="content-mode-switch" aria-label="Content format">
+          <legend className="sr-only">Content format</legend>
           {modeButtons.map(({ id, label, Icon }) => (
             <button type="button" className={mode === id ? 'is-active' : ''} aria-pressed={mode === id} key={id} onClick={() => setMode(id)}>
               <Icon size={13} aria-hidden />{label}
@@ -358,12 +366,12 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
               <Code2 size={13} aria-hidden />Code
             </button>
           ) : null}
-        </div>
+        </fieldset>
         <span className="content-detected" title="Detected source format">Detected: {codeLanguage ? `${detected} · ${codeLanguage}` : detected}</span>
       </div>
       {truncated ? <div className="content-budget-notice" role="status">Preview limited to 8,000 characters. Choose Show full to inspect the complete field.</div> : null}
       {analysisTruncated ? <div className="content-budget-notice" role="status">Rendering is limited to the first {richTextLimit.toLocaleString()} characters; use Raw or Copy for the complete value.</div> : null}
       <div className="content-body">{body}</div>
-    </div>
+    </section>
   );
 }

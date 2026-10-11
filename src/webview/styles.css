@@ -1581,6 +1581,9 @@ body.is-resizing-column * {
   flex-wrap: wrap;
   gap: 2px;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .content-mode-switch button {
