@@ -230,6 +230,42 @@ describe('document controller', () => {
     });
   });
 
+  it('keeps a moving source recoverable without reporting a destructive request failure', async () => {
+    const messages: ExtensionMessage[] = [];
+    let recoveryRequests = 0;
+    const session = {
+      ...fakeSession(),
+      getDetail: async () => {
+        throw Object.assign(new Error('The JSONL source has no stable baseline; rebuild after the writer settles.'), { code: 'SOURCE_CHANGED' });
+      },
+    };
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, {
+      onTransientSourceChange: () => { recoveryRequests += 1; return true; },
+    });
+
+    await controller.handleMessage(request('GET_DETAIL', {
+      ref: {
+        documentId: 'document',
+        generation: 'generation',
+        ordinal: '0',
+        byteStart: '0',
+        byteEndExclusive: '1',
+        contentByteLength: '1',
+        delimiterByteLength: 1,
+        parseState: 'valid',
+      },
+    }));
+
+    expect(recoveryRequests).toBe(1);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: 'ERROR',
+      payload: { code: 'SOURCE_UPDATING', recoverable: true },
+    });
+  });
+
   it('rejects a stale lifecycle epoch before invoking the session', async () => {
     const messages: ExtensionMessage[] = [];
     const current = { ...summary(), snapshot: { ...summary().snapshot, epoch: 2 } };

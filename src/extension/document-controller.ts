@@ -63,6 +63,8 @@ export interface DocumentControllerHooks {
   onOpenSessionNavigator?: () => Promise<void> | void;
   /** Hand off a bounded Webview error to the host-owned diagnostic flow. */
   onDiagnosticError?: (diagnostic: { code: string; message: string; action?: 'explain' | 'copy' }) => Promise<void> | void;
+  /** Schedule bounded source recovery without replacing the current snapshot. */
+  onTransientSourceChange?: () => Promise<boolean> | boolean;
 }
 
 export class DocumentController {
@@ -232,6 +234,18 @@ export class DocumentController {
       if (signal?.aborted) {
         return;
       }
+      if (isTransientSourceChange(error)) {
+        const handled = await this.hooks.onTransientSourceChange?.();
+        if (handled === true) {
+          await this.postError(
+            request,
+            'SOURCE_UPDATING',
+            'The source is still changing; the previous snapshot remains visible while it settles.',
+            true,
+          );
+          return;
+        }
+      }
       const message = error instanceof Error ? error.message : String(error);
       await this.postError(request, 'REQUEST_FAILED', message, true);
     } finally {
@@ -319,4 +333,14 @@ export class DocumentController {
       payload: { code, message, recoverable },
     }));
   }
+}
+
+function isTransientSourceChange(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  if (code === 'UNEXPECTED_EOF') return true;
+  if (code !== 'SOURCE_CHANGED') return false;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string'
+    && (message.includes('no stable baseline') || message.includes('while the snapshot was being checked'));
 }

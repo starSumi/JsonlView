@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION, type DocumentSummary, type ExtensionMessage } from '.
 import { createProtocolEnvelope } from '../shared/transport';
 import { DocumentController } from './document-controller';
 import { IntegratedJsonlSession } from './integrated-session';
-import type { NativeNewlineScannerSetting } from '../engine';
+import type { NativeNewlineScannerSetting, SourceRefreshResult } from '../engine';
 import { shouldAutoFollow } from './follow-policy';
 import {
   FollowRecoveryCoordinator,
@@ -137,6 +137,20 @@ class JsonlViewDocument implements vscode.CustomDocument {
 
   public resetRecovery(): void {
     this.recovery.reset();
+  }
+
+  /** Schedule the same bounded recovery used by watcher hints. */
+  public async notifyTransientSourceChange(): Promise<boolean> {
+    if (this.disposed) return false;
+    let refresh: SourceRefreshResult;
+    try {
+      refresh = await this.session.classifyRefresh();
+    } catch {
+      return false;
+    }
+    if (refresh.kind !== 'unknown' && refresh.kind !== 'append') return false;
+    this.recovery.notifyUnknown();
+    return true;
   }
 
   public setPendingReveal(intent: RevealIntent): void {
@@ -376,6 +390,7 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
       },
       onReady: () => document.flushPendingReveal(),
       onOpenSessionNavigator: () => this.openSessionNavigator(),
+      onTransientSourceChange: () => document.notifyTransientSourceChange(),
       onDiagnosticError: ({ code, message, action }) => offerDiagnostic({
         stage: 'editor-error-banner',
         name: code,
