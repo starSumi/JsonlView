@@ -46,7 +46,9 @@ describe('JSON syntax rendering helpers', () => {
     expect(result.truncated).toBe(true);
     expect(result.text.length).toBeLessThanOrEqual(400);
     expect(result.text).toContain('[Circular]');
-    expect(result.text).toContain('more items');
+    expect(result.text).not.toContain('[Truncated:');
+    expect(result.text).not.toContain('... [truncated]');
+    expect(JSON.parse(result.text)).toMatchObject({ items: expect.any(Array) });
   });
 
   it('pretty prints only complete valid raw JSON', () => {
@@ -65,6 +67,18 @@ describe('JSON syntax rendering helpers', () => {
     expect(pretty?.truncated).toBe(false);
     expect(pretty?.text).toContain('x'.repeat(18_000));
     expect(pretty?.text).not.toContain('[truncated]');
+  });
+
+  it('keeps bounded derived JSON free of in-band truncation markers', () => {
+    const result = stringifyJsonBounded({ message: 'x'.repeat(100), values: [1, 2, 3] }, {
+      maxChildren: 1,
+      maxStringChars: 8,
+    });
+
+    expect(result.truncated).toBe(true);
+    expect(result.text).not.toContain('truncated');
+    expect(result.text).not.toContain('...');
+    expect(JSON.parse(result.text)).toEqual({ message: 'xxxxxxxx' });
   });
 
   it('retains exact source after the bounded highlighted prefix', () => {

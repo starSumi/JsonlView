@@ -2147,6 +2147,19 @@ body.is-resizing-column * {
   color: var(--vscode-editorWarning-foreground);
 }
 
+.tree-truncation-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 3px;
+  border: 1px solid var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+  border-radius: 2px;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
+  font-family: var(--vscode-font-family);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .code-pane {
   display: flow-root;
   inline-size: max-content;
