@@ -60,8 +60,14 @@ export function shouldNotifyFollowRecovery(
   recoveryRunning: boolean,
   kind: SourceRefreshKind,
 ): boolean {
+  // Verified appends and moving-source classifications are safe candidates
+  // for the same bounded stable-rebuild path even when the user has not
+  // enabled tail-follow. Keeping this route here preserves the old snapshot
+  // while a writer settles instead of making a normal view require Rebuild.
+  if (kind === 'unknown') return true;
+  if (!followMode && kind === 'append') return true;
   if (!followMode) return false;
-  if (kind === 'delete' || kind === 'replace' || kind === 'unknown') return true;
+  if (kind === 'delete' || kind === 'replace') return true;
   return recoveryRunning && kind === 'append';
 }
 

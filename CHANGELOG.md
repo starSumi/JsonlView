@@ -2,12 +2,30 @@
 
 ## Unreleased
 
-- Continue the staged vertical migration behind the existing facades, with
-  isolated barrel exports and tests colocated with their owning modules.
-- Evaluate additional provider adapters and opt-in observability surfaces under
-  the same bounded, read-only contracts.
-- Track follow-up release work in the decision records and reviewed showcase
-  acceptance notes.
+- Future staged evolution work will be recorded here.
+- Expose bounded file navigation actions on Agent source nodes while keeping session-only actions scoped to entities.
+
+## 0.2.9 - 2026-10-12
+
+- Keep the Data Studio action available from any editor title bar while
+  preserving a higher-priority JSONL session action.
+- Add bounded, source-safe Session Navigator actions for opening, revealing,
+  copying paths or session IDs, and opening the native timeline without
+  mutating provider-owned files.
+- Separate display-budget status from provider content and add bounded Claude
+  projections for nested memory and known file-tool inputs while keeping Raw
+  authoritative.
+- Isolate event presentation, bounded content analysis, and the Integrated
+  Session profile behind facade-preserving modules with colocated coverage.
+- Establish product documentation ownership, machine-readable metadata, and an
+  evidence-gated roadmap for staged vertical migration and future format
+  adapters.
+- Record the native scanner measurement boundary and portable fallback trigger
+  conditions so optional acceleration remains evidence-driven.
+- Keep provider adapters and observability surfaces bounded, read-only, and
+  separate from harness reports and host evidence.
+- Refresh the public release contract with explicit deferred tags, rollback
+  conditions, and the next-stage data-format discovery boundary.
 
 ## 0.2.8 - 2026-10-10
 

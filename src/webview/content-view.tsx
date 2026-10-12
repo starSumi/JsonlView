@@ -4,23 +4,26 @@ import { HighlightedCode } from './code-syntax';
 import { CopyButton } from './copy-button';
 import { JsonCode, stringifyJsonBounded } from './json-syntax';
 
-export type ContentMode = 'auto' | 'text' | 'markdown' | 'json' | 'code';
-export type DetectedContentKind = 'text' | 'markdown' | 'json';
-
-export interface EmbeddedJsonCandidate {
-  start: number;
-  end: number;
-  source: string;
-  value: object | unknown[];
-}
-
-interface JsonScanFrame {
-  opening: '{' | '[';
-  start: number;
-  end?: number;
-  invalid: boolean;
-  children: JsonScanFrame[];
-}
+import type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate } from './content-analysis';
+export type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate };
+import {
+  classifyContent,
+  decodeEscapedDisplayText,
+  extractEmbeddedJson,
+  hasMarkdownSignal,
+  inferCodeLanguage,
+  normalizeMarkdownSource,
+  parseJsonObjectOrArray,
+} from './content-analysis';
+export {
+  classifyContent,
+  decodeEscapedDisplayText,
+  extractEmbeddedJson,
+  hasMarkdownSignal,
+  inferCodeLanguage,
+  normalizeMarkdownSource,
+  parseJsonObjectOrArray,
+};
 
 interface MarkdownHeading {
   kind: 'heading';
@@ -81,220 +84,6 @@ const MAX_MARKDOWN_BLOCKS = 256;
 const MAX_MARKDOWN_ROWS = 128;
 const MAX_MARKDOWN_CELLS = 32;
 const MAX_INLINE_PARTS = 256;
-const ANSI_ESCAPE_PATTERN = /(?:\u001B\][^\u0007]*(?:\u0007|\u001B\\)|\u001B\[[0-?]*[ -/]*[@-~])/g;
-// A candidate is parsed at most once per structural frame and the aggregate
-// source passed to JSON.parse is bounded. This keeps hostile nested input from
-// turning the renderer into a quadratic parser while retaining useful fallback
-// candidates inside malformed outer text.
-const MAX_EMBEDDED_JSON_PARSE_CHARS = MAX_RICH_TEXT_CHARS * 8;
-
-function objectOrArray(value: unknown): value is object | unknown[] {
-  return value !== null && typeof value === 'object';
-}
-
-function parseJsonObjectOrArray(source: string, depth = 0): object | unknown[] | undefined {
-  const trimmed = source.trim();
-  if (!trimmed || depth > 2) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    // Tool bridges sometimes serialize a JSON document twice. Unwrap only a
-    // quoted object/array so ordinary quoted text remains text.
-    if (typeof parsed === 'string') {
-      const nested = parsed.trim();
-      if (nested !== trimmed && (nested.startsWith('{') || nested.startsWith('['))) {
-        return parseJsonObjectOrArray(nested, depth + 1);
-      }
-      return undefined;
-    }
-    return objectOrArray(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Infer a conservative lexer for raw tool output. This is a signal-based
- * classifier, not a language parser; uncertain output stays selectable text.
- */
-export function inferCodeLanguage(source: string, hint?: string): string | undefined {
-  const explicit = hint?.trim().toLowerCase();
-  if (explicit) return explicit;
-  const normalized = source
-    .replace(ANSI_ESCAPE_PATTERN, '')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*\d+:\s?/, ''))
-    .join('\n');
-  const rustSignals = [
-    /\b(?:use|pub|crate|mod|impl|struct|enum|trait)\s+[A-Za-z_]/,
-    /\bfn\s+[A-Za-z_][\w]*\s*\(/,
-    /\blet\s+(?:mut\s+)?[A-Za-z_][\w]*\s*=/,
-    /\b(?:match|async|await)\b/,
-    /::[A-Za-z_][\w]*/,
-  ].filter((pattern) => pattern.test(normalized)).length;
-  if (rustSignals >= 2) return 'rust';
-  const shellSignals = [
-    /^\s*#!.*\b(?:sh|bash|zsh|fish|pwsh|powershell)\b/m,
-    /\b(?:if|then|fi|for|foreach|do|done|case|esac)\b/,
-    /(?:^|\s)(?:Get-[A-Za-z]+|Set-[A-Za-z]+|Write-[A-Za-z]+|npm|pnpm|cargo|git)\b/m,
-    /\$env:[A-Za-z_]|\bexport\s+[A-Za-z_][\w]*=/,
-    /\[\s+-[a-zA-Z]+\s+[^\]]+\]/,
-  ].filter((pattern) => pattern.test(normalized)).length;
-  if (shellSignals >= 2) return 'shell';
-  const pythonSignals = [
-    /^\s*def\s+[A-Za-z_][\w]*\s*\(/m,
-    /^\s*(?:from\s+\S+\s+)?import\s+\S+/m,
-    /\b(?:elif|lambda|None|True|False)\b/,
-  ].filter((pattern) => pattern.test(normalized)).length;
-  if (pythonSignals >= 2) return 'python';
-  const javascriptSignals = [
-    /\b(?:const|let|var|function|import|export)\s+[A-Za-z_$]/,
-    /\b(?:await|async)\b|=>/,
-    /\b(?:console|process|require)\.[A-Za-z_]/,
-  ].filter((pattern) => pattern.test(normalized)).length;
-  if (javascriptSignals >= 2) return 'javascript';
-  return undefined;
-}
-
-/**
- * Terminal-oriented producers commonly wrap every line in ANSI colour codes,
- * and tools such as `rg -n` prefix source lines with `42:`. Those bytes are
- * meaningful in Text/Raw mode but prevent a Markdown heading/list from being
- * recognized. Normalize only the rich presentation path; never mutate the
- * value offered for copying or the exact source views.
- */
-export function normalizeMarkdownSource(source: string): string {
-  const withoutAnsi = source.replace(ANSI_ESCAPE_PATTERN, '');
-  const lines = withoutAnsi.split(/\r?\n/);
-  const numbered = lines.filter((line) => /^\s*\d+:\s?/.test(line));
-  if (numbered.length < 2) return withoutAnsi;
-  const nonEmpty = lines.filter((line) => line.trim().length > 0);
-  if (nonEmpty.length === 0 || numbered.length / nonEmpty.length < 0.5) return withoutAnsi;
-  const unnumbered = lines.map((line) => line.replace(/^\s*\d+:\s?/, '')).join('\n');
-  return hasMarkdownSignal(unnumbered) ? unnumbered : withoutAnsi;
-}
-
-/**
- * Find parseable object/array values embedded in prose. The scanner is
- * string-aware and bounded; braces in quoted strings or escaped JSON do not
- * terminate a candidate.
- */
-export function extractEmbeddedJson(source: string): EmbeddedJsonCandidate[] {
-  const roots: JsonScanFrame[] = [];
-  const stack: JsonScanFrame[] = [];
-  let inString = false;
-  let escaped = false;
-
-  // Build delimiter intervals once. A mismatch invalidates the active root and
-  // resets the stack; completed descendants remain attached for fallback.
-  for (let cursor = 0; cursor < source.length; cursor += 1) {
-    const character = source[cursor] ?? '';
-    // Quotes in ordinary prose are not JSON string state. The previous
-    // candidate scanner also reset its quote state for every opening token.
-    if (stack.length === 0) {
-      if (character === '{' || character === '[') {
-        const frame: JsonScanFrame = { opening: character, start: cursor, invalid: false, children: [] };
-        stack.push(frame);
-      }
-      continue;
-    }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-      continue;
-    }
-    if (character === '{' || character === '[') {
-      const frame: JsonScanFrame = { opening: character, start: cursor, invalid: false, children: [] };
-      stack.at(-1)?.children.push(frame);
-      stack.push(frame);
-      continue;
-    }
-    if (character !== '}' && character !== ']') continue;
-    const expected = character === '}' ? '{' : '[';
-    const frame = stack.at(-1);
-    if (!frame || frame.opening !== expected) {
-      const root = stack[0];
-      if (root) {
-        root.invalid = true;
-        roots.push(root);
-      }
-      stack.length = 0;
-      inString = false;
-      escaped = false;
-      continue;
-    }
-    frame.end = cursor + 1;
-    stack.pop();
-    if (stack.length === 0) {
-      roots.push(frame);
-      inString = false;
-      escaped = false;
-    }
-  }
-  const incompleteRoot = stack[0];
-  if (incompleteRoot && !roots.includes(incompleteRoot)) {
-    incompleteRoot.invalid = true;
-    roots.push(incompleteRoot);
-  }
-
-  const candidates: EmbeddedJsonCandidate[] = [];
-  const maxCandidates = 4;
-  let parseBudget = MAX_EMBEDDED_JSON_PARSE_CHARS;
-  const pending = [...roots].reverse();
-  while (pending.length > 0 && candidates.length < maxCandidates) {
-    const frame = pending.pop();
-    if (!frame) continue;
-    let accepted = false;
-    if (!frame.invalid && frame.end !== undefined) {
-      const length = frame.end - frame.start;
-      if (length <= MAX_RICH_TEXT_CHARS && length <= parseBudget) {
-        parseBudget -= length;
-        const candidateSource = source.slice(frame.start, frame.end);
-        const value = parseJsonObjectOrArray(candidateSource);
-        if (value !== undefined) {
-          candidates.push({ start: frame.start, end: frame.end, source: candidateSource, value });
-          accepted = true;
-        }
-      }
-    }
-    // A valid outer value owns its descendants. If it is malformed, continue
-    // in source order so an embedded inner value can still be recovered.
-    if (!accepted) {
-      for (let index = frame.children.length - 1; index >= 0; index -= 1) {
-        const child = frame.children[index];
-        if (child) pending.push(child);
-      }
-    }
-  }
-  return candidates;
-}
-
-function hasMarkdownSignal(source: string): boolean {
-  const lines = source.split(/\r?\n/);
-  let tableSeparator = false;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]?.trim() ?? '';
-    if (/^#{1,6}\s+\S/.test(line) || /^(?:`{3,}|~{3,})\s*[A-Za-z0-9_+#.-]*\s*$/.test(line)) return true;
-    if (/^(?:[-*+]\s+|\d+[.)]\s+|>\s?)/.test(line)) return true;
-    if (/^(?:\*\s*){3,}$|^(?:-\s*){3,}$|^(?:_\s*){3,}$/.test(line)) return true;
-    if (line.includes('|') && /^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?$/.test(lines[index + 1]?.trim() ?? '')) {
-      tableSeparator = true;
-    }
-  }
-  return tableSeparator || /\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^\)\n]+\)/.test(source);
-}
-
-export function classifyContent(source: string): DetectedContentKind {
-  const bounded = source.slice(0, MAX_RICH_TEXT_CHARS);
-  if (parseJsonObjectOrArray(bounded) !== undefined && bounded.trim() === source.trim()) return 'json';
-  const markdownSource = normalizeMarkdownSource(bounded);
-  if (extractEmbeddedJson(bounded).length > 0 && !hasMarkdownSignal(markdownSource)) return 'json';
-  return hasMarkdownSignal(markdownSource) ? 'markdown' : 'text';
-}
 
 function splitTableRow(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
@@ -473,23 +262,30 @@ function MarkdownView({ source }: { source: string }): React.JSX.Element {
   return (
     <div className="content-markdown">
       {blocks.map((block, index) => {
+        const blockKey = block.kind + ':' + JSON.stringify(block) + ':' + index;
+        const childKeys = new Map<string, number>();
+        const childKey = (prefix: string, value: string): string => {
+          const occurrence = childKeys.get(prefix + ':' + value) ?? 0;
+          childKeys.set(prefix + ':' + value, occurrence + 1);
+          return prefix + ':' + value + ':' + occurrence;
+        };
         if (block.kind === 'heading') {
           const Heading = `h${String(block.level)}` as keyof React.JSX.IntrinsicElements;
-          return <Heading key={index}>{renderInline(block.text, `heading:${index}`)}</Heading>;
+          return <Heading key={blockKey}>{renderInline(block.text, `heading:${index}`)}</Heading>;
         }
-        if (block.kind === 'paragraph') return <p key={index}>{block.lines.map((line, lineIndex) => <React.Fragment key={lineIndex}>{lineIndex ? <br /> : null}{renderInline(line, `paragraph:${index}:${lineIndex}`)}</React.Fragment>)}</p>;
-        if (block.kind === 'quote') return <blockquote key={index}>{block.lines.map((line, lineIndex) => <React.Fragment key={lineIndex}>{lineIndex ? <br /> : null}{renderInline(line, `quote:${index}:${lineIndex}`)}</React.Fragment>)}</blockquote>;
+        if (block.kind === 'paragraph') return <p key={blockKey}>{block.lines.map((line, lineIndex) => <React.Fragment key={childKey('paragraph', line)}>{lineIndex ? <br /> : null}{renderInline(line, `paragraph:${index}:${lineIndex}`)}</React.Fragment>)}</p>;
+        if (block.kind === 'quote') return <blockquote key={blockKey}>{block.lines.map((line, lineIndex) => <React.Fragment key={childKey('quote', line)}>{lineIndex ? <br /> : null}{renderInline(line, `quote:${index}:${lineIndex}`)}</React.Fragment>)}</blockquote>;
         if (block.kind === 'list') {
           const List = block.ordered ? 'ol' : 'ul';
-          return <List key={index}>{block.items.map((item, itemIndex) => <li key={itemIndex}>{renderInline(item, `list:${index}:${itemIndex}`)}</li>)}</List>;
+          return <List key={blockKey}>{block.items.map((item, itemIndex) => <li key={childKey('list', item)}>{renderInline(item, `list:${index}:${itemIndex}`)}</li>)}</List>;
         }
-        if (block.kind === 'rule') return <hr key={index} />;
+        if (block.kind === 'rule') return <hr key={blockKey} />;
         if (block.kind === 'table') return (
-          <div className="content-table-wrap" key={index}>
-            <table className="content-table"><thead><tr>{block.header.map((cell, cellIndex) => <th key={cellIndex}>{renderInline(cell, `table-head:${index}:${cellIndex}`)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.header.map((_, cellIndex) => <td key={cellIndex}>{renderInline(row[cellIndex] ?? '', `table:${index}:${rowIndex}:${cellIndex}`)}</td>)}</tr>)}</tbody></table>
+          <div className="content-table-wrap" key={blockKey}>
+            <table className="content-table"><thead><tr>{block.header.map((cell, cellIndex) => <th key={childKey('head', cell)}>{renderInline(cell, `table-head:${index}:${cellIndex}`)}</th>)}</tr></thead><tbody>{block.rows.map((row, rowIndex) => <tr key={childKey('row', row.join('|'))}>{block.header.map((_, cellIndex) => <td key={childKey('cell', row[cellIndex] ?? '')}>{renderInline(row[cellIndex] ?? '', `table:${index}:${rowIndex}:${cellIndex}`)}</td>)}</tr>)}</tbody></table>
           </div>
         );
-        return <MarkdownCodeBlock key={index} {...block} />;
+        return <MarkdownCodeBlock key={blockKey} {...block} />;
       })}
     </div>
   );
@@ -529,9 +325,9 @@ function autoPresentation(source: string): React.JSX.Element {
     const parts: React.ReactNode[] = [];
     let cursor = 0;
     candidates.forEach((candidate, index) => {
-      if (candidate.start > cursor) parts.push(<span className="content-text-inline" key={`text:${index}`}>{source.slice(cursor, candidate.start)}</span>);
+      if (candidate.start > cursor) parts.push(<span className="content-text-inline" key={`text:${candidate.start}`}>{source.slice(cursor, candidate.start)}</span>);
       const rendered = jsonPresentation(candidate.source);
-      if (rendered) parts.push(<React.Fragment key={`json:${index}`}>{rendered}</React.Fragment>);
+      if (rendered) parts.push(<React.Fragment key={`json:${candidate.start}:${candidate.end}`}>{rendered}</React.Fragment>);
       cursor = candidate.end;
     });
     if (cursor < source.length) parts.push(<span className="content-text-inline" key="text:tail">{source.slice(cursor)}</span>);
@@ -547,7 +343,10 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
   // expands it, allow a larger but still bounded render. The complete record
   // remains available through Raw/copy without becoming one enormous DOM node.
   const richTextLimit = truncated ? MAX_RICH_TEXT_CHARS : MAX_EXPANDED_RICH_TEXT_CHARS;
-  const bounded = text.slice(0, richTextLimit);
+  // Text mode is the exact value view. Other modes may decode one explicit
+  // provider serialization layer to restore readable line breaks.
+  const presentationText = mode === 'text' ? text : decodeEscapedDisplayText(text);
+  const bounded = presentationText.slice(0, richTextLimit);
   const analysisTruncated = text.length > bounded.length;
   const detected = React.useMemo(() => classifyContent(bounded), [bounded]);
   let body: React.JSX.Element;
@@ -558,9 +357,10 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
   else body = autoPresentation(bounded);
 
   return (
-    <div className="content-view" aria-label={ariaLabel}>
+    <section className="content-view" aria-label={ariaLabel}>
       <div className="content-toolbar">
-        <div className="content-mode-switch" role="group" aria-label="Content format">
+        <fieldset className="content-mode-switch" aria-label="Content format">
+          <legend className="sr-only">Content format</legend>
           {modeButtons.map(({ id, label, Icon }) => (
             <button type="button" className={mode === id ? 'is-active' : ''} aria-pressed={mode === id} key={id} onClick={() => setMode(id)}>
               <Icon size={13} aria-hidden />{label}
@@ -571,12 +371,12 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
               <Code2 size={13} aria-hidden />Code
             </button>
           ) : null}
-        </div>
+        </fieldset>
         <span className="content-detected" title="Detected source format">Detected: {codeLanguage ? `${detected} · ${codeLanguage}` : detected}</span>
       </div>
       {truncated ? <div className="content-budget-notice" role="status">Preview limited to 8,000 characters. Choose Show full to inspect the complete field.</div> : null}
       {analysisTruncated ? <div className="content-budget-notice" role="status">Rendering is limited to the first {richTextLimit.toLocaleString()} characters; use Raw or Copy for the complete value.</div> : null}
       <div className="content-body">{body}</div>
-    </div>
+    </section>
   );
 }

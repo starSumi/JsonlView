@@ -374,8 +374,11 @@ function sampleRss(): number[] {
   }
 }
 
-export function assertHarnessReportPath(outputPath: string, harnessRoot = resolve(process.cwd(), '..', 'JsonlView-harness')): string {
+export function assertArtifactReportPath(outputPath: string, artifactRoot: string | undefined = process.env.JSONLVIEW_ARTIFACT_DIR): string {
   if (outputPath.trim().length === 0) throw new Error('--out requires a non-empty path.');
+  if (artifactRoot === undefined || artifactRoot.trim().length === 0) {
+    throw new Error('--out requires an explicit artifact root via --artifact-root or JSONLVIEW_ARTIFACT_DIR.');
+  }
   const windowsDriveAbsolute = /^[A-Za-z]:[\\/]/.test(outputPath);
   const windowsUncAbsolute = /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(outputPath);
   if (windowsUncAbsolute) {
@@ -384,11 +387,11 @@ export function assertHarnessReportPath(outputPath: string, harnessRoot = resolv
   if (process.platform !== 'win32' && windowsDriveAbsolute) {
     throw new Error('--out received a Windows absolute path on a non-Windows host.');
   }
-  const root = resolve(harnessRoot, 'state', 'runs');
+  const root = resolve(artifactRoot);
   const resolved = resolve(outputPath);
   const suffix = relative(root, resolved);
   if (isAbsolute(suffix) || suffix === '' || suffix === '..' || suffix.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
-    throw new Error(`--out must stay inside the harness state/runs directory: ${root}`);
+    throw new Error(`--out must stay inside the external artifact root: ${root}`);
   }
   const parent = dirname(resolved);
   let rootStat;
@@ -397,10 +400,10 @@ export function assertHarnessReportPath(outputPath: string, harnessRoot = resolv
     rootStat = lstatSync(root);
     parentStat = lstatSync(parent);
   } catch {
-    throw new Error(`--out requires an existing harness run directory: ${parent}`);
+    throw new Error(`--out requires an existing artifact directory: ${parent}`);
   }
   if (!rootStat.isDirectory() || !parentStat.isDirectory()) {
-    throw new Error(`--out requires an existing harness run directory: ${parent}`);
+    throw new Error(`--out requires an existing artifact directory: ${parent}`);
   }
   let current = parent;
   while (true) {
@@ -408,14 +411,14 @@ export function assertHarnessReportPath(outputPath: string, harnessRoot = resolv
     try {
       stat = lstatSync(current);
     } catch {
-      throw new Error(`--out could not inspect the harness path: ${current}`);
+      throw new Error(`--out could not inspect the artifact path: ${current}`);
     }
     if (stat.isSymbolicLink()) {
       throw new Error(`--out rejects symlink or junction ancestors: ${current}`);
     }
     if (current === root) break;
     const next = dirname(current);
-    if (next === current) throw new Error(`--out escaped the harness state/runs directory: ${root}`);
+    if (next === current) throw new Error(`--out escaped the external artifact root: ${root}`);
     current = next;
   }
   let rootReal;
@@ -424,11 +427,11 @@ export function assertHarnessReportPath(outputPath: string, harnessRoot = resolv
     rootReal = realpathSync(root);
     parentReal = realpathSync(parent);
   } catch {
-    throw new Error(`--out could not resolve the harness path: ${parent}`);
+    throw new Error(`--out could not resolve the artifact path: ${parent}`);
   }
   const realSuffix = relative(rootReal, parentReal);
   if (isAbsolute(realSuffix) || realSuffix === '..' || realSuffix.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
-    throw new Error(`--out rejects symlink or junction escape: ${parent}`);
+    throw new Error(`--out rejects symlink or junction escape from the artifact root: ${parent}`);
   }
   try {
     lstatSync(resolved);
@@ -452,7 +455,7 @@ function makeSession(base: Uint8Array): StagedMutationSession {
   });
 }
 
-export async function writeHarnessReport(outputPath: string, output: string): Promise<void> {
+export async function writeArtifactReport(outputPath: string, output: string): Promise<void> {
   try {
     // O_EXCL closes the check/use gap for the report target itself.
     await writeFile(outputPath, output, { encoding: 'utf8', flag: 'wx' });
@@ -502,29 +505,34 @@ async function main(): Promise<void> {
   if (options.help === true) return;
   const report = await runBenchmark(options);
   const output = `${JSON.stringify(report, null, 2)}\n`;
-  if (options.out !== undefined) await writeHarnessReport(options.out, output);
+  if (options.out !== undefined) await writeArtifactReport(options.out, output);
   process.stdout.write(output);
 }
 
-function parseArgs(values: readonly string[]): BenchmarkOptions & { out?: string; help?: boolean } {
+function parseArgs(values: readonly string[]): BenchmarkOptions & { out?: string; artifactRoot?: string; help?: boolean } {
   const args = values[0] === '--' ? values.slice(1) : values;
-  const options: BenchmarkOptions & { out?: string; help?: boolean } = {};
+  const options: BenchmarkOptions & { out?: string; artifactRoot?: string; help?: boolean } = {};
   for (let index = 0; index < args.length; index += 1) {
     const key = args[index];
     const value = args[index + 1];
     if (key === '--help') {
-      process.stdout.write('Usage: node scripts/benchmark-staged-mutation.mjs [--iterations N] [--warmup N] [--out report.json]\n');
+      process.stdout.write('Usage: node scripts/benchmark-staged-mutation.mjs [--iterations N] [--warmup N] [--artifact-root DIR --out report.json]\n');
       options.help = true;
       return options;
     }
     if (key === '--iterations') { options.iterations = positiveInteger(value, key); index += 1; continue; }
     if (key === '--warmup') { options.warmup = nonNegativeInteger(value, key); index += 1; continue; }
+    if (key === '--artifact-root') {
+      if (value === undefined || value.startsWith('--')) throw new Error('--artifact-root requires a path.');
+      options.artifactRoot = value; index += 1; continue;
+    }
     if (key === '--out') {
       if (value === undefined || value.startsWith('--')) throw new Error('--out requires a path.');
-      options.out = assertHarnessReportPath(value); index += 1; continue;
+      options.out = value; index += 1; continue;
     }
     throw new Error(`Unknown argument: ${key}`);
   }
+  if (options.out !== undefined) options.out = assertArtifactReportPath(options.out, options.artifactRoot ?? process.env.JSONLVIEW_ARTIFACT_DIR);
   return options;
 }
 

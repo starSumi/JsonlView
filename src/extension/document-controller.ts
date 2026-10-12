@@ -9,12 +9,11 @@ import type {
   ProblemPage,
   RecordDetail,
   RecordRef,
-  RowPage,
-  RowScanBudget,
   RowSort,
   WebviewRequest,
 } from '../shared/types';
-import { PROTOCOL_VERSION } from '../shared/types';
+import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
+import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transport';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
 
@@ -24,28 +23,15 @@ type ExtensionMessageByType = {
 
 type ExtensionPayload<TType extends ExtensionMessage['type']> = ExtensionMessageByType[TType]['payload'];
 
-export interface RowsRequest {
-  anchorOrdinal?: string;
-  direction?: 'forward' | 'backward';
-  limit: number;
-  predicate?: Predicate;
-  columns?: ColumnSpec[];
-  sort?: RowSort;
-  sortOffset?: string;
-  scanBudget?: RowScanBudget;
-}
+/** @deprecated Import RecordPageRequest from application ports for new code. */
+export type RowsRequest = RecordPageRequest;
 
-export interface ProblemsRequest {
-  anchorOrdinal?: string;
-  direction?: 'forward' | 'backward';
-  limit: number;
-  scanBudget?: RowScanBudget;
-}
+/** @deprecated Import ProblemPageRequest from application ports for new code. */
+export type ProblemsRequest = ProblemPageRequest;
 
-export interface JsonlSessionPort {
+export interface JsonlSessionPort extends RecordPageReader, ProblemPageReader {
   getSummary(): DocumentSummary;
   getProfileColumns(): readonly ColumnSpec[];
-  getRows(request: RowsRequest, signal: AbortSignal): Promise<RowPage>;
   getProblems(request: ProblemsRequest, signal: AbortSignal): Promise<ProblemPage>;
   getDetail(ref: RecordRef, full: boolean, signal: AbortSignal): Promise<RecordDetail>;
   getSchema(offset: number, limit: number, signal: AbortSignal): Promise<{
@@ -81,6 +67,8 @@ export interface DocumentControllerHooks {
 
 export class DocumentController {
   private readonly requests = new RequestRegistry();
+  private readonly loadRecordPage: LoadRecordPage;
+  private readonly loadProblemPage: LoadProblemPage;
   private disposed = false;
   private rebuildRequestSequence = 0;
 
@@ -88,7 +76,10 @@ export class DocumentController {
     private readonly session: JsonlSessionPort,
     private readonly channel: MessageChannel,
     private readonly hooks: DocumentControllerHooks = {},
-  ) {}
+  ) {
+    this.loadRecordPage = new LoadRecordPage(session);
+    this.loadProblemPage = new LoadProblemPage(session);
+  }
 
   public async handleMessage(value: unknown): Promise<void> {
     if (this.disposed) {
@@ -96,7 +87,7 @@ export class DocumentController {
     }
     const validation = validateWebviewRequest(value);
     if (!validation.ok || validation.request === undefined) {
-      await this.postError(identityFromUnknown(value), 'INVALID_REQUEST', validation.error ?? 'Invalid request.', false);
+      await this.postError(readProtocolIdentity(value), 'INVALID_REQUEST', validation.error ?? 'Invalid request.', false);
       return;
     }
     const request = validation.request;
@@ -154,7 +145,7 @@ export class DocumentController {
             request,
             operationGeneration,
             'ROWS',
-            await this.session.getRows(request.payload, signal),
+            await this.loadRecordPage.execute(request.payload, signal),
           );
           return;
         case 'GET_PROBLEMS':
@@ -163,7 +154,7 @@ export class DocumentController {
             request,
             operationGeneration,
             'PROBLEMS',
-            await this.session.getProblems(request.payload, signal),
+            await this.loadProblemPage.execute(request.payload, signal),
           );
           return;
         case 'GET_DETAIL':
@@ -272,8 +263,7 @@ export class DocumentController {
     payload: ExtensionPayload<TType>,
     generation: string,
   ): Promise<void> {
-    const message = {
-      protocolVersion: PROTOCOL_VERSION,
+    const message = createProtocolEnvelope({
       type,
       documentId: request.documentId,
       generation,
@@ -282,7 +272,7 @@ export class DocumentController {
         : { epoch: this.session.getSummary().snapshot.epoch }),
       requestId: request.requestId,
       payload,
-    } as ExtensionMessageByType[TType];
+    }) as unknown as ExtensionMessageByType[TType];
     await this.channel.postMessage(message);
   }
 
@@ -318,8 +308,7 @@ export class DocumentController {
     message: string,
     recoverable: boolean,
   ): Promise<void> {
-    await this.channel.postMessage({
-      protocolVersion: PROTOCOL_VERSION,
+    await this.channel.postMessage(createProtocolEnvelope({
       type: 'ERROR',
       documentId: request.documentId,
       generation: this.session.getSummary().snapshot.generation,
@@ -328,21 +317,6 @@ export class DocumentController {
         : { epoch: this.session.getSummary().snapshot.epoch }),
       requestId: request.requestId,
       payload: { code, message, recoverable },
-    });
+    }));
   }
-}
-
-function identityFromUnknown(value: unknown): Pick<
-  WebviewRequest,
-  'documentId' | 'generation' | 'requestId'
-> {
-  if (value !== null && typeof value === 'object') {
-    const candidate = value as Record<string, unknown>;
-    return {
-      documentId: typeof candidate.documentId === 'string' ? candidate.documentId : 'unknown',
-      generation: typeof candidate.generation === 'string' ? candidate.generation : 'unknown',
-      requestId: typeof candidate.requestId === 'string' ? candidate.requestId : 'unknown',
-    };
-  }
-  return { documentId: 'unknown', generation: 'unknown', requestId: 'unknown' };
 }

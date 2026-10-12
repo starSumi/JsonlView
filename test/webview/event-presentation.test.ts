@@ -752,7 +752,8 @@ describe('structured agent event presentation', () => {
       profile: { profileId: 'codex-rollout', eventKind: 'message', summary: 'message', evidence: [], confidence: 'source' },
     }));
     expect(markup).toContain('Show full');
-    expect(markup).toContain('[preview truncated]');
+    expect(markup).toContain('Preview limited');
+    expect(markup).not.toContain('[preview truncated]');
   });
 
   it('can auto-expand the first complete long section for a selected detail row', () => {
@@ -779,7 +780,13 @@ describe('structured agent event presentation', () => {
     expect(section?.previewOnly).toBe(true);
     expect(section?.fullText).toBeUndefined();
     expect(section?.text?.length).toBeLessThan(8_100);
-    expect(section?.text).toContain('[preview truncated]');
+    expect(section?.text).not.toContain('[preview truncated]');
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, {
+      value: { type: 'message', role: 'assistant', content },
+      profile: { profileId: 'codex-rollout', eventKind: 'message', summary: 'message', evidence: [], confidence: 'source' },
+    }));
+    expect(markup).toContain('Preview only');
+    expect(markup).not.toContain('[preview truncated]');
   });
 
   it('presents current Claude control records with their semantic prompt content', () => {
@@ -1094,10 +1101,10 @@ describe('structured agent event presentation', () => {
     const diff = model?.sections.find((section) => section.title === 'Details diff');
     const patch = model?.sections.find((section) => section.title === 'Details patch');
     expect(diff).toMatchObject({ language: 'diff', fullText: withinBudget, truncated: true, previewOnly: false });
-    expect(diff?.code).toBe(withinBudget.slice(0, 8_000) + '\n... [preview truncated]');
+    expect(diff?.code).toBe(withinBudget.slice(0, 8_000));
     expect(patch).toMatchObject({ language: 'diff', truncated: true, previewOnly: true });
     expect(patch?.fullText).toBeUndefined();
-    expect(patch?.code).toBe(overBudget.slice(0, 8_000) + '\n... [preview truncated]');
+    expect(patch?.code).toBe(overBudget.slice(0, 8_000));
   });
 
   it('keeps unknown Pi detail values in JSON and limits diff promotion to Pi tool results', () => {

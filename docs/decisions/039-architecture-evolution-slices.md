@@ -1,6 +1,6 @@
 # ADR-039: Architecture Evolution Slices
 
-Status: proposed
+Status: accepted
 
 ## Pressure
 
@@ -48,6 +48,33 @@ The proposed next stage uses three small, reversible practices:
   records the current modular-monolith boundary and compatibility-barrel rule.
 - [ADR-015: Curated release-note CI guard](015-changelog-ci-guard.md) and the
   focused suites provide the current change and validation gates.
+
+## Recorded progress
+
+The profile policy, record-query, event-presentation, content-analysis, and
+provider-specific event-builder slices have now been completed on isolated
+candidates. Each keeps the original facade and records focused
+characterization coverage before any owner retirement. The event presentation
+slice moves the renderer and bounded section model into a feature directory,
+while the provider builder remains a pure, provider-owned projection. The
+content analysis slice moves bounded JSON, Markdown, and language
+classification into a React-free owner.
+
+The current candidate also contains the first transport and application
+vertical slices. Shared envelope validation and cancellation now have one
+typed transport owner, while bounded record-page loading is expressed as an
+application use-case behind a reader port. The existing facades and wire shape
+remain in place for rollback; filesystem, provider, native, and domain roots
+remain deferred until their own contracts and evidence are ready.
+
+The paired measurement for these slices used the fixed 100,000-record,
+47,167,597-byte synthetic corpus with the Node scanner on Windows x64 / Node
+v24.15.0. The candidate measured 28.047 ms for the first page, 143.657 ms for
+complete indexing, 11.341 ms for a reverse page, 44.4 MiB peak RSS delta, and
+812,102 bundle bytes. The comparison measured 28.564 ms, 143.685 ms,
+11.369 ms, 43.0 MiB, and 800,640 bytes respectively; the boundary digest was
+identical. The measurement is a single paired local observation and is retained
+in the harness run evidence, not a general performance promise.
 
 ## Revisit trigger
 

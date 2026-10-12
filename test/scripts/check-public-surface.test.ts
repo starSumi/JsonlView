@@ -73,4 +73,27 @@ describe('public surface release guard', () => {
     expect(result.ok).toBe(false);
     expect(result.pathLeaks).toEqual([{ file: 'docs/decision.md', line: 1, detail: 'absolute local path marker' }]);
   });
+
+  it('does not treat escaped punctuation in VS Code when clauses as a UNC path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-public-surface-'));
+    temporaryDirectories.push(root);
+    await mkdir(join(root, 'docs', 'assets'), { recursive: true });
+    await writeFile(join(root, 'README.md'), [
+      '### Diff and prompt detail',
+      '![diff](docs/assets/claude-diff.png)',
+      '### Agent profile timelines',
+      '![timeline](docs/assets/codex-timeline-exec.png)',
+      '### Event analysis',
+      '![events](docs/assets/rollout-event-insights.png)',
+    ].join('\n'));
+    await writeFile(join(root, 'CHANGELOG.md'), '# Changelog\n');
+    await writeFile(join(root, 'package.json'), '{"when":"viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/"}\n');
+    for (const asset of ['claude-diff.png', 'codex-timeline-exec.png', 'rollout-event-insights.png']) {
+      await writeFile(join(root, 'docs', 'assets', asset), 'fixture');
+    }
+
+    const result = await checkPublicSurface(root);
+    expect(result.ok).toBe(true);
+    expect(result.pathLeaks).toEqual([]);
+  });
 });

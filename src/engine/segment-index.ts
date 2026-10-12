@@ -102,10 +102,18 @@ export class AdaptiveSegmentIndex {
 
   async indexMore(maxBytes: number, guard: OperationGuard): Promise<void> {
     if (this.complete || maxBytes <= 0) return;
+    if (!Number.isSafeInteger(maxBytes)) {
+      throw new JsonlEngineError('INVALID_ARGUMENT', 'maxBytes must be a positive safe integer.');
+    }
     const startingOffset = this.scanOffset;
-    while (!this.complete && this.scanOffset - startingOffset < BigInt(maxBytes)) {
+    const budget = BigInt(maxBytes);
+    while (!this.complete && this.scanOffset - startingOffset < budget) {
       guard();
-      await this.scanNextChunk(guard);
+      const remainingBudget = budget - (this.scanOffset - startingOffset);
+      const chunkBudget = remainingBudget > BigInt(MAX_NEWLINE_SCAN_BYTES)
+        ? MAX_NEWLINE_SCAN_BYTES
+        : Number(remainingBudget);
+      await this.scanNextChunk(guard, chunkBudget);
     }
   }
 
@@ -173,7 +181,7 @@ export class AdaptiveSegmentIndex {
     };
   }
 
-  private async scanNextChunk(guard: OperationGuard): Promise<void> {
+  private async scanNextChunk(guard: OperationGuard, budgetBytes?: number): Promise<void> {
     if (this.scanOffset >= this.fileSize) {
       this.finishAtEof();
       return;
@@ -181,9 +189,13 @@ export class AdaptiveSegmentIndex {
 
     const remaining = this.fileSize - this.scanOffset;
     const configuredReadBytes = Math.min(this.options.readChunkBytes, MAX_NEWLINE_SCAN_BYTES);
-    const length = Number(remaining < BigInt(configuredReadBytes)
+    const readBudget = budgetBytes === undefined
+      ? configuredReadBytes
+      : Math.min(configuredReadBytes, budgetBytes);
+    if (readBudget <= 0) return;
+    const length = Number(remaining < BigInt(readBudget)
       ? remaining
-      : BigInt(configuredReadBytes));
+      : BigInt(readBudget));
     const buffer = Buffer.allocUnsafe(length);
     const { bytesRead } = await this.handle.read(buffer, 0, length, this.scanOffset);
     guard();

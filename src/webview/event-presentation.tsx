@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import type React from 'react';
 import type { AgentRowProjection } from '../shared/types';
 import {
   isClaudeHistoryRecord,
@@ -8,13 +8,21 @@ import {
   classifyCodexItem,
   normalizeCodexItemType,
 } from '../profiles/codex-item-strategy';
-import { CopyButton } from './copy-button';
 import { stringifyJsonBounded } from './json-syntax';
-import { classifyContent, ContentView, inferCodeLanguage, type ContentMode } from './content-view';
-import { formatJavaScriptForDisplay, HighlightedCode } from './code-syntax';
+import { classifyContent, inferCodeLanguage } from './content-view';
+import { formatJavaScriptForDisplay } from './code-syntax';
 import { DEFAULT_MAX_CHARS } from './code-syntax-core';
-import { DiffView } from './diff-view';
-import { claudeToolSections, type ClaudeToolSection } from '../profiles/claude-tool-projection';
+import { buildClaudeEventSections, type ClaudeEventBuilderContext } from './providers/claude-event-builder';
+import {
+  buildCodexContextSections,
+  buildCodexItemSections,
+  buildCodexResponseItemSections,
+  type CodexEventBuilderContext,
+} from './providers/codex-event-builder';
+import { buildPiEventSections, type PiEventBuilderContext } from './providers/pi-event-builder';
+import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
+import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
+export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 
 const MAX_TEXT = 8_000;
 // Keep the first paint cheap, but allow an explicit Show full action to render
@@ -39,33 +47,10 @@ interface CodeSectionValue {
   mode?: 'code' | 'patch';
 }
 
-interface FunctionCallView {
-  name: string;
-  command: CodeSectionValue;
-  options?: CodeSectionValue;
-}
+export type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView };
 
-export interface EventPresentationSection {
-  title: string;
-  text?: string;
-  fullText?: string;
-  copyText?: string;
-  truncated?: boolean;
-  code?: string;
-  language?: string;
-  codeWrap?: boolean;
-  richText?: boolean;
-  previewOnly?: boolean;
-  contentMode?: ContentMode;
-  codeLanguage?: string;
-  functionCall?: FunctionCallView;
-}
-
-export interface AgentEventPresentationModel {
-  title: string;
-  kind: string;
-  metadata: Array<{ label: string; value: string }>;
-  sections: EventPresentationSection[];
+export function AgentEventPresentation(props: Omit<AgentEventPresentationProps, 'buildModel'>): React.JSX.Element | null {
+  return <AgentEventPresentationView {...props} buildModel={buildAgentEventPresentation} />;
 }
 
 function objectOf(value: unknown): EventObject | undefined {
@@ -163,7 +148,10 @@ function textOf(value: unknown): string | undefined {
 function boundedText(value: unknown): string | undefined {
   const result = extractText(value, { maxChars: MAX_TEXT, maxItems: MAX_TEXT_ITEMS });
   if (!result.text) return undefined;
-  return result.truncated ? `${result.text}\n... [truncated]` : result.text;
+  // Truncation is product state rendered by the section header. Keep the
+  // extracted text free of synthetic markers so provider content and copied
+  // previews retain their source semantics.
+  return result.text;
 }
 
 function textSection(value: unknown): Pick<EventPresentationSection, 'text' | 'fullText' | 'truncated' | 'previewOnly'> {
@@ -174,7 +162,7 @@ function textSection(value: unknown): Pick<EventPresentationSection, 'text' | 'f
   if (!result.text) return {};
   const previewTruncated = result.truncated || result.text.length > MAX_TEXT;
   return {
-    text: previewTruncated ? `${result.text.slice(0, MAX_TEXT)}\n... [preview truncated]` : result.text,
+    text: previewTruncated ? result.text.slice(0, MAX_TEXT) : result.text,
     ...(result.truncated ? {} : { fullText: result.text }),
     truncated: previewTruncated,
     previewOnly: result.truncated,
@@ -200,7 +188,7 @@ function codeSectionValue(value: unknown): CodeSectionValue | undefined {
     const previewOnly = value.length > expanded.length;
     const truncated = value.length > MAX_TEXT;
     return {
-      code: truncated ? `${expanded.slice(0, MAX_TEXT)}\n... [preview truncated]` : expanded,
+      code: truncated ? expanded.slice(0, MAX_TEXT) : expanded,
       ...(previewOnly ? {} : { fullCode: expanded }),
       truncated,
       previewOnly,
@@ -332,7 +320,7 @@ function isAgentMarkdownText(
 }
 
 function own(object: EventObject, key: string): unknown {
-  return Object.prototype.hasOwnProperty.call(object, key) ? object[key] : undefined;
+  return Object.hasOwn(object, key) ? object[key] : undefined;
 }
 
 function presentationProduct(profile?: AgentRowProjection): string {
@@ -583,7 +571,7 @@ function addCommandCandidate(sections: EventPresentationSection[], value: unknow
       maxDepth: 32,
       maxChildren: MAX_TEXT_ITEMS,
     });
-    const code = display.length > MAX_TEXT ? `${display.slice(0, MAX_TEXT)}\n... [preview truncated]` : display;
+    const code = display.length > MAX_TEXT ? display.slice(0, MAX_TEXT) : display;
     sections.push({
       title: 'Command',
       code,
@@ -757,9 +745,7 @@ function addTextDiffCandidate(
 ): boolean {
   if (typeof value !== 'string' || value.length === 0 || sections.some((section) => section.title === title)) return false;
   const expanded = value.slice(0, MAX_EXPANDED_STRUCTURED_TEXT);
-  const source = expanded.length > MAX_TEXT
-    ? expanded.slice(0, MAX_TEXT) + '\n... [preview truncated]'
-    : expanded;
+  const source = expanded.length > MAX_TEXT ? expanded.slice(0, MAX_TEXT) : expanded;
   const sourceTruncated = alreadyTruncated || expanded.length < value.length;
   const hasFullSource = !sourceTruncated;
   sections.push({
@@ -771,20 +757,6 @@ function addTextDiffCandidate(
     language: 'diff',
   });
   return true;
-}
-
-function addPiToolDetailDiffs(sections: EventPresentationSection[], details: unknown): void {
-  const detailObject = objectOf(details);
-  if (!detailObject) return;
-  for (const key of ['diff', 'patch'] as const) {
-    const value = own(detailObject, key);
-    const title = 'Details ' + key;
-    if (typeof value === 'string') {
-      addTextDiffCandidate(sections, title, value);
-    } else if (!addDiffCandidate(sections, title, value) && value !== undefined) {
-      addCodeCandidate(sections, title, value, 'json');
-    }
-  }
 }
 
 function appendAgentContentBlock(
@@ -869,457 +841,17 @@ function appendAgentContentBlock(
   addCodeCandidate(sections, title, object, 'json');
 }
 
-function claudeMessageSections(
-  payload: EventObject,
-  profile?: AgentRowProjection,
-): EventPresentationSection[] {
-  if (profile?.profileId !== 'claude-code-session') return [];
-  const message = objectOf(payload.message);
-  if (!message || !Object.hasOwn(message, 'content')) {
-    return Object.hasOwn(payload, 'toolUseResult')
-      ? claudeToolSections(payload).map(toEventPresentationSection)
-      : [];
-  }
-  const role = valueLabel(message.role)?.toLowerCase();
-  const content = own(message, 'content');
-  if (!Array.isArray(content)) {
-    if (typeof content === 'string') {
-      const sections: EventPresentationSection[] = [{ title: 'Message', ...textSection(content), richText: role === 'assistant' }];
-      if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-      return sections;
-    }
-    const sections: EventPresentationSection[] = [];
-    addCodeCandidate(sections, 'Content', content, 'json');
-    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-    return sections;
-  }
-  if (content.length === 0) {
-    const sections: EventPresentationSection[] = [];
-    addCodeCandidate(sections, 'Content', content, 'json');
-    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-    return sections;
-  }
-  const sections: EventPresentationSection[] = [];
-  const singleTextBlock = content.length === 1
-    && objectOf(content[0])?.type === 'text';
-  const visibleBlocks = Math.min(content.length, 32);
-  for (let index = 0; index < visibleBlocks; index += 1) {
-    const block = content[index];
-    const object = objectOf(block);
-    const type = valueLabel(object?.type)?.toLowerCase() ?? 'content';
-    const title = singleTextBlock
-      ? 'Message'
-      : type === 'tool_result'
-        ? `Tool result${content.length > 1 ? ` ${String(index + 1)}` : ''}`
-        : type === 'tool_use' || type === 'server_tool_use'
-          ? `Tool input${content.length > 1 ? ` ${String(index + 1)}` : ''}`
-          : `${type.replaceAll('_', ' ')}${content.length > 1 ? ` ${String(index + 1)}` : ''}`;
-    appendAgentContentBlock(sections, block, title, role);
-  }
-  if (Object.hasOwn(payload, 'toolUseResult')) {
-    sections.push(...claudeToolSections(payload).map(toEventPresentationSection));
-  }
-  if (content.length > 32) {
-    sections.push({
-      title: 'Additional content blocks',
-      code: JSON.stringify({ omittedBlocks: content.length - 32 }, null, 2),
-      truncated: true,
-      previewOnly: true,
-      language: 'json',
-    });
-  }
-  return sections;
+/** Provider-only Codex projection; the builder owns provider-specific field semantics. */
+function codexContextSections(envelopeType: string | undefined, payload: EventObject): EventPresentationSection[] {
+  return buildCodexContextSections(envelopeType, payload, codexEventBuilderContext);
 }
 
-function toEventPresentationSection(section: ClaudeToolSection): EventPresentationSection {
-  if (section.kind === 'json') {
-    const rendered = codeSectionValue(section.value);
-    return {
-      title: section.title,
-      ...(rendered
-        ? { code: rendered.code, ...(rendered.fullCode !== undefined ? { fullText: rendered.fullCode } : {}) }
-        : { code: '{}' }),
-      language: 'json',
-      truncated: section.truncated ?? rendered?.truncated ?? false,
-      previewOnly: section.truncated ?? rendered?.previewOnly ?? false,
-    };
-  }
-  if (section.kind === 'diff') {
-    const source = typeof section.value === 'string' ? section.value : JSON.stringify(section.value, null, 2);
-    const added: EventPresentationSection[] = [];
-    addTextDiffCandidate(added, section.title, source ?? '', section.truncated);
-    return added[0] ?? { title: section.title, code: '', language: 'diff', truncated: true, previewOnly: true };
-  }
-  const text = typeof section.value === 'string' ? section.value : textOf(section.value);
-  if (section.kind === 'code') {
-    const rendered = codeSectionValue(text ?? section.value);
-    return {
-      title: section.title,
-      ...(rendered
-        ? { code: rendered.code, ...(rendered.fullCode !== undefined ? { fullText: rendered.fullCode } : {}) }
-        : { code: '' }),
-      ...(section.language ? { language: section.language } : {}),
-      truncated: section.truncated ?? rendered?.truncated ?? false,
-      previewOnly: section.truncated ?? rendered?.previewOnly ?? false,
-    };
-  }
-  const bounded = textSection(text ?? section.value);
-  return { title: section.title, ...bounded, ...(section.language ? { language: section.language } : {}) };
+function codexItemSections(item: EventObject | undefined, normalizedType: string | undefined): EventPresentationSection[] {
+  return buildCodexItemSections(item, normalizedType, codexEventBuilderContext);
 }
 
-/** Pi AgentMessage is a nested, typed content contract rather than a flat text field. */
-function piMessageSections(
-  payload: EventObject,
-  profile?: AgentRowProjection,
-): EventPresentationSection[] {
-  if (profile?.profileId !== 'pi-coding-agent') return [];
-  if (valueLabel(payload.type)?.toLowerCase() === 'custom_message') {
-    const sections: EventPresentationSection[] = [];
-    addTextCandidate(sections, 'Custom type', own(payload, 'customType'));
-    addCodeCandidate(sections, 'Display', own(payload, 'display'), 'json');
-    const content = own(payload, 'content');
-    if (Array.isArray(content)) {
-      const visible = Math.min(content.length, 32);
-      for (let index = 0; index < visible; index += 1) {
-        const block = content[index];
-        const blockObject = objectOf(block);
-        const type = valueLabel(blockObject?.type)?.toLowerCase() ?? 'content';
-        const title = content.length === 1 && type === 'text'
-          ? 'Custom message'
-          : `Custom ${type.replaceAll('_', ' ')} ${String(index + 1)}`;
-        appendAgentContentBlock(sections, block, title, 'agent');
-      }
-      if (content.length > visible) {
-        sections.push({ title: 'Additional custom message content', code: JSON.stringify({ omittedBlocks: content.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
-      }
-    } else if (content !== undefined) {
-      addTextCandidate(sections, 'Custom message', content, false);
-      if (!sections.some((section) => section.title === 'Custom message')) {
-        addCodeCandidate(sections, 'Custom content', content, 'json');
-      }
-    }
-    addCodeCandidate(sections, 'Custom details', own(payload, 'details'), 'json');
-    return sections;
-  }
-  const message = objectOf(payload.message);
-  if (!message) return [];
-  const sections: EventPresentationSection[] = [];
-  const role = valueLabel(message.role)?.toLowerCase();
-  const content = own(message, 'content');
-  if (Array.isArray(content)) {
-    const visible = Math.min(content.length, 32);
-    for (let index = 0; index < visible; index += 1) {
-      const block = content[index];
-      const blockObject = objectOf(block);
-      const type = valueLabel(blockObject?.type)?.toLowerCase() ?? 'content';
-      const name = valueLabel(blockObject?.name);
-      const title = type === 'toolcall'
-        ? (name ? 'Tool call · ' + name : 'Tool call')
-        : content.length === 1 ? (type === 'text' ? 'Message' : type.replaceAll('_', ' ')) : type.replaceAll('_', ' ') + ' ' + String(index + 1);
-      appendAgentContentBlock(sections, block, title, role);
-    }
-    if (content.length > visible) {
-      sections.push({ title: 'Additional content blocks', code: JSON.stringify({ omittedBlocks: content.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
-    }
-  } else if (typeof content === 'string' && content.length > 0) {
-    addTextCandidate(sections, role === 'system' ? 'System message' : 'Message', content, role === 'assistant');
-  }
-
-  if (role === 'bashexecution') {
-    addCodeCandidate(sections, 'Command', own(message, 'command'), 'shell');
-    addOutputCandidate(sections, 'Output', own(message, 'output'));
-    addCodeCandidate(sections, 'Execution details', message, 'json');
-  } else if (role === 'custom') {
-    addTextCandidate(sections, 'Custom message', own(message, 'content'), false);
-    addCodeCandidate(sections, 'Custom details', own(message, 'details'), 'json');
-  } else if (role === 'branchsummary' || role === 'compactionsummary') {
-    addTextCandidate(sections, role === 'branchsummary' ? 'Branch summary' : 'Compaction summary', own(message, 'summary'), true);
-    addCodeCandidate(sections, 'Summary details', own(message, 'details'), 'json');
-  }
-
-  const namedSections = objectOf(message.sections);
-  if (namedSections) {
-    let count = 0;
-    for (const key of Object.keys(namedSections)) {
-      if (count >= 32) break;
-      const value = own(namedSections, key);
-      if (value === null) {
-        addCodeCandidate(sections, 'System section · ' + key, null, 'json');
-      } else {
-        addTextCandidate(sections, 'System section · ' + key, value, true);
-      }
-      count += 1;
-    }
-  }
-
-  const toolsAdded = own(message, 'toolsAdded');
-  if (Array.isArray(toolsAdded)) {
-    const visible = Math.min(toolsAdded.length, 32);
-    for (let index = 0; index < visible; index += 1) {
-      const tool = objectOf(toolsAdded[index]);
-      if (!tool) continue;
-      const name = valueLabel(own(tool, 'name')) ?? String(index + 1);
-      addTextCandidate(sections, 'Tool declaration · ' + name, own(tool, 'description'));
-      addCodeCandidate(sections, 'Tool schema · ' + name, own(tool, 'parameters'), 'json');
-    }
-    if (toolsAdded.length > visible) {
-      sections.push({ title: 'Additional tool declarations', code: JSON.stringify({ omittedTools: toolsAdded.length - visible }, null, 2), truncated: true, previewOnly: true, language: 'json' });
-    }
-  }
-
-  const toolsRemoved = own(message, 'toolsRemoved');
-  if (Array.isArray(toolsRemoved)) {
-    const names = toolsRemoved.slice(0, 32).map((item) => valueLabel(objectOf(item)?.name) ?? valueLabel(item)).filter((name): name is string => Boolean(name));
-    if (names.length > 0) addTextCandidate(sections, 'Tools removed', names.join(', '));
-  }
-  if (role === 'toolresult') addPiToolDetailDiffs(sections, own(message, 'details'));
-  addCodeCandidate(sections, 'Tool details', own(message, 'details'), 'json');
-  addCodeCandidate(sections, 'Nested tool calls', own(message, 'nestedCalls'), 'json');
-  return sections;
-}
-
-/**
- * Claude control records such as model and MCP attachments carry their
- * human-readable payload outside `message.content`. Keep these paths explicit
- * so arbitrary attachment objects remain available in Tree/Raw without being
- * flattened into an unbounded transcript.
- */
-function claudeAttachmentSections(
-  payload: EventObject,
-  profile?: AgentRowProjection,
-): EventPresentationSection[] {
-  if (profile?.profileId !== 'claude-code-session' || valueLabel(payload.type)?.toLowerCase() !== 'attachment') return [];
-  const sections: EventPresentationSection[] = [];
-  const attachment = objectOf(payload.attachment);
-  if (attachment) {
-    addTextCandidate(sections, 'Attachment text', own(attachment, 'text'));
-    addTextCandidate(sections, 'System prompt', own(attachment, 'systemPrompt'), true);
-    addClaudeToolDescriptions(sections, own(attachment, 'tools'));
-    addTextCandidate(sections, 'Added blocks', own(attachment, 'addedBlocks'));
-    addTextCandidate(sections, 'Added lines', own(attachment, 'addedLines'));
-    addTextCandidate(sections, 'Removed names', own(attachment, 'removedNames'));
-    addRenderedClaudeContent(sections, own(attachment, 'rendered'));
-  }
-  addRenderedClaudeContent(sections, own(payload, 'rendered'));
-  return sections;
-}
-
-function addRenderedClaudeContent(
-  sections: EventPresentationSection[],
-  value: unknown,
-): void {
-  if (!Array.isArray(value)) return;
-  const visible = Math.min(value.length, 32);
-  for (let index = 0; index < visible; index += 1) {
-    const rendered = objectOf(value[index]);
-    const nestedAttachment = rendered ? objectOf(own(rendered, 'attachment')) : undefined;
-    const content = rendered
-      ? (own(rendered, 'content')
-        ?? own(rendered, 'text')
-        ?? own(nestedAttachment ?? {}, 'text')
-        ?? own(nestedAttachment ?? {}, 'systemPrompt'))
-      : value[index];
-    addTextCandidate(sections, visible === 1 ? 'Rendered content' : `Rendered content ${String(index + 1)}`, content);
-    if (nestedAttachment) addClaudeToolDescriptions(sections, own(nestedAttachment, 'tools'));
-  }
-  if (value.length > visible) {
-    sections.push({
-      title: 'Additional rendered content',
-      code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
-      truncated: true,
-      previewOnly: true,
-      language: 'json',
-    });
-  }
-}
-
-function addClaudeToolDescriptions(
-  sections: EventPresentationSection[],
-  value: unknown,
-): void {
-  if (!Array.isArray(value)) return;
-  const visible = Math.min(value.length, 32);
-  for (let index = 0; index < visible; index += 1) {
-    const tool = objectOf(value[index]);
-    if (!tool) continue;
-    const description = own(tool, 'description');
-    if (description === undefined) continue;
-    const name = valueLabel(own(tool, 'name'));
-    addTextCandidate(
-      sections,
-      name ? `Tool description · ${name}` : `Tool description · ${String(index + 1)}`,
-      description,
-    );
-  }
-  if (value.length > visible) {
-    sections.push({
-      title: 'Additional tool descriptions',
-      code: JSON.stringify({ omittedItems: value.length - visible }, null, 2),
-      truncated: true,
-      previewOnly: true,
-      language: 'json',
-    });
-  }
-}
-
-/**
- * These are deliberately explicit Codex-owned paths. A generic `text` key is
- * not enough evidence to turn arbitrary application data into Markdown.
- */
-function codexContextSections(
-  envelopeType: string | undefined,
-  payload: EventObject,
-): EventPresentationSection[] {
-  const sections: EventPresentationSection[] = [];
-  if (envelopeType === 'world_state') {
-    const fields: Array<{ title: string; path: string[]; richText: boolean }> = [
-      { title: 'AGENTS.md', path: ['state', 'agents_md', 'text'], richText: true },
-      { title: 'Host skills', path: ['state', 'host_skills', 'body'], richText: true },
-      { title: 'Orchestrator skills', path: ['state', 'orchestrator_skills', 'body'], richText: true },
-      { title: 'Permission instructions', path: ['state', 'permissions', 'instructions'], richText: true },
-      { title: 'Collaboration instructions', path: ['state', 'collaboration_mode', 'settings', 'developer_instructions'], richText: true },
-      { title: 'Developer instructions', path: ['state', 'developer_instructions'], richText: true },
-      { title: 'Managed developer instructions', path: ['state', 'managed_developer_instructions'], richText: true },
-      { title: 'Multi-agent usage hint', path: ['state', 'multi_agent_usage_hint'], richText: false },
-      { title: 'Skills', path: ['state', 'skills', 'body'], richText: true },
-      { title: 'Skills instructions', path: ['state', 'skills', 'instructions'], richText: true },
-      { title: 'Context window guidance', path: ['state', 'context_window_guidance'], richText: false },
-    ];
-    for (const field of fields) addTextCandidate(sections, field.title, valueAtPath(payload, field.path), field.richText);
-  } else if (envelopeType === 'thread_settings_applied') {
-    const fields: Array<{ title: string; path: string[] }> = [
-      { title: 'Developer instructions', path: ['thread_settings', 'collaboration_mode', 'settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['thread_settings', 'settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['thread_settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['collaboration_mode', 'settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['settings', 'developer_instructions'] },
-      { title: 'Developer instructions', path: ['developer_instructions'] },
-      { title: 'Instructions', path: ['instructions'] },
-    ];
-    for (const field of fields) addTextCandidate(sections, field.title, valueAtPath(payload, field.path), true);
-  } else if (envelopeType === 'session_meta') {
-    addTextCandidate(sections, 'Base instructions', valueAtPath(payload, ['base_instructions']), true);
-  } else if (envelopeType === 'compacted') {
-    addTextCandidate(sections, 'Compaction message', own(payload, 'message'), true);
-  } else if (envelopeType === 'inter_agent_communication') {
-    addTextCandidate(sections, 'Agent message', own(payload, 'content'), true);
-  } else if (envelopeType === 'task_complete' || envelopeType === 'turn_complete') {
-    // Codex keeps the terminal turn message beside the lifecycle envelope,
-    // rather than wrapping it in a response-item content block.
-    addTextCandidate(sections, 'Last agent message', own(payload, 'last_agent_message'), true);
-    addTextCandidate(sections, 'Error', own(payload, 'error'), true);
-    const timing: EventObject = {};
-    for (const key of ['started_at', 'completed_at', 'duration_ms', 'time_to_first_token_ms']) {
-      if (own(payload, key) !== undefined) timing[key] = own(payload, key);
-    }
-    if (Object.keys(timing).length > 0) addCodeCandidate(sections, 'Timing', timing, 'json');
-  }
-  return sections;
-}
-
-function codexItemSections(
-  item: EventObject | undefined,
-  normalizedType: string | undefined,
-): EventPresentationSection[] {
-  if (!item || !normalizedType) return [];
-  const sections: EventPresentationSection[] = [];
-  switch (normalizedType) {
-    case 'reasoning':
-      addTextCandidate(sections, 'Reasoning summary', own(item, 'summary_text'), true);
-      addTextCandidate(sections, 'Reasoning content', own(item, 'raw_content'), true);
-      break;
-    case 'command_execution':
-      addCommandCandidate(sections, own(item, 'command'));
-      for (const key of ['stdout', 'stderr', 'aggregated_output', 'formatted_output']) {
-        addCommandOutputCandidate(sections, key.replaceAll('_', ' '), own(item, key));
-      }
-      break;
-    case 'file_change':
-      if (!addDiffCandidate(sections, 'Changes', own(item, 'changes'))) {
-        if (typeof own(item, 'unified_diff') === 'string' || typeof own(item, 'diff') === 'string') {
-          addDiffCandidate(sections, 'Changes', item);
-        } else {
-          addCodeCandidate(sections, 'Changes', own(item, 'changes'));
-        }
-      }
-      addTextCandidate(sections, 'stdout', own(item, 'stdout'), true);
-      addTextCandidate(sections, 'stderr', own(item, 'stderr'), true);
-      break;
-    case 'mcp_tool_call':
-    case 'dynamic_tool_call':
-      addCodeCandidate(sections, 'Arguments', own(item, 'arguments'));
-      addTextCandidate(sections, 'Result', own(item, 'result'));
-      addTextCandidate(sections, 'Error', own(item, 'error'));
-      addTextCandidate(sections, 'Output', own(item, 'content_items'));
-      break;
-    case 'collab_agent_tool_call':
-    case 'collab_tool_call':
-    case 'sub_agent_activity':
-      addTextCandidate(sections, 'Prompt', own(item, 'prompt'), true);
-      break;
-    case 'plan':
-      addTextCandidate(sections, 'Plan', own(item, 'text'), true);
-      break;
-    case 'hook_prompt':
-      addTextCandidate(sections, 'Prompt', own(item, 'fragments'), true);
-      break;
-    case 'extension':
-      addTextCandidate(sections, 'Query', own(item, 'query'));
-      addCodeCandidate(sections, 'Action', own(item, 'action'));
-      addTextCandidate(sections, 'Results', own(item, 'results'));
-      addTextCandidate(sections, 'Result', own(item, 'result'));
-      addTextCandidate(sections, 'Output', own(item, 'output'));
-      break;
-    case 'image_view':
-      addTextCandidate(sections, 'Path', own(item, 'path'));
-      break;
-    default:
-      break;
-  }
-  return sections;
-}
-
-function codexResponseItemSections(
-  itemType: string | undefined,
-  item: EventObject,
-): EventPresentationSection[] {
-  const sections: EventPresentationSection[] = [];
-  switch (itemType) {
-    case 'custom_tool_call': {
-      const name = valueLabel(own(item, 'name'));
-      const input = own(item, 'input');
-      if ((name === 'exec' || name === 'js_repl') && typeof input === 'string') {
-        addJavaScriptCandidate(sections, `JavaScript · ${name}`, input);
-      } else {
-        addTextCandidate(sections, name ? `Freeform input · ${name}` : 'Freeform input', input);
-      }
-      break;
-    }
-    case 'custom_tool_call_output':
-    case 'function_call_output':
-      addOutputCandidate(sections, 'Tool result', own(item, 'output'));
-      break;
-    case 'function_call': {
-      const rawArguments = own(item, 'arguments');
-      const decodedArguments = decodeSerializedJsonValue(rawArguments);
-      addCodeCandidate(
-        sections,
-        'Arguments',
-        decodedArguments,
-        'json',
-        typeof rawArguments === 'string' ? rawArguments : undefined,
-      );
-      const argumentsSection = sections.find((section) => section.title === 'Arguments');
-      if (argumentsSection) addExecCommandView(argumentsSection, valueLabel(own(item, 'name')), decodedArguments);
-      break;
-    }
-    case 'mcp_tool_call_output':
-      addCodeCandidate(sections, 'Tool result', own(item, 'output'), 'json');
-      break;
-    default:
-      break;
-  }
-  return sections;
+function codexResponseItemSections(itemType: string | undefined, item: EventObject): EventPresentationSection[] {
+  return buildCodexResponseItemSections(itemType, item, codexEventBuilderContext);
 }
 
 function roleLabel(value: unknown, fallback: string): string {
@@ -1376,6 +908,55 @@ function genericDatasetKind(
   if (textOf(own(payload, 'chosen')) !== undefined && textOf(own(payload, 'rejected')) !== undefined) return 'preference';
   return undefined;
 }
+
+const claudeEventBuilderContext: ClaudeEventBuilderContext = {
+  objectOf,
+  own,
+  valueLabel,
+  textOf,
+  textSection,
+  codeSectionValue: (value) => {
+    const rendered = codeSectionValue(value);
+    if (!rendered) return undefined;
+    return {
+      code: rendered.code,
+      ...(rendered.fullCode !== undefined ? { fullCode: rendered.fullCode } : {}),
+      truncated: rendered.truncated,
+      previewOnly: rendered.previewOnly,
+    };
+  },
+  addTextCandidate,
+  addCodeCandidate,
+  addTextDiffCandidate,
+  appendAgentContentBlock,
+};
+
+const codexEventBuilderContext: CodexEventBuilderContext = {
+  own,
+  valueAtPath,
+  valueLabel,
+  addTextCandidate,
+  addOutputCandidate,
+  addCodeCandidate,
+  addDiffCandidate,
+  addCommandCandidate,
+  addCommandOutputCandidate,
+  addJavaScriptCandidate,
+  decodeSerializedJsonValue,
+  addExecCommandView,
+};
+
+const piEventBuilderContext: PiEventBuilderContext = {
+  objectOf,
+  own,
+  valueLabel,
+  addTextCandidate,
+  addOutputCandidate,
+  addCodeCandidate,
+  addTextDiffCandidate,
+  addDiffCandidate,
+  appendAgentContentBlock,
+};
 
 export function buildAgentEventPresentation(
   value: unknown,
@@ -1475,11 +1056,8 @@ export function buildAgentEventPresentation(
     ?? plainText
     ?? payload.lastPrompt
     ?? payload.prompt;
-  const claudeSections = [
-    ...claudeMessageSections(payload, profile),
-    ...claudeAttachmentSections(payload, profile),
-  ];
-  const piSections = piMessageSections(payload, profile);
+  const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
+  const piSections = buildPiEventSections(payload, profile, piEventBuilderContext);
   const specializedSections = claudeSections.length > 0 ? claudeSections : piSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
@@ -1552,148 +1130,4 @@ export function buildAgentEventPresentation(
     } else addCodeCandidate(sections, payloadTitle, payload);
   }
   return { title, kind, metadata, sections };
-}
-
-interface AgentEventPresentationProps {
-  value: unknown;
-  profile?: AgentRowProjection | undefined;
-  autoExpandFirstFullSection?: boolean;
-}
-
-function FunctionCallArgumentsView({
-  view,
-  expanded,
-}: {
-  view: FunctionCallView;
-  expanded: boolean;
-}): React.JSX.Element {
-  const command = expanded ? view.command.fullCode ?? view.command.code : view.command.code;
-  return (
-    <div className="event-function-call-view">
-      <div className="event-function-call-label">Command</div>
-      <div className="event-code-language">
-        <HighlightedCode
-          source={command}
-          language="shell"
-          {...(view.command.mode ? { mode: view.command.mode } : {})}
-          ariaLabel={`${view.name} command`}
-          className="is-wrapped"
-        />
-      </div>
-      {view.options ? (
-        <div className="event-function-call-options">
-          <div className="event-function-call-label">Options</div>
-          <ContentView
-            text={view.options.code}
-            ariaLabel={`${view.name} options`}
-            defaultMode="json"
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-export function AgentEventPresentation({ value, profile, autoExpandFirstFullSection = false }: AgentEventPresentationProps): React.JSX.Element | null {
-  const model = useMemo(() => buildAgentEventPresentation(value, profile), [profile, value]);
-  const automaticSectionIndex = autoExpandFirstFullSection && model
-    ? model.sections.findIndex((section) => section.truncated === true && section.fullText !== undefined)
-    : -1;
-  const [expandedSections, setExpandedSections] = React.useState<ReadonlySet<number>>(
-    () => automaticSectionIndex >= 0 ? new Set([automaticSectionIndex]) : new Set(),
-  );
-  React.useEffect(() => {
-    if (automaticSectionIndex < 0) return;
-    setExpandedSections((current) => {
-      if (current.size > 0 || current.has(automaticSectionIndex)) return current;
-      return new Set([automaticSectionIndex]);
-    });
-  }, [automaticSectionIndex]);
-  if (!model) return null;
-  const sectionKeyOccurrences = new Map<string, number>();
-  return (
-    <section className="event-presentation" aria-label="Structured event view">
-      <header className="event-presentation-header">
-        <div>
-          <div className="event-presentation-title">{model.title}</div>
-          <div className="event-presentation-kind">{model.kind.replaceAll('_', ' ')}</div>
-        </div>
-        <span className="event-kind-badge">{profile?.eventKind ?? 'event'}</span>
-      </header>
-      {model.metadata.length ? (
-        <dl className="event-fields">
-          {model.metadata.map((item) => <React.Fragment key={item.label}><dt>{item.label}</dt><dd title={item.value}>{item.value}</dd></React.Fragment>)}
-        </dl>
-      ) : null}
-      <div className="event-sections">
-        {model.sections.map((section, index) => {
-          const sectionKeyBase = `${section.title}:${section.fullText ?? section.text ?? section.code ?? section.language ?? 'empty'}:${section.contentMode ?? 'auto'}:${section.copyText ?? ''}`;
-          const occurrence = sectionKeyOccurrences.get(sectionKeyBase) ?? 0;
-          sectionKeyOccurrences.set(sectionKeyBase, occurrence + 1);
-          return (
-            <section className="event-section" key={`${sectionKeyBase}:${occurrence}`}>
-            <div className="event-section-header">
-              <h3>{section.title}</h3>
-              <div className="event-section-actions">
-                {section.truncated && section.fullText !== undefined ? (
-                  <button
-                    type="button"
-                    className="event-section-action"
-                    onClick={() => setExpandedSections((current) => {
-                      const next = new Set(current);
-                      if (next.has(index)) next.delete(index);
-                      else next.add(index);
-                      return next;
-                    })}
-                  >
-                    {expandedSections.has(index) ? 'Show preview' : 'Show full'}
-                  </button>
-                ) : null}
-                <CopyButton
-                  text={section.copyText ?? section.fullText ?? section.text ?? section.code ?? ''}
-                  label={`Copy ${section.title}${section.previewOnly ? ' preview' : ''}`}
-                />
-              </div>
-            </div>
-            {section.previewOnly ? <div className="content-budget-notice" role="status">Preview limited by the record hydration budget; the complete value remains available in the Raw view when the source is complete.</div> : null}
-            {section.text !== undefined ? (
-              <ContentView
-                key={`content:${section.fullText ?? section.text ?? String(index)}`}
-                text={expandedSections.has(index) ? section.fullText ?? section.text : section.text}
-                truncated={section.truncated === true && !expandedSections.has(index)}
-                ariaLabel={`${section.title} content`}
-                defaultMode={section.contentMode ?? (section.richText ? 'markdown' : 'auto')}
-                {...(section.codeLanguage ? { codeLanguage: section.codeLanguage } : {})}
-              />
-            ) : null}
-            {section.functionCall ? (
-              <FunctionCallArgumentsView
-                view={section.functionCall}
-                expanded={expandedSections.has(index)}
-              />
-            ) : section.code !== undefined ? (
-              section.language === 'diff'
-                ? <DiffView
-                    key={`diff-code:${section.code}`}
-                    source={expandedSections.has(index) ? section.fullText ?? section.code : section.code}
-                    ariaLabel={`${section.title} unified diff`}
-                  />
-                : section.language === 'json'
-                ? <ContentView
-                    key={`json-code:${section.code}`}
-                    text={expandedSections.has(index) ? section.fullText ?? section.code : section.code}
-                    truncated={section.truncated === true && !expandedSections.has(index)}
-                    ariaLabel={`${section.title} JSON`}
-                    defaultMode="json"
-                  />
-                : section.language
-                ? <div className="event-code-language"><HighlightedCode key={`code:${section.code}`} source={expandedSections.has(index) ? section.fullText ?? section.code : section.code} language={section.language} ariaLabel={`${section.title} code`} {...(section.codeWrap ? { className: 'is-wrapped' } : {})} /></div>
-                : <ContentView key={`code:${section.code}`} text={expandedSections.has(index) ? section.fullText ?? section.code : section.code} truncated={section.truncated === true && !expandedSections.has(index)} ariaLabel={`${section.title} code`} />
-            ) : null}
-            </section>
-          );
-        })}
-      </div>
-    </section>
-  );
 }

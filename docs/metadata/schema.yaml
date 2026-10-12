@@ -1,0 +1,10 @@
+schema: jsonlview.documentation-metadata
+version: 1
+description: "A stable catalog for public Markdown documents; bodies remain reviewable Markdown."
+document:
+  required: [id, path, title, kind, status, owner, tags, evidence, revisit, rollback]
+  kinds: [index, guide, roadmap, decision, design, policy, reliability, security]
+  statuses: [active, accepted, experimental, planned, proposed, historical, superseded, draft]
+  owners: [product]
+  evidenceItem: [id, revision, digest, boundary, reproduce]
+  extensionPrefix: x-

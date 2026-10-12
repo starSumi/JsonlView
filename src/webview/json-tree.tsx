@@ -43,7 +43,7 @@ function kindOf(value: unknown): JsonKind {
 function primitivePreview(value: unknown, maxChars: number): { preview: string; truncated: boolean; copyValue: string } {
   if (typeof value === 'string') {
     const truncated = value.length > maxChars;
-    const visible = truncated ? `${value.slice(0, maxChars)}...` : value;
+    const visible = truncated ? value.slice(0, maxChars) : value;
     return { preview: JSON.stringify(visible), truncated, copyValue: value };
   }
   if (value === null) return { preview: 'null', truncated: false, copyValue: 'null' };
@@ -192,6 +192,7 @@ export function JsonTree({ value }: JsonTreeProps): React.JSX.Element {
         <div
           className={`tree-row${row.limited ? ' is-limited' : ''}${row.previewTruncated ? ' is-preview-truncated' : ''}`}
           role="treeitem"
+          tabIndex={-1}
           aria-level={row.depth + 1}
           aria-expanded={row.expandable ? row.expanded : undefined}
           key={row.id}
@@ -210,7 +211,10 @@ export function JsonTree({ value }: JsonTreeProps): React.JSX.Element {
             <span className={`tree-label ${row.depth === 0 ? '' : 'json-token-key'}`}>{row.label}</span>
           </div>
           <span className={`tree-kind kind-${row.kind}`}>{row.kind}</span>
-          <span className={`tree-value ${previewClass(row.kind)}`} title={row.preview}>{row.preview}</span>
+          <span className={`tree-value ${previewClass(row.kind)}`} title={row.preview}>
+            <span className="tree-value-text">{row.preview}</span>
+            {row.previewTruncated ? <span className="tree-truncation-badge" role="status" aria-label="Preview limited" title="Preview limited">Preview limited</span> : null}
+          </span>
           {row.copyValue !== undefined ? <CopyButton text={row.copyValue} label={`Copy ${row.label}`} /> : <span className="tree-copy-spacer" aria-hidden />}
         </div>
       ))}

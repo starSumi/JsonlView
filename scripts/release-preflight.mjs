@@ -13,6 +13,8 @@ import { compareVsixArchiveIdentity, compareVsixArchiveIdentityEvidence, inspect
 import { getExtensionTarget, getReleaseTargets, resolveExtensionTarget } from './release-targets.mjs';
 import { canonicalVsixPairEvidence, computeVsixPairSha256, verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
 import { checkPublicSurface } from './check-public-surface.mjs';
+import { normalizeRepositoryIdentity } from './repository-identity.mjs';
+export { normalizeRepositoryIdentity } from './repository-identity.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -86,12 +88,12 @@ async function main() {
   if (options.npmManifest === undefined) {
     fail('npmCandidate', 'pass --npm-manifest <prepared npm candidate manifest>');
   } else {
-    npmCandidate = await checkNpmManifest(options.npmManifest, options.npmCandidate, options.npmTarball, revision, gitIdentity, options.approvedNpmName, nativeProvenance, sourceLegalFiles);
+    npmCandidate = await checkNpmManifest(options.npmManifest, options.npmCandidate, options.npmTarball, revision, gitIdentity, options.approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface);
   }
   if (options.vsixManifest === undefined) {
     fail('vsixCandidate', 'pass --vsix-manifest <packaged VSIX manifest>');
   } else {
-    await checkVsixManifest(options.vsixManifest, options.vsixArtifact, revision, gitIdentity, packageIdentity, extensionTarget, npmCandidate, options.approvedNpmName, nativeProvenance, sourceLegalFiles);
+    await checkVsixManifest(options.vsixManifest, options.vsixArtifact, revision, gitIdentity, packageIdentity, extensionTarget, npmCandidate, options.approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface);
   }
   if (options.vsixPairReport !== undefined && options.pairedVsixArtifact !== undefined
     && options.vsixArtifact !== undefined && options.vsixTarget !== undefined) {
@@ -276,7 +278,7 @@ async function checkNativeProvenance(path, gitIdentity) {
   };
 }
 
-async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revision, gitIdentity, approvedNpmName, nativeProvenance, sourceLegalFiles) {
+async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revision, gitIdentity, approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface) {
   const manifest = await readJson(resolve(manifestPath), 'npm candidate manifest');
   const files = Array.isArray(manifest.files) ? manifest.files : [];
   if (!isApprovedPublicLicense(manifest.package?.license)) fail('npmCandidate.license', 'npm candidate does not carry an approved public license');
@@ -349,6 +351,8 @@ async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revisi
     .map((file) => normalizeInventoryPath(file?.path));
   const forbiddenPaths = findForbiddenDistributionPaths(forbidden);
   if (forbiddenPaths.length > 0) fail('npmCandidate.scope', `npm candidate contains development or sensitive paths: ${forbiddenPaths.join(', ')}`);
+  const unreferencedAssets = findUnreferencedNpmAssets(files.map((file) => file.path), publicSurface?.referencedAssets);
+  if (unreferencedAssets.length > 0) fail('npmCandidate.scope', `npm candidate contains retired or unreferenced showcase assets: ${unreferencedAssets.join(', ')}`);
 
   let integrity;
   if (candidatePath !== undefined && !isOutsideProductCheckout(candidatePath)) {
@@ -394,7 +398,7 @@ async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revisi
   };
 }
 
-async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdentity, rootPackage, extensionTarget, npmCandidate, approvedNpmName, nativeProvenance, sourceLegalFiles) {
+async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdentity, rootPackage, extensionTarget, npmCandidate, approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface) {
   const manifest = await readJson(resolve(manifestPath), 'VSIX candidate manifest');
   const artifact = manifest.artifact ?? {};
   if (!Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) fail('vsixCandidate.artifact', 'VSIX manifest has no positive artifact size');
@@ -477,6 +481,10 @@ async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdenti
   const unexpectedVsixPaths = findUnexpectedVsixDistributionPaths(archiveFiles?.map((file) => file.path));
   if (unexpectedVsixPaths.length > 0) {
     fail('vsixCandidate.scope', `VSIX contains files outside the release allowlist: ${unexpectedVsixPaths.join(', ')}`);
+  }
+  const unreferencedVsixAssets = findUnreferencedVsixAssets(archiveFiles?.map((file) => file.path), publicSurface.referencedAssets);
+  if (unreferencedVsixAssets.length > 0) {
+    fail('vsixCandidate.scope', `VSIX contains retired or unreferenced showcase assets: ${unreferencedVsixAssets.join(', ')}`);
   }
   if (archiveIdentity !== undefined) {
     for (const issue of compareVsixArchiveIdentity(archiveIdentity, manifest.package, 'sidecar package')) {
@@ -749,8 +757,8 @@ export function findForbiddenDistributionPaths(paths, prefix = '') {
     }
     const normalized = value.replaceAll('\\', '/');
     const path = normalized.startsWith(normalizedPrefix) ? normalized.slice(normalizedPrefix.length) : normalized;
-    if (/^(?:src|test|scripts|\.github|report|showcase|harness)(?:\/|$)/i.test(path)
-      || /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|.*\.(?:pem|key|p12|pfx)|.*\.provenance\.json)$/i.test(path)) {
+    if (/(?:^|\/)(?:src|source|test|scripts|target|\.github|report|showcase|harness)(?:\/|$)/i.test(path)
+      || /(?:^|\/)(?:\.vscodeignore|Cargo(?:\.lock|\.toml)?|build\.rs|\.env(?:\..*)?|\.npmrc|.*\.(?:pem|key|p12|pfx)|.*\.provenance\.json)$/i.test(path)) {
       forbidden.push(normalized);
     }
   }
@@ -764,6 +772,29 @@ export function findUnexpectedVsixDistributionPaths(paths) {
     .filter((path) => typeof path !== 'string' || !isAllowedVsixPath(path.replaceAll('\\', '/')))
     .map((path) => typeof path === 'string' ? path : '<invalid-path>')
     .sort(stableCompare);
+}
+
+/** Reject showcase screenshots that are no longer part of the README surface. */
+export function findUnreferencedVsixAssets(paths, referencedAssets) {
+  return findUnreferencedShowcaseAssets(paths, referencedAssets, 'extension/');
+}
+
+/** Apply the same README asset contract to npm's package-relative inventory. */
+export function findUnreferencedNpmAssets(paths, referencedAssets) {
+  return findUnreferencedShowcaseAssets(paths, referencedAssets);
+}
+
+function findUnreferencedShowcaseAssets(paths, referencedAssets, prefix = '') {
+  if (!Array.isArray(paths) || !Array.isArray(referencedAssets)) return ['<missing-inventory>'];
+  const normalizedPrefix = prefix.replaceAll('\\', '/');
+  const referenced = new Set(referencedAssets
+    .filter((asset) => typeof asset === 'string')
+    .map((asset) => asset.replaceAll('\\', '/')));
+  return [...new Set(paths
+    .filter((path) => typeof path === 'string')
+    .map((path) => path.replaceAll('\\', '/'))
+    .filter((path) => path.toLowerCase().startsWith(normalizedPrefix.toLowerCase() + 'docs/assets/'))
+    .filter((path) => !referenced.has(path.slice(normalizedPrefix.length))))].sort(stableCompare);
 }
 
 function isAllowedVsixPath(path) {
@@ -794,30 +825,6 @@ export function compareSourceProvenance(left, right) {
     if (left[field] !== right[field]) issues.push(`${field} differs between candidate manifests`);
   }
   return issues;
-}
-
-export function normalizeRepositoryIdentity(value) {
-  if (typeof value !== 'string') return undefined;
-  let source = value.trim();
-  if (source.length === 0) return undefined;
-  const scp = source.match(/^[^@\s]+@([^:\s]+):(.+)$/);
-  let host;
-  let path;
-  if (scp !== null) {
-    host = scp[1];
-    path = scp[2];
-  } else {
-    source = source.replace(/^git\+/i, '');
-    let parsed;
-    try { parsed = new URL(source); } catch { return undefined; }
-    if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.search.length > 0 || parsed.hash.length > 0) return undefined;
-    host = parsed.hostname;
-    path = parsed.pathname;
-  }
-  if (typeof host !== 'string' || typeof path !== 'string') return undefined;
-  path = path.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
-  if (path.length === 0 || path.split('/').some((part) => part === '' || part === '.' || part === '..')) return undefined;
-  return `${host.toLowerCase()}/${path.toLowerCase()}`;
 }
 
 function repositoryUrl(value) {

@@ -40,7 +40,7 @@ GitHub, npm, and Open VSX statuses separate.
 
 ## Evidence
 
-Release scripts and `JsonlView-harness/report/release-*` evidence. The harness
+Release scripts and immutable release evidence receipts produced by the external validation workspace. The harness
 must label unavailable reviewers, stale historical tags, and unverified
 platforms instead of collapsing them into success.
 

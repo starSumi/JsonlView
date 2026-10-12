@@ -2,7 +2,7 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for logs, telemetry, traces, coding-agent runs, and local agent session history.",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "publisher": "Sumi-Sophia",
   "icon": "images/jsonlview-icon.png",
   "private": false,
@@ -26,7 +26,9 @@
     "LICENSE.txt",
     "THIRD-PARTY-NOTICES.txt",
     "docs/acceleration-roadmap.md",
+    "docs/roadmap.yaml",
     "docs/format-and-profile-boundaries.md",
+    "docs/metadata",
     "docs/decisions",
     "docs/assets",
     "third_party/licenses"
@@ -143,8 +145,7 @@
       },
       {
         "command": "jsonlView.sessionNavigator.open",
-        "title": "JsonlView: Open Agent Sessions",
-        "icon": "$(list-tree)"
+        "title": "JsonlView: Open Agent Sessions"
       },
       {
         "command": "jsonlView.sessionNavigator.sortActivity",
@@ -161,6 +162,38 @@
       {
         "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
         "title": "JsonlView: Paste JSONL Source"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openEntity",
+        "title": "Open in JsonlView"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openEntityWith",
+        "title": "Open With JsonlView Data Studio"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.revealInFileExplorer",
+        "title": "Reveal in File Explorer"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openInIntegratedTerminal",
+        "title": "Open in Integrated Terminal"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.copyRelativePath",
+        "title": "Copy Relative Path"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openTimeline",
+        "title": "Open Timeline"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.copySessionId",
+        "title": "Copy Session ID"
       }
     ],
     "viewsContainers": {
@@ -244,14 +277,18 @@
         {
           "command": "jsonlView.open",
           "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
-          "group": "navigation@jsonlview"
+          "group": "navigation@1"
         }
       ],
       "editor/title": [
         {
           "command": "jsonlView.sessionNavigator.open",
           "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
-          "group": "navigation@jsonlview"
+          "group": "navigation@1"
+        },
+        {
+          "command": "jsonlView.open",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -264,6 +301,66 @@
           "command": "jsonlView.sessionNavigator.removeSource",
           "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source",
           "group": "inline@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.revealInFileExplorer",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openInIntegratedTerminal",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "navigation@4"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyPath",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "copy@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyRelativePath",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "copy@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openEntity",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openEntityWith",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.revealInFileExplorer",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openInIntegratedTerminal",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@4"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyPath",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "copy@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyRelativePath",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "copy@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copySessionId",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "copy@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openTimeline",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "timeline@1"
         }
       ]
     },
@@ -387,10 +484,14 @@
     "check:cargo-notices": "node scripts/check-cargo-notices.mjs",
     "generate:cargo-notices": "node scripts/generate-cargo-notices.mjs",
     "check:runtime-notices": "node scripts/check-runtime-notices.mjs",
+    "agent-spec-lint": "node scripts/check-agent-spec.mjs",
+    "check:agent-spec": "pnpm agent-spec-lint",
+    "check:docs-index": "node scripts/check-docs-index.mjs",
     "audit:cargo": "cargo audit --file native/jsonl-core/Cargo.lock",
     "check:cargo-policy": "cargo deny --manifest-path native/jsonl-core/Cargo.toml --config deny.toml check advisories licenses bans sources",
     "discover:producers": "node scripts/discover-producer-surfaces.mjs",
     "release:preflight": "node scripts/release-preflight.mjs",
+    "check:release-lineage": "node scripts/check-release-lineage.mjs",
     "promotion:plan": "node scripts/promotion-plan.mjs",
     "promotion:join": "node scripts/promotion-join.mjs",
     "marketplace:publish": "node scripts/marketplace-publish.mjs",

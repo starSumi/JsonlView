@@ -11,31 +11,41 @@ export function useViewportPopover(ref: RefObject<HTMLDetailsElement | null>): v
     const place = (): void => {
       if (!menu.open) return;
       const desiredWidth = popup.classList.contains('columns-popover') ? 220 : 260;
+      const desiredMaxHeight = popup.classList.contains('columns-popover') ? 320 : 420;
       const anchor = summary.getBoundingClientRect();
-      const width = clampPopoverToViewport(anchor, desiredWidth, 0, window.innerWidth, window.innerHeight).width;
-      popup.style.width = `${width}px`;
-      popup.style.maxHeight = 'none';
       const placement = clampPopoverToViewport(anchor, desiredWidth,
-        Math.min(popup.scrollHeight + 2, popup.classList.contains('columns-popover') ? 320 : 420),
+        Math.min(popup.scrollHeight + 2, desiredMaxHeight),
         window.innerWidth, window.innerHeight);
-      popup.style.position = 'fixed';
-      popup.style.right = 'auto';
-      popup.style.left = `${placement.left}px`;
-      popup.style.top = `${placement.top}px`;
-      popup.style.width = `${placement.width}px`;
-      popup.style.maxHeight = `${placement.maxHeight}px`;
+      const nextStyle: Record<string, string> = {
+        position: 'fixed',
+        right: 'auto',
+        left: `${placement.left}px`,
+        top: `${placement.top}px`,
+        width: `${placement.width}px`,
+        maxHeight: `${placement.maxHeight}px`,
+      };
+      for (const [property, value] of Object.entries(nextStyle)) {
+        if (popup.style.getPropertyValue(property) !== value) popup.style.setProperty(property, value);
+      }
     };
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
     observer?.observe(popup);
+    const onScroll = (event: Event): void => {
+      // Scrolling the popup must leave its own scroll position untouched.
+      // Only an ancestor/window scroll can move the anchor out of view.
+      const target = event.target;
+      if (target === popup || (typeof Node !== 'undefined' && target instanceof Node && popup.contains(target))) return;
+      place();
+    };
     menu.addEventListener('toggle', place);
     window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
+    window.addEventListener('scroll', onScroll, true);
     place();
     return () => {
       observer?.disconnect();
       menu.removeEventListener('toggle', place);
       window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('scroll', onScroll, true);
       if (previousStyle === null) popup.removeAttribute('style');
       else popup.setAttribute('style', previousStyle);
     };

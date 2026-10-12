@@ -1,4 +1,4 @@
-import { isObject, own, stringAt } from './utils';
+import { isObject, own, stringAt } from '../../profiles/utils';
 
 const MAX_BLOCKS = 32;
 const MAX_CHARS = 128 * 1024;
@@ -17,6 +17,16 @@ export interface ClaudeToolSection {
 export interface ClaudeToolBlock {
   value: Record<string, unknown>;
   index: number;
+}
+
+/** Returns true when a message block has a bounded, provider-known projection. */
+export function hasClaudeToolProjection(value: unknown): boolean {
+  if (!isObject(value) || own(value, 'type') !== 'tool_use' || !isObject(value.input)) return false;
+  const name = stringAt(value, 'name');
+  if ((name === 'Bash' || name === 'PowerShell') && typeof value.input.command === 'string') return true;
+  if (name === 'Write' && typeof value.input.content === 'string') return true;
+  if (name === 'Edit' && (typeof value.input.old_string === 'string' || typeof value.input.new_string === 'string')) return true;
+  return false;
 }
 
 /** Physical rows can contain multiple tool blocks; never invent a cross-row link. */

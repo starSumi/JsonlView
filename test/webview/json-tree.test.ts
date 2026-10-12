@@ -77,9 +77,11 @@ describe('bounded interactive JSON tree model', () => {
 
     expect(message?.previewTruncated).toBe(true);
     expect(message?.copyValue).toBe('x'.repeat(300));
-    expect(message?.preview).toContain('...');
+    expect(message?.preview).toBe(JSON.stringify('x'.repeat(32)));
 
     const markup = renderToStaticMarkup(React.createElement(JsonTree, { value }));
     expect(markup).toContain('aria-label="Copy message"');
+    expect(markup).toContain('class="tree-truncation-badge"');
+    expect(markup).toContain('aria-label="Preview limited"');
   });
 });

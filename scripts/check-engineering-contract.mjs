@@ -5,10 +5,14 @@ import { loadReleaseTargets } from './release-targets.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const requiredContractText = [
+  '## Scope and Ownership',
+  '## Mandatory Commands',
   '## Change Contract',
   '## Completion Levels',
   '## Decision Records',
-  'JsonlView-harness',
+  'external validation workspace',
+  'pnpm check:agent-spec',
+  'pnpm check:docs-index',
   'pnpm check:contract',
 ];
 const adrFiles = [
@@ -137,12 +141,16 @@ for (const pin of pinnedWorkflowActions) {
 }
 
 const packageJson = JSON.parse(await text('package.json'));
-for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'check:contract', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
+for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'check:contract', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
   if (typeof packageJson.scripts?.[script] !== 'string') failures.push(`package.json missing script: ${script}`);
 }
 
-for (const helper of ['scripts/npm-tarball-integrity.mjs', 'scripts/vsix-archive-integrity.mjs', 'scripts/verify-candidate-pair.mjs', 'scripts/verify-vsix-targets.mjs', 'scripts/release-targets.mjs', 'scripts/promotion-join.mjs', 'scripts/license-policy.mjs', 'scripts/check-changelog.mjs']) {
+for (const helper of ['scripts/check-agent-spec.mjs', 'scripts/check-docs-index.mjs', 'scripts/check-doc-metadata.mjs', 'scripts/npm-tarball-integrity.mjs', 'scripts/vsix-archive-integrity.mjs', 'scripts/verify-candidate-pair.mjs', 'scripts/verify-vsix-targets.mjs', 'scripts/release-targets.mjs', 'scripts/promotion-join.mjs', 'scripts/check-release-lineage.mjs', 'scripts/license-policy.mjs', 'scripts/check-changelog.mjs']) {
   if (!(await exists(helper))) failures.push(`release helper is missing: ${helper}`);
+}
+
+for (const config of ['config/agent-spec.json', 'config/docs-index.json', 'config/docs-metadata.json']) {
+  if (!(await exists(config))) failures.push('project governance manifest is missing: ' + config);
 }
 
 try {

@@ -93,6 +93,25 @@ describe('VS Code message client', () => {
     expect(client.accept(message('ROWS', request.id, 'g2', payload))?.type).toBe('ROWS');
   });
 
+  it('rejects a correlated row page with a malformed response payload', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g2',
+    });
+    const request = client.send('GET_ROWS', { limit: 100 });
+    const malformed = {
+      rows: [{ cells: [], genericSummary: 'missing ref' }],
+      columns: [],
+      anchorOrdinal: '0',
+      hasBefore: false,
+      hasAfter: false,
+      indexedRecords: '1',
+    };
+
+    expect(client.accept(message('ROWS', request.id, 'g2', malformed as never))).toBeUndefined();
+    expect(client.hasPending('rows')).toBe(true);
+  });
+
   it('does not allow one request kind to authorize another response kind', () => {
     const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
       documentId: 'doc',

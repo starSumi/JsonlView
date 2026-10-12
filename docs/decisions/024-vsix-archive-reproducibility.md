@@ -65,8 +65,8 @@ SOURCE_DATE_EPOCH=1700000000.
   https://reproducible-builds.org/docs/source-date-epoch/
 - VS Code extension packaging documentation:
   https://code.visualstudio.com/api/working-with-extensions/publishing-extension
-- Local repeated-build record:
-  JsonlView-harness/state/runs/quality-0.2.7-repro-20261006/reproducibility-evidence.json
+- Local repeated-build record: an immutable external validation receipt identified
+  by its run id; the receipt is owned by the validation workspace.
 
 ## Boundary
 

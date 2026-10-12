@@ -1,10 +1,11 @@
 import {
-  PROTOCOL_VERSION,
   type ExtensionMessage,
-  type ProtocolEnvelope,
   type WebviewRequest,
 } from '../shared/types';
+import { createProtocolEnvelope, isExtensionMessage } from '../shared/transport';
 import type { RequestKind } from './state';
+
+export { isExtensionMessage };
 
 export interface MessageTransport {
   postMessage(message: WebviewRequest): void;
@@ -27,21 +28,6 @@ export type RequestPayload<TType extends WebviewRequest['type']> = Extract<
   WebviewRequest,
   { type: TType }
 >['payload'];
-
-const EXTENSION_MESSAGE_TYPES = new Set<ExtensionMessage['type']>([
-  'OPENED',
-  'ROWS',
-  'PROBLEMS',
-  'DETAIL',
-  'SCHEMA',
-  'INSIGHTS',
-  'INDEX_PROGRESS',
-  'PROFILE_CHANGED',
-  'ROW_ORDER_CHANGED',
-  'REVEAL',
-  'SOURCE_INVALIDATED',
-  'ERROR',
-]);
 
 const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   READY: 'ready',
@@ -67,21 +53,6 @@ function createRequestId(): string {
   }
   requestCounter += 1;
   return `jsonl-view-${Date.now().toString(36)}-${requestCounter.toString(36)}`;
-}
-
-export function isExtensionMessage(value: unknown): value is ExtensionMessage {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const candidate = value as Partial<ProtocolEnvelope<string, unknown>>;
-  return candidate.protocolVersion === PROTOCOL_VERSION
-    && typeof candidate.type === 'string'
-    && EXTENSION_MESSAGE_TYPES.has(candidate.type as ExtensionMessage['type'])
-    && typeof candidate.documentId === 'string'
-    && typeof candidate.generation === 'string'
-    && (candidate.epoch === undefined || (Number.isSafeInteger(candidate.epoch) && candidate.epoch >= 0))
-    && typeof candidate.requestId === 'string'
-    && 'payload' in candidate;
 }
 
 export function shouldAcceptMessage(
@@ -240,15 +211,14 @@ export class VsCodeMessageClient {
       generation: this.#session.generation,
       ...(this.#session.epoch === undefined ? {} : { epoch: this.#session.epoch }),
     };
-    const envelope = {
-      protocolVersion: PROTOCOL_VERSION,
+    const envelope = createProtocolEnvelope({
       type,
       documentId: this.#session.documentId,
       generation: this.#session.generation,
       ...(this.#session.epoch === undefined ? {} : { epoch: this.#session.epoch }),
       requestId,
       payload,
-    } as WebviewRequest;
+    }) as WebviewRequest;
     // Diagnostic handoff is a one-way host action; it has no correlated
     // response and must not leave an unbounded pending entry behind.
     if (type !== 'CANCEL' && type !== 'DIAGNOSE_ERROR') {

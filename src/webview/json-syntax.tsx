@@ -39,6 +39,8 @@ export interface BoundedJsonText {
   truncated: boolean;
 }
 
+const OMITTED = Symbol('bounded-json-omitted');
+
 export interface JsonFoldLine {
   lineNumber: number;
   text: string;
@@ -257,16 +259,16 @@ export function stringifyJsonBounded(
   let nodes = 0;
   let bounded = false;
 
-  const project = (node: unknown, depth: number): unknown => {
+  const project = (node: unknown, depth: number): unknown | typeof OMITTED => {
     nodes += 1;
     if (nodes > maxNodes) {
       bounded = true;
-      return '[Truncated: node budget]';
+      return OMITTED;
     }
     if (typeof node === 'string') {
       if (node.length <= maxStringChars) return node;
       bounded = true;
-      return `${node.slice(0, maxStringChars)}... [truncated]`;
+      return node.slice(0, maxStringChars);
     }
     if (node === null || typeof node === 'boolean' || typeof node === 'number') return node;
     if (typeof node === 'bigint') return `${String(node)}n`;
@@ -277,7 +279,7 @@ export function stringifyJsonBounded(
     }
     if (depth >= maxDepth) {
       bounded = true;
-      return '[Truncated: depth limit]';
+      return OMITTED;
     }
     seen.add(node);
 
@@ -285,11 +287,11 @@ export function stringifyJsonBounded(
       const projected: unknown[] = [];
       const count = Math.min(node.length, maxChildren);
       for (let index = 0; index < count && nodes <= maxNodes; index += 1) {
-        projected.push(project(node[index], depth + 1));
+        const child = project(node[index], depth + 1);
+        if (child !== OMITTED) projected.push(child);
       }
       if (node.length > count) {
         bounded = true;
-        projected.push(`[Truncated: ${String(node.length - count)} more items]`);
       }
       return projected;
     }
@@ -303,19 +305,24 @@ export function stringifyJsonBounded(
         hasMore = true;
         break;
       }
-      projected[key] = project(safeProperty(node as Record<string, unknown>, key), depth + 1);
+      const child = project(safeProperty(node as Record<string, unknown>, key), depth + 1);
+      if (child === OMITTED) {
+        hasMore = true;
+        break;
+      }
+      projected[key] = child;
       count += 1;
     }
     if (hasMore) {
       bounded = true;
-      projected['...'] = '[Truncated: more fields]';
     }
     return projected;
   };
 
   let text: string;
   try {
-    text = JSON.stringify(project(value, 0), null, 2) ?? String(value);
+    const projected = project(value, 0);
+    text = JSON.stringify(projected === OMITTED ? null : projected, null, 2) ?? String(value);
   } catch {
     return { text: 'Value cannot be serialized.', truncated: true };
   }
@@ -349,11 +356,11 @@ function JsonHighlightedCode({
           Syntax preview is limited to the first {result.displayedChars.toLocaleString()} characters.
         </div>
       ) : null}
-      <pre className={`json-code${className ? ` ${className}` : ''}`} aria-label={ariaLabel}>
-        {result.tokens.map((token, index) => (
+      <pre className={`json-code${className ? ` ${className}` : ''}`}>
+        {result.tokens.map((token) => (
           token.kind === 'plain'
-            ? <React.Fragment key={index}>{token.text}</React.Fragment>
-            : <span className={`json-token json-token-${token.kind}`} key={index}>{token.text}</span>
+            ? <React.Fragment key={`${token.kind}:${token.text}`}>{token.text}</React.Fragment>
+            : <span className={`json-token json-token-${token.kind}`} key={`${token.kind}:${token.text}`}>{token.text}</span>
         ))}
       </pre>
     </>
@@ -364,10 +371,10 @@ function TokenSpans({ source, lineKey }: { source: string; lineKey: string }): R
   const result = tokenizeJson(source, { maxChars: Math.max(1, source.length) });
   return (
     <>
-      {result.tokens.map((token, index) => (
+      {result.tokens.map((token) => (
         token.kind === 'plain'
-          ? <React.Fragment key={`${lineKey}:plain:${index}`}>{token.text}</React.Fragment>
-          : <span className={`json-token json-token-${token.kind}`} key={`${lineKey}:${token.kind}:${index}`}>{token.text}</span>
+          ? <React.Fragment key={`${lineKey}:${token.kind}:${token.text}`}>{token.text}</React.Fragment>
+          : <span className={`json-token json-token-${token.kind}`} key={`${lineKey}:${token.kind}:${token.text}`}>{token.text}</span>
       ))}
       {source.slice(result.displayedChars)}
     </>
@@ -401,7 +408,7 @@ function JsonFoldCode({ source, ariaLabel, className }: JsonFoldCodeProps): Reac
         const foldId = `${viewId}-fold-${String(line.lineNumber)}`;
         return (
           <React.Fragment key={line.lineNumber}>
-            <div className="json-line" role="treeitem" aria-level={1} aria-expanded={foldEndLine === undefined ? undefined : !collapsed}>
+            <div className="json-line" role="treeitem" tabIndex={-1} aria-level={1} aria-expanded={foldEndLine === undefined ? undefined : !collapsed}>
               <span className="json-line-gutter">
                 {foldEndLine !== undefined ? (
                   <button

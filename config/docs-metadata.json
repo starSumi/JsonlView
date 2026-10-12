@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "schema": "docs/metadata/schema.yaml",
+  "index": "docs/metadata/index.yaml",
+  "directory": "docs",
+  "requireCompleteCoverage": true,
+  "allowExtensionsPrefix": "x-"
+}

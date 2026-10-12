@@ -235,6 +235,31 @@ describe('workspace reducer', () => {
     expect(state.rebuildDetail).toBeUndefined();
   });
 
+  it('keeps a closed detail drawer closed while retaining the selected row', () => {
+    let state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', { rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'rebuild', id: 'rebuild-closed' } });
+    expect(state.rebuildDetail).toBeUndefined();
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2, requestId: 'rebuild-closed' },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toBeUndefined();
+    const refreshedRows = rows.map((row) => ({ ...row, ref: { ...row.ref, generation: 'g2' } }));
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('ROWS', { rows: refreshedRows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }), generation: 'g2' },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toBeUndefined();
+  });
+
   it('keeps the prior follow viewport visible until the new tail page swaps in', () => {
     let state = createInitialState({ followMode: true });
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });

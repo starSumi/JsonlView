@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "directory": "docs/decisions",
+  "index": "docs/decisions/README.md",
+  "allowedDuplicateIds": {
+    "023": [
+      "023-keyless-target-separated-publication.md",
+      "023-native-build-reproducibility.md"
+    ]
+  },
+  "legacyHeaders": {
+    "017-physical-order-paging.md": "017",
+    "018-accepted-webview-snapshot-identity.md": "018",
+    "019-webview-query-and-keyboard-ownership.md": "019"
+  },
+  "requireStandardHeaderForChanged": true
+}

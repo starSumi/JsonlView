@@ -10,6 +10,7 @@ import { copyFrozenBundle, compareBundleInventories, inventoryFrozenBundle } fro
 import { compareVsixArchiveIdentity, inspectVsixArchive } from './vsix-archive-integrity.mjs';
 import { assertOutsideTree, assertPathsDoNotOverlap, isWithin } from './path-boundary.mjs';
 import { resolveExtensionTarget } from './release-targets.mjs';
+import { extractReferencedAssets } from './check-public-surface.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -100,10 +101,18 @@ try {
   const stagedNativeBinary = resolve(staging, 'native/jsonl-core', 'jsonl_core.win32-x64-msvc.node');
   await cp(nativeBinary, stagedNativeBinary);
   const stagedNativeSha256 = hash(stagedNativeBinary);
-  // README images are intentionally shipped as approved product assets; keep
-  // internal reports and source-study material out of the VSIX.
-  if (await isDirectory(resolve(root, 'docs/assets'))) {
-    await cp(resolve(root, 'docs/assets'), resolve(staging, 'docs/assets'), { recursive: true });
+  // Ship only README-referenced showcase assets. Retired screenshots may stay
+  // in the checkout for history, but they must never enter a public VSIX.
+  const readme = await readFile(resolve(root, 'README.md'), 'utf8');
+  for (const asset of extractReferencedAssets(readme)) {
+    const sourceAsset = resolve(root, asset);
+    if (!isWithin(root, sourceAsset) || sourceAsset === root) {
+      throw new Error(`VSIX showcase asset must stay inside the product checkout: ${asset}`);
+    }
+    await assertRegularFile(sourceAsset, 'VSIX showcase asset');
+    const stagedAsset = resolve(staging, asset);
+    await mkdir(dirname(stagedAsset), { recursive: true });
+    await cp(sourceAsset, stagedAsset);
   }
   await cp(resolve(root, 'docs/acceleration-roadmap.md'), resolve(staging, 'docs/acceleration-roadmap.md'));
   await cp(resolve(root, 'docs/format-and-profile-boundaries.md'), resolve(staging, 'docs/format-and-profile-boundaries.md'));
@@ -296,10 +305,6 @@ function isMainModule() {
 async function assertRegularFile(path, label) {
   const details = await lstat(path);
   if (!details.isFile() || details.isSymbolicLink()) throw new Error(`${label} must be a regular file: ${path}`);
-}
-
-async function isDirectory(path) {
-  try { return (await lstat(path)).isDirectory(); } catch { return false; }
 }
 
 async function assertOutsideCheckout(path, label) {

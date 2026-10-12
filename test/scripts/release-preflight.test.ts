@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // The release gate is intentionally a JavaScript CLI; keep its pure integrity
 // helpers covered without making the production script a TypeScript build input.
 // @ts-expect-error release-preflight.mjs has no emitted declaration file.
-import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, normalizeRepositoryIdentity, projectVsixPairCheck, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
+import { collectSourceProvenanceFailures, compareNativeCandidateDigests, compareNpmCandidateIdentity, comparePackageIdentities, compareSourceProvenance, findCredentialKinds, findForbiddenDistributionPaths, findUnexpectedVsixDistributionPaths, findUnreferencedNpmAssets, findUnreferencedVsixAssets, normalizeRepositoryIdentity, projectVsixPairCheck, validatePackageIdentity, validateSourceProvenance, verifyNpmCandidateIntegrity, verifyVsixArtifactIntegrity } from '../../scripts/release-preflight.mjs';
 // @ts-expect-error JavaScript release helper has no emitted declaration file.
 import { bundleFromCandidateInventory, bundleInventoryDigest, compareBundleInventories } from '../../scripts/bundle-integrity.mjs';
 // @ts-expect-error verify-native-provenance.mjs has no emitted declaration file.
@@ -220,6 +220,28 @@ describe('release candidate integrity', () => {
       'extension/third_party/licenses/dependency.txt',
       'extension/private-notes.md',
     ])).toEqual(['extension/private-notes.md']);
+  });
+
+  it('rejects native source and build metadata plus retired showcase assets', () => {
+    expect(findForbiddenDistributionPaths([
+      'extension/native/jsonl-core/src/lib.rs',
+      'extension/native/jsonl-core/target/debug/build.log',
+      'extension/.vscodeignore',
+      'extension/native/jsonl-core/Cargo.toml',
+      'extension/native/jsonl-core/Cargo.lock',
+    ], 'extension/')).toHaveLength(5);
+    expect(findUnreferencedVsixAssets([
+      'extension/docs/assets/codex-timeline-exec.png',
+      'extension/docs/assets/codex-timeline.png',
+      'extension/dist/webview.js',
+    ], ['docs/assets/codex-timeline-exec.png'])).toEqual([
+      'extension/docs/assets/codex-timeline.png',
+    ]);
+    expect(findUnreferencedVsixAssets(['extension/docs/assets/kept.png'], undefined)).toEqual(['<missing-inventory>']);
+    expect(findUnreferencedNpmAssets([
+      'docs/assets/codex-timeline-exec.png',
+      'docs/assets/pi-timeline.png',
+    ], ['docs/assets/codex-timeline-exec.png'])).toEqual(['docs/assets/pi-timeline.png']);
   });
 
   it('binds embedded VSIX package license, privacy, and repository metadata', () => {

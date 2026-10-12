@@ -4,7 +4,9 @@ import { join, resolve } from 'node:path';
 const DEFAULT_ROOT = resolve(import.meta.dirname, '..');
 const PUBLIC_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'package.json'];
 const PUBLIC_DOC_ROOT = 'docs';
-const PATH_MARKER = /(?<![A-Za-z])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/(?:Users|home|private|tmp|mnt|workspace)\/)/i;
+// Keep UNC detection strict enough to ignore escaped punctuation in JSON
+// regular expressions (for example \\\\. in a VS Code when clause).
+const PATH_MARKER = /(?<![A-Za-z])(?:[A-Za-z]:[\\/]|\\\\(?=[A-Za-z0-9])[^\\/\s]+[\\/]|\/(?:Users|home|private|tmp|mnt|workspace)\/)/i;
 const REQUIRED_TIMELINE = 'docs/assets/codex-timeline-exec.png';
 
 if (isMainModule()) {
@@ -31,7 +33,7 @@ export async function checkPublicSurface(root = DEFAULT_ROOT) {
 
   const readme = await readFile(join(projectRoot, 'README.md'), 'utf8');
   const showcase = checkReadmeShowcase(readme);
-  const referencedAssets = [...readme.matchAll(/\((docs\/assets\/[^)]+)\)/g)].map((match) => match[1]);
+  const referencedAssets = extractReferencedAssets(readme);
   const missingAssets = [];
   for (const asset of referencedAssets) {
     try {
@@ -46,8 +48,15 @@ export async function checkPublicSurface(root = DEFAULT_ROOT) {
     filesScanned: files,
     pathLeaks,
     showcase,
+    referencedAssets,
     missingAssets,
   };
+}
+
+/** Keep the public README asset set as the single VSIX showcase contract. */
+export function extractReferencedAssets(readme) {
+  if (typeof readme !== 'string') return [];
+  return [...new Set([...readme.matchAll(/\((docs\/assets\/[^)\s]+)\)/g)].map((match) => match[1]))].sort();
 }
 
 export async function collectPublicTextFiles(root) {

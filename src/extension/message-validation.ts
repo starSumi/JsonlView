@@ -1,5 +1,4 @@
 import {
-  PROTOCOL_VERSION,
   type ColumnSpec,
   type FieldPath,
   type Predicate,
@@ -8,8 +7,8 @@ import {
   type WebviewRequest,
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
+import { MAX_PROTOCOL_REQUEST_ID_LENGTH, validateProtocolEnvelope } from '../shared/transport';
 
-const MAX_REQUEST_ID_LENGTH = 128;
 const MAX_QUERY_DEPTH = 16;
 const MAX_QUERY_NODES = 256;
 const MAX_QUERY_STRING = 16 * 1024;
@@ -23,27 +22,15 @@ export interface ValidationResult {
   error?: string;
 }
 
-export function validateWebviewRequest(value: unknown): ValidationResult {
-  if (!isObject(value)) {
-    return failure('Message must be an object.');
+export function validateWebviewRequest(rawValue: unknown): ValidationResult {
+  const envelope = validateProtocolEnvelope(rawValue);
+  if (!envelope.ok) {
+    return failure(envelope.error);
   }
-  if (value.protocolVersion !== PROTOCOL_VERSION) {
-    return failure('Unsupported protocol version.');
-  }
-  if (!isBoundedString(value.type, 64)) {
-    return failure('Message type is required.');
-  }
-  if (!isBoundedString(value.documentId, 256) || !isBoundedString(value.generation, 256)) {
-    return failure('Document identity is required.');
-  }
-  if (value.epoch !== undefined && (!Number.isSafeInteger(value.epoch) || Number(value.epoch) < 0)) {
-    return failure('Epoch must be a non-negative safe integer.');
-  }
-  if (!isBoundedString(value.requestId, MAX_REQUEST_ID_LENGTH)) {
+  const value = envelope.envelope;
+  const { type, payload } = value;
+  if (envelope.envelope.requestId.length === 0) {
     return failure('Request id is required.');
-  }
-  if (!isObject(value.payload)) {
-    return failure('Payload must be an object.');
   }
 
   switch (value.type) {
@@ -187,7 +174,7 @@ export function validateWebviewRequest(value: unknown): ValidationResult {
       }
       break;
     case 'CANCEL':
-      if (!isBoundedString(value.payload.targetRequestId, MAX_REQUEST_ID_LENGTH)) {
+      if (!isBoundedString(value.payload.targetRequestId, MAX_PROTOCOL_REQUEST_ID_LENGTH)) {
         return failure('Cancellation target is required.');
       }
       break;

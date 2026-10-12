@@ -1,5 +1,11 @@
 # Acceleration roadmap
 
+The machine-readable roadmap and deferred-tag registry live in roadmap.yaml.
+ADR-043 makes its mainline invariant explicit: close and measure the physical,
+protocol, and presentation boundaries before expanding formats, write paths, or
+runtime topology. This document remains the technical acceleration boundary; it
+does not promote a deferred capability.
+
 Native code is an optional compute accelerator behind the portable TypeScript
 engine. It does not own document generations, source identity, file watching,
 or recovery. Every accelerated result must match the portable oracle and can be

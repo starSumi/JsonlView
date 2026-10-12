@@ -90,6 +90,15 @@ describe('JsonlFileEngine indexing and hydration', () => {
     }
   });
 
+  it('does not read past an explicit incremental index byte budget', async () => {
+    const { engine } = await fixture('{"a":1}\n{"a":2}\n', { readChunkBytes: 64 });
+
+    const summary = await engine.indexMore({ maxBytes: 1 });
+
+    expect(summary.indexedBytes).toBe('1');
+    expect(summary.indexingComplete).toBe(false);
+  });
+
   it('handles BOM, boundary-spanning CRLF, LF, and a final line without a delimiter', async () => {
     const { engine } = await fixture('\uFEFF{"a":1}\r\n{"a":2}\n{"a":3}', {
       readChunkBytes: 11,
@@ -869,13 +878,15 @@ describe('JsonlFileEngine refresh classification and lifecycle', () => {
     await expect(engine.getDetail(original)).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
   });
 
-  it('blocks an unverified append after a large snapshot defers its original fingerprint', async () => {
+  it('keeps an unverified append readable while recovery waits for a stable baseline', async () => {
     const { engine, path } = await fixture('{"value":true}\n'.repeat(600_000));
     expect(engine.canValidateOriginalSnapshot).toBe(false);
     await appendFile(path, '{"value":false}\n');
 
     expect(await engine.classifyRefresh()).toMatchObject({ kind: 'unknown' });
-    await expect(engine.getRows({ limit: 1 })).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+    const page = await engine.getRows({ limit: 1 });
+    expect(page.rows[0]?.genericSummary).toBe('{"value":true}');
+    expect(engine.getDiagnostics().open).toBe(true);
   });
 
   it('keeps a large snapshot readable after establishing its baseline before an append', async () => {

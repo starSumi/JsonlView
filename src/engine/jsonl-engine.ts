@@ -1317,10 +1317,11 @@ export class JsonlFileEngine {
       ) {
         const original = await this.getFullFingerprint();
         if (original === undefined) {
-          // A moving writer means this generation has no trustworthy baseline.
-          // Rebuild after the writer settles instead of treating new bytes as
-          // append-only data.
-          throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source has no stable baseline; rebuild after the writer settles.');
+          // Keep the already-open generation readable while a large writer is
+          // still moving. The recovery coordinator will establish a stable
+          // baseline and atomically publish a replacement generation; bytes
+          // beyond this snapshot are never admitted by this engine.
+          return;
         }
         const currentOldRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard);
         if (currentOldRange.hash !== original.hash || currentOldRange.length !== original.length) {
@@ -1385,6 +1386,12 @@ export class JsonlFileEngine {
     const equalLengthRewrite = handleState.size === this.fileSize
       && (handleState.mtimeNs !== this.sourceMtimeNs || handleState.ctimeNs !== this.sourceCtimeNs);
     if (!sameIdentity || !sameOpenFile || truncated || divergentSize || equalLengthRewrite) {
+      if (sameIdentity && sameOpenFile && !truncated && divergentSize && handleState.size > this.fileSize) {
+        // Appenders may advance the physical file while this generation is
+        // still serving cached/indexed rows. Keep the old boundary readable;
+        // stable recovery owns admission of the appended range.
+        return;
+      }
       this.invalidateSnapshot();
       throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed before staged index data could commit.');
     }
