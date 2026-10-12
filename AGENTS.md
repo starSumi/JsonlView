@@ -69,6 +69,9 @@ Use narrower gates when appropriate:
 - pnpm check:changelog -- --base <commit> when implementation files change.
 - pnpm package:vsix:candidate and pnpm package:npm only for an explicitly
   authorized release candidate; keep their outputs outside this checkout.
+- A package version change is a release-contract change: update CHANGELOG.md,
+  rerun the full mandatory commands, and bind every candidate artifact to the
+  clean revision before any registry promotion.
 
 ## Change Contract
 
