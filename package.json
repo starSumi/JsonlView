@@ -303,6 +303,26 @@
           "group": "inline@1"
         },
         {
+          "command": "jsonlView.sessionNavigator.revealInFileExplorer",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openInIntegratedTerminal",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "navigation@4"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyPath",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "copy@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyRelativePath",
+          "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/",
+          "group": "copy@2"
+        },
+        {
           "command": "jsonlView.sessionNavigator.openEntity",
           "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
           "group": "navigation@1"

@@ -23,7 +23,7 @@ vi.mock('vscode', () => ({
   Uri: {
     joinPath: (base: { fsPath: string }, ...parts: string[]) => ({ fsPath: join(base.fsPath, ...parts) }),
     file: (path: string) => ({ fsPath: path, toString: () => pathToFileURL(path).toString() }),
-    parse: (value: string) => ({ fsPath: fileURLToPath(value), toString: () => value }),
+    parse: (value: string) => ({ scheme: new URL(value).protocol.replace(':', ''), fsPath: fileURLToPath(value), toString: () => value }),
   },
   ConfigurationTarget: { Global: 1 },
   window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
@@ -36,9 +36,11 @@ vi.mock('vscode', () => ({
         host.configuration?.({ affectsConfiguration: (query) => query === 'jsonlView.sessionNavigator' || query === 'jsonlView.' + key });
       },
     }),
+    asRelativePath: ({ fsPath }: { fsPath: string }) => fsPath.replaceAll('\\', '/'),
     onDidChangeConfiguration: (listener: typeof host.configuration) => { host.configuration = listener; return { dispose() {} }; },
   },
   commands: { executeCommand: host.execute, registerCommand: (id: string, handler: (...args: any[]) => unknown) => { host.commands.set(id, handler); return { dispose() {} }; } },
+  env: { clipboard: { writeText: vi.fn() } },
 }));
 vi.mock('../../src/experimental/session-navigator/source-config', async (original) => {
   const actual = await original<typeof import('../../src/experimental/session-navigator/source-config')>();
@@ -90,6 +92,19 @@ describe('Session Navigator host lifecycle', () => {
     if (entity?.nodeKind !== 'entity') throw new Error('Expected a loaded session');
     return entity;
   }
+
+  it('routes source context actions to the authorized source root without session semantics', async () => {
+    await tree.refresh();
+    const [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected a source node');
+    await host.commands.get('jsonlView.sessionNavigator.revealInFileExplorer')!(source);
+    await host.commands.get('jsonlView.sessionNavigator.openInIntegratedTerminal')!(source);
+    await host.commands.get('jsonlView.sessionNavigator.copyPath')!(source);
+    await host.commands.get('jsonlView.sessionNavigator.copyRelativePath')!(source);
+    expect(host.execute).toHaveBeenNthCalledWith(1, 'revealFileInOS', expect.objectContaining({ fsPath: join(root, 'provider') }));
+    expect(host.execute).toHaveBeenNthCalledWith(2, 'openInIntegratedTerminal', expect.objectContaining({ fsPath: join(root, 'provider') }));
+    expect(host.commands.has('jsonlView.sessionNavigator.copySessionId')).toBe(true);
+  });
 
   it.each(['codex', 'claude'] as const)('opens a current %s transcript despite unrelated provider activity', async (provider) => {
     host.roots = [{ ...host.roots[0]!, provider }];

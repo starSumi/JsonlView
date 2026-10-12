@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Future staged evolution work will be recorded here.
+- Expose bounded file navigation actions on Agent source nodes while keeping session-only actions scoped to entities.
 
 ## 0.2.9 - 2026-10-12
 

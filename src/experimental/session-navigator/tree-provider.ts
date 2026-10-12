@@ -409,9 +409,16 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     }
   }
 
-  private async entityUri(node: SessionNavigatorTreeNode): Promise<vscode.Uri | undefined> {
-    if (node.nodeKind !== 'entity' || this.#disposed || !this.isEnabled()) return undefined;
+  /** Resolve a safe local filesystem URI for either a source or an entity. */
+  private async nodeUri(node: SessionNavigatorTreeNode): Promise<vscode.Uri | undefined> {
+    if (this.#disposed || !this.isEnabled()) return undefined;
     const store = await this.ensureStore();
+    if (node.nodeKind === 'source') {
+      const rootUriString = store.getSourceRoot(node.source.sourceId);
+      if (rootUriString === undefined) return undefined;
+      const root = vscode.Uri.parse(rootUriString);
+      return root.scheme === 'file' ? root : undefined;
+    }
     const location = store.getLocation({ sourceId: node.entity.sourceId, generation: node.entity.generation, nativeId: node.entity.nativeId });
     const rootUriString = store.getSourceRoot(node.entity.sourceId);
     if (location === undefined || rootUriString === undefined) return undefined;
@@ -429,6 +436,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return vscode.Uri.file(canonicalTarget);
   }
 
+  private async entityUri(node: SessionNavigatorTreeNode): Promise<vscode.Uri | undefined> {
+    return node.nodeKind === 'entity' ? this.nodeUri(node) : undefined;
+  }
+
   private async openEntity(node: SessionNavigatorTreeNode): Promise<void> {
     if (node.nodeKind === 'entity') await this.reveal(node);
   }
@@ -439,22 +450,22 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   }
 
   private async revealInFileExplorer(node: SessionNavigatorTreeNode): Promise<void> {
-    const uri = await this.entityUri(node);
+    const uri = await this.nodeUri(node);
     if (uri !== undefined) await vscode.commands.executeCommand('revealFileInOS', uri);
   }
 
   private async openInIntegratedTerminal(node: SessionNavigatorTreeNode): Promise<void> {
-    const uri = await this.entityUri(node);
+    const uri = await this.nodeUri(node);
     if (uri !== undefined) await vscode.commands.executeCommand('openInIntegratedTerminal', uri);
   }
 
   private async copyPath(node: SessionNavigatorTreeNode): Promise<void> {
-    const uri = await this.entityUri(node);
+    const uri = await this.nodeUri(node);
     if (uri !== undefined) await vscode.env.clipboard.writeText(uri.fsPath);
   }
 
   private async copyRelativePath(node: SessionNavigatorTreeNode): Promise<void> {
-    const uri = await this.entityUri(node);
+    const uri = await this.nodeUri(node);
     if (uri !== undefined) await vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(uri, false));
   }
 

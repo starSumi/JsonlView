@@ -79,4 +79,17 @@ describe('Session Navigator layout contract', () => {
     expect(entityItems.some((item: { command: string }) => /delete|remove/iu.test(item.command))).toBe(false);
     for (const item of entityItems) expect(manifest.contributes.commands.some((command: { command: string }) => command.command === item.command)).toBe(true);
   });
+
+  it('gives source nodes only safe filesystem context actions, including partial sources', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    const sourceItems = manifest.contributes.menus['view/item/context'].filter((item: { when: string }) => item.when.includes('viewItem =~ /^jsonlView\\.sessionNavigator\\.source'));
+    expect(sourceItems.map((item: { command: string }) => item.command)).toEqual([
+      'jsonlView.sessionNavigator.revealInFileExplorer',
+      'jsonlView.sessionNavigator.openInIntegratedTerminal',
+      'jsonlView.sessionNavigator.copyPath',
+      'jsonlView.sessionNavigator.copyRelativePath',
+    ]);
+    expect(sourceItems.every((item: { when: string }) => item.when === 'view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/')).toBe(true);
+    expect(sourceItems.some((item: { command: string }) => /openEntity|openEntityWith|copySessionId|openTimeline/iu.test(item.command))).toBe(false);
+  });
 });
