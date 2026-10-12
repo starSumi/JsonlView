@@ -4,7 +4,9 @@ import { join, resolve } from 'node:path';
 const DEFAULT_ROOT = resolve(import.meta.dirname, '..');
 const PUBLIC_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'package.json'];
 const PUBLIC_DOC_ROOT = 'docs';
-const PATH_MARKER = /(?<![A-Za-z])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/(?:Users|home|private|tmp|mnt|workspace)\/)/i;
+// Keep UNC detection strict enough to ignore escaped punctuation in JSON
+// regular expressions (for example \\\\. in a VS Code when clause).
+const PATH_MARKER = /(?<![A-Za-z])(?:[A-Za-z]:[\\/]|\\\\(?=[A-Za-z0-9])[^\\/\s]+[\\/]|\/(?:Users|home|private|tmp|mnt|workspace)\/)/i;
 const REQUIRED_TIMELINE = 'docs/assets/codex-timeline-exec.png';
 
 if (isMainModule()) {
