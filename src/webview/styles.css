@@ -1435,6 +1435,20 @@ body.is-resizing-column * {
   flex: 0 0 auto;
 }
 
+.event-section-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-panel-border));
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
 .event-section-actions .copy-button {
   width: 22px;
   height: 22px;

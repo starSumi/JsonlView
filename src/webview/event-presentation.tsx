@@ -148,7 +148,10 @@ function textOf(value: unknown): string | undefined {
 function boundedText(value: unknown): string | undefined {
   const result = extractText(value, { maxChars: MAX_TEXT, maxItems: MAX_TEXT_ITEMS });
   if (!result.text) return undefined;
-  return result.truncated ? `${result.text}\n... [truncated]` : result.text;
+  // Truncation is product state rendered by the section header. Keep the
+  // extracted text free of synthetic markers so provider content and copied
+  // previews retain their source semantics.
+  return result.text;
 }
 
 function textSection(value: unknown): Pick<EventPresentationSection, 'text' | 'fullText' | 'truncated' | 'previewOnly'> {
@@ -159,7 +162,7 @@ function textSection(value: unknown): Pick<EventPresentationSection, 'text' | 'f
   if (!result.text) return {};
   const previewTruncated = result.truncated || result.text.length > MAX_TEXT;
   return {
-    text: previewTruncated ? `${result.text.slice(0, MAX_TEXT)}\n... [preview truncated]` : result.text,
+    text: previewTruncated ? result.text.slice(0, MAX_TEXT) : result.text,
     ...(result.truncated ? {} : { fullText: result.text }),
     truncated: previewTruncated,
     previewOnly: result.truncated,
@@ -185,7 +188,7 @@ function codeSectionValue(value: unknown): CodeSectionValue | undefined {
     const previewOnly = value.length > expanded.length;
     const truncated = value.length > MAX_TEXT;
     return {
-      code: truncated ? `${expanded.slice(0, MAX_TEXT)}\n... [preview truncated]` : expanded,
+      code: truncated ? expanded.slice(0, MAX_TEXT) : expanded,
       ...(previewOnly ? {} : { fullCode: expanded }),
       truncated,
       previewOnly,
@@ -568,7 +571,7 @@ function addCommandCandidate(sections: EventPresentationSection[], value: unknow
       maxDepth: 32,
       maxChildren: MAX_TEXT_ITEMS,
     });
-    const code = display.length > MAX_TEXT ? `${display.slice(0, MAX_TEXT)}\n... [preview truncated]` : display;
+    const code = display.length > MAX_TEXT ? display.slice(0, MAX_TEXT) : display;
     sections.push({
       title: 'Command',
       code,
@@ -742,9 +745,7 @@ function addTextDiffCandidate(
 ): boolean {
   if (typeof value !== 'string' || value.length === 0 || sections.some((section) => section.title === title)) return false;
   const expanded = value.slice(0, MAX_EXPANDED_STRUCTURED_TEXT);
-  const source = expanded.length > MAX_TEXT
-    ? expanded.slice(0, MAX_TEXT) + '\n... [preview truncated]'
-    : expanded;
+  const source = expanded.length > MAX_TEXT ? expanded.slice(0, MAX_TEXT) : expanded;
   const sourceTruncated = alreadyTruncated || expanded.length < value.length;
   const hasFullSource = !sourceTruncated;
   sections.push({

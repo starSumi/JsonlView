@@ -81,6 +81,15 @@ export function AgentEventPresentation({ value, profile, autoExpandFirstFullSect
               <div className="event-section-header">
                 <h3>{section.title}</h3>
                 <div className="event-section-actions">
+                  {section.truncated ? (
+                    <span
+                      className="event-section-status"
+                      role="status"
+                      title={section.previewOnly ? 'Only the bounded presentation preview is available here; use Raw or Copy for source content.' : 'The initial presentation is bounded; expand the section to inspect the available value.'}
+                    >
+                      {section.previewOnly ? 'Preview only' : 'Preview limited'}
+                    </span>
+                  ) : null}
                   {section.truncated && section.fullText !== undefined ? (
                     <button
                       type="button"
