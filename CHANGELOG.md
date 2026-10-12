@@ -2,24 +2,21 @@
 
 ## Unreleased
 
-- Isolate the event presentation view and bounded section model behind the
-  existing facade, preserving provider payloads, Raw authority, and Webview
-  protocol behavior.
-- Extract bounded content analysis into a React-free module while preserving
-  the content-view facade and its characterization coverage.
-- Define product documentation ownership for reliability, security, and
-  architecture records while keeping benchmarks, host evidence, and incident
-  instances in the sibling harness.
-- Record the native scanner measurement boundary and its portable fallback
-  trigger conditions for staged architecture work.
-- Extract the Integrated Session profile policy behind a pure, facade-preserving
-  module with focused column and predicate-field coverage.
-- Continue the staged vertical migration behind the existing facades, with
-  isolated barrel exports and tests colocated with their owning modules.
-- Evaluate additional provider adapters and opt-in observability surfaces under
-  the same bounded, read-only contracts.
-- Track follow-up release work in the decision records and reviewed showcase
-  acceptance notes.
+- Future staged evolution work will be recorded here.
+
+## 0.2.9 - 2026-10-12
+
+- Isolate event presentation, bounded content analysis, and the Integrated
+  Session profile behind facade-preserving modules with colocated coverage.
+- Establish product documentation ownership, machine-readable metadata, and an
+  evidence-gated roadmap for staged vertical migration and future format
+  adapters.
+- Record the native scanner measurement boundary and portable fallback trigger
+  conditions so optional acceleration remains evidence-driven.
+- Keep provider adapters and observability surfaces bounded, read-only, and
+  separate from harness reports and host evidence.
+- Refresh the public release contract with explicit deferred tags, rollback
+  conditions, and the next-stage data-format discovery boundary.
 
 ## 0.2.8 - 2026-10-10
 
