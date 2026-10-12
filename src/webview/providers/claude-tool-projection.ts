@@ -1,4 +1,4 @@
-import { isObject, own, stringAt } from './utils';
+import { isObject, own, stringAt } from '../../profiles/utils';
 
 const MAX_BLOCKS = 32;
 const MAX_CHARS = 128 * 1024;

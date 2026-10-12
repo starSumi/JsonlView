@@ -1,6 +1,6 @@
 import type { AgentRowProjection } from '../../shared/types';
 import { classifyContent } from '../content-analysis';
-import { claudeToolSections, type ClaudeToolSection } from '../../profiles/claude-tool-projection';
+import { claudeToolSections, type ClaudeToolSection } from './claude-tool-projection';
 import type { EventPresentationSection } from '../features/event-presentation/model';
 
 export type ClaudeEventObject = Record<string, unknown>;
