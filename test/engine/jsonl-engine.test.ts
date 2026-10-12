@@ -90,6 +90,15 @@ describe('JsonlFileEngine indexing and hydration', () => {
     }
   });
 
+  it('does not read past an explicit incremental index byte budget', async () => {
+    const { engine } = await fixture('{"a":1}\n{"a":2}\n', { readChunkBytes: 64 });
+
+    const summary = await engine.indexMore({ maxBytes: 1 });
+
+    expect(summary.indexedBytes).toBe('1');
+    expect(summary.indexingComplete).toBe(false);
+  });
+
   it('handles BOM, boundary-spanning CRLF, LF, and a final line without a delimiter', async () => {
     const { engine } = await fixture('\uFEFF{"a":1}\r\n{"a":2}\n{"a":3}', {
       readChunkBytes: 11,
