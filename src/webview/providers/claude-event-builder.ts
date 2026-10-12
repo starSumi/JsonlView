@@ -1,6 +1,7 @@
 import type { AgentRowProjection } from '../../shared/types';
+import { findSemanticFeatures } from '../../shared/semantic-features';
 import { classifyContent } from '../content-analysis';
-import { claudeToolSections, type ClaudeToolSection } from './claude-tool-projection';
+import { claudeToolSections, hasClaudeToolProjection, type ClaudeToolSection } from './claude-tool-projection';
 import type { EventPresentationSection } from '../features/event-presentation/model';
 
 export type ClaudeEventObject = Record<string, unknown>;
@@ -166,15 +167,56 @@ function appendRenderedClaudeContent(
   }
 }
 
+function appendClaudeToolSections(
+  context: ClaudeEventBuilderContext,
+  sections: EventPresentationSection[],
+  payload: ClaudeEventObject,
+): void {
+  sections.push(...claudeToolSections(payload).map((section) => toEventPresentationSection(context, section)));
+}
+
+function appendSemanticAttachmentContent(
+  context: ClaudeEventBuilderContext,
+  sections: EventPresentationSection[],
+  attachment: ClaudeEventObject,
+): void {
+  const matches = findSemanticFeatures(
+    attachment,
+    [
+      {
+        id: 'content',
+        keys: ['content'],
+        weight: 1.1,
+        accepts: (value) => typeof value === 'string',
+      },
+      {
+        id: 'raw-content',
+        keys: ['rawContent', 'raw_content'],
+        weight: 1.2,
+        accepts: (value) => typeof value === 'string',
+      },
+    ],
+    { maxDepth: 4, maxMatchesPerFeature: 4 },
+  );
+  const content = matches.find((match) => match.id === 'content');
+  const rawContent = matches.find((match) => match.id === 'raw-content');
+  if (context.own(attachment, 'text') === undefined && content) {
+    context.addTextCandidate(sections, 'Attachment content', content.value, true);
+  }
+  if (rawContent) {
+    context.addTextCandidate(sections, 'Raw content', rawContent.value, true);
+  }
+}
+
 function claudeMessageSections(
   context: ClaudeEventBuilderContext,
   payload: ClaudeEventObject,
 ): EventPresentationSection[] {
   const message = context.objectOf(context.own(payload, 'message'));
   if (!message || !Object.hasOwn(message, 'content')) {
-    return Object.hasOwn(payload, 'toolUseResult')
-      ? claudeToolSections(payload).map((section) => toEventPresentationSection(context, section))
-      : [];
+    const sections: EventPresentationSection[] = [];
+    appendClaudeToolSections(context, sections, payload);
+    return sections;
   }
   const role = context.valueLabel(context.own(message, 'role'))?.toLowerCase();
   const content = context.own(message, 'content');
@@ -184,18 +226,18 @@ function claudeMessageSections(
         title: 'Message',
         ...boundedTextSection(context, content, role === 'assistant'),
       }];
-      if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map((section) => toEventPresentationSection(context, section)));
+      appendClaudeToolSections(context, sections, payload);
       return sections;
     }
     const sections: EventPresentationSection[] = [];
     context.addCodeCandidate(sections, 'Content', content, 'json');
-    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map((section) => toEventPresentationSection(context, section)));
+    appendClaudeToolSections(context, sections, payload);
     return sections;
   }
   if (content.length === 0) {
     const sections: EventPresentationSection[] = [];
     context.addCodeCandidate(sections, 'Content', content, 'json');
-    if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map((section) => toEventPresentationSection(context, section)));
+    appendClaudeToolSections(context, sections, payload);
     return sections;
   }
   const sections: EventPresentationSection[] = [];
@@ -205,6 +247,7 @@ function claudeMessageSections(
     const block = content[index];
     const object = context.objectOf(block);
     const type = context.valueLabel(object?.type)?.toLowerCase() ?? 'content';
+    if (hasClaudeToolProjection(block)) continue;
     const title = singleTextBlock
       ? 'Message'
       : type === 'tool_result'
@@ -214,7 +257,7 @@ function claudeMessageSections(
           : `${type.replaceAll('_', ' ')}${content.length > 1 ? ` ${String(index + 1)}` : ''}`;
     context.appendAgentContentBlock(sections, block, title, role);
   }
-  if (Object.hasOwn(payload, 'toolUseResult')) sections.push(...claudeToolSections(payload).map((section) => toEventPresentationSection(context, section)));
+  appendClaudeToolSections(context, sections, payload);
   if (content.length > 32) {
     sections.push({ title: 'Additional content blocks', code: JSON.stringify({ omittedBlocks: content.length - 32 }, null, 2), truncated: true, previewOnly: true, language: 'json' });
   }
@@ -230,6 +273,10 @@ function claudeAttachmentSections(
   const attachment = context.objectOf(context.own(payload, 'attachment'));
   if (attachment) {
     context.addTextCandidate(sections, 'Attachment text', context.own(attachment, 'text'));
+    const attachmentType = context.valueLabel(context.own(attachment, 'type'))?.toLowerCase();
+    if (attachmentType === 'nested_memory' || context.own(attachment, 'rawContent') !== undefined) {
+      appendSemanticAttachmentContent(context, sections, attachment);
+    }
     context.addTextCandidate(sections, 'System prompt', context.own(attachment, 'systemPrompt'), true);
     appendClaudeToolDescriptions(context, sections, context.own(attachment, 'tools'));
     context.addTextCandidate(sections, 'Added blocks', context.own(attachment, 'addedBlocks'));

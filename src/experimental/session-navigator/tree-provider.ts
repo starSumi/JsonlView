@@ -423,7 +423,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       ? vscode.Uri.file(dirname(configuredRoot.fsPath))
       : configuredRoot;
     if (await isRegularFile(root.fsPath)) return basename(root.fsPath) === location.relativePath ? root : undefined;
-    return vscode.Uri.joinPath(root, ...location.relativePath.split(/[\\/]+/u));
+    const target = vscode.Uri.joinPath(root, ...location.relativePath.split(/[\\/]+/u));
+    const [canonicalRoot, canonicalTarget] = await Promise.all([realpath(root.fsPath).catch(() => undefined), realpath(target.fsPath).catch(() => undefined)]);
+    if (canonicalRoot === undefined || canonicalTarget === undefined || !isContainedFile(canonicalRoot, canonicalTarget) || !(await isRegularFile(canonicalTarget))) return undefined;
+    return vscode.Uri.file(canonicalTarget);
   }
 
   private async openEntity(node: SessionNavigatorTreeNode): Promise<void> {

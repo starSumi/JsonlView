@@ -432,6 +432,33 @@ describe('Agent profile projection', () => {
     ]));
   });
 
+  it('projects nested memory content and raw content by semantic paths', () => {
+    const registry = new AgentProfileRegistry();
+    const model = registry.project('claude-code-session', { value: {
+      type: 'attachment',
+      attachment: {
+        type: 'nested_memory',
+        content: {
+          type: 'User',
+          content: '# Redacted memory',
+          rawContent: '---\npaths: [redacted]\n---',
+        },
+      },
+      sessionId: 'session-redacted',
+    } }, context);
+
+    expect(model.summary).toContain('# Redacted memory');
+    expect(model.derivedFields).toMatchObject({
+      attachmentType: 'nested_memory',
+      attachmentText: '# Redacted memory',
+      rawContent: '--- paths: [redacted] ---',
+    });
+    expect(model.evidence).toEqual(expect.arrayContaining([
+      { field: 'attachmentText', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'content' }, { kind: 'key', value: 'content' }] } },
+      { field: 'rawContent', path: { tokens: [{ kind: 'key', value: 'attachment' }, { kind: 'key', value: 'content' }, { kind: 'key', value: 'rawContent' }] } },
+    ]));
+  });
+
   it('uses Claude leafUuid as identity for control records that have no uuid', () => {
     const registry = new AgentProfileRegistry();
     const values = [

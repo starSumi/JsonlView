@@ -78,6 +78,42 @@ describe('buildClaudeEventSections', () => {
     expect(sections[1]?.text).toBe('Read a file safely');
   });
 
+  it('projects nested memory content and raw content without exposing the source shape as JSON', () => {
+    const sections = buildClaudeEventSections({
+      type: 'attachment',
+      attachment: {
+        type: 'nested_memory',
+        content: {
+          type: 'User',
+          content: '# Redacted memory',
+          rawContent: '---\npaths: [redacted]\n---',
+        },
+      },
+    }, profile, context());
+
+    expect(sections.map((section) => section.title)).toEqual(['Attachment content', 'Raw content']);
+    expect(sections[0]?.text).toContain('# Redacted memory');
+    expect(sections[1]?.text).toContain('paths: [redacted]');
+  });
+
+  it('renders a Write tool input when no tool result wrapper exists', () => {
+    const sections = buildClaudeEventSections({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{
+          type: 'tool_use',
+          name: 'Write',
+          input: { file_path: '<redacted>/README.md', content: '# Example\n\nBounded content.' },
+        }],
+      },
+    }, profile, context());
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({ title: 'Proposed file content' });
+    expect(sections[0]?.code).toContain('# Example');
+  });
+
   it('returns no provider projection for other profiles', () => {
     expect(buildClaudeEventSections({ type: 'attachment', attachment: { text: 'opaque' } }, { ...profile, profileId: 'pi-coding-agent' }, context())).toEqual([]);
   });

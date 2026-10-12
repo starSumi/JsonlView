@@ -1,4 +1,5 @@
-import type { AgentRowProjection } from '../shared/types';
+import type { AgentRowProjection, FieldPath } from '../shared/types';
+import { bestSemanticFeature } from '../shared/semantic-features';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import {
   CLAUDE_CONTROL_TYPES,
@@ -250,6 +251,7 @@ export class ClaudeCodeProfile implements AgentProfile {
           const attachmentType = stringAt(attachment, 'type');
           const attachmentProjection = projectClaudeAttachment(value, attachment);
           const semanticSummary = attachmentProjection.attachmentText
+            ?? attachmentProjection.rawContent
             ?? attachmentProjection.systemPrompt
             ?? attachmentProjection.toolDescriptions
             ?? attachmentProjection.addedBlocks
@@ -264,7 +266,8 @@ export class ClaudeCodeProfile implements AgentProfile {
           );
           setActor(projection, 'system', keyPath('type'));
           if (attachmentType) setDerivedField(projection, 'attachmentType', attachmentType, keyPath('attachment', 'type'));
-          if (attachmentProjection.attachmentText) setDerivedField(projection, 'attachmentText', attachmentProjection.attachmentText, keyPath('attachment', 'text'));
+           if (attachmentProjection.attachmentText) setDerivedField(projection, 'attachmentText', attachmentProjection.attachmentText, attachmentProjection.attachmentTextPath ?? keyPath('attachment', 'text'));
+           if (attachmentProjection.rawContent) setDerivedField(projection, 'rawContent', attachmentProjection.rawContent, attachmentProjection.rawContentPath ?? keyPath('attachment', 'content', 'rawContent'));
           if (attachmentProjection.systemPrompt) setDerivedField(projection, 'systemPrompt', attachmentProjection.systemPrompt, keyPath('attachment', 'systemPrompt'));
           if (attachmentProjection.toolDescriptions) setDerivedField(projection, 'toolDescriptions', attachmentProjection.toolDescriptions, keyPath('attachment', 'tools'));
           if (attachmentProjection.renderedContent) setDerivedField(projection, 'renderedContent', attachmentProjection.renderedContent, keyPath('rendered'));
@@ -323,6 +326,9 @@ function findBlock(blocks: unknown[], type: string): { value: Record<string, unk
 
 interface ClaudeAttachmentProjection {
   attachmentText?: string;
+  attachmentTextPath?: FieldPath;
+  rawContent?: string;
+  rawContentPath?: FieldPath;
   systemPrompt?: string;
   toolDescriptions?: string;
   renderedContent?: string;
@@ -351,10 +357,28 @@ function projectClaudeAttachment(
     if (toolDescriptions !== undefined) result.toolDescriptions = toolDescriptions;
     if (addedBlocks !== undefined) result.addedBlocks = addedBlocks;
     if (removedNames !== undefined) result.removedNames = removedNames;
+    const content = bestSemanticFeature(attachment, [{ id: 'content', keys: ['content'], weight: 1.1 }], { maxDepth: 4 });
+    if (content) {
+      const text = boundedClaudeText(content.value);
+      if (text !== undefined) {
+        result.attachmentText = result.attachmentText ?? text;
+        result.attachmentTextPath = result.attachmentTextPath ?? prefixAttachmentPath(content.path);
+      }
+    }
+    const raw = bestSemanticFeature(attachment, [{ id: 'raw-content', keys: ['rawContent', 'raw_content'], weight: 1.2 }], { maxDepth: 4 });
+    if (raw && typeof raw.value === 'string') {
+      const rawContent = boundedClaudeText(raw.value);
+      if (rawContent !== undefined) result.rawContent = rawContent;
+      result.rawContentPath = prefixAttachmentPath(raw.path);
+    }
   }
   const renderedContent = boundedClaudeText(value.rendered);
   if (renderedContent !== undefined) result.renderedContent = renderedContent;
   return result;
+}
+
+function prefixAttachmentPath(path: FieldPath): FieldPath {
+  return { tokens: [...keyPath('attachment').tokens, ...path.tokens] };
 }
 
 function boundedClaudeText(value: unknown): string | undefined {
