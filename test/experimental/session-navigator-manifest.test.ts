@@ -28,26 +28,17 @@ describe('Session Navigator layout contract', () => {
     ]);
   });
 
-  it('keeps the JSONL navigator action ahead of the always-visible Data Studio title action', async () => {
+  it('keeps the Data Studio title action without a duplicate navigator icon', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
     const titleItems = manifest.contributes.menus['editor/title'];
     expect(titleItems).toEqual([
       {
-        command: 'jsonlView.sessionNavigator.open',
-        when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',
-        group: 'navigation@1',
-      },
-      {
         command: 'jsonlView.open',
-        group: 'navigation@2',
+        group: 'navigation@1',
       },
     ]);
     expect(titleItems.find((item: { command: string }) => item.command === 'jsonlView.open')).not.toHaveProperty('when');
-    expect(titleItems.find((item: { command: string }) => item.command === 'jsonlView.sessionNavigator.open')).toMatchObject({
-      when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',
-      group: 'navigation@1',
-    });
-    expect(Number(titleItems[0].group.split('@')[1])).toBeLessThan(Number(titleItems[1].group.split('@')[1]));
+    expect(titleItems.some((item: { command: string }) => item.command === 'jsonlView.sessionNavigator.open')).toBe(false);
     const explorerItem = manifest.contributes.menus['explorer/context'].find((item: { command: string }) => item.command === 'jsonlView.open');
     expect(explorerItem).toMatchObject({
       when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',

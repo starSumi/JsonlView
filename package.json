@@ -282,13 +282,8 @@
       ],
       "editor/title": [
         {
-          "command": "jsonlView.sessionNavigator.open",
-          "when": "resourceExtname == .jsonl || resourceExtname == .ndjson",
-          "group": "navigation@1"
-        },
-        {
           "command": "jsonlView.open",
-          "group": "navigation@2"
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
