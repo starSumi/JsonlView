@@ -28,9 +28,11 @@ release input.
 3. Read `designs/theme-adaptation.md` for the accepted host-theme and Webview
    interaction baseline.
 4. Read `decisions/README.md` before changing a shared boundary.
-5. Read `reliability/service-levels.md` and `security/threat-model.md` when a
+5. Read `metadata/README.md` and `metadata/index.yaml` when classifying or
+   locating a public document.
+6. Read `reliability/service-levels.md` and `security/threat-model.md` when a
    change affects performance, failure handling, paths, or data exposure.
-6. Read `operations/postmortem-policy.md` when a failure needs corrective
+7. Read `operations/postmortem-policy.md` when a failure needs corrective
    action or recurrence prevention.
 
 ## Design baselines
