@@ -14,6 +14,20 @@ describe('Session Navigator layout contract', () => {
     expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.sessionNavigator')).toBeTruthy();
   });
 
+  it('keeps Agent Sessions as one fixed Activity Bar entry', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    expect(Object.keys(manifest.contributes.viewsContainers)).toEqual(['activitybar']);
+    expect(manifest.contributes.viewsContainers.activitybar).toEqual([
+      { id: 'jsonlViewSessionNavigator', title: 'Agent Sessions', icon: '$(list-tree)' },
+    ]);
+    expect(manifest.contributes.commands.find((command: { command: string }) => command.command === 'jsonlView.sessionNavigator.open')).not.toHaveProperty('icon');
+    const listTreeIcons = manifest.contributes.commands.filter((command: { icon?: string }) => command.icon === '$(list-tree)');
+    expect(listTreeIcons).toHaveLength(0);
+    expect(manifest.contributes.views.jsonlViewSessionNavigator.map((view: { id: string }) => view.id)).toEqual([
+      'jsonlView.sourceDrop', 'jsonlView.sessionNavigator',
+    ]);
+  });
+
   it('keeps the JSONL navigator action ahead of the always-visible Data Studio title action', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
     const titleItems = manifest.contributes.menus['editor/title'];

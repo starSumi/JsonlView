@@ -145,8 +145,7 @@
       },
       {
         "command": "jsonlView.sessionNavigator.open",
-        "title": "JsonlView: Open Agent Sessions",
-        "icon": "$(list-tree)"
+        "title": "JsonlView: Open Agent Sessions"
       },
       {
         "command": "jsonlView.sessionNavigator.sortActivity",
