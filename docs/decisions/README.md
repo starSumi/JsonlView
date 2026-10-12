@@ -66,6 +66,7 @@ Read these before changing a shared boundary:
 42. [ADR-041 typed RPC and ports-adapters slices](041-typed-rpc-and-ports-adapters-slices.md)
 43. [ADR-042 documentation ownership and external evidence](042-documentation-ownership-and-external-evidence.md)
 44. [ADR-043 core closure and evidence-gated evolution](043-core-closure-and-evidence-gated-evolution.md)
+45. [ADR-044 data format ecosystem and conversion boundary](044-data-format-ecosystem-boundary.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.
