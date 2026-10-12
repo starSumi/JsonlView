@@ -6,6 +6,14 @@
 
 ## 0.2.9 - 2026-10-12
 
+- Keep the Data Studio action available from any editor title bar while
+  preserving a higher-priority JSONL session action.
+- Add bounded, source-safe Session Navigator actions for opening, revealing,
+  copying paths or session IDs, and opening the native timeline without
+  mutating provider-owned files.
+- Separate display-budget status from provider content and add bounded Claude
+  projections for nested memory and known file-tool inputs while keeping Raw
+  authoritative.
 - Isolate event presentation, bounded content analysis, and the Integrated
   Session profile behind facade-preserving modules with colocated coverage.
 - Establish product documentation ownership, machine-readable metadata, and an
