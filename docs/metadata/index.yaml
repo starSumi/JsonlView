@@ -531,6 +531,26 @@ documents:
     evidence: []
     revisit: when product and harness ownership changes
     rollback: restore the prior ownership boundary
+  - id: adr-043-core-closure-and-evidence-gated-evolution
+    path: docs/decisions/043-core-closure-and-evidence-gated-evolution.md
+    title: Core Closure And Evidence-Gated Evolution
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [architecture, roadmap, evidence, rollback]
+    evidence: []
+    revisit: when a roadmap stage or core boundary changes
+    rollback: revert the affected stage and retain the prior facade
+  - id: adr-044-data-format-ecosystem-boundary
+    path: docs/decisions/044-data-format-ecosystem-boundary.md
+    title: Data Format Ecosystem Boundary
+    kind: decision
+    status: planned
+    owner: product
+    tags: [formats, datasets, conversion, streaming]
+    evidence: []
+    revisit: when a format contract gains conformance evidence
+    rollback: keep JSONL authoritative and disable the adapter
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions
