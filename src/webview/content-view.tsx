@@ -8,6 +8,7 @@ import type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate } from './
 export type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate };
 import {
   classifyContent,
+  decodeEscapedDisplayText,
   extractEmbeddedJson,
   hasMarkdownSignal,
   inferCodeLanguage,
@@ -16,6 +17,7 @@ import {
 } from './content-analysis';
 export {
   classifyContent,
+  decodeEscapedDisplayText,
   extractEmbeddedJson,
   hasMarkdownSignal,
   inferCodeLanguage,
@@ -341,7 +343,10 @@ export function ContentView({ text, truncated = false, ariaLabel = 'Event conten
   // expands it, allow a larger but still bounded render. The complete record
   // remains available through Raw/copy without becoming one enormous DOM node.
   const richTextLimit = truncated ? MAX_RICH_TEXT_CHARS : MAX_EXPANDED_RICH_TEXT_CHARS;
-  const bounded = text.slice(0, richTextLimit);
+  // Text mode is the exact value view. Other modes may decode one explicit
+  // provider serialization layer to restore readable line breaks.
+  const presentationText = mode === 'text' ? text : decodeEscapedDisplayText(text);
+  const bounded = presentationText.slice(0, richTextLimit);
   const analysisTruncated = text.length > bounded.length;
   const detected = React.useMemo(() => classifyContent(bounded), [bounded]);
   let body: React.JSX.Element;

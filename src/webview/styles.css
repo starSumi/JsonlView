@@ -1557,20 +1557,20 @@ body.is-resizing-column * {
 
 .diff-line-add {
   color: var(--vscode-diffEditor-insertedTextForeground, var(--vscode-editor-foreground));
-  background: var(--vscode-diffEditor-insertedLineBackground, color-mix(in srgb, #2ea043 18%, transparent));
+  background: var(--vscode-diffEditor-insertedLineBackground, var(--vscode-editor-insertedTextBackground, transparent));
 }
 
 .diff-line-add .diff-line-marker {
-  color: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green, var(--vscode-editor-foreground)));
 }
 
 .diff-line-remove {
   color: var(--vscode-diffEditor-removedTextForeground, var(--vscode-editor-foreground));
-  background: var(--vscode-diffEditor-removedLineBackground, color-mix(in srgb, #f85149 18%, transparent));
+  background: var(--vscode-diffEditor-removedLineBackground, var(--vscode-editor-removedTextBackground, transparent));
 }
 
 .diff-line-remove .diff-line-marker {
-  color: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  color: var(--vscode-gitDecoration-deletedResourceForeground, var(--vscode-charts-red, var(--vscode-editor-foreground)));
 }
 
 .diff-line-hunk {

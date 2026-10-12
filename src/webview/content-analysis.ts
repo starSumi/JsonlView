@@ -1,6 +1,40 @@
 export type ContentMode = 'auto' | 'text' | 'markdown' | 'json' | 'code';
 export type DetectedContentKind = 'text' | 'markdown' | 'json';
 
+/**
+ * Decode one provider serialization layer for rich presentation only. Raw and
+ * copy paths keep the original value. Unquoted text is decoded only when it
+ * contains explicit escaped line-break evidence; unrelated backslashes (for
+ * example Windows paths) remain untouched.
+ */
+export function decodeEscapedDisplayText(source: string): string {
+  const trimmed = source.trim();
+  // A complete JSON object/array is already decoded at the document boundary;
+  // preserve its escape sequences for the JSON formatter and syntax view.
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const decoded: unknown = JSON.parse(trimmed);
+      if (decoded !== null && typeof decoded === 'object') return source;
+    } catch {
+      // Continue only for non-JSON text containing explicit line escapes.
+    }
+  }
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const decoded: unknown = JSON.parse(trimmed);
+      if (typeof decoded === 'string') return decoded;
+    } catch {
+      // Fall through to the conservative line-break path.
+    }
+  }
+  if (!/\\(?:r\\n|n|r)/.test(source)) return source;
+  return source
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\"/g, '"');
+}
+
 export interface EmbeddedJsonCandidate {
   start: number;
   end: number;
@@ -99,7 +133,7 @@ export function inferCodeLanguage(source: string, hint?: string): string | undef
  * value offered for copying or the exact source views.
  */
 export function normalizeMarkdownSource(source: string): string {
-  const withoutAnsi = source.replace(ANSI_ESCAPE_PATTERN, '');
+  const withoutAnsi = decodeEscapedDisplayText(source).replace(ANSI_ESCAPE_PATTERN, '');
   const lines = withoutAnsi.split(/\r?\n/);
   const numbered = lines.filter((line) => /^\s*\d+:\s?/.test(line));
   if (numbered.length < 2) return withoutAnsi;
@@ -225,8 +259,9 @@ export function hasMarkdownSignal(source: string): boolean {
 }
 
 export function classifyContent(source: string): DetectedContentKind {
-  const bounded = source.slice(0, MAX_RICH_TEXT_CHARS);
-  if (parseJsonObjectOrArray(bounded) !== undefined && bounded.trim() === source.trim()) return 'json';
+  const displaySource = decodeEscapedDisplayText(source);
+  const bounded = displaySource.slice(0, MAX_RICH_TEXT_CHARS);
+  if (parseJsonObjectOrArray(bounded) !== undefined && bounded.trim() === displaySource.trim()) return 'json';
   const markdownSource = normalizeMarkdownSource(bounded);
   if (extractEmbeddedJson(bounded).length > 0 && !hasMarkdownSignal(markdownSource)) return 'json';
   return hasMarkdownSignal(markdownSource) ? 'markdown' : 'text';

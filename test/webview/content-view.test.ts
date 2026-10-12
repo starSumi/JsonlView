@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { classifyContent, ContentView, extractEmbeddedJson, inferCodeLanguage, normalizeMarkdownSource } from '../../src/webview/content-view';
+import { classifyContent, ContentView, decodeEscapedDisplayText, extractEmbeddedJson, inferCodeLanguage, normalizeMarkdownSource } from '../../src/webview/content-view';
 
 describe('bounded event content renderer', () => {
   it('recognizes complete JSON and keeps an embedded object inside prose parseable', () => {
@@ -37,6 +37,23 @@ describe('bounded event content renderer', () => {
     expect(markup).toContain('Detected: json');
     expect(markup).toContain('json-fold-view');
     expect(markup).toContain('pnpm test');
+  });
+
+  it('decodes one explicit escaped-text layer for rich presentation without changing exact text mode', () => {
+    const source = '## Summary\\n\\n- first\\n- second\\n\\nconst value = \\"ready\\"';
+    expect(decodeEscapedDisplayText(source)).toBe('## Summary\n\n- first\n- second\n\nconst value = "ready"');
+    expect(classifyContent(source)).toBe('markdown');
+    const richMarkup = renderToStaticMarkup(React.createElement(ContentView, { text: source }));
+    expect(richMarkup).toContain('<h2>Summary</h2>');
+    expect(richMarkup).toContain('<li>first</li>');
+    const textMarkup = renderToStaticMarkup(React.createElement(ContentView, { text: source, defaultMode: 'text' }));
+    expect(textMarkup).toContain('## Summary\\n\\n- first');
+  });
+
+  it('leaves ordinary backslash paths untouched when no escaped line break is present', () => {
+    const source = 'Open C:\\tmp\\agent.log';
+    expect(decodeEscapedDisplayText(source)).toBe(source);
+    expect(classifyContent(source)).toBe('text');
   });
 
   it('infers only strong code signals and keeps ambiguous output as text', () => {
