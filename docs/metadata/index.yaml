@@ -1,0 +1,553 @@
+schema: jsonlview.documentation-metadata
+version: 1
+documents:
+  - id: docs-index
+    path: docs/README.md
+    title: Product Documentation
+    kind: index
+    status: active
+    owner: product
+    tags: [documentation, ownership, public-surface]
+    evidence: []
+    revisit: when the documentation topology changes
+    rollback: remove this catalog entry in a reviewed metadata migration
+  - id: acceleration-roadmap
+    path: docs/acceleration-roadmap.md
+    title: Acceleration roadmap
+    kind: roadmap
+    status: active
+    owner: product
+    tags: [performance, native, fallback, roadmap]
+    evidence: []
+    revisit: when a measured workload changes the acceleration boundary
+    rollback: supersede the roadmap entry and retain the prior record
+  - id: continuous-improvement
+    path: docs/continuous-improvement.md
+    title: Continuous improvement loop
+    kind: guide
+    status: active
+    owner: product
+    tags: [maintenance, reliability, rollback]
+    evidence: []
+    revisit: when the maintenance or evidence workflow changes
+    rollback: supersede this guide with the prior workflow
+  - id: format-and-profile-boundaries
+    path: docs/format-and-profile-boundaries.md
+    title: Format and profile boundaries
+    kind: guide
+    status: active
+    owner: product
+    tags: [jsonl, profiles, contracts]
+    evidence: []
+    revisit: when a source format or profile contract changes
+    rollback: restore the prior contract and supersede this guide
+  - id: marketplace-publishing
+    path: docs/marketplace-publishing.md
+    title: Visual Studio Marketplace publication
+    kind: guide
+    status: active
+    owner: product
+    tags: [release, marketplace, provenance]
+    evidence: []
+    revisit: when the marketplace publication contract changes
+    rollback: stop promotion and use the prior release runbook
+  - id: promotion-runbook
+    path: docs/promotion-runbook.md
+    title: Promotion Runbook
+    kind: guide
+    status: active
+    owner: product
+    tags: [release, promotion, rollback]
+    evidence: []
+    revisit: when a public distribution target changes
+    rollback: revert the runbook change and retain the old gate
+  - id: theme-adaptation
+    path: docs/designs/theme-adaptation.md
+    title: Theme Adaptation Design
+    kind: design
+    status: accepted
+    owner: product
+    tags: [webview, design, vscode-theme, accessibility]
+    evidence: []
+    revisit: when host-theme ownership or interaction tokens change
+    rollback: restore the accepted design baseline
+  - id: postmortem-policy
+    path: docs/operations/postmortem-policy.md
+    title: Incident Review and Postmortem Contract
+    kind: policy
+    status: active
+    owner: product
+    tags: [operations, incidents, learning]
+    evidence: []
+    revisit: when incident response ownership changes
+    rollback: use the previous policy and supersede this version
+  - id: service-levels
+    path: docs/reliability/service-levels.md
+    title: Reliability Service Levels
+    kind: reliability
+    status: active
+    owner: product
+    tags: [sli, slo, reliability, error-budget]
+    evidence: []
+    revisit: when reliability budgets or runtime surfaces change
+    rollback: retain the last accepted service-level policy
+  - id: threat-model
+    path: docs/security/threat-model.md
+    title: Security Threat Model
+    kind: security
+    status: active
+    owner: product
+    tags: [security, trust-boundary, threat-model]
+    evidence: []
+    revisit: when an input, permission, or execution boundary changes
+    rollback: restore the prior threat model and record the trigger
+  - id: adr-001-format-profile-boundary
+    path: docs/decisions/001-format-profile-boundary.md
+    title: Format And Profile Boundary
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [jsonl, profiles, architecture]
+    evidence: []
+    revisit: when the source/profile separation changes
+    rollback: supersede ADR-001 with an explicit replacement
+  - id: adr-002-generations-and-follow
+    path: docs/decisions/002-generations-and-follow.md
+    title: Generations And Follow Handoff
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [lifecycle, follow, generations]
+    evidence: []
+    revisit: when source refresh or follow semantics change
+    rollback: supersede ADR-002 and restore prior lifecycle behavior
+  - id: adr-003-native-acceleration
+    path: docs/decisions/003-native-acceleration.md
+    title: Native Acceleration
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [native, performance, fallback]
+    evidence: []
+    revisit: when measured native parity or packaging changes
+    rollback: disable native selection and use the portable scanner
+  - id: adr-004-webview-rendering
+    path: docs/decisions/004-webview-rendering.md
+    title: Webview Rendering And Bounded Detail
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, rendering, bounds]
+    evidence: []
+    revisit: when rendering or detail budgets change
+    rollback: restore the bounded rendering contract
+  - id: adr-005-release-provenance
+    path: docs/decisions/005-release-provenance.md
+    title: Release Provenance
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [release, provenance, artifacts]
+    evidence: []
+    revisit: when a release artifact or target changes
+    rollback: stop promotion and use the prior provenance gate
+  - id: adr-006-claude-surface-strategies
+    path: docs/decisions/006-claude-surface-strategies.md
+    title: Claude Surface Strategies
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [claude, provider, profiles]
+    evidence: []
+    revisit: when a Claude source surface changes
+    rollback: retain the previous provider strategy
+  - id: adr-007-source-backed-format-discovery
+    path: docs/decisions/007-source-backed-format-discovery.md
+    title: Source-Backed Format Discovery
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [discovery, provider, formats]
+    evidence: []
+    revisit: when source-backed format discovery changes
+    rollback: restore the previous discovery rules
+  - id: adr-008-promotion-synchronization
+    path: docs/decisions/008-promotion-synchronization.md
+    title: Promotion Synchronization
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [release, synchronization, rollback]
+    evidence: []
+    revisit: when distribution synchronization changes
+    rollback: stop promotion and use the last known good artifact
+  - id: adr-009-automatic-update-boundary
+    path: docs/decisions/009-automatic-update-boundary.md
+    title: Automatic Update Boundary
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [updates, trust, vscode]
+    evidence: []
+    revisit: when update ownership or trust changes
+    rollback: disable the proposed update path
+  - id: adr-010-toolchain-baseline
+    path: docs/decisions/010-toolchain-baseline.md
+    title: Development Toolchain Baseline
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [toolchain, node, pnpm]
+    evidence: []
+    revisit: when supported runtime or package manager changes
+    rollback: restore the pinned toolchain contract
+  - id: adr-011-runtime-topology-and-refactor-shape
+    path: docs/decisions/011-runtime-topology-and-refactor-shape.md
+    title: Runtime Topology And Refactor Shape
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [architecture, extension-host, webview]
+    evidence: []
+    revisit: when a runtime boundary or build consumer changes
+    rollback: retain the modular monolith topology
+  - id: adr-012-registry-extension-identities
+    path: docs/decisions/012-registry-extension-identities.md
+    title: Registry Extension Identities
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [registry, marketplace, identity]
+    evidence: []
+    revisit: when a distribution identity changes
+    rollback: restore the prior published identity mapping
+  - id: adr-013-bounded-mixed-code-highlighting
+    path: docs/decisions/013-bounded-mixed-code-highlighting.md
+    title: Bounded Mixed-Code Highlighting
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, syntax, bounds]
+    evidence: []
+    revisit: when code presentation or language detection changes
+    rollback: use the bounded plain-text presentation
+  - id: adr-014-large-module-boundary-governance
+    path: docs/decisions/014-large-module-boundary-governance.md
+    title: Large Module Boundary Governance
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [architecture, refactor, governance]
+    evidence: []
+    revisit: when module ownership or extraction budgets change
+    rollback: restore the prior module boundary
+  - id: adr-015-changelog-ci-guard
+    path: docs/decisions/015-changelog-ci-guard.md
+    title: Guard Curated Release Notes in CI
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [changelog, ci, release]
+    evidence: []
+    revisit: when release-note policy changes
+    rollback: restore the prior release-note guard
+  - id: adr-016-otlp-metrics-and-columnar-format-gates
+    path: docs/decisions/016-otlp-metrics-and-columnar-format-gates.md
+    title: OTLP Metrics Semantics and Columnar Format Gates
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [otlp, telemetry, columnar]
+    evidence: []
+    revisit: when telemetry or conversion contracts change
+    rollback: keep conversion opt-in and bounded
+  - id: adr-017-physical-order-paging
+    path: docs/decisions/017-physical-order-paging.md
+    title: Physical Order Paging
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [paging, query, ordering]
+    evidence: []
+    revisit: when paging or order semantics change
+    rollback: restore physical-order navigation
+  - id: adr-018-accepted-webview-snapshot-identity
+    path: docs/decisions/018-accepted-webview-snapshot-identity.md
+    title: Accepted Webview Snapshot Identity
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, snapshots, lifecycle]
+    evidence: []
+    revisit: when snapshot identity semantics change
+    rollback: retain the previous snapshot identity contract
+  - id: adr-019-webview-query-and-keyboard-ownership
+    path: docs/decisions/019-webview-query-and-keyboard-ownership.md
+    title: Webview Query Ownership and Keyboard Interaction
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, query, keyboard]
+    evidence: []
+    revisit: when query or keyboard ownership changes
+    rollback: restore the prior interaction owner
+  - id: adr-020-read-only-indexing-status-strip
+    path: docs/decisions/020-read-only-indexing-status-strip.md
+    title: Read-Only Indexing Status Strip
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, indexing, status]
+    evidence: []
+    revisit: when indexing status presentation changes
+    rollback: restore the prior status strip
+  - id: adr-021-explicit-row-order-toggle
+    path: docs/decisions/021-explicit-row-order-toggle.md
+    title: Explicit Row-Order Toggle
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, navigation, ordering]
+    evidence: []
+    revisit: when row-order controls change
+    rollback: restore the prior row-order behavior
+  - id: adr-022-read-only-agent-history-adapter-roadmap
+    path: docs/decisions/022-read-only-agent-history-adapter-roadmap.md
+    title: Read-Only Agent-History Adapter Roadmap
+    kind: decision
+    status: planned
+    owner: product
+    tags: [agents, history, adapters]
+    evidence: []
+    revisit: when provider adapter coverage changes
+    rollback: retain the read-only adapter boundary
+  - id: adr-023-keyless-target-separated-publication
+    path: docs/decisions/023-keyless-target-separated-publication.md
+    title: Keyless and Target-Separated Publication
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [release, credentials, publication]
+    evidence: []
+    revisit: when registry publication contracts change
+    rollback: stop publication and use separate target gates
+  - id: adr-023-native-build-reproducibility
+    path: docs/decisions/023-native-build-reproducibility.md
+    title: Native Build Reproducibility
+    kind: decision
+    status: historical
+    owner: product
+    tags: [native, reproducibility, historical]
+    evidence: []
+    revisit: when native build reproducibility is re-evaluated
+    rollback: retain the historical record and superseding decision
+  - id: adr-024-vsix-archive-reproducibility
+    path: docs/decisions/024-vsix-archive-reproducibility.md
+    title: VSIX Archive Reproducibility
+    kind: decision
+    status: proposed
+    owner: product
+    tags: [vsix, reproducibility, release]
+    evidence: []
+    revisit: when archive reproducibility evidence changes
+    rollback: withdraw the proposal without rewriting history
+  - id: adr-025-experimental-staged-mutation-and-local-mcp
+    path: docs/decisions/025-experimental-staged-mutation-and-local-mcp.md
+    title: Staged Mutation and Local Agent Navigation
+    kind: decision
+    status: proposed
+    owner: product
+    tags: [mutation, mcp, experimental]
+    evidence: []
+    revisit: when mutation or MCP contracts gain measured evidence
+    rollback: keep the source read-only and disable the experiment
+  - id: adr-026-read-only-navigation-prototype
+    path: docs/decisions/026-read-only-navigation-prototype.md
+    title: Opt-In Read-Only Navigation Prototype
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [navigation, agents, opt-in]
+    evidence: []
+    revisit: when navigation leaves prototype scope
+    rollback: disable the opt-in prototype
+  - id: adr-027-synthetic-provider-index-contract
+    path: docs/decisions/027-synthetic-provider-index-contract.md
+    title: Synthetic Provider and Navigation Index Contract
+    kind: decision
+    status: proposed
+    owner: product
+    tags: [providers, index, synthetic]
+    evidence: []
+    revisit: when provider index evidence changes
+    rollback: retain source-backed provider discovery only
+  - id: adr-028-staged-mutation-benchmark
+    path: docs/decisions/028-staged-mutation-benchmark.md
+    title: Staged Mutation Benchmark and Failure Replay
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [benchmark, mutation, failure]
+    evidence: []
+    revisit: when mutation benchmark scope changes
+    rollback: remove the mutation path from the candidate
+  - id: adr-029-opt-in-session-navigator-treeview
+    path: docs/decisions/029-opt-in-session-navigator-treeview.md
+    title: Opt-In Session Navigator TreeView
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [session-navigator, treeview, opt-in]
+    evidence: []
+    revisit: when session navigator ownership changes
+    rollback: disable the opt-in TreeView
+  - id: adr-030-provider-native-session-navigator-contract
+    path: docs/decisions/030-provider-native-session-navigator-contract.md
+    title: Provider-Native Session Navigator Contract
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [session-navigator, provider, contract]
+    evidence: []
+    revisit: when provider-native metadata contracts change
+    rollback: use the provider-neutral navigation contract
+  - id: adr-031-session-navigator-intake-and-loading
+    path: docs/decisions/031-session-navigator-intake-and-loading.md
+    title: Session Loading, Native Metadata, and Source Intake
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [session-navigator, loading, freshness]
+    evidence: []
+    revisit: when loading or freshness behavior changes
+    rollback: restore the previous intake behavior
+  - id: adr-032-bounded-session-pagination
+    path: docs/decisions/032-bounded-session-pagination.md
+    title: Bounded Session Pagination and Source-State Continuations
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [session-navigator, pagination, bounds]
+    evidence: []
+    revisit: when source-state continuation semantics change
+    rollback: restore bounded pagination and discard stale continuations
+  - id: adr-033-bounded-webview-diagnostics
+    path: docs/decisions/033-bounded-webview-diagnostics.md
+    title: Bounded Webview Diagnostics and Agent Handoff
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [webview, diagnostics, handoff]
+    evidence: []
+    revisit: when diagnostics or agent handoff changes
+    rollback: retain bounded diagnostics without external handoff
+  - id: adr-034-opt-in-otlp-observability
+    path: docs/decisions/034-opt-in-otlp-observability.md
+    title: Opt-In OTLP Observability Boundary
+    kind: decision
+    status: proposed
+    owner: product
+    tags: [otlp, observability, opt-in]
+    evidence: []
+    revisit: when telemetry privacy or transport evidence changes
+    rollback: keep outbound telemetry disabled by default
+  - id: adr-035-architecture-decomposition-and-toolchain-ownership
+    path: docs/decisions/035-architecture-decomposition-and-toolchain-ownership.md
+    title: Runtime-Bounded Decomposition And Toolchain Ownership
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [architecture, toolchain, ownership]
+    evidence: []
+    revisit: when an independently buildable boundary exists
+    rollback: return to the modular monolith boundary
+  - id: adr-036-pi-coding-agent-adapter
+    path: docs/decisions/036-pi-coding-agent-adapter.md
+    title: Pi Coding Agent Session Adapter
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [pi, provider, agent-history]
+    evidence: []
+    revisit: when the Pi session format changes
+    rollback: disable Pi discovery without touching source files
+  - id: adr-037-mcp-july-2026-compatibility-boundary
+    path: docs/decisions/037-mcp-july-2026-compatibility-boundary.md
+    title: MCP July 2026 Compatibility Boundary
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [mcp, compatibility, protocol]
+    evidence: []
+    revisit: when the MCP protocol contract changes
+    rollback: pin the last compatible MCP surface
+  - id: adr-038-claude-tool-result-presentation
+    path: docs/decisions/038-claude-tool-result-presentation.md
+    title: Claude Top-Level Tool Result Presentation
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [claude, tools, presentation]
+    evidence: []
+    revisit: when Claude tool-result shapes change
+    rollback: retain the raw bounded presentation
+  - id: adr-039-architecture-evolution-slices
+    path: docs/decisions/039-architecture-evolution-slices.md
+    title: Architecture Evolution Slices
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [architecture, migration, vertical-slice]
+    evidence: []
+    revisit: when a migration boundary or consumer changes
+    rollback: revert one vertical slice and retain the facade
+  - id: adr-040-native-scanner-measurement-boundary
+    path: docs/decisions/040-native-scanner-measurement-boundary.md
+    title: Native Scanner Measurement Boundary
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [native, scanner, benchmark]
+    evidence: []
+    revisit: when a new paired measurement changes the choice
+    rollback: use the portable scanner and retain the measurement
+  - id: adr-041-typed-rpc-and-ports-adapters-slices
+    path: docs/decisions/041-typed-rpc-and-ports-adapters-slices.md
+    title: Typed RPC And Ports-Adapters Slices
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [rpc, ports-adapters, architecture]
+    evidence: []
+    revisit: when a second runtime consumer or protocol change appears
+    rollback: revert one vertical slice and keep the prior facade
+  - id: adr-042-documentation-ownership-and-external-evidence
+    path: docs/decisions/042-documentation-ownership-and-external-evidence.md
+    title: Documentation Ownership and External Evidence
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [documentation, harness, evidence]
+    evidence: []
+    revisit: when product and harness ownership changes
+    rollback: restore the prior ownership boundary
+  - id: decisions-index
+    path: docs/decisions/README.md
+    title: JsonlView Decisions
+    kind: index
+    status: active
+    owner: product
+    tags: [documentation, decisions, architecture]
+    evidence: []
+    revisit: when the decision record topology changes
+    rollback: restore the previous decision index
+  - id: documentation-metadata
+    path: docs/metadata/README.md
+    title: Documentation Metadata
+    kind: policy
+    status: active
+    owner: product
+    tags: [documentation, metadata, governance]
+    evidence: []
+    revisit: when the metadata schema or migration policy changes
+    rollback: remove the metadata catalog in a reviewed change

@@ -68,5 +68,9 @@ if (base && config.requireStandardHeaderForChanged) {
 }
 
 const result = { ok: failures.length === 0, files: files.length, links: links.length, failures };
+const metadata = spawnSync(process.execPath, [join(root, 'scripts', 'check-doc-metadata.mjs')], { cwd: root, encoding: 'utf8' });
+if (metadata.status !== 0) failures.push('documentation metadata validation failed: ' + ((metadata.stdout || metadata.stderr || '').trim() || `exit ${metadata.status}`));
+result.metadata = metadata.stdout ? JSON.parse(metadata.stdout) : { ok: false };
+result.ok = failures.length === 0;
 console.log(JSON.stringify(result, null, 2));
 if (failures.length > 0) process.exitCode = 1;
