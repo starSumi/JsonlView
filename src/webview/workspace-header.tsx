@@ -12,6 +12,7 @@ export interface WorkspaceHeaderProps {
   complete: boolean;
   phase: string;
   appendPending: boolean;
+  rebuildAvailable: boolean;
   rebuildBusy: boolean;
   onRebuild: () => void;
   onOpenNavigator: () => void;
@@ -22,6 +23,7 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
   const size = Number(status.sizeBytes);
   const progress = size > 0 && Number.isFinite(size) && Number.isFinite(indexed)
     ? Math.max(0, Math.min(100, (indexed / size) * 100)) : 0;
+  const rebuildLabel = status.appendPending ? 'Rebuild index to include appended records' : 'Rebuild index';
 
   return (
     <header className="workspace-header">
@@ -60,12 +62,12 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
         <button type="button" className="icon-button navigator-action" title="Open Agent Sessions" aria-label="Open Agent Sessions" onClick={status.onOpenNavigator}>
           <ListTree size={15} aria-hidden />
         </button>
-        {status.appendPending ? (
+        {status.rebuildAvailable ? (
           <button
             type="button"
             className="rebuild-action rebuild-action-prominent"
-            title="Rebuild index to include appended records"
-            aria-label="Rebuild index to include appended records"
+            title={rebuildLabel}
+            aria-label={rebuildLabel}
             disabled={status.rebuildBusy}
             onClick={status.onRebuild}
           >

@@ -334,6 +334,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
     }
     case 'ROWS': {
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
+      // An append leaves the current generation readable. Keep its selected
+      // row and hydrated drawer stable while background queries finish; a
+      // page response must not make the UI jump to the first row.
+      const preserveAppendDetail = state.invalidationReason === 'append' && state.detail !== undefined;
       const retainedRebuildRow = state.rebuildSelection === undefined ? undefined : message.payload.rows.find(
         (row) => sameRebuildRecord(row.ref, state.rebuildSelection!.ref),
       );
@@ -342,7 +346,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         (row) => sameRebuildRecord(row.ref, state.rebuildDetail!.ref),
       );
       const preserveRebuildDetail = retainedRebuildDetail !== undefined;
-      const selectedOrdinal = state.followMode
+      const selectedOrdinal = preserveAppendDetail && state.selectedOrdinal !== undefined
+        ? state.selectedOrdinal
+        : state.followMode
         ? message.payload.rows.at(-1)?.ref.ordinal
         : state.rebuildSelection !== undefined && (preserveRebuildSelection || message.payload.rows.length === 0)
           ? state.rebuildSelection.ref.ordinal
@@ -374,7 +380,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           ...(message.payload.scan === undefined ? {} : { scan: message.payload.scan }),
         },
         selectedOrdinal,
-        detail: state.detail?.ref.ordinal === selectedOrdinal
+        detail: preserveAppendDetail
+          ? state.detail
+          : state.detail?.ref.ordinal === selectedOrdinal
           && (state.rebuildDetail === undefined || preserveRebuildDetail || message.payload.rows.length === 0)
           ? state.detail : undefined,
         blockedDetailOrdinal: state.blockedDetailOrdinal === selectedOrdinal ? state.blockedDetailOrdinal : undefined,

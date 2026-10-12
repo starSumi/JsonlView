@@ -708,6 +708,7 @@ export function App(): React.JSX.Element {
         complete={summary?.indexingComplete ?? false}
         phase={state.invalidationReason === 'append' ? 'snapshot' : state.phase}
         appendPending={state.invalidationReason === 'append'}
+          rebuildAvailable={state.invalidationReason !== undefined}
         rebuildBusy={Boolean(state.pending.rebuild)}
         onRebuild={rebuild}
         onOpenNavigator={openNavigator}
@@ -847,7 +848,6 @@ export function App(): React.JSX.Element {
         <div className="workspace-banner invalidated-banner" role="alert">
           <AlertTriangle size={15} aria-hidden />
           <span>Source changed ({state.invalidationReason ?? 'unknown'}). This view is a stale snapshot.</span>
-          <button type="button" disabled={Boolean(state.pending.rebuild)} onClick={rebuild}><RefreshCw size={14} aria-hidden />Rebuild</button>
         </div>
       ) : null}
       {state.error ? (

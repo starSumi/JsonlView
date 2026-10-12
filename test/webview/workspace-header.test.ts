@@ -13,6 +13,7 @@ const status: WorkspaceHeaderProps = {
   complete: true,
   phase: 'ready',
   appendPending: false,
+  rebuildAvailable: false,
   rebuildBusy: false,
   onRebuild: () => undefined,
   onOpenNavigator: () => undefined,
@@ -47,7 +48,7 @@ describe('workspace header status', () => {
   });
 
   it('shows a nonblocking pending notice with one active Rebuild control', () => {
-    const markup = render({ children: null, appendPending: true, phase: 'snapshot' });
+    const markup = render({ children: null, appendPending: true, rebuildAvailable: true, phase: 'snapshot' });
 
     expect(markup).toContain('Update pending');
     expect(markup).toContain('The current snapshot remains readable; rebuild to include appended records.');
@@ -57,10 +58,18 @@ describe('workspace header status', () => {
     expect(markup.match(/>Rebuild<\/span>/g)).toHaveLength(1);
   });
 
+  it('keeps Rebuild available for non-append invalidation without relabeling it as an update', () => {
+    const markup = render({ children: null, rebuildAvailable: true, appendPending: false });
+
+    expect(markup).toContain('aria-label="Rebuild index"');
+    expect(markup).not.toContain('Update pending');
+  });
+
   it('disables the pending action while rebuilding and keeps incomplete progress visible', () => {
     const markup = render({
       children: null,
       appendPending: true,
+      rebuildAvailable: true,
       rebuildBusy: true,
       complete: false,
       phase: 'indexing',
