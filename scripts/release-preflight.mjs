@@ -93,7 +93,7 @@ async function main() {
   if (options.vsixManifest === undefined) {
     fail('vsixCandidate', 'pass --vsix-manifest <packaged VSIX manifest>');
   } else {
-    await checkVsixManifest(options.vsixManifest, options.vsixArtifact, revision, gitIdentity, packageIdentity, extensionTarget, npmCandidate, options.approvedNpmName, nativeProvenance, sourceLegalFiles);
+    await checkVsixManifest(options.vsixManifest, options.vsixArtifact, revision, gitIdentity, packageIdentity, extensionTarget, npmCandidate, options.approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface);
   }
   if (options.vsixPairReport !== undefined && options.pairedVsixArtifact !== undefined
     && options.vsixArtifact !== undefined && options.vsixTarget !== undefined) {
@@ -398,7 +398,7 @@ async function checkNpmManifest(manifestPath, candidatePath, tarballPath, revisi
   };
 }
 
-async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdentity, rootPackage, extensionTarget, npmCandidate, approvedNpmName, nativeProvenance, sourceLegalFiles) {
+async function checkVsixManifest(manifestPath, artifactPath, revision, gitIdentity, rootPackage, extensionTarget, npmCandidate, approvedNpmName, nativeProvenance, sourceLegalFiles, publicSurface) {
   const manifest = await readJson(resolve(manifestPath), 'VSIX candidate manifest');
   const artifact = manifest.artifact ?? {};
   if (!Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) fail('vsixCandidate.artifact', 'VSIX manifest has no positive artifact size');
