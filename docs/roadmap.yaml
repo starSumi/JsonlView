@@ -1,0 +1,129 @@
+schemaVersion: 1
+kind: jsonlview.roadmap
+product: jsonl-view
+status: accepted
+mainline:
+  id: core-closure-before-expansion
+  invariant: >-
+    Close and measure the physical, protocol, and presentation boundaries
+    before expanding formats, write paths, or runtime topology.
+  sourceAuthority: jsonl-bytes
+  defaultMode: read-only
+  writePolicy: opt-in-staged-reversible
+  evidencePolicy: >-
+    A capability advances only after reproducible contract, failure, resource,
+    and rollback evidence is attached to the candidate revision.
+  owner: product-architecture
+  revisit: >-
+    Reopen the mainline when a measured user requirement cannot be met by the
+    current bounded modular monolith or when a second runtime consumer exists.
+deferredTags:
+  - id: "deferred:workspace-split"
+    status: deferred
+    owner: architecture
+    dependsOn: [core-closure]
+    revisit: >-
+      A second independently built consumer and a provenance-preserving build
+      graph demonstrate lower coupling than the current root package.
+  - id: "deferred:zero-copy"
+    status: deferred
+    owner: engine-performance
+    dependsOn: [core-closure, measured-copy-bottleneck]
+    revisit: >-
+      End-to-end profiling proves serialization or copying dominates the
+      bounded page budget and a copy-free contract has a safe fallback.
+  - id: "deferred:native-expansion"
+    status: deferred
+    owner: native-scanner
+    dependsOn: [native-parity, host-crash-gate]
+    revisit: >-
+      Repeated multi-host measurements show a material end-to-end win after
+      calibration, memory, cancellation, and fallback costs.
+  - id: "deferred:write-path"
+    status: deferred
+    owner: mutation-boundary
+    dependsOn: [read-only-closure, capability-policy, rollback-journal]
+    revisit: >-
+      An explicit opt-in mutation slice has a capability model, preview,
+      atomic recovery, audit record, and tested rollback on representative
+      local files.
+  - id: "deferred:format-adapters"
+    status: deferred
+    owner: format-adapters
+    dependsOn: [record-contract, corpus-matrix]
+    revisit: >-
+      A source-backed format contract and corpus prove bounded framing, exact
+      offsets, malformed-input handling, and a useful user workflow.
+  - id: "deferred:distributed-connectors"
+    status: deferred
+    owner: host-integration
+    dependsOn: [format-adapters, trust-boundary]
+    revisit: >-
+      A supported VS Code and WSL2 workflow has explicit trust, permissions,
+      cancellation, and failure evidence without making remote access a
+      runtime dependency.
+stages:
+  - id: p0-core-closure
+    priority: P0
+    status: active
+    owner: product-architecture
+    objective: >-
+      Finish the current vertical migration, typed host-Webview boundary,
+      provider presentation ownership, and machine-readable documentation
+      index while preserving the read-only source contract.
+    dependencies: []
+    acceptanceEvidence:
+      - candidate-bound contract and public-surface gates
+      - focused malformed, unknown, duplicate-title, and over-limit tests
+      - typecheck, build, and full product suite
+      - immutable harness receipt bound to the candidate revision
+    rollback: revert one vertical slice and retain its prior facade
+    revisitTrigger: a boundary changes latency, memory, wire shape, or host behavior
+  - id: p1-contract-and-format-discovery
+    priority: P1
+    status: planned
+    owner: format-adapters
+    objective: >-
+      Define source-backed conversion contracts for agent datasets and
+      telemetry without weakening JSONL framing; evaluate vLLM, SGLang,
+      Ollama, Llama-Factory, OTLP, Arrow, Parquet, and Protobuf as bounded
+      adapters with explicit corpus and provenance requirements.
+    dependencies: [p0-core-closure]
+    acceptanceEvidence:
+      - public producer or format specification
+      - synthetic conformance corpus and round-trip or loss report
+      - bounded memory, cancellation, and malformed-input measurements
+      - no-write default integration proof
+    rollback: keep the adapter opt-in and leave the JSONL path authoritative
+    revisitTrigger: a format has a stable contract and a measured user workflow
+  - id: p2-opt-in-mutation-and-native-expansion
+    priority: P2
+    status: planned
+    owner: mutation-boundary
+    objective: >-
+      Add preview-first, user-authorized edits and measured native expansion
+      only behind capability, journaling, cancellation, and recovery boundaries.
+    dependencies: [p1-contract-and-format-discovery]
+    acceptanceEvidence:
+      - threat and trust-boundary review
+      - atomic write and rollback fault injection
+      - host crash and stale-generation tests
+      - paired end-to-end benchmark against the portable oracle
+    rollback: disable capability and restore the read-only projection
+    revisitTrigger: mutation or native work cannot meet its stated evidence budget
+  - id: p3-workspace-and-distributed-topology
+    priority: P3
+    status: planned
+    owner: architecture
+    objective: >-
+      Consider pnpm or Cargo workspace extraction and WSL2 or distributed
+      workflows only after independent consumers, trust controls, and build
+      provenance justify the topology.
+    dependencies: [p2-opt-in-mutation-and-native-expansion]
+    acceptanceEvidence:
+      - independent build and release manifests
+      - reproducible cross-platform artifacts
+      - resource, failure-isolation, and rollback evidence
+      - installed-host validation
+    rollback: retain the modular monolith composition root
+    revisitTrigger: package or host boundaries become measurable bottlenecks

@@ -26,6 +26,7 @@
     "LICENSE.txt",
     "THIRD-PARTY-NOTICES.txt",
     "docs/acceleration-roadmap.md",
+    "docs/roadmap.yaml",
     "docs/format-and-profile-boundaries.md",
     "docs/decisions",
     "docs/assets",
