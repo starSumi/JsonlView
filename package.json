@@ -28,7 +28,7 @@
     "docs/acceleration-roadmap.md",
     "docs/roadmap.yaml",
     "docs/format-and-profile-boundaries.md",
-      "docs/metadata",
+    "docs/metadata",
     "docs/decisions",
     "docs/assets",
     "third_party/licenses"
