@@ -119,8 +119,10 @@ describe('FollowRecoveryCoordinator', () => {
     { follow: true, running: true, kind: 'append' as const, expected: true },
     { follow: true, running: false, kind: 'append' as const, expected: false },
     { follow: true, running: true, kind: 'truncate' as const, expected: false },
+    { follow: false, running: false, kind: 'append' as const, expected: true },
+    { follow: false, running: false, kind: 'unknown' as const, expected: true },
     { follow: false, running: true, kind: 'delete' as const, expected: false },
-  ])('routes $kind refresh into recovery only when follow policy permits', ({ follow, running, kind, expected: result }) => {
+  ])('routes $kind refresh into the bounded recovery policy', ({ follow, running, kind, expected: result }) => {
     expect(shouldNotifyFollowRecovery(follow, running, kind)).toBe(result);
   });
 

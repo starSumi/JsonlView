@@ -47,12 +47,30 @@ class JsonlViewDocument implements vscode.CustomDocument {
       probe: (signal) => this.probeSource(signal),
       rebuildStable: (expected, signal) => this.session.rebuildStable(expected, signal),
       publish: (summary) => this.publishRecovered(summary),
-      invalidate: (reason) => this.broadcast('SOURCE_INVALIDATED', { reason }),
-      report: (message) => this.broadcast('ERROR', {
-        code: 'FOLLOW_RECOVERY_STOPPED',
-        message,
-        recoverable: true,
-      }),
+      invalidate: (reason) => {
+        // In the regular (non-follow) view, an unknown classification usually
+        // means the writer is still changing metadata. Retain the old
+        // generation and let the watcher schedule another bounded attempt;
+        // only destructive source transitions become a user-visible barrier.
+        if (!this.session.followMode && reason === 'unknown') {
+          this.recovery.reset();
+          this.scheduleReconcile();
+          return Promise.resolve();
+        }
+        return this.broadcast('SOURCE_INVALIDATED', { reason });
+      },
+      report: (message) => {
+        if (!this.session.followMode) {
+          this.recovery.reset();
+          this.scheduleReconcile();
+          return Promise.resolve();
+        }
+        return this.broadcast('ERROR', {
+          code: 'FOLLOW_RECOVERY_STOPPED',
+          message,
+          recoverable: true,
+        });
+      },
       scheduleReconcile: () => this.scheduleReconcile(),
     });
     this.followModeRegistration = {
