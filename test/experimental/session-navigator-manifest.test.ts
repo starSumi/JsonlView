@@ -14,11 +14,31 @@ describe('Session Navigator layout contract', () => {
     expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.sessionNavigator')).toBeTruthy();
   });
 
-  it('leaves JSONL editor choice to VS Code Open With instead of a duplicate title-bar button', async () => {
+  it('keeps the JSONL navigator action ahead of the always-visible Data Studio title action', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
-    const titleCommands = manifest.contributes.menus['editor/title'].map((item: { command: string }) => item.command);
-    expect(titleCommands).not.toContain('jsonlView.open');
-    expect(titleCommands).toContain('jsonlView.sessionNavigator.open');
+    const titleItems = manifest.contributes.menus['editor/title'];
+    expect(titleItems).toEqual([
+      {
+        command: 'jsonlView.sessionNavigator.open',
+        when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',
+        group: 'navigation@1',
+      },
+      {
+        command: 'jsonlView.open',
+        group: 'navigation@2',
+      },
+    ]);
+    expect(titleItems.find((item: { command: string }) => item.command === 'jsonlView.open')).not.toHaveProperty('when');
+    expect(titleItems.find((item: { command: string }) => item.command === 'jsonlView.sessionNavigator.open')).toMatchObject({
+      when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',
+      group: 'navigation@1',
+    });
+    expect(Number(titleItems[0].group.split('@')[1])).toBeLessThan(Number(titleItems[1].group.split('@')[1]));
+    const explorerItem = manifest.contributes.menus['explorer/context'].find((item: { command: string }) => item.command === 'jsonlView.open');
+    expect(explorerItem).toMatchObject({
+      when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',
+      group: 'navigation@1',
+    });
     expect(manifest.contributes.customEditors).toEqual(expect.arrayContaining([
       expect.objectContaining({ viewType: 'jsonlView.editor', displayName: 'JsonlView Data Studio' }),
     ]));
