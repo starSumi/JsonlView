@@ -75,6 +75,64 @@ selection role. Native text selection uses the editor selection role. The
 browser's default selection blue must not leak into the workbench state model.
 Rows and cells must retain readable text and a stable geometry in every state.
 
+## Content fidelity and display truncation
+
+The source JSONL bytes remain the authority for every provider and profile. A
+table cell, summary, Markdown view, diff, patch, tree node, or semantic tool
+presentation is a disposable display projection. A provider adapter may choose
+which fields to present, but it must not redefine whether the source is complete
+or silently replace source content with a preview.
+
+### Presentation state
+
+Every bounded content surface exposes the same provider-neutral state model,
+whether the record came from a generic JSONL file, Claude, Codex, Pi, OTLP, or
+another supported profile:
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| authority | `source`, `derived` | Whether the view is a source-backed range or a computed presentation |
+| visibility | `complete`, `bounded`, `unavailable`, `malformed` | Whether the requested display content is fully available in this view |
+| omission | `none`, `display-budget`, `malformed-input`, `unsupported-shape` | Why content is absent; this is product metadata, never source text |
+| copy | `exact-range`, `derived-rendering`, `unavailable` | What a copy action is allowed to place on the clipboard |
+
+The state is attached to the presentation envelope or view model. It is not
+inserted into the Raw payload, parsed JSON, Markdown, diff, patch, or provider
+message. `bounded` means the product display budget was reached; it must never
+be labelled as a source truncation. `malformed` means the source could not be
+parsed or decoded within the contract; it is distinct from a valid but bounded
+display. `unavailable` means the requested projection is not available without
+claiming that the source is empty.
+
+### UI and copy contract
+
+- A complete source-backed surface has no truncation badge.
+- A bounded surface shows an explicit product label such as `Display limited`
+  and, when known, the applied byte, line, item, or nesting budget. The label
+  must not say `Source truncated` unless the source itself contains an explicit
+  producer field with that meaning.
+- Malformed and unsupported states use distinct status text and badges from
+  display-budget state. Unknown provider records remain inspectable through Raw
+  and do not inherit another provider's wording.
+- Raw remains the authority view. It may itself be bounded for memory or layout
+  safety, but the UI must expose the bounded range and retain a path to inspect
+  the source-backed range; it must not imply that the visible slice is the whole
+  record.
+- Copying a source-backed view copies only the exact displayed source range and
+  never copies the status badge or its explanatory text. When a source-backed
+  view is bounded, the action is labelled as copying the visible range.
+- Copying a derived view is labelled or scoped as derived content. A diff,
+  patch, Markdown rendering, tree summary, tool summary, and provider-specific
+  projection must never be presented as the original record.
+- When no exact source range can be determined, source copy is unavailable; the
+  product must not silently substitute a derived summary.
+
+These rules apply equally to Claude, Codex, Pi, generic logs, telemetry, and
+future adapters. Provider-specific builders own semantic labels and field
+selection; the shared presentation contract owns authority, visibility,
+omission, and copy semantics. Adding a provider therefore cannot introduce a
+new interpretation of truncation.
+
 ## Layout and interaction rules
 
 - The primary table remains a virtualized DOM grid. Header, body, and detail

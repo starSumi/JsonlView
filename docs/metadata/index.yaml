@@ -67,7 +67,7 @@ documents:
     kind: design
     status: accepted
     owner: product
-    tags: [webview, design, vscode-theme, accessibility]
+    tags: [webview, design, vscode-theme, accessibility, content-fidelity]
     evidence: []
     revisit: when host-theme ownership or interaction tokens change
     rollback: restore the accepted design baseline
