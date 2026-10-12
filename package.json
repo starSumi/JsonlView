@@ -163,6 +163,38 @@
       {
         "command": "jsonlView.sessionNavigator.addSourceFromClipboard",
         "title": "JsonlView: Paste JSONL Source"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openEntity",
+        "title": "Open in JsonlView"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openEntityWith",
+        "title": "Open With JsonlView Data Studio"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.revealInFileExplorer",
+        "title": "Reveal in File Explorer"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openInIntegratedTerminal",
+        "title": "Open in Integrated Terminal"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.copyRelativePath",
+        "title": "Copy Relative Path"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.openTimeline",
+        "title": "Open Timeline"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.copySessionId",
+        "title": "Copy Session ID"
       }
     ],
     "viewsContainers": {
@@ -270,6 +302,46 @@
           "command": "jsonlView.sessionNavigator.removeSource",
           "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source",
           "group": "inline@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openEntity",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openEntityWith",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.revealInFileExplorer",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openInIntegratedTerminal",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "navigation@4"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyPath",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "copy@1"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copyRelativePath",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "copy@2"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.copySessionId",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "copy@3"
+        },
+        {
+          "command": "jsonlView.sessionNavigator.openTimeline",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity",
+          "group": "timeline@1"
         }
       ]
     },

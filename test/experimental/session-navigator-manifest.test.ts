@@ -43,4 +43,26 @@ describe('Session Navigator layout contract', () => {
       expect.objectContaining({ viewType: 'jsonlView.editor', displayName: 'JsonlView Data Studio' }),
     ]));
   });
+
+  it('keeps entity context actions stable and file safe', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    const entityItems = manifest.contributes.menus['view/item/context'].filter((item: { when: string }) => item.when.includes('viewItem == jsonlView.sessionNavigator.entity'));
+    expect(entityItems.map((item: { command: string }) => item.command)).toEqual([
+      'jsonlView.sessionNavigator.openEntity',
+      'jsonlView.sessionNavigator.openEntityWith',
+      'jsonlView.sessionNavigator.revealInFileExplorer',
+      'jsonlView.sessionNavigator.openInIntegratedTerminal',
+      'jsonlView.sessionNavigator.copyPath',
+      'jsonlView.sessionNavigator.copyRelativePath',
+      'jsonlView.sessionNavigator.copySessionId',
+      'jsonlView.sessionNavigator.openTimeline',
+    ]);
+    expect(entityItems.map((item: { group: string }) => item.group)).toEqual([
+      'navigation@1', 'navigation@2', 'navigation@3', 'navigation@4',
+      'copy@1', 'copy@2', 'copy@3', 'timeline@1',
+    ]);
+    expect(entityItems.every((item: { when: string }) => item.when === 'view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.entity')).toBe(true);
+    expect(entityItems.some((item: { command: string }) => /delete|remove/iu.test(item.command))).toBe(false);
+    for (const item of entityItems) expect(manifest.contributes.commands.some((command: { command: string }) => command.command === item.command)).toBe(true);
+  });
 });

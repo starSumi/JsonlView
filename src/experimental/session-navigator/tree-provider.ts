@@ -91,6 +91,14 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sort', () => this.chooseSort()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.addSourceFromClipboard', () => this.addSource()),
       vscode.commands.registerCommand('jsonlView.revealSessionNode', (node: EntityTreeNode) => this.reveal(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.openEntity', (node: SessionNavigatorTreeNode) => this.openEntity(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.openEntityWith', (node: SessionNavigatorTreeNode) => this.openEntityWith(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.revealInFileExplorer', (node: SessionNavigatorTreeNode) => this.revealInFileExplorer(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.openInIntegratedTerminal', (node: SessionNavigatorTreeNode) => this.openInIntegratedTerminal(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.copyPath', (node: SessionNavigatorTreeNode) => this.copyPath(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.copyRelativePath', (node: SessionNavigatorTreeNode) => this.copyRelativePath(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.openTimeline', (node: SessionNavigatorTreeNode) => this.openTimeline(node)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.copySessionId', (node: SessionNavigatorTreeNode) => this.copySessionId(node)),
       this.#treeView.onDidChangeVisibility((event) => this.handleVisibility(event.visible)),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('jsonlView.sessionNavigator')) {
@@ -135,7 +143,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       ? vscode.TreeItemCollapsibleState.Collapsed
       : vscode.TreeItemCollapsibleState.None);
     item.id = `entity:${node.entity.sourceId}:${node.entity.nativeId}`;
-    item.contextValue = `jsonlView.sessionNavigator.${node.entity.kind}`;
+    // Context menus use a stable key. The raw tree node is supplied to each
+    // command, so kind-specific keys would only multiply manifest cases.
+    item.contextValue = 'jsonlView.sessionNavigator.entity';
     item.description = [node.entity.relationship === 'root' ? undefined : node.entity.relationship, node.entity.activityAt === undefined ? undefined : relativeTime(node.entity.activityAt)].filter((value): value is string => value !== undefined).join(' · ');
     item.iconPath = new vscode.ThemeIcon(node.entity.kind === 'subagent' ? 'hubot' : 'comment-discussion');
     const location = this.#store?.getLocation({ sourceId: node.entity.sourceId, generation: node.entity.generation, nativeId: node.entity.nativeId });
@@ -397,6 +407,64 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       this.#revealRegistry.clear(canonicalUri.toString());
       void vscode.window.showErrorMessage(`JsonlView could not open the selected source: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private async entityUri(node: SessionNavigatorTreeNode): Promise<vscode.Uri | undefined> {
+    if (node.nodeKind !== 'entity' || this.#disposed || !this.isEnabled()) return undefined;
+    const store = await this.ensureStore();
+    const location = store.getLocation({ sourceId: node.entity.sourceId, generation: node.entity.generation, nativeId: node.entity.nativeId });
+    const rootUriString = store.getSourceRoot(node.entity.sourceId);
+    if (location === undefined || rootUriString === undefined) return undefined;
+    if (location.relativePath.length === 0 || isAbsolute(location.relativePath)
+      || /^[A-Za-z]:/u.test(location.relativePath) || location.relativePath.startsWith('/') || location.relativePath.startsWith('\\')
+      || location.relativePath.split(/[\\/]+/u).includes('..')) return undefined;
+    const configuredRoot = vscode.Uri.parse(rootUriString);
+    const root = node.entity.provider === 'codex' && /state(?:_\d+)?\.sqlite$/iu.test(basename(configuredRoot.fsPath))
+      ? vscode.Uri.file(dirname(configuredRoot.fsPath))
+      : configuredRoot;
+    if (await isRegularFile(root.fsPath)) return basename(root.fsPath) === location.relativePath ? root : undefined;
+    return vscode.Uri.joinPath(root, ...location.relativePath.split(/[\\/]+/u));
+  }
+
+  private async openEntity(node: SessionNavigatorTreeNode): Promise<void> {
+    if (node.nodeKind === 'entity') await this.reveal(node);
+  }
+
+  private async openEntityWith(node: SessionNavigatorTreeNode): Promise<void> {
+    const uri = await this.entityUri(node);
+    if (uri !== undefined) await vscode.commands.executeCommand('vscode.openWith', uri, 'jsonlView.editor');
+  }
+
+  private async revealInFileExplorer(node: SessionNavigatorTreeNode): Promise<void> {
+    const uri = await this.entityUri(node);
+    if (uri !== undefined) await vscode.commands.executeCommand('revealFileInOS', uri);
+  }
+
+  private async openInIntegratedTerminal(node: SessionNavigatorTreeNode): Promise<void> {
+    const uri = await this.entityUri(node);
+    if (uri !== undefined) await vscode.commands.executeCommand('openInIntegratedTerminal', uri);
+  }
+
+  private async copyPath(node: SessionNavigatorTreeNode): Promise<void> {
+    const uri = await this.entityUri(node);
+    if (uri !== undefined) await vscode.env.clipboard.writeText(uri.fsPath);
+  }
+
+  private async copyRelativePath(node: SessionNavigatorTreeNode): Promise<void> {
+    const uri = await this.entityUri(node);
+    if (uri !== undefined) await vscode.env.clipboard.writeText(vscode.workspace.asRelativePath(uri, false));
+  }
+
+  private async openTimeline(node: SessionNavigatorTreeNode): Promise<void> {
+    const uri = await this.entityUri(node);
+    if (uri !== undefined) {
+      await vscode.commands.executeCommand('vscode.open', uri);
+      await vscode.commands.executeCommand('timeline.focus');
+    }
+  }
+
+  private async copySessionId(node: SessionNavigatorTreeNode): Promise<void> {
+    if (node.nodeKind === 'entity') await vscode.env.clipboard.writeText(node.entity.nativeId);
   }
 
   public dispose(): void {
