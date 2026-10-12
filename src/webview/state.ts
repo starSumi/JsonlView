@@ -500,6 +500,20 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     }
     case 'ERROR':
+      if (message.payload.code === 'SOURCE_UPDATING') {
+        // A moving writer is a recoverable lifecycle hint, not a snapshot
+        // barrier. Keep the old rows/detail mounted and let the host publish a
+        // new generation only after bounded quiet-source validation.
+        return {
+          ...state,
+          phase: state.detail || state.rows.length > 0 ? state.phase : 'loading',
+          // Keep the lifecycle hint in state so App can schedule a bounded
+          // retry for the selected detail. The banner intentionally filters
+          // this product-owned code; rows and drawer remain mounted.
+          error: message.payload,
+          pending,
+        };
+      }
       if (state.invalidationReason !== undefined) {
         return {
           ...state,

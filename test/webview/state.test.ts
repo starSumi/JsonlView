@@ -564,6 +564,40 @@ describe('workspace reducer', () => {
     expect(state.selectedOrdinal).toBe('1');
   });
 
+  it('keeps the current snapshot mounted while the source is moving', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2',
+      }),
+    });
+    const selected = rows[1]!;
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: selected.ref.ordinal });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', {
+        ref: selected.ref, value: { value: 2 }, rawPreview: '{"value":2}', rawComplete: true, problems: [],
+      }),
+    });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'detail', id: 'moving-1' } });
+    const moving = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ERROR', {
+        code: 'SOURCE_UPDATING',
+        message: 'The source is still changing.',
+        recoverable: true,
+      }),
+    });
+    expect(moving.detail?.ref.ordinal).toBe(selected.ref.ordinal);
+    expect(moving.blockedDetailOrdinal).toBeUndefined();
+    expect(moving.error).toMatchObject({ code: 'SOURCE_UPDATING' });
+    expect(moving.invalidationReason).toBeUndefined();
+    expect(moving.selectedOrdinal).toBe(selected.ref.ordinal);
+  });
+
   it('keeps an invalidated generation blocked until a new snapshot opens', () => {
     let state = createInitialState();
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });

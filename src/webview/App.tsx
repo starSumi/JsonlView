@@ -167,6 +167,8 @@ export function App(): React.JSX.Element {
   // same-generation OPENED must not accidentally clear the stale barrier.
   const acceptedSessionRef = useRef<ViewportIdentity | undefined>(undefined);
   const automaticFullDetailKeyRef = useRef<string | undefined>(undefined);
+  const detailIntentRef = useRef<{ ref: RecordRef; full: boolean } | undefined>(undefined);
+  const sourceUpdateRetryRef = useRef<{ generation: string; attempts: number }>({ generation: '', attempts: 0 });
   const schemaRequestKeyRef = useRef('');
   const schemaRequestIdRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
@@ -307,6 +309,7 @@ export function App(): React.JSX.Element {
 
   const requestDetail = useCallback((ref: RecordRef, full = false): void => {
     const client = clientRef.current;
+    detailIntentRef.current = { ref, full };
     finishCancelled('detail', client.cancel('detail'));
     dispatch({ type: 'SELECT_ROW', ordinal: ref.ordinal });
     if (!canReadSnapshot(invalidationRef.current)) return;
@@ -339,6 +342,26 @@ export function App(): React.JSX.Element {
   }, [queryController]);
 
   useEffect(() => {
+    const error = state.error;
+    if (error?.code !== 'SOURCE_UPDATING' || state.summary === undefined) {
+      if (error === undefined) sourceUpdateRetryRef.current = { generation: '', attempts: 0 };
+      return;
+    }
+    const generation = state.summary.snapshot.generation;
+    if (sourceUpdateRetryRef.current.generation !== generation) {
+      sourceUpdateRetryRef.current = { generation, attempts: 0 };
+    }
+    if (sourceUpdateRetryRef.current.attempts >= 8) return;
+    sourceUpdateRetryRef.current.attempts += 1;
+    const timer = window.setTimeout(() => {
+      const intent = detailIntentRef.current;
+      if (intent !== undefined) requestDetail(intent.ref, intent.full);
+      else requestRows();
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [requestDetail, requestRows, state.error, state.summary]);
+
+  useEffect(() => {
     if (
       canReadSnapshot(state.invalidationReason)
       && state.activeTab === 'problems'
@@ -361,6 +384,9 @@ export function App(): React.JSX.Element {
       if (message.type === 'SOURCE_INVALIDATED') {
         invalidationRef.current = nextInvalidationReason(invalidationRef.current, message.payload.reason);
       } else if (openedGenerationChanged) invalidationRef.current = undefined;
+      if (openedGenerationChanged || message.type === 'DETAIL') {
+        detailIntentRef.current = undefined;
+      }
       if (message.type === 'REVEAL') queryController.revealOrdinal(message.payload.anchorOrdinal);
       if (message.type === 'OPENED') {
         if (openedGenerationChanged) setSchemaLoadFailed(false);
@@ -487,7 +513,12 @@ export function App(): React.JSX.Element {
       ...problem,
       ...(problem.ref?.ordinal === undefined ? {} : { ordinal: problem.ref.ordinal }),
     }));
-  const drawerOpen = Boolean(state.detail || state.pending.detail || state.blockedDetailOrdinal);
+  const drawerOpen = Boolean(
+    state.detail
+    || state.pending.detail
+    || state.blockedDetailOrdinal
+    || (state.error?.code === 'SOURCE_UPDATING' && state.selectedOrdinal !== undefined),
+  );
 
   useEffect(() => {
     if (!state.detailStale || state.rebuildDetail === undefined || state.pending.detail
@@ -850,7 +881,7 @@ export function App(): React.JSX.Element {
           <span>Source changed ({state.invalidationReason ?? 'unknown'}). This view is a stale snapshot.</span>
         </div>
       ) : null}
-      {state.error ? (
+      {state.error && state.error.code !== 'SOURCE_UPDATING' ? (
         <div className={`workspace-banner error-banner${state.error.recoverable ? ' is-recoverable' : ''}`} role="alert">
           <CircleAlert size={15} aria-hidden />
           <span><strong>{state.error.code}</strong> {state.error.message}</span>

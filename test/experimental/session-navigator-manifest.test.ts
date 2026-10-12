@@ -28,17 +28,9 @@ describe('Session Navigator layout contract', () => {
     ]);
   });
 
-  it('keeps the Data Studio title action without a duplicate navigator icon', async () => {
+  it('keeps the Data Studio resource action without a duplicate title icon', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
-    const titleItems = manifest.contributes.menus['editor/title'];
-    expect(titleItems).toEqual([
-      {
-        command: 'jsonlView.open',
-        group: 'navigation@1',
-      },
-    ]);
-    expect(titleItems.find((item: { command: string }) => item.command === 'jsonlView.open')).not.toHaveProperty('when');
-    expect(titleItems.some((item: { command: string }) => item.command === 'jsonlView.sessionNavigator.open')).toBe(false);
+    expect(manifest.contributes.menus['editor/title']).toBeUndefined();
     const explorerItem = manifest.contributes.menus['explorer/context'].find((item: { command: string }) => item.command === 'jsonlView.open');
     expect(explorerItem).toMatchObject({
       when: 'resourceExtname == .jsonl || resourceExtname == .ndjson',
