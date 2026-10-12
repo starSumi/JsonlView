@@ -4,6 +4,8 @@
 
 - Future staged evolution work will be recorded here.
 - Expose bounded file navigation actions on Agent source nodes while keeping session-only actions scoped to entities.
+- Keep append-invalidated snapshots readable while preserving the selected row and detail drawer until an explicit rebuild.
+- Keep one Agent Sessions Activity Bar entry and remove the duplicate JSONL editor title action.
 
 ## 0.2.9 - 2026-10-12
 

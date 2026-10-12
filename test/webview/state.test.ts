@@ -438,6 +438,20 @@ describe('workspace reducer', () => {
     state = workspaceReducer(state, {
       type: 'MESSAGE_RECEIVED',
       message: envelope('ROWS', {
+        rows: [rows[0]!],
+        columns: [],
+        anchorOrdinal: '1',
+        hasBefore: false,
+        hasAfter: true,
+        indexedRecords: '2',
+      }),
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail?.ref.ordinal).toBe('2');
+    expect(state.invalidationReason).toBe('append');
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
         rows: [rows[1]!],
         columns: [],
         anchorOrdinal: '2',
