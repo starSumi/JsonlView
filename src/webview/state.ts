@@ -208,7 +208,15 @@ function reconcileColumnOrder(columns: ColumnSpec[], current: readonly string[])
 }
 
 function sameRebuildRecord(left: RecordRef, right: RecordRef): boolean {
-  return left.ordinal === right.ordinal && left.byteStart === right.byteStart;
+  // Generation is deliberately ignored here: append/rebuild recovery rebases
+  // the same physical record into the accepted snapshot. Every byte coordinate
+  // remains part of the identity so an ordinal reuse or length change cannot
+  // retain the wrong payload.
+  return left.ordinal === right.ordinal
+    && left.byteStart === right.byteStart
+    && left.byteEndExclusive === right.byteEndExclusive
+    && left.contentByteLength === right.contentByteLength
+    && left.delimiterByteLength === right.delimiterByteLength;
 }
 
 function samePhysicalRecord(left: RecordRef, right: RecordRef): boolean {
