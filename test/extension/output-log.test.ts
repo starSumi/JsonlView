@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appendOutputLog, formatOutputLogLine } from '../../src/extension/output-log';
+import {
+  appendObservabilityEvent,
+  appendOutputLog,
+  createOutputLogObservabilitySink,
+  formatOutputLogLine,
+  formatObservabilityLogLine,
+} from '../../src/extension/output-log';
 
 describe('JsonlView output log', () => {
   it('formats bounded single-line entries without copying control characters', () => {
@@ -14,5 +20,41 @@ describe('JsonlView output log', () => {
     appendOutputLog(undefined, 'ignored');
     appendOutputLog(channel, 'ready', 'registered');
     expect(channel.appendLine).toHaveBeenCalledWith(expect.stringContaining('[ready] registered'));
+  });
+
+  it('writes only validated lifecycle metadata to the local output channel', () => {
+    const channel = { appendLine: vi.fn() };
+    const event = {
+      name: 'jsonlview.lifecycle.source_classified' as const,
+      timestamp: '2026-10-13T00:00:00.000Z',
+      attributes: { stage: 'source_classification', result: 'append', sequence: 1, causation: 'root' },
+    };
+
+    appendObservabilityEvent(channel, event);
+    expect(channel.appendLine).toHaveBeenCalledWith(
+      '2026-10-13T00:00:00.000Z [jsonlview.lifecycle.source_classified] stage=source_classification result=append sequence=1 causation=root',
+    );
+    expect(formatObservabilityLogLine({
+      ...event,
+      attributes: { path: 'C:/private/source.jsonl' },
+    } as never)).toBeUndefined();
+  });
+
+  it('keeps the default sink silent and supports an explicit channel sink', () => {
+    const channel = { appendLine: vi.fn() };
+    const noChannelSink = createOutputLogObservabilitySink(undefined);
+    expect(() => noChannelSink.record({
+      name: 'jsonlview.lifecycle.webview_accepted',
+      timestamp: '2026-10-13T00:00:00.000Z',
+      attributes: { stage: 'webview_acceptance', result: 'accepted', sequence: 4, causation: 'snapshot_publish' },
+    })).not.toThrow();
+
+    const sink = createOutputLogObservabilitySink(channel);
+    sink.record({
+      name: 'jsonlview.lifecycle.webview_accepted',
+      timestamp: '2026-10-13T00:00:00.000Z',
+      attributes: { stage: 'webview_acceptance', result: 'accepted', sequence: 4, causation: 'snapshot_publish' },
+    });
+    expect(channel.appendLine).toHaveBeenCalledTimes(1);
   });
 });
