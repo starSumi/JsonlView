@@ -187,9 +187,14 @@ class JsonlViewDocument implements vscode.CustomDocument {
         const delivered = await this.broadcast('SOURCE_INVALIDATED', { reason: 'append' });
         trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
       } else {
-        this.beginRecoveryTrace(refresh.kind);
-        appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=recover reason=unknown');
-        this.recovery.notifyUnknown();
+        // Unknown metadata is a transient read barrier in a normal view. Do
+        // not start FollowRecoveryCoordinator here: its stable candidate
+        // path adopts a new generation, which would silently replace the
+        // snapshot while the user is inspecting a detail drawer. The caller
+        // receives SOURCE_UPDATING and owns the bounded retry; Rebuild remains
+        // the explicit adoption boundary.
+        appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=defer reason=unknown');
+        this.scheduleReconcile();
       }
       return true;
     }
@@ -247,6 +252,17 @@ class JsonlViewDocument implements vscode.CustomDocument {
       const refresh = await this.session.classifyRefresh();
       appendOutputLog(outputChannel, 'source-classified', `mode=${this.session.followMode ? 'follow' : 'normal'} kind=${refresh.kind}`);
       if (refresh.kind === 'unchanged') return;
+      if (!this.session.followMode && refresh.kind === 'unknown') {
+        // A normal view never auto-adopts an unclassified source transition.
+        // Keep the current snapshot mounted and wait for a later watcher hint
+        // or an explicit Rebuild instead of polling or publishing OPENED.
+        if (this.recovery.isRunning) {
+          this.recovery.cancel();
+          this.recoveryTrace = undefined;
+        }
+        appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=defer reason=unknown');
+        return;
+      }
       if (shouldNotifyFollowRecovery(this.session.followMode, this.recovery.isRunning, refresh.kind)) {
         this.beginRecoveryTrace(refresh.kind);
         this.recovery.notifyUnknown();

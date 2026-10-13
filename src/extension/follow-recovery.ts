@@ -63,10 +63,11 @@ export function shouldNotifyFollowRecovery(
   // A stable candidate rebuild mutates the session generation. That is safe
   // only for an explicitly tail-following view; a normal view must retain its
   // mounted generation and expose a verified append as a Rebuild barrier.
-  // Unknown growth can be a deferred baseline during first detail hydration,
-  // so both modes use the bounded recovery probe. A normal view still never
-  // adopts that candidate; its publish path emits an append barrier instead.
-  if (kind === 'unknown') return true;
+  // Unknown source state is safe to recover only for an explicitly following
+  // view. A normal view must retain its current generation and require an
+  // explicit Rebuild; otherwise a stable probe could adopt a new generation
+  // behind the user's back while a detail drawer is open.
+  if (kind === 'unknown') return followMode;
   if (!followMode) return false;
   if (kind === 'delete' || kind === 'replace') return true;
   return recoveryRunning && kind === 'append';
