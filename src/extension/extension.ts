@@ -46,8 +46,12 @@ class JsonlViewDocument implements vscode.CustomDocument {
       isExpectedIdentityCurrent: (expected) => this.isExpectedIdentityCurrent(expected),
       probe: (signal) => this.probeSource(signal),
       rebuildStable: (expected, signal) => this.session.rebuildStable(expected, signal),
-      publish: (summary) => this.publishRecovered(summary),
+      publish: (summary) => {
+        appendOutputLog(outputChannel, 'snapshot-published', `mode=${this.session.followMode ? 'follow' : 'normal'} reason=stable`);
+        return this.publishRecovered(summary);
+      },
       invalidate: (reason) => {
+        appendOutputLog(outputChannel, 'recovery-decision', `mode=${this.session.followMode ? 'follow' : 'normal'} action=invalidate reason=${reason}`);
         // In the regular (non-follow) view, an unknown classification usually
         // means the writer is still changing metadata. Retain the old
         // generation and let the watcher schedule another bounded attempt;
@@ -149,6 +153,23 @@ class JsonlViewDocument implements vscode.CustomDocument {
       return false;
     }
     if (refresh.kind !== 'unknown' && refresh.kind !== 'append') return false;
+    if (!this.session.followMode) {
+      // A normal view never adopts a candidate generation in the background.
+      // Keep its old snapshot mounted and expose a verified append as the
+      // explicit Rebuild boundary. Unknown metadata remains transient so the
+      // controller can retry without turning an in-flight write into a hard
+      // failure; the watcher will classify it on the next pass.
+      if (refresh.kind === 'append') {
+        appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=source-invalidated reason=append');
+        appendOutputLog(outputChannel, 'source-invalidated', 'reason=append');
+        await this.broadcast('SOURCE_INVALIDATED', { reason: 'append' });
+      } else {
+        appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=recover reason=unknown');
+        this.recovery.notifyUnknown();
+      }
+      return true;
+    }
+    appendOutputLog(outputChannel, 'recovery-decision', `mode=follow action=recover reason=${refresh.kind}`);
     this.recovery.notifyUnknown();
     return true;
   }
@@ -199,6 +220,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
     this.reconciling = true;
     try {
       const refresh = await this.session.classifyRefresh();
+      appendOutputLog(outputChannel, 'source-classified', `mode=${this.session.followMode ? 'follow' : 'normal'} kind=${refresh.kind}`);
       if (refresh.kind === 'unchanged') return;
       if (shouldNotifyFollowRecovery(this.session.followMode, this.recovery.isRunning, refresh.kind)) {
         this.recovery.notifyUnknown();
@@ -300,6 +322,9 @@ class JsonlViewDocument implements vscode.CustomDocument {
     payload: Extract<ExtensionMessage, { type: TType }>['payload'],
   ): Promise<void> {
     if (this.disposed) return;
+    if (type === 'OPENED' || type === 'SOURCE_INVALIDATED') {
+      appendOutputLog(outputChannel, 'webview-lifecycle', `type=${type} panels=${String(this.panels.size)}`);
+    }
     const snapshot = this.session.getSummary().snapshot;
     const message = createProtocolEnvelope({
       type,

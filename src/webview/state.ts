@@ -298,7 +298,36 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       if (state.invalidationReason !== undefined && !snapshotChanged) return { ...state, pending };
       const preserveFollowViewport = snapshotChanged && state.followMode && state.rows.length > 0
         && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
-      const preserveRebuildDetail = snapshotChanged && !preserveFollowViewport
+      const preserveTransientViewport = snapshotChanged && !preserveFollowViewport
+        && state.error?.code === 'SOURCE_UPDATING'
+        && state.detail !== undefined
+        && state.selectedOrdinal !== undefined
+        && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
+      const preserveRecoveryViewport = preserveFollowViewport || preserveTransientViewport;
+      // Follow adoption changes the generation but keeps the same physical
+      // file. Seed the existing rebuild intents so the viewport and drawer
+      // remain mounted while the new page is queried, then let App's existing
+      // stale-detail effect hydrate the selected record against that generation.
+      const recoveryRecordRef = preserveFollowViewport
+        ? state.detail?.ref ?? state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal)?.ref
+        : preserveTransientViewport ? state.detail?.ref
+        : undefined;
+      const preserveRecoveryRecord = recoveryRecordRef !== undefined
+        && state.selectedOrdinal !== undefined
+        && state.rebuildSelection === undefined
+        && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
+      const recoverySelection = preserveRecoveryRecord && state.summary !== undefined
+        ? {
+            documentId: state.summary.snapshot.documentId,
+            generation: state.summary.snapshot.generation,
+            ref: recoveryRecordRef,
+          } satisfies RebuildDetailIntent
+        : undefined;
+      const recoveryDetail = preserveRecoveryRecord && state.detail !== undefined
+        && state.rebuildDetail === undefined
+        ? recoverySelection
+        : undefined;
+      const preserveRebuildDetail = snapshotChanged && !preserveRecoveryViewport
         && state.rebuildDetail !== undefined
         && state.pending.rebuild !== undefined
         && state.rebuildDetail.documentId === message.payload.snapshot.documentId;
@@ -306,17 +335,18 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
         summary: message.payload,
-        rows: snapshotChanged && !preserveFollowViewport ? [] : state.rows,
-        columns: snapshotChanged && !preserveFollowViewport ? [] : state.columns,
-        page: snapshotChanged && !preserveFollowViewport ? undefined : state.page,
+        rows: snapshotChanged && !preserveRecoveryViewport ? [] : state.rows,
+        columns: snapshotChanged && !preserveRecoveryViewport ? [] : state.columns,
+        page: snapshotChanged && !preserveRecoveryViewport ? undefined : state.page,
         problems: snapshotChanged ? undefined : state.problems,
         selectedOrdinal: preserveRebuildDetail
           ? state.rebuildDetail?.ref.ordinal
-          : snapshotChanged && !preserveFollowViewport && state.rebuildSelection !== undefined
+          : snapshotChanged && !preserveRecoveryViewport && state.rebuildSelection !== undefined
             && state.rebuildSelection.documentId === message.payload.snapshot.documentId
             ? state.rebuildSelection.ref.ordinal
-          : snapshotChanged && !preserveFollowViewport ? undefined : state.selectedOrdinal,
-        detail: preserveRebuildDetail ? state.detail : snapshotChanged ? undefined : state.detail,
+          : preserveRecoveryRecord ? state.selectedOrdinal
+          : snapshotChanged && !preserveRecoveryViewport ? undefined : state.selectedOrdinal,
+        detail: preserveRebuildDetail || preserveRecoveryRecord ? state.detail : snapshotChanged ? undefined : state.detail,
         schema: snapshotChanged ? [] : state.schema,
         schemaTotal: snapshotChanged ? 0 : state.schemaTotal,
         schemaComplete: snapshotChanged ? false : state.schemaComplete,
@@ -324,11 +354,11 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending: snapshotChanged ? {} : pending,
         invalidationReason: undefined,
         blockedDetailOrdinal: undefined,
-        rebuildSelection: preserveRebuildDetail || (snapshotChanged && !preserveFollowViewport
+        rebuildSelection: preserveRebuildDetail || (snapshotChanged && !preserveRecoveryViewport
           && state.rebuildSelection?.documentId === message.payload.snapshot.documentId)
-          ? state.rebuildSelection : undefined,
-        rebuildDetail: preserveRebuildDetail ? state.rebuildDetail : undefined,
-        detailStale: preserveRebuildDetail ? true : false,
+          ? state.rebuildSelection : recoverySelection,
+        rebuildDetail: preserveRebuildDetail ? state.rebuildDetail : recoveryDetail,
+        detailStale: preserveRebuildDetail || recoveryDetail !== undefined ? true : false,
         error: undefined,
       };
     }
@@ -348,10 +378,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       const preserveRebuildDetail = retainedRebuildDetail !== undefined;
       const selectedOrdinal = preserveAppendDetail && state.selectedOrdinal !== undefined
         ? state.selectedOrdinal
-        : state.followMode
-        ? message.payload.rows.at(-1)?.ref.ordinal
         : state.rebuildSelection !== undefined && (preserveRebuildSelection || message.payload.rows.length === 0)
           ? state.rebuildSelection.ref.ordinal
+        : state.followMode
+        ? message.payload.rows.at(-1)?.ref.ordinal
         : state.rebuildSelection !== undefined
           ? message.payload.rows[0]?.ref.ordinal
         : state.selectedOrdinal && message.payload.rows.some(

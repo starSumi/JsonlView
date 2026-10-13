@@ -308,6 +308,110 @@ describe('workspace reducer', () => {
     expect(state.selectedOrdinal).toBe('3');
   });
 
+  it('keeps a followed physical selection and drawer mounted across auto-adopt', () => {
+    let state = createInitialState({ followMode: true });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    const oldDetail: RecordDetail = {
+      ref: rows[1]!.ref, rawPreview: '{"event":"old"}', rawComplete: true, problems: [],
+    };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('DETAIL', oldDetail) });
+
+    const nextSummary = {
+      ...summary,
+      snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2, sizeBytes: '8192' },
+    };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2 },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toEqual(oldDetail);
+    expect(state.detailStale).toBe(true);
+    expect(state.rebuildDetail?.ref.byteStart).toBe(rows[1]!.ref.byteStart);
+
+    const refreshedRows = rows.map((row) => ({ ...row, ref: { ...row.ref, generation: 'g2' } }));
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: {
+        ...envelope('ROWS', {
+          rows: refreshedRows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+          indexedRecords: '3', totalRecords: '3',
+        }),
+        generation: 'g2',
+      },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toEqual(oldDetail);
+
+    const hydrated: RecordDetail = {
+      ...oldDetail, ref: refreshedRows[1]!.ref, rawPreview: '{"event":"new"}',
+    };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('DETAIL', hydrated), generation: 'g2' },
+    });
+    expect(state.detail).toEqual(hydrated);
+    expect(state.detailStale).toBe(false);
+  });
+
+  it('keeps transient non-follow detail mounted when recovery publishes a generation', () => {
+    let state = createInitialState();
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    const oldDetail: RecordDetail = {
+      ref: rows[1]!.ref, rawPreview: '{"event":"old"}', rawComplete: true, problems: [],
+    };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('DETAIL', oldDetail) });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'detail', id: 'moving-detail' } });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ERROR', {
+        code: 'SOURCE_UPDATING', message: 'The source is still changing.', recoverable: true,
+      }),
+    });
+
+    const nextSummary = {
+      ...summary,
+      snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2, sizeBytes: '8192' },
+    };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2 },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toEqual(oldDetail);
+    expect(state.detailStale).toBe(true);
+
+    const refreshedRows = rows.map((row) => ({ ...row, ref: { ...row.ref, generation: 'g2' } }));
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: {
+        ...envelope('ROWS', {
+          rows: refreshedRows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+          indexedRecords: '3', totalRecords: '3',
+        }),
+        generation: 'g2',
+      },
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail?.ref.ordinal).toBe('2');
+  });
+
   it('keeps selectors bounded to the current page', () => {
     let state = createInitialState();
     state = workspaceReducer(state, {
