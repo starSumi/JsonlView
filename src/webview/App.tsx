@@ -526,11 +526,20 @@ export function App(): React.JSX.Element {
       || !canReadSnapshot(invalidationRef.current)) return;
     const row = state.rows.find((candidate) => candidate.ref.ordinal === state.rebuildDetail?.ref.ordinal
       && candidate.ref.byteStart === state.rebuildDetail.ref.byteStart);
-    if (row === undefined) return;
-    const key = `rebuild:${state.summary.snapshot.generation}:${row.ref.ordinal}:${row.ref.byteStart}`;
+    // A recovery page is intentionally bounded and may not contain the pinned
+    // record.  A rebased intent proves this is the same physical append-only
+    // source, so request the detail directly by byte coordinates. Keep the
+    // old payload marked stale until the response arrives; never relabel
+    // cached content as the new snapshot.
+    const ref = row?.ref ?? (state.rebuildDetail.ref.generation === state.summary.snapshot.generation ? {
+      ...state.rebuildDetail.ref,
+      generation: state.summary.snapshot.generation,
+    } : undefined);
+    if (ref === undefined) return;
+    const key = `rebuild:${ref.generation}:${ref.ordinal}:${ref.byteStart}`;
     if (automaticFullDetailKeyRef.current === key) return;
     automaticFullDetailKeyRef.current = key;
-    requestDetail(row.ref, true);
+    requestDetail(ref, true);
   }, [requestDetail, state.detailStale, state.invalidationReason, state.pending.detail, state.rebuildDetail, state.rows, state.summary]);
 
   useEffect(() => {

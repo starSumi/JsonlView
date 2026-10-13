@@ -312,15 +312,18 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         ? state.detail?.ref ?? state.rows.find((row) => row.ref.ordinal === state.selectedOrdinal)?.ref
         : preserveTransientViewport ? state.detail?.ref
         : undefined;
+      const recoverySelectionCompatible = recoveryRecordRef === undefined
+        || state.rebuildSelection === undefined
+        || sameRebuildRecord(state.rebuildSelection.ref, recoveryRecordRef);
       const preserveRecoveryRecord = recoveryRecordRef !== undefined
         && state.selectedOrdinal !== undefined
-        && state.rebuildSelection === undefined
+        && recoverySelectionCompatible
         && state.summary?.snapshot.documentId === message.payload.snapshot.documentId;
       const recoverySelection = preserveRecoveryRecord && state.summary !== undefined
         ? {
             documentId: state.summary.snapshot.documentId,
-            generation: state.summary.snapshot.generation,
-            ref: recoveryRecordRef,
+            generation: message.payload.snapshot.generation,
+            ref: { ...recoveryRecordRef, generation: message.payload.snapshot.generation },
           } satisfies RebuildDetailIntent
         : undefined;
       const recoveryDetail = preserveRecoveryRecord && state.detail !== undefined
@@ -368,6 +371,11 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       // row and hydrated drawer stable while background queries finish; a
       // page response must not make the UI jump to the first row.
       const preserveAppendDetail = state.invalidationReason === 'append' && state.detail !== undefined;
+      // A followed detail can be outside the newly fetched tail page. Decide
+      // this before matching the page so its physical intent survives the
+      // page swap and can be hydrated by the detail request effect.
+      const preserveFollowDetail = state.followMode && state.detail !== undefined
+        && state.selectedOrdinal !== undefined;
       const retainedRebuildRow = state.rebuildSelection === undefined ? undefined : message.payload.rows.find(
         (row) => sameRebuildRecord(row.ref, state.rebuildSelection!.ref),
       );
@@ -375,11 +383,21 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       const retainedRebuildDetail = state.rebuildDetail === undefined ? undefined : message.payload.rows.find(
         (row) => sameRebuildRecord(row.ref, state.rebuildDetail!.ref),
       );
-      const preserveRebuildDetail = retainedRebuildDetail !== undefined;
+      const preserveRebuildDetail = retainedRebuildDetail !== undefined
+        || (preserveFollowDetail && state.rebuildDetail !== undefined);
+      const preserveRebuildSelectionForPinnedDetail = preserveRebuildSelection
+        || (preserveFollowDetail && state.rebuildSelection !== undefined);
+      // A followed detail is a user pin.  The follow page normally selects its
+      // tail, but that rule must yield while the drawer is showing a physical
+      // record across a generation swap.  Keep the old detail mounted until
+      // the corresponding record is rehydrated; otherwise the first ROWS
+      // response relabels the drawer as the new tail and drops its content.
+      const preserveDetail = preserveAppendDetail || preserveFollowDetail;
       const selectedOrdinal = preserveAppendDetail && state.selectedOrdinal !== undefined
         ? state.selectedOrdinal
         : state.rebuildSelection !== undefined && (preserveRebuildSelection || message.payload.rows.length === 0)
           ? state.rebuildSelection.ref.ordinal
+        : preserveFollowDetail ? state.selectedOrdinal
         : state.followMode
         ? message.payload.rows.at(-1)?.ref.ordinal
         : state.rebuildSelection !== undefined
@@ -410,18 +428,18 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           ...(message.payload.scan === undefined ? {} : { scan: message.payload.scan }),
         },
         selectedOrdinal,
-        detail: preserveAppendDetail
+        detail: preserveDetail
           ? state.detail
           : state.detail?.ref.ordinal === selectedOrdinal
           && (state.rebuildDetail === undefined || preserveRebuildDetail || message.payload.rows.length === 0)
           ? state.detail : undefined,
         blockedDetailOrdinal: state.blockedDetailOrdinal === selectedOrdinal ? state.blockedDetailOrdinal : undefined,
         rebuildSelection: state.rebuildSelection === undefined
-          || preserveRebuildSelection || message.payload.rows.length === 0 ? state.rebuildSelection : undefined,
+          || preserveRebuildSelectionForPinnedDetail || message.payload.rows.length === 0 ? state.rebuildSelection : undefined,
         rebuildDetail: state.rebuildDetail === undefined
           || preserveRebuildDetail || message.payload.rows.length === 0 ? state.rebuildDetail : undefined,
         detailStale: state.detailStale === true
-          && (preserveRebuildDetail || message.payload.rows.length === 0),
+          && (preserveRebuildDetail || preserveFollowDetail || message.payload.rows.length === 0),
         columnVisibility: reconcileVisibility(message.payload.columns, state.columnVisibility),
         columnOrder: reconcileColumnOrder(message.payload.columns, state.columnOrder),
         sortOffset,
@@ -434,6 +452,13 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
     }
     case 'DETAIL':
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
+      // A cancelled detail response can still cross the host boundary. Never
+      // let that stale payload relabel a newer user selection. The request
+      // client filters it in normal operation; this reducer guard is the
+      // deterministic last line for append/rebuild races.
+      if (state.selectedOrdinal !== undefined && state.selectedOrdinal !== message.payload.ref.ordinal) {
+        return { ...state, pending };
+      }
       return {
         ...state,
         detail: message.payload,

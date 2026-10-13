@@ -336,6 +336,7 @@ describe('workspace reducer', () => {
     expect(state.detail).toEqual(oldDetail);
     expect(state.detailStale).toBe(true);
     expect(state.rebuildDetail?.ref.byteStart).toBe(rows[1]!.ref.byteStart);
+    expect(state.rebuildDetail?.ref.generation).toBe('g2');
 
     const refreshedRows = rows.map((row) => ({ ...row, ref: { ...row.ref, generation: 'g2' } }));
     state = workspaceReducer(state, {
@@ -360,6 +361,51 @@ describe('workspace reducer', () => {
     });
     expect(state.detail).toEqual(hydrated);
     expect(state.detailStale).toBe(false);
+  });
+
+  it('keeps a followed detail pinned when invalidation precedes the new tail page', () => {
+    let state = createInitialState({ followMode: true });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    const oldDetail: RecordDetail = {
+      ref: rows[1]!.ref, rawPreview: '{"event":"old"}', rawComplete: true, problems: [],
+    };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('DETAIL', oldDetail) });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+
+    const nextSummary = {
+      ...summary, snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2, sizeBytes: '8192' },
+    };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2 },
+    });
+    const tailRows = rows.map((row, index) => ({
+      ...row, ref: { ...row.ref, generation: 'g2', ordinal: String(index + 3), byteStart: String(40 + index * 20),
+        byteEndExclusive: String(60 + index * 20) },
+    }));
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('ROWS', {
+        rows: tailRows, columns: [], anchorOrdinal: '3', hasBefore: true, hasAfter: false,
+        indexedRecords: '4', totalRecords: '4',
+      }), generation: 'g2' },
+    });
+
+    expect(state.rows).toEqual(tailRows);
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toEqual(oldDetail);
+    expect(state.detailStale).toBe(true);
+    expect(state.rebuildDetail?.ref.generation).toBe('g2');
   });
 
   it('keeps transient non-follow detail mounted when recovery publishes a generation', () => {
@@ -574,6 +620,48 @@ describe('workspace reducer', () => {
       type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
     });
     expect(sameGenerationOpened).toEqual(state);
+  });
+
+  it('does not relabel a newer append selection with a cancelled detail response', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '1' });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', {
+        ref: rows[0]!.ref, rawPreview: '{"event":"one"}', rawComplete: true, problems: [],
+      }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', {
+        ref: rows[0]!.ref, rawPreview: '{"event":"stale"}', rawComplete: true, problems: [],
+      }),
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toBeUndefined();
+
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', {
+        ref: rows[1]!.ref, rawPreview: '{"event":"two"}', rawComplete: true, problems: [],
+      }),
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail?.rawPreview).toBe('{"event":"two"}');
   });
 
   it('preserves in-flight reads across append hints but cancels them on replacement', () => {
