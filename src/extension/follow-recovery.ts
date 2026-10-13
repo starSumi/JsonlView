@@ -90,17 +90,21 @@ export async function postMessageBestEffort<TMessage>(
   senders: readonly FollowRecoveryMessageSender<TMessage>[],
   message: TMessage,
   onFailure?: (error: unknown, index: number) => void,
-): Promise<void> {
+): Promise<boolean> {
   const outcomes = await Promise.allSettled(
     senders.map((sender) => Promise.resolve().then(() => sender.postMessage(message))),
   );
+  let delivered = outcomes.length > 0;
   outcomes.forEach((outcome, index) => {
     if (outcome.status === 'rejected') {
+      delivered = false;
       notifyMessageFailure(onFailure, outcome.reason, index);
     } else if (outcome.value === false) {
+      delivered = false;
       notifyMessageFailure(onFailure, new Error('Webview declined the message.'), index);
     }
   });
+  return delivered;
 }
 
 function notifyMessageFailure(

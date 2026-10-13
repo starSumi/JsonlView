@@ -7,7 +7,7 @@ export type ObservabilityEventName =
   | 'jsonlview.lifecycle.source_classified'
   | 'jsonlview.lifecycle.recovery_decided'
   | 'jsonlview.lifecycle.snapshot_published'
-  | 'jsonlview.lifecycle.webview_accepted';
+  | 'jsonlview.lifecycle.webview_delivered';
 
 export interface ObservabilityEvent {
   readonly name: ObservabilityEventName;
@@ -26,7 +26,7 @@ const LIFECYCLE_STAGE_ORDER = [
   'source_classification',
   'recovery_decision',
   'snapshot_publish',
-  'webview_acceptance',
+  'webview_delivery',
 ] as const;
 
 export type LifecycleTraceStage = typeof LIFECYCLE_STAGE_ORDER[number];
@@ -50,10 +50,11 @@ export type LifecycleTraceResult =
   | 'failed'
   | 'accepted'
   | 'rejected'
+  | 'delivered'
   | 'skipped';
 
 export interface CausalLifecycleTrace {
-  /** Record the next stage in the bounded source-to-Webview lifecycle. */
+  /** Record the next stage in the bounded source-to-Webview delivery lifecycle. */
   record(stage: LifecycleTraceStage, result: LifecycleTraceResult): ObservabilityEvent | undefined;
   readonly sequence: number;
   readonly complete: boolean;
@@ -63,7 +64,7 @@ const LIFECYCLE_EVENT_NAMES: Readonly<Record<LifecycleTraceStage, ObservabilityE
   source_classification: 'jsonlview.lifecycle.source_classified',
   recovery_decision: 'jsonlview.lifecycle.recovery_decided',
   snapshot_publish: 'jsonlview.lifecycle.snapshot_published',
-  webview_acceptance: 'jsonlview.lifecycle.webview_accepted',
+  webview_delivery: 'jsonlview.lifecycle.webview_delivered',
 });
 
 const ALLOWED_KEYS = new Set([

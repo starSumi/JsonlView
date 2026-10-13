@@ -294,9 +294,10 @@ describe('FollowRecoveryCoordinator', () => {
       { postMessage: async () => true },
     ];
     host.publish = async (summary) => {
-      await postMessageBestEffort(panels, summary, (error, index) => {
+      const delivered = await postMessageBestEffort(panels, summary, (error, index) => {
         diagnostics.push(`${String(index)}:${error instanceof Error ? error.message : String(error)}`);
       });
+      expect(delivered).toBe(false);
       host.published.push(summary);
     };
     const coordinator = new FollowRecoveryCoordinator(host, {

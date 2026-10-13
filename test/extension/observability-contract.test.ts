@@ -33,19 +33,19 @@ describe('contract-first observability boundary', () => {
     const classified = trace.record('source_classification', 'unknown');
     const decided = trace.record('recovery_decision', 'retry');
     const published = trace.record('snapshot_publish', 'published');
-    const accepted = trace.record('webview_acceptance', 'accepted');
+    const delivered = trace.record('webview_delivery', 'delivered');
 
     expect(events).toEqual([
       'jsonlview.lifecycle.source_classified:1',
       'jsonlview.lifecycle.recovery_decided:2',
       'jsonlview.lifecycle.snapshot_published:3',
-      'jsonlview.lifecycle.webview_accepted:4',
+      'jsonlview.lifecycle.webview_delivered:4',
     ]);
-    expect(accepted).toMatchObject({
+    expect(delivered).toMatchObject({
       timestamp: '2026-10-13T00:00:00.000Z',
       attributes: {
-        stage: 'webview_acceptance',
-        result: 'accepted',
+        stage: 'webview_delivery',
+        result: 'delivered',
         sequence: 4,
         causation: 'snapshot_publish',
       },

@@ -54,12 +54,12 @@ class JsonlViewDocument implements vscode.CustomDocument {
         const published = await this.publishRecovered(summary);
         const trace = this.recoveryTrace;
         if (trace !== undefined) {
-          trace.record('snapshot_publish', published ? 'published' : 'stale');
-          if (published) trace.record('webview_acceptance', 'accepted');
+          trace.record('snapshot_publish', published.published ? 'published' : 'stale');
+          if (published.published) trace.record('webview_delivery', published.delivered ? 'delivered' : 'failed');
           this.recoveryTrace = undefined;
         }
       },
-      invalidate: (reason) => {
+      invalidate: async (reason) => {
         appendOutputLog(outputChannel, 'recovery-decision', `mode=${this.session.followMode ? 'follow' : 'normal'} action=invalidate reason=${reason}`);
         // A terminal recovery does not publish a new snapshot. Retire its
         // partial trace so a later attempt starts with a fresh causal root.
@@ -73,15 +73,15 @@ class JsonlViewDocument implements vscode.CustomDocument {
           this.scheduleReconcile();
           return Promise.resolve();
         }
-        return this.broadcast('SOURCE_INVALIDATED', { reason });
+        await this.broadcast('SOURCE_INVALIDATED', { reason });
       },
-      report: (message) => {
+      report: async (message) => {
         if (!this.session.followMode) {
           this.recovery.reset();
           this.scheduleReconcile();
           return Promise.resolve();
         }
-        return this.broadcast('ERROR', {
+        await this.broadcast('ERROR', {
           code: 'FOLLOW_RECOVERY_STOPPED',
           message,
           recoverable: true,
@@ -184,8 +184,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
         trace.record('snapshot_publish', 'invalidate');
         appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=source-invalidated reason=append');
         appendOutputLog(outputChannel, 'source-invalidated', 'reason=append');
-        await this.broadcast('SOURCE_INVALIDATED', { reason: 'append' });
-        trace.record('webview_acceptance', 'accepted');
+        const delivered = await this.broadcast('SOURCE_INVALIDATED', { reason: 'append' });
+        trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
       } else {
         this.beginRecoveryTrace(refresh.kind);
         appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=recover reason=unknown');
@@ -257,8 +257,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
         trace.record('recovery_decision', 'rebuild');
         const summary = await this.session.rebuild(new AbortController().signal);
         trace.record('snapshot_publish', 'published');
-        await this.broadcast('OPENED', summary);
-        trace.record('webview_acceptance', 'accepted');
+        const delivered = await this.broadcast('OPENED', summary);
+        trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
         return;
       }
       if (this.recovery.isRunning) {
@@ -269,8 +269,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
       trace.record('recovery_decision', 'invalidate');
       appendOutputLog(outputChannel, 'source-invalidated', `reason=${refresh.kind}`);
       trace.record('snapshot_publish', 'invalidate');
-      await this.broadcast('SOURCE_INVALIDATED', { reason: refresh.kind });
-      trace.record('webview_acceptance', 'accepted');
+      const delivered = await this.broadcast('SOURCE_INVALIDATED', { reason: refresh.kind });
+      trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
     } catch (error) {
       appendOutputLog(outputChannel, 'source-reconcile-failed', error instanceof Error ? error.message : String(error));
       await this.broadcast('ERROR', {
@@ -345,14 +345,13 @@ class JsonlViewDocument implements vscode.CustomDocument {
     }
   }
 
-  private async publishRecovered(summary: DocumentSummary): Promise<boolean> {
-    if (this.disposed) return false;
+  private async publishRecovered(summary: DocumentSummary): Promise<{ published: boolean; delivered: boolean }> {
+    if (this.disposed) return { published: false, delivered: false };
     const current = this.session.getSummary();
     // A newer manual rebuild wins; never relabel its payload with the
     // candidate summary supplied by an older recovery attempt.
-    if (current.snapshot.generation !== summary.snapshot.generation) return false;
-    await this.broadcast('OPENED', current);
-    return true;
+    if (current.snapshot.generation !== summary.snapshot.generation) return { published: false, delivered: false };
+    return { published: true, delivered: await this.broadcast('OPENED', current) };
   }
 
   private beginLifecycleTrace(kind: SourceRefreshResult['kind']): CausalLifecycleTrace {
@@ -371,8 +370,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private async broadcast<TType extends ExtensionMessage['type']>(
     type: TType,
     payload: Extract<ExtensionMessage, { type: TType }>['payload'],
-  ): Promise<void> {
-    if (this.disposed) return;
+  ): Promise<boolean> {
+    if (this.disposed) return false;
     if (type === 'OPENED' || type === 'SOURCE_INVALIDATED') {
       appendOutputLog(outputChannel, 'webview-lifecycle', `type=${type} panels=${String(this.panels.size)}`);
     }
@@ -385,7 +384,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
       requestId: '',
       payload,
     }) as unknown as Extract<ExtensionMessage, { type: TType }>;
-    await postMessageBestEffort(
+    return postMessageBestEffort(
       [...this.panels].map((panel) => panel.webview),
       message,
       (error, index) => {

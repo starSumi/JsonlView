@@ -44,16 +44,16 @@ describe('JsonlView output log', () => {
     const channel = { appendLine: vi.fn() };
     const noChannelSink = createOutputLogObservabilitySink(undefined);
     expect(() => noChannelSink.record({
-      name: 'jsonlview.lifecycle.webview_accepted',
+      name: 'jsonlview.lifecycle.webview_delivered',
       timestamp: '2026-10-13T00:00:00.000Z',
-      attributes: { stage: 'webview_acceptance', result: 'accepted', sequence: 4, causation: 'snapshot_publish' },
+      attributes: { stage: 'webview_delivery', result: 'delivered', sequence: 4, causation: 'snapshot_publish' },
     })).not.toThrow();
 
     const sink = createOutputLogObservabilitySink(channel);
     sink.record({
-      name: 'jsonlview.lifecycle.webview_accepted',
+      name: 'jsonlview.lifecycle.webview_delivered',
       timestamp: '2026-10-13T00:00:00.000Z',
-      attributes: { stage: 'webview_acceptance', result: 'accepted', sequence: 4, causation: 'snapshot_publish' },
+      attributes: { stage: 'webview_delivery', result: 'delivered', sequence: 4, causation: 'snapshot_publish' },
     });
     expect(channel.appendLine).toHaveBeenCalledTimes(1);
   });
