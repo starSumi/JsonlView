@@ -20,7 +20,8 @@ import { getWebviewHtml } from './webview-html';
 import { RevealIntentRegistry, type RevealIntent } from '../experimental';
 import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
-import { appendOutputLog, type JsonlViewOutputChannel } from './output-log';
+import { appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
+import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 
@@ -35,6 +36,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private pendingReveal: RevealIntent | undefined;
   private readonly recovery: FollowRecoveryCoordinator;
   private readonly followModeRegistration: { dispose(): void };
+  /** One bounded source-to-Webview trace for the active recovery attempt. */
+  private recoveryTrace: CausalLifecycleTrace | undefined;
 
   private constructor(
     public readonly uri: vscode.Uri,
@@ -46,12 +49,21 @@ class JsonlViewDocument implements vscode.CustomDocument {
       isExpectedIdentityCurrent: (expected) => this.isExpectedIdentityCurrent(expected),
       probe: (signal) => this.probeSource(signal),
       rebuildStable: (expected, signal) => this.session.rebuildStable(expected, signal),
-      publish: (summary) => {
+      publish: async (summary) => {
         appendOutputLog(outputChannel, 'snapshot-published', `mode=${this.session.followMode ? 'follow' : 'normal'} reason=stable`);
-        return this.publishRecovered(summary);
+        const published = await this.publishRecovered(summary);
+        const trace = this.recoveryTrace;
+        if (trace !== undefined) {
+          trace.record('snapshot_publish', published ? 'published' : 'stale');
+          if (published) trace.record('webview_acceptance', 'accepted');
+          this.recoveryTrace = undefined;
+        }
       },
       invalidate: (reason) => {
         appendOutputLog(outputChannel, 'recovery-decision', `mode=${this.session.followMode ? 'follow' : 'normal'} action=invalidate reason=${reason}`);
+        // A terminal recovery does not publish a new snapshot. Retire its
+        // partial trace so a later attempt starts with a fresh causal root.
+        this.recoveryTrace = undefined;
         // In the regular (non-follow) view, an unknown classification usually
         // means the writer is still changing metadata. Retain the old
         // generation and let the watcher schedule another bounded attempt;
@@ -79,6 +91,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
     });
     this.followModeRegistration = {
       dispose: session.onFollowMode((enabled) => {
+        this.recoveryTrace = undefined;
         if (enabled) this.recovery.reset();
         else this.recovery.cancel();
       }),
@@ -140,6 +153,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
   }
 
   public resetRecovery(): void {
+    this.recoveryTrace = undefined;
     this.recovery.reset();
   }
 
@@ -160,15 +174,21 @@ class JsonlViewDocument implements vscode.CustomDocument {
       // controller can retry without turning an in-flight write into a hard
       // failure; the watcher will classify it on the next pass.
       if (refresh.kind === 'append') {
+        const trace = this.beginLifecycleTrace(refresh.kind);
+        trace.record('recovery_decision', 'invalidate');
+        trace.record('snapshot_publish', 'invalidate');
         appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=source-invalidated reason=append');
         appendOutputLog(outputChannel, 'source-invalidated', 'reason=append');
         await this.broadcast('SOURCE_INVALIDATED', { reason: 'append' });
+        trace.record('webview_acceptance', 'accepted');
       } else {
+        this.beginRecoveryTrace(refresh.kind);
         appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=recover reason=unknown');
         this.recovery.notifyUnknown();
       }
       return true;
     }
+    this.beginRecoveryTrace(refresh.kind);
     appendOutputLog(outputChannel, 'recovery-decision', `mode=follow action=recover reason=${refresh.kind}`);
     this.recovery.notifyUnknown();
     return true;
@@ -223,17 +243,26 @@ class JsonlViewDocument implements vscode.CustomDocument {
       appendOutputLog(outputChannel, 'source-classified', `mode=${this.session.followMode ? 'follow' : 'normal'} kind=${refresh.kind}`);
       if (refresh.kind === 'unchanged') return;
       if (shouldNotifyFollowRecovery(this.session.followMode, this.recovery.isRunning, refresh.kind)) {
+        this.beginRecoveryTrace(refresh.kind);
         this.recovery.notifyUnknown();
         return;
       }
       if (this.session.followMode && shouldAutoFollow(refresh.kind)) {
+        const trace = this.beginLifecycleTrace(refresh.kind);
+        trace.record('recovery_decision', 'rebuild');
         const summary = await this.session.rebuild(new AbortController().signal);
+        trace.record('snapshot_publish', 'published');
         await this.broadcast('OPENED', summary);
+        trace.record('webview_acceptance', 'accepted');
         return;
       }
       if (this.recovery.isRunning) this.recovery.cancel();
+      const trace = this.beginLifecycleTrace(refresh.kind);
+      trace.record('recovery_decision', 'invalidate');
       appendOutputLog(outputChannel, 'source-invalidated', `reason=${refresh.kind}`);
+      trace.record('snapshot_publish', 'invalidate');
       await this.broadcast('SOURCE_INVALIDATED', { reason: refresh.kind });
+      trace.record('webview_acceptance', 'accepted');
     } catch (error) {
       appendOutputLog(outputChannel, 'source-reconcile-failed', error instanceof Error ? error.message : String(error));
       await this.broadcast('ERROR', {
@@ -308,13 +337,27 @@ class JsonlViewDocument implements vscode.CustomDocument {
     }
   }
 
-  private async publishRecovered(summary: DocumentSummary): Promise<void> {
-    if (this.disposed) return;
+  private async publishRecovered(summary: DocumentSummary): Promise<boolean> {
+    if (this.disposed) return false;
     const current = this.session.getSummary();
     // A newer manual rebuild wins; never relabel its payload with the
     // candidate summary supplied by an older recovery attempt.
-    if (current.snapshot.generation !== summary.snapshot.generation) return;
+    if (current.snapshot.generation !== summary.snapshot.generation) return false;
     await this.broadcast('OPENED', current);
+    return true;
+  }
+
+  private beginLifecycleTrace(kind: SourceRefreshResult['kind']): CausalLifecycleTrace {
+    const trace = createCausalLifecycleTrace(createOutputLogObservabilitySink(outputChannel));
+    trace.record('source_classification', kind);
+    return trace;
+  }
+
+  private beginRecoveryTrace(kind: SourceRefreshResult['kind']): void {
+    if (this.recoveryTrace !== undefined && !this.recoveryTrace.complete) return;
+    const trace = this.beginLifecycleTrace(kind);
+    trace.record('recovery_decision', 'retry');
+    this.recoveryTrace = trace;
   }
 
   private async broadcast<TType extends ExtensionMessage['type']>(
