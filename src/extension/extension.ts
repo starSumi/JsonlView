@@ -174,6 +174,11 @@ class JsonlViewDocument implements vscode.CustomDocument {
       // controller can retry without turning an in-flight write into a hard
       // failure; the watcher will classify it on the next pass.
       if (refresh.kind === 'append') {
+        // A verified append is an explicit Rebuild boundary in the normal
+        // view. Retire any unknown recovery that was waiting on the same
+        // write so it cannot later auto-publish over this decision.
+        this.recovery.cancel();
+        this.recoveryTrace = undefined;
         const trace = this.beginLifecycleTrace(refresh.kind);
         trace.record('recovery_decision', 'invalidate');
         trace.record('snapshot_publish', 'invalidate');
@@ -256,7 +261,10 @@ class JsonlViewDocument implements vscode.CustomDocument {
         trace.record('webview_acceptance', 'accepted');
         return;
       }
-      if (this.recovery.isRunning) this.recovery.cancel();
+      if (this.recovery.isRunning) {
+        this.recovery.cancel();
+        this.recoveryTrace = undefined;
+      }
       const trace = this.beginLifecycleTrace(refresh.kind);
       trace.record('recovery_decision', 'invalidate');
       appendOutputLog(outputChannel, 'source-invalidated', `reason=${refresh.kind}`);
