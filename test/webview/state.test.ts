@@ -210,6 +210,34 @@ describe('workspace reducer', () => {
     expect(state.rebuildDetail).toBeUndefined();
   });
 
+  it('admits a rebased detail before the replacement rows page arrives', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', { rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2' }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    const oldDetail: RecordDetail = { ref: rows[1]!.ref, rawPreview: '{"event":"old"}', rawComplete: true, problems: [] };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('DETAIL', oldDetail) });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'rebuild', id: 'rebuild-before-rows' } });
+    const nextSummary = { ...summary, snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 } };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('OPENED', nextSummary), generation: 'g2', epoch: 2, requestId: 'rebuild-before-rows' },
+    });
+    const refreshed: RecordDetail = {
+      ...oldDetail, ref: { ...oldDetail.ref, generation: 'g2' }, rawPreview: '{"event":"new-before-rows"}',
+    };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: { ...envelope('DETAIL', refreshed), generation: 'g2', requestId: 'detail-g2-before-rows' },
+    });
+    expect(state.detail).toEqual(refreshed);
+    expect(state.detailStale).toBe(false);
+  });
+
   it('falls back when a rebuild reuses an ordinal at a different physical offset', () => {
     let state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
     state = workspaceReducer(state, {
@@ -662,6 +690,29 @@ describe('workspace reducer', () => {
     });
     expect(state.selectedOrdinal).toBe('2');
     expect(state.detail?.rawPreview).toBe('{"event":"two"}');
+  });
+
+  it('rejects a detail payload whose coordinates do not match the selected row', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false,
+        indexedRecords: '2', totalRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '2' });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED',
+      message: envelope('DETAIL', {
+        ref: { ...rows[1]!.ref, byteStart: '999', byteEndExclusive: '1001' },
+        rawPreview: '{"event":"wrong-physical-record"}', rawComplete: true, problems: [],
+      }),
+    });
+    expect(state.selectedOrdinal).toBe('2');
+    expect(state.detail).toBeUndefined();
   });
 
   it('preserves in-flight reads across append hints but cancels them on replacement', () => {

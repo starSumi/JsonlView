@@ -211,6 +211,15 @@ function sameRebuildRecord(left: RecordRef, right: RecordRef): boolean {
   return left.ordinal === right.ordinal && left.byteStart === right.byteStart;
 }
 
+function samePhysicalRecord(left: RecordRef, right: RecordRef): boolean {
+  return left.generation === right.generation
+    && left.ordinal === right.ordinal
+    && left.byteStart === right.byteStart
+    && left.byteEndExclusive === right.byteEndExclusive
+    && left.contentByteLength === right.contentByteLength
+    && left.delimiterByteLength === right.delimiterByteLength;
+}
+
 export interface ReconciledProfileQueryState {
   sort?: RowSort;
   filter?: RowFilter;
@@ -334,6 +343,13 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         && state.rebuildDetail !== undefined
         && state.pending.rebuild !== undefined
         && state.rebuildDetail.documentId === message.payload.snapshot.documentId;
+      const reboundRebuildDetail = preserveRebuildDetail && state.rebuildDetail !== undefined
+        ? {
+            ...state.rebuildDetail,
+            generation: message.payload.snapshot.generation,
+            ref: { ...state.rebuildDetail.ref, generation: message.payload.snapshot.generation },
+          } satisfies RebuildDetailIntent
+        : undefined;
       return {
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
@@ -360,7 +376,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         rebuildSelection: preserveRebuildDetail || (snapshotChanged && !preserveRecoveryViewport
           && state.rebuildSelection?.documentId === message.payload.snapshot.documentId)
           ? state.rebuildSelection : recoverySelection,
-        rebuildDetail: preserveRebuildDetail ? state.rebuildDetail : recoveryDetail,
+        rebuildDetail: reboundRebuildDetail ?? recoveryDetail,
         detailStale: preserveRebuildDetail || recoveryDetail !== undefined ? true : false,
         error: undefined,
       };
@@ -450,13 +466,28 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         error: undefined,
       };
     }
-    case 'DETAIL':
+    case 'DETAIL': {
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       // A cancelled detail response can still cross the host boundary. Never
       // let that stale payload relabel a newer user selection. The request
       // client filters it in normal operation; this reducer guard is the
-      // deterministic last line for append/rebuild races.
+      // deterministic last line for append/rebuild races. Check the complete
+      // physical identity when a row or recovery intent is available; ordinal
+      // alone is not enough because a rewritten source can reuse it.
+      const selectedRow = state.selectedOrdinal === undefined ? undefined : state.rows.find(
+        (row) => row.ref.ordinal === state.selectedOrdinal,
+      );
+      // During recovery the visible rows intentionally remain from the old
+      // generation until the replacement page arrives. Prefer the rebased
+      // intent over that old page so the first current-generation DETAIL is
+      // admitted instead of being mistaken for a stale response.
+      const expectedRef = state.rebuildDetail?.ref
+        ?? state.rebuildSelection?.ref
+        ?? selectedRow?.ref;
       if (state.selectedOrdinal !== undefined && state.selectedOrdinal !== message.payload.ref.ordinal) {
+        return { ...state, pending };
+      }
+      if (expectedRef !== undefined && !samePhysicalRecord(expectedRef, message.payload.ref)) {
         return { ...state, pending };
       }
       return {
@@ -470,6 +501,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending,
         error: undefined,
       };
+    }
     case 'PROBLEMS': {
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
       const observedProblemRecords = message.payload.observedProblemRecords;
