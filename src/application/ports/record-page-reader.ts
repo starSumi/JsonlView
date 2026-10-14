@@ -48,8 +48,10 @@ export function assertRecordPageRequest(request: RecordPageRequest): void {
   if (request.sort !== undefined && !isRowSort(request.sort)) {
     fail('Record page sort is invalid.');
   }
-  if (request.sort !== undefined && (request.anchorOrdinal !== undefined || request.direction !== undefined)) {
-    fail('Sorted record pages cannot include a physical anchor or direction.');
+  if (request.sort !== undefined && (request.anchorOrdinal !== undefined || request.direction !== undefined)
+    && ((request.sort.columnId !== '__ordinal' && request.sort.columnId !== '$ordinal')
+      || request.sortOffset !== undefined)) {
+    fail('Physical cursors require ordinal order and cannot include a sorted offset.');
   }
   if (request.sortOffset !== undefined && !isDecimalString(request.sortOffset)) {
     fail('Record page sort offset must be a non-negative decimal string.');

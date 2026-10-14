@@ -37,6 +37,7 @@ export interface RecordQueryRequestOptions {
   direction?: 'forward' | 'backward';
   sort?: RowSort;
   sortOffset?: string;
+  scanBudget?: RowScanBudget;
   now?: number;
 }
 
@@ -160,7 +161,7 @@ export function textPredicate(query: string): Predicate | undefined {
   return value ? { op: 'text_search', value, caseSensitive: false } : undefined;
 }
 
-export function createFilterScanBudget(now = Date.now()): RowScanBudget {
+export function createFilterScanBudget(now = Date.now()): Required<RowScanBudget> {
   return {
     maxExaminedRecords: FILTER_SCAN_MAX_RECORDS,
     maxExaminedBytes: String(FILTER_SCAN_MAX_BYTES),
@@ -188,14 +189,19 @@ export function buildRecordQueryRequest(options: RecordQueryRequestOptions): Row
     rowTypePredicate(options.rowTypes),
   );
   const sort = options.sort;
+  const physicalCursor = sort === undefined || (isPhysicalOrdinalSort(sort)
+    && (options.anchorOrdinal !== undefined || options.direction !== undefined));
   return {
     limit: options.limit,
-    ...(sort === undefined && options.anchorOrdinal ? { anchorOrdinal: options.anchorOrdinal } : {}),
-    ...(sort === undefined && options.direction ? { direction: options.direction } : {}),
-    ...(predicate ? { predicate, scanBudget: createFilterScanBudget(options.now) } : {}),
+    ...(physicalCursor && options.anchorOrdinal !== undefined ? { anchorOrdinal: options.anchorOrdinal } : {}),
+    ...(physicalCursor && options.direction !== undefined ? { direction: options.direction } : {}),
+    ...(predicate ? { predicate } : {}),
+    ...(options.scanBudget === undefined
+      ? predicate ? { scanBudget: createFilterScanBudget(options.now) } : {}
+      : { scanBudget: options.scanBudget }),
     ...(options.columns === undefined ? {} : { columns: [...options.columns] }),
     ...(sort === undefined ? {} : { sort }),
-    ...(sort === undefined || options.sortOffset === undefined ? {} : { sortOffset: options.sortOffset }),
+    ...(sort === undefined || physicalCursor || options.sortOffset === undefined ? {} : { sortOffset: options.sortOffset }),
   };
 }
 

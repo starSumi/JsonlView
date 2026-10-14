@@ -468,17 +468,18 @@ export class JsonlFileEngine {
       const direction = options.direction ?? 'forward';
       const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
       const sort = normalizeRowSort(options.sort);
+      const physicalCursor = options.anchorOrdinal !== undefined || options.direction !== undefined;
       if (sort !== undefined) {
-        if (options.anchorOrdinal !== undefined || options.direction !== undefined) {
+        if (physicalCursor && (!isOrdinalSort(sort) || options.sortOffset !== undefined)) {
           throw new JsonlEngineError(
             'INVALID_ARGUMENT',
-            'Sorted row requests cannot also specify a physical anchor or direction.',
+            'Physical cursors require ordinal order and cannot include a sorted offset.',
           );
         }
-        if (isOrdinalSort(sort)) {
+        if (isOrdinalSort(sort) && !physicalCursor) {
           return this.getOrdinalSortedRows(options, guard, limit, sort);
         }
-        return this.getSortedRows(options, guard, limit, sort);
+        if (!isOrdinalSort(sort)) return this.getSortedRows(options, guard, limit, sort);
       }
       const anchor = options.anchorOrdinal === undefined
         ? undefined
@@ -633,6 +634,21 @@ export class JsonlFileEngine {
         ? (direction === 'forward' ? lastOrdinal : firstOrdinal)
         : scanCursor;
       const total = this.index.totalRecords;
+      const cursorAdvanced = continuationCursor !== undefined && (anchor === undefined
+        || (direction === 'forward' ? continuationCursor > anchor : continuationCursor < anchor));
+      const hasPhysicalRemainder = continuationCursor !== undefined && (direction === 'forward'
+        ? total === undefined || continuationCursor + 1n < total
+        : continuationCursor > 0n);
+      const canContinue = hasExtra && cursorAdvanced && hasPhysicalRemainder;
+      const hasBefore = direction === 'backward'
+        ? canContinue
+        : firstOrdinal !== undefined ? firstOrdinal > 0n : anchor !== undefined && anchor > 0n;
+      const hasAfter = direction === 'forward'
+        ? canContinue
+        : lastOrdinal !== undefined ? (total === undefined || lastOrdinal + 1n < total)
+          : anchor !== undefined && anchor + 1n < (total ?? this.index.indexedRecords);
+      // The scan selects an adjacent physical window; the ordinal sort controls presentation.
+      if (sort?.direction === 'desc') rows.reverse();
 
       await this.assertSnapshotUnchanged(guard);
 
@@ -642,25 +658,17 @@ export class JsonlFileEngine {
         anchorOrdinal: direction === 'forward'
           ? (lastOrdinal ?? anchor ?? 0n).toString()
           : (firstOrdinal ?? anchor ?? 0n).toString(),
-        hasBefore: direction === 'backward'
-          ? hasExtra
-          : firstOrdinal !== undefined
-            ? firstOrdinal > 0n
-            : anchor !== undefined && anchor > 0n,
-        hasAfter: direction === 'forward'
-          ? hasExtra
-          : lastOrdinal !== undefined
-            ? (total === undefined || lastOrdinal + 1n < total)
-            : anchor !== undefined
-              && anchor + 1n < (total ?? this.index.indexedRecords),
+        hasBefore: sort?.direction === 'desc' ? hasAfter : hasBefore,
+        hasAfter: sort?.direction === 'desc' ? hasBefore : hasAfter,
+        ...(sort === undefined ? {} : { sort }),
         indexedRecords: this.index.indexedRecords.toString(),
         ...(total === undefined ? {} : { totalRecords: total.toString() }),
-        ...(scanBudget === undefined && !stoppedByBudget && scanTruncatedReason === undefined ? {} : {
+        ...(sort === undefined && scanBudget === undefined && !stoppedByBudget && scanTruncatedReason === undefined ? {} : {
           scan: {
             examinedRecords: examinedRecords.toString(),
             examinedBytes: examinedBytes.toString(),
             ...(continuationCursor === undefined ? {} : { cursorOrdinal: continuationCursor.toString() }),
-            ...(scanTruncatedReason === undefined ? {} : { direction }),
+            ...(sort === undefined && scanTruncatedReason === undefined ? {} : { direction }),
             ...(scanTruncatedReason === undefined ? {} : { truncatedReason: scanTruncatedReason }),
           },
         }),

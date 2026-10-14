@@ -204,7 +204,7 @@ export interface RowPage {
   totalRecords?: string;
   /** Echoes the logical ordering used for this page, when present. */
   sort?: RowSort;
-  /** Logical zero-based offset for a sorted page. Physical anchors remain in anchorOrdinal. */
+  /** Logical zero-based rank; absent for physical ordinal cursor pages. */
   sortOffset?: string;
   /** Next logical offset when a bounded sorted page returned fewer rows than requested. */
   sortNextOffset?: string;
@@ -324,7 +324,9 @@ export interface ProtocolEnvelope<TType extends string, TPayload> {
 export type WebviewRequest =
   | ProtocolEnvelope<'READY', { restoredState?: unknown }>
   | ProtocolEnvelope<'GET_ROWS', {
+    /** Exclusive physical cursor, including ordinal sorted pages. */
     anchorOrdinal?: string;
+    /** Physical scan direction, independent of display order. */
     direction?: 'forward' | 'backward';
     limit: number;
     predicate?: Predicate;

@@ -60,8 +60,10 @@ export function validateWebviewRequest(rawValue: unknown): ValidationResult {
       if (
         value.payload.sort !== undefined
         && (value.payload.anchorOrdinal !== undefined || value.payload.direction !== undefined)
+        && ((value.payload.sort.columnId !== '__ordinal' && value.payload.sort.columnId !== '$ordinal')
+          || value.payload.sortOffset !== undefined)
       ) {
-        return failure('Sorted rows cannot include a physical anchor or direction.');
+        return failure('Physical cursors require ordinal order and cannot include a sorted offset.');
       }
       const sortOffset = value.payload.sortOffset;
       if (sortOffset !== undefined && !isDecimalString(sortOffset)) {

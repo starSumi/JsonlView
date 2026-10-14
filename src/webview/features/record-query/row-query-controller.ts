@@ -1,5 +1,5 @@
-import type { ColumnSpec, ExtensionMessage, RecordRef, RowFilter, RowPage, RowProjection, RowSort, SortDirection } from '../../../shared/types';
-import { buildRecordQueryRequest, canRequestSortedPage, columnsAfterProfileChange, isPhysicalOrdinalSort, selectedRecordColumns } from './model';
+import type { ColumnSpec, ExtensionMessage, RecordRef, RowFilter, RowPage, RowProjection, RowScanBudget, RowSort, SortDirection } from '../../../shared/types';
+import { buildRecordQueryRequest, canRequestSortedPage, columnsAfterProfileChange, createFilterScanBudget, isPhysicalOrdinalSort, selectedRecordColumns } from './model';
 import {
   advanceSortPage, anchorForPage, normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage,
   pageFromOrdinal, pageFromSortOffset, previousSortPage, rowsOptionsAfterRebuild, rowsOptionsForViewport,
@@ -8,7 +8,7 @@ import type { PendingRequest, ProtocolSession, VsCodeMessageClient } from '../..
 import {
   captureRebuild, planEmptyRestore, planOpened,
   type PendingViewportIntent, type QueryViewport, type RebuildViewportIntent,
-  type RecoveryRowsOptions, type RestoreViewportIntent, type RestoreViewportPhase,
+  type QueryWindowReplay, type RecoveryRowsOptions, type RestoreViewportIntent, type RestoreViewportPhase,
 } from './row-query-recovery-policy';
 import { snapshotIdentityChanged } from '../../snapshot-identity';
 import { sameRecordRef } from '../../record-identity';
@@ -22,6 +22,7 @@ export interface RowsRequestOptions extends RecoveryRowsOptions {
 }
 
 export interface RowsRequestMetadata {
+  readonly navigation?: 'logical' | 'physical';
   readonly preserveOnRebuild?: boolean;
   readonly restoreAfterRebuild?: boolean;
   readonly restorePhase?: RestoreViewportPhase;
@@ -59,9 +60,66 @@ interface PageNavigation {
   readonly anchorOrdinal?: string | undefined;
   readonly sortNextOffset?: string | undefined;
   readonly scan?: RowPage['scan'] | undefined;
+  readonly hasBefore?: boolean;
+  readonly hasAfter?: boolean;
 }
 
 const NO_FOLLOW_UP = (): void => undefined;
+
+function replayScanWindow(scan: RowPage['scan']): RecoveryRowsOptions['scanWindow'] {
+  if (scan?.truncatedReason === undefined) return undefined;
+  let examinedRecords: bigint;
+  let examinedBytes: bigint;
+  try {
+    examinedRecords = BigInt(scan.examinedRecords);
+    examinedBytes = BigInt(scan.examinedBytes);
+  } catch {
+    return { records: 0 };
+  }
+  if (examinedRecords <= 0n) return { records: 0 };
+  const maxExaminedRecords = Number(examinedRecords);
+  if (!Number.isSafeInteger(maxExaminedRecords) || maxExaminedRecords <= 0) return { records: 0 };
+  return {
+    records: maxExaminedRecords,
+    ...(examinedBytes > 0n ? { bytes: examinedBytes.toString() } : {}),
+  };
+}
+
+function operationScanBudget(options: RecoveryRowsOptions | undefined, replay: boolean): RowScanBudget | undefined {
+  const window = options?.scanWindow;
+  if (window !== undefined) {
+    // Zero progress is an empty frozen range, not permission to scan anew.
+    if (window.records === 0) return { deadlineEpochMs: Date.now() };
+    return { maxExaminedRecords: window.records,
+      ...(window.bytes === undefined ? {} : { maxExaminedBytes: window.bytes }),
+      deadlineEpochMs: createFilterScanBudget().deadlineEpochMs };
+  }
+  const budget = options?.scanBudget;
+  return budget === undefined ? undefined : { ...budget,
+    ...(replay ? { deadlineEpochMs: createFilterScanBudget().deadlineEpochMs } : {}) };
+}
+
+function queryWindowForPage(
+  page: RowPage,
+  requested: RecoveryRowsOptions | undefined,
+  limit: number,
+): QueryWindowReplay | undefined {
+  if (page.sort === undefined || requested?.sort === undefined
+    || requested.sort.columnId !== page.sort.columnId || requested.sort.direction !== page.sort.direction) return undefined;
+  // A slower replay must not replace the original range with its smaller progress.
+  const scanWindow = requested.scanWindow ?? replayScanWindow(page.scan);
+  const sort = { ...requested.sort };
+  if (requested.navigation === 'physical' && requested.direction !== undefined && isPhysicalOrdinalSort(sort)) {
+    const anchorOrdinal = requested.anchorOrdinal
+      ?? (requested.direction === 'backward' ? page.indexedRecords : undefined);
+    return { limit, options: { navigation: 'physical', sort, direction: requested.direction,
+      ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      ...(scanWindow === undefined ? {} : { scanWindow }) } };
+  }
+  // A sorted offset is a matching rank, never an ordinal or a physical scan boundary.
+  return { limit, options: { navigation: 'logical', sort, sortOffset: requested.sortOffset ?? '0',
+    ...(scanWindow === undefined ? {} : { scanWindow }) } };
+}
 
 /** Synchronous UI intent only. The client remains the sole wire/session authority. */
 export class RowQueryController {
@@ -128,7 +186,16 @@ export class RowQueryController {
     const retainedRow = canReadSnapshot(context.invalidationReason)
       && context.workspace.rows.some((row) => sameRecordRef(row.ref, ref));
     if ((ref.generation !== context.session.generation && !retainedRow) || !/^[0-9]+$/u.test(ref.ordinal)) return;
-    this.#viewport = { ...context.session, query: this.#query, firstVisibleOrdinal: ref.ordinal };
+    const prior = this.#viewport;
+    const sameSession = prior !== undefined && !snapshotIdentityChanged(prior, context.session)
+      && prior.query === this.#query;
+    const descending = isPhysicalOrdinalSort(this.#sort) && this.#sort?.direction === 'desc';
+    const windowFirstOrdinal = descending
+      ? sameSession ? prior.windowFirstOrdinal : context.workspace.rows[0]?.ref.ordinal : undefined;
+    this.#viewport = { ...context.session, query: this.#query, firstVisibleOrdinal: ref.ordinal,
+      ...(windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal }),
+      ...(sameSession && prior.queryWindow !== undefined ? { queryWindow: prior.queryWindow } : {}),
+      ...(descending ? { sortDirection: 'desc' as const } : {}) };
   }
 
   public pauseFollowing(ref?: RecordRef): void {
@@ -147,15 +214,20 @@ export class RowQueryController {
       // table; only an unobserved viewport falls back to its retained page start.
       const firstVisibleOrdinal = retainedAnchor ?? context.workspace.rows[0]?.ref.ordinal;
       if (this.#viewport === undefined && firstVisibleOrdinal !== undefined) {
-        this.#viewport = { ...context.session, query: this.#query, firstVisibleOrdinal };
+        this.#viewport = { ...context.session, query: this.#query, firstVisibleOrdinal,
+          ...(prior?.windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal: prior.windowFirstOrdinal }),
+          ...(prior?.queryWindow === undefined ? {} : { queryWindow: prior.queryWindow }),
+          ...(prior?.sortDirection === undefined ? {} : { sortDirection: prior.sortDirection }) };
       }
       for (const requestId of this.#ports.client.cancel('rows')) {
         this.#ports.dispatch({ type: 'REQUEST_FINISHED', kind: 'rows', requestId });
       }
       this.#pendingViewport = undefined;
       if (context.workspace.rows[0]?.ref.generation !== context.session.generation) {
-        this.requestRows(rowsOptionsAfterRebuild(this.#viewport?.firstVisibleOrdinal, false),
-          { preserveOnRebuild: true });
+        const options = this.currentViewportOptions();
+        this.requestRows(options, { preserveOnRebuild: true,
+          navigation: isPhysicalOrdinalSort(options.sort ?? this.#sort)
+            && options.direction !== undefined ? 'physical' : 'logical' });
       }
     }
   }
@@ -217,6 +289,7 @@ export class RowQueryController {
   }
 
   #resetPaging(): void {
+    this.#viewport = undefined;
     this.#sortOffset = '0';
     this.#sortOffsetHistory = [];
     this.#sortPage = '1';
@@ -232,10 +305,28 @@ export class RowQueryController {
   public abandonRestore(): void { this.#restoreViewport = undefined; }
 
   public currentViewportOptions(): RecoveryRowsOptions {
-    if (this.#sort !== undefined) return { sortOffset: this.#sortOffset };
+    const pending = this.#pendingViewport;
+    if (pending !== undefined && pending.preserveOnRebuild && pending.query === this.#query
+      && !snapshotIdentityChanged(pending, this.#ports.getContext().session)) {
+      return { ...pending.options,
+        ...(pending.options.sort === undefined ? {} : { sort: { ...pending.options.sort } }),
+        ...(pending.options.scanWindow === undefined ? {} : { scanWindow: { ...pending.options.scanWindow } }),
+        ...(pending.options.scanBudget === undefined ? {} : { scanBudget: { ...pending.options.scanBudget } }) };
+    }
+    const queryWindow = this.#viewport?.query === this.#query ? this.#viewport.queryWindow : undefined;
+    if (queryWindow !== undefined && queryWindow.limit === this.#pageSize) {
+      const options = queryWindow.options;
+      return { ...options,
+        ...(options.sort === undefined ? {} : { sort: { ...options.sort } }),
+        ...(options.scanWindow === undefined ? {} : { scanWindow: { ...options.scanWindow } }),
+        ...(options.scanBudget === undefined ? {} : { scanBudget: { ...options.scanBudget } }) };
+    }
+    if (this.#sort !== undefined) return { navigation: 'logical', sortOffset: this.#sortOffset };
     return rowsOptionsAfterRebuild(
-      this.#viewport?.query === this.#query ? this.#viewport.firstVisibleOrdinal : undefined,
+      this.#viewport?.query === this.#query
+        ? this.#viewport.windowFirstOrdinal ?? this.#viewport.firstVisibleOrdinal : undefined,
       this.#followsSourceTail(),
+      this.#viewport?.sortDirection ?? 'asc',
     );
   }
 
@@ -248,29 +339,43 @@ export class RowQueryController {
       this.#ports.dispatch({ type: 'REQUEST_FINISHED', kind: 'rows', requestId });
     }
     const query = options?.query ?? this.#query;
-    const sort = context.indexingComplete ? options?.sort ?? this.#sort : undefined;
-    const sortOffset = sort === undefined ? undefined : options?.sortOffset ?? this.#sortOffset;
+    const requestedSort = options?.sort ?? this.#sort;
+    const sort = context.indexingComplete || isPhysicalOrdinalSort(requestedSort) ? requestedSort : undefined;
+    const navigation = metadata.navigation ?? options?.navigation ?? 'logical';
+    const physicalCursor = sort !== undefined && isPhysicalOrdinalSort(sort) && navigation === 'physical';
+    const cursorAllowed = sort === undefined || physicalCursor;
+    const anchorOrdinal = cursorAllowed ? options?.anchorOrdinal : undefined;
+    const direction = cursorAllowed
+      ? options?.direction ?? (physicalCursor ? sort?.direction === 'desc' ? 'backward' : 'forward' : undefined)
+      : undefined;
+    const sortOffset = sort === undefined || physicalCursor ? undefined : options?.sortOffset ?? this.#sortOffset;
     const state = context.workspace;
     const filterColumns = options?.filterColumns
       ?? (this.#columns.length > 0 ? this.#columns : this.#ports.fallbackColumns(state.rows));
     const columns = options?.columns ?? (state.summary?.snapshot.generation === context.session.generation
       ? selectedRecordColumns(this.#columns, state.schema, state.columnVisibility) : undefined);
-    const request = this.#ports.client.send('GET_ROWS', buildRecordQueryRequest({
+    const scanBudget = operationScanBudget(options, metadata.preserveOnRebuild === true);
+    const payload = buildRecordQueryRequest({
       limit: this.#pageSize, query, filterColumns,
       ...(columns === undefined ? {} : { columns }),
       filters: this.#filters,
       ...(this.#rowTypes === undefined ? {} : { rowTypes: this.#rowTypes }),
-      ...(options?.anchorOrdinal === undefined ? {} : { anchorOrdinal: options.anchorOrdinal }),
-      ...(options?.direction === undefined ? {} : { direction: options.direction }),
+      ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      ...(direction === undefined ? {} : { direction }),
       ...(sort === undefined ? {} : { sort }),
       ...(sortOffset === undefined ? {} : { sortOffset }),
-    }));
+      ...(scanBudget === undefined ? {} : { scanBudget }),
+    });
+    const request = this.#ports.client.send('GET_ROWS', payload);
     if (metadata.pageInputSubmission === true) this.#pageInputRequestId = request.id;
     const pendingOptions: RecoveryRowsOptions = {
-      ...(options?.anchorOrdinal === undefined ? {} : { anchorOrdinal: options.anchorOrdinal }),
-      ...(options?.direction === undefined ? {} : { direction: options.direction }),
+      ...(sort === undefined ? {} : { navigation }),
+      ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      ...(direction === undefined ? {} : { direction }),
       ...(sort === undefined ? {} : { sort: { ...sort },
         ...(sortOffset === undefined ? {} : { sortOffset }) }),
+      ...(payload.scanBudget === undefined ? {} : { scanBudget: { ...payload.scanBudget } }),
+      ...(options?.scanWindow === undefined ? {} : { scanWindow: { ...options.scanWindow } }),
     };
     if (metadata.restoreAfterRebuild === true && this.#restoreViewport !== undefined) {
       this.#restoreViewport = { ...this.#restoreViewport, requestId: request.id,
@@ -295,6 +400,19 @@ export class RowQueryController {
     this.pauseFollowing();
     this.abandonRestore();
     this.#ports.dispatch({ type: 'SELECT_ROW', ordinal });
+    const sort = this.#sort;
+    if (sort !== undefined && isPhysicalOrdinalSort(sort)) {
+      try {
+        const rowOrdinal = BigInt(ordinal);
+        const sortOffset = sort.direction === 'asc'
+          ? rowOrdinal
+          : BigInt(this.#latestIndexedRecords) - rowOrdinal - 1n;
+        if (sortOffset < 0n) return;
+        this.requestRows({ sortOffset: sortOffset.toString() },
+          { supersedesRestore: true, navigation: 'logical' });
+      } catch { /* Ignore a stale Navigator ordinal outside the current snapshot. */ }
+      return;
+    }
     this.requestRows({ anchorOrdinal: ordinal, direction: 'forward' }, { supersedesRestore: true });
   }
 
@@ -334,7 +452,7 @@ export class RowQueryController {
     this.#filters = [...new Map(filters.map((filter) => [JSON.stringify(filter), filter])).values()];
     this.#resetPaging();
     this.#ports.dispatch({ type: 'SET_FILTERS', filters: this.#filters });
-    this.requestRows({ sortOffset: '0' });
+    this.requestRows({ sortOffset: '0' }, { navigation: 'logical' });
   }
 
   public applyRowTypes(selection: RowTypeSelection | undefined): void {
@@ -343,7 +461,7 @@ export class RowQueryController {
     this.#rowTypes = selection?.values.length ? { column: selection.column, values: [...new Set(selection.values)] } : undefined;
     this.#resetPaging();
     this.#ports.dispatch({ type: 'SET_ROW_TYPES', rowTypes: this.#rowTypes });
-    this.requestRows({ sortOffset: '0' });
+    this.requestRows({ sortOffset: '0' }, { navigation: 'logical' });
   }
 
   public changeSort(sort: RowSort | undefined, userIntent = true): void {
@@ -351,7 +469,7 @@ export class RowQueryController {
     this.#sort = sort;
     this.#resetPaging();
     this.#ports.dispatch({ type: 'SET_SORT', sort });
-    this.requestRows({ sortOffset: '0' });
+    this.requestRows({ sortOffset: '0' }, { navigation: 'logical' });
   }
 
   public requestRowOrder(direction: SortDirection): void {
@@ -374,7 +492,7 @@ export class RowQueryController {
     this.abandonRestore();
     if (this.#ports.getContext().indexingComplete && this.#sort?.columnId === '__ordinal' && this.#sort.direction === 'desc') {
       this.#setSortPosition({ offset: '0', history: [], page: '1' });
-      this.requestRows({ sortOffset: '0' }, { followsTail: true });
+      this.requestRows({ sortOffset: '0' }, { followsTail: true, navigation: 'logical' });
     } else this.requestRows({ direction: 'backward' }, { followsTail: true });
   }
 
@@ -383,6 +501,17 @@ export class RowQueryController {
     if (!canReadSnapshot(this.#ports.getContext().invalidationReason)) return;
     this.pauseFollowing();
     const navigation = this.#navigation;
+    if (isPhysicalOrdinalSort(this.#sort)) {
+      if ((navigation?.hasAfter ?? state.page?.hasAfter) !== true) return;
+      const direction = this.#sort?.direction === 'desc' ? 'backward' : 'forward';
+      const scan = navigation?.scan ?? state.page?.scan;
+      const continuation = scan?.truncatedReason !== undefined && scan.direction === direction
+        && scan.examinedRecords !== '0' ? scan.cursorOrdinal : undefined;
+      const anchorOrdinal = continuation ?? navigation?.lastOrdinal ?? state.rows.at(-1)?.ref.ordinal
+        ?? navigation?.anchorOrdinal ?? state.page?.anchorOrdinal;
+      if (anchorOrdinal !== undefined) this.requestRows({ anchorOrdinal, direction }, { navigation: 'physical' });
+      return;
+    }
     if (this.#sort !== undefined) {
       const currentOffset = normalizeSortOffset(this.#sortOffset);
       const offset = BigInt(currentOffset);
@@ -395,7 +524,7 @@ export class RowQueryController {
         nextOffset.toString(), this.#pageSize);
       this.#setSortPosition(position);
       this.#setPageInput(position.page);
-      this.requestRows({ sortOffset: position.offset });
+      this.requestRows({ sortOffset: position.offset }, { navigation: 'logical' });
       return;
     }
     const scan = navigation?.scan ?? state.page?.scan;
@@ -409,11 +538,24 @@ export class RowQueryController {
     const context = this.#ports.getContext();
     if (!canReadSnapshot(context.invalidationReason)) return;
     this.pauseFollowing();
+    if (isPhysicalOrdinalSort(this.#sort)) {
+      const state = context.workspace;
+      const navigation = this.#navigation;
+      if ((navigation?.hasBefore ?? state.page?.hasBefore) !== true) return;
+      const direction = this.#sort?.direction === 'desc' ? 'forward' : 'backward';
+      const scan = navigation?.scan ?? state.page?.scan;
+      const continuation = scan?.truncatedReason !== undefined && scan.direction === direction
+        && scan.examinedRecords !== '0' ? scan.cursorOrdinal : undefined;
+      const anchorOrdinal = continuation ?? navigation?.firstOrdinal ?? state.rows[0]?.ref.ordinal
+        ?? navigation?.anchorOrdinal ?? state.page?.anchorOrdinal;
+      if (anchorOrdinal !== undefined) this.requestRows({ anchorOrdinal, direction }, { navigation: 'physical' });
+      return;
+    }
     if (this.#sort !== undefined) {
       const position = previousSortPage(this.#sortOffsetHistory, this.#sortOffset, this.#sortPage, this.#pageSize);
       this.#setSortPosition(position);
       this.#setPageInput(position.page);
-      this.requestRows({ sortOffset: position.offset });
+      this.requestRows({ sortOffset: position.offset }, { navigation: 'logical' });
       return;
     }
     const state = context.workspace;
@@ -457,7 +599,7 @@ export class RowQueryController {
         return;
       }
       this.#setSortPosition({ offset: offset.toString(), history: [], page: page.toString() });
-      this.requestRows({ sortOffset: offset.toString() }, { pageInputSubmission: true });
+      this.requestRows({ sortOffset: offset.toString() }, { pageInputSubmission: true, navigation: 'logical' });
       return;
     }
     const anchorOrdinal = anchorForPage(value, this.#pageSize);
@@ -485,6 +627,8 @@ export class RowQueryController {
     if (decision.kind !== 'retry') return;
     this.requestRows({ ...decision.options, ...(restore.query.trim() ? { query: restore.query } : {}) }, {
       preserveOnRebuild: true, restoreAfterRebuild: true, restorePhase: 'retrying', supersedesRestore: false,
+      navigation: isPhysicalOrdinalSort(decision.options.sort ?? this.#sort)
+        && decision.options.direction !== undefined ? 'physical' : 'logical',
     });
   }
 
@@ -501,7 +645,11 @@ export class RowQueryController {
     this.#columns = message.payload.columns;
     this.#navigation = { firstOrdinal: message.payload.rows[0]?.ref.ordinal,
       lastOrdinal: message.payload.rows.at(-1)?.ref.ordinal, anchorOrdinal: message.payload.anchorOrdinal,
-      sortNextOffset: message.payload.sortNextOffset, scan: message.payload.scan };
+      sortNextOffset: message.payload.sortNextOffset, scan: message.payload.scan,
+      hasBefore: message.payload.hasBefore, hasAfter: message.payload.hasAfter };
+    const cursorResponse = isPhysicalOrdinalSort(message.payload.sort)
+      && pending?.options.navigation === 'physical' && message.payload.sortOffset === undefined;
+    if (cursorResponse) this.#setSortPosition({ offset: '0', history: [], page: '1' });
     if (message.payload.sortOffset !== undefined && responseQuery === this.#query) {
       const offset = normalizeSortOffset(message.payload.sortOffset);
       if (offset !== this.#sortOffset) {
@@ -510,13 +658,19 @@ export class RowQueryController {
     }
     const sameViewport = this.#viewport !== undefined
       && !snapshotIdentityChanged(this.#viewport, context.session) && this.#viewport.query === responseQuery;
-    const retainedAnchor = this.#viewportMode === 'reading' && sameViewport && pending?.preservesAnchor === true
-      && message.payload.rows.some((row) => row.ref.ordinal === this.#viewport?.firstVisibleOrdinal)
-      ? this.#viewport?.firstVisibleOrdinal : undefined;
+    const savedAnchor = sameViewport ? this.#viewport?.firstVisibleOrdinal
+      : message.payload.sort?.direction === 'desc' ? restore?.firstVisibleOrdinal : undefined;
+    const retainedAnchor = this.#viewportMode === 'reading' && pending?.preservesAnchor === true
+      && message.payload.rows.some((row) => row.ref.ordinal === savedAnchor) ? savedAnchor : undefined;
     const firstVisibleOrdinal = retainedAnchor ?? message.payload.rows[0]?.ref.ordinal
       ?? (sameViewport ? this.#viewport?.firstVisibleOrdinal : undefined);
+    const queryWindow = queryWindowForPage(message.payload, pending?.options, this.#pageSize);
     this.#viewport = { ...context.session, query: responseQuery,
-      ...(firstVisibleOrdinal === undefined ? {} : { firstVisibleOrdinal }) };
+      ...(firstVisibleOrdinal === undefined ? {} : { firstVisibleOrdinal }),
+      ...(queryWindow === undefined ? {} : { queryWindow }),
+      ...(isPhysicalOrdinalSort(message.payload.sort) && message.payload.sort?.direction === 'desc'
+        && message.payload.rows[0]?.ref.ordinal !== undefined
+        ? { windowFirstOrdinal: message.payload.rows[0].ref.ordinal, sortDirection: 'desc' as const } : {}) };
     this.#retainedViewport = undefined;
     if (pending !== undefined) {
       if (this.#pageInputRequestId === message.requestId) this.#releaseSubmission();
@@ -524,7 +678,7 @@ export class RowQueryController {
     }
     if (message.payload.rows.length > 0 && responseQuery === this.#query
       && !this.#pageInputDirty && !this.#pageInputFocused) {
-      this.#setPageInput(this.#sort === undefined
+      this.#setPageInput(cursorResponse ? '' : this.#sort === undefined
         ? pageFromOrdinal(message.payload.rows[0]?.ref.ordinal, this.#pageSize) : this.#sortPage);
     }
     if (restore === undefined) return NO_FOLLOW_UP;
@@ -552,11 +706,13 @@ export class RowQueryController {
       const decision = planOpened({
         opened: message.payload.snapshot, firstOpenedSession: flags.firstOpenedSession,
         snapshotChanged: flags.openedGenerationChanged, query: this.#query, followMode: this.#followsSourceTail(),
-        pageText: this.#pageInput, viewport: this.#viewport, pending: this.#pendingViewport, rebuild: this.#rebuildViewport,
+        pageText: this.#pageInput, pageSize: this.#pageSize, viewport: this.#viewport,
+        pending: this.#pendingViewport, rebuild: this.#rebuildViewport,
       });
       if (decision.kind === 'none') return NO_FOLLOW_UP;
       if (this.#sort === undefined || this.#sort.columnId === '__ordinal') {
-        const sort: RowSort | undefined = this.#sortDirection === 'desc' && context.indexingComplete
+        const sort: RowSort | undefined = this.#sortDirection === 'desc'
+          && (context.indexingComplete || isPhysicalOrdinalSort(this.#sort))
           ? { columnId: '__ordinal', direction: 'desc' } : undefined;
         if (this.#sort?.direction !== sort?.direction) {
           this.#sort = sort;
@@ -574,8 +730,11 @@ export class RowQueryController {
       return () => this.requestRows({ ...decision.options, ...(decision.query === undefined ? {} : { query: decision.query }) },
         decision.replacesSnapshot ? { preserveOnRebuild: true, restoreAfterRebuild: !this.#followsSourceTail(),
           restorePhase: 'initial', supersedesRestore: false, allowWhileInvalidated: true,
-          followsTail: this.#followsSourceTail() }
-          : { allowWhileInvalidated: true, followsTail: this.#followsSourceTail() });
+          followsTail: this.#followsSourceTail(), navigation: isPhysicalOrdinalSort(decision.options.sort ?? this.#sort)
+            && decision.options.direction !== undefined ? 'physical' : 'logical' }
+          : { allowWhileInvalidated: true, followsTail: this.#followsSourceTail(),
+            navigation: isPhysicalOrdinalSort(decision.options.sort ?? this.#sort)
+              && decision.options.direction !== undefined ? 'physical' : 'logical' });
     }
     if (message.type === 'PROFILE_CHANGED' && context.invalidationReason === undefined) {
       const profile = reconcileProfileQueryState(this.#sort, this.#filters[0], this.#columns, message.payload.columns);
@@ -586,10 +745,15 @@ export class RowQueryController {
         && pendingOptions.sort.columnId === profile.sort.columnId && pendingOptions.sort.direction === profile.sort.direction;
       // Keep the correlated page intent; the rendered anchor can still be on its predecessor page.
       const recoveryOptions = pendingOptions === undefined ? undefined : {
+        ...(pendingOptions.navigation === undefined ? {} : { navigation: pendingOptions.navigation }),
         ...(pendingOptions.anchorOrdinal === undefined ? {} : { anchorOrdinal: pendingOptions.anchorOrdinal }),
         ...(pendingOptions.direction === undefined ? {} : { direction: pendingOptions.direction }),
+        ...(pendingOptions.scanBudget === undefined ? {} : { scanBudget: pendingOptions.scanBudget }),
+        ...(pendingOptions.scanWindow === undefined ? {} : { scanWindow: pendingOptions.scanWindow }),
         ...(preservesSort ? { sort: profile.sort, sortOffset: pendingOptions.sortOffset } : {}),
       };
+      const previousFilterCount = this.#filters.length;
+      const previousRowTypes = this.#rowTypes;
       this.#sort = profile.sort;
       this.#filters = this.#filters.flatMap((filter) => {
         const reconciled = reconcileProfileQueryState(undefined, filter, this.#columns, message.payload.columns).filter;
@@ -599,19 +763,29 @@ export class RowQueryController {
         && !message.payload.columns.some((column) => column.id === this.#rowTypes?.column.id && column.source === 'profile')) {
         this.#rowTypes = undefined;
       }
-      if (!preservesSort) this.#resetPaging();
+      const preservesOrdinalWindow = message.requestId === '' && this.#viewportMode === 'reading'
+        && isPhysicalOrdinalSort(profile.sort) && profile.sort?.direction === 'desc'
+        && this.#viewport?.windowFirstOrdinal !== undefined
+        && previousFilterCount === this.#filters.length && previousRowTypes === this.#rowTypes;
+      if (!preservesSort && !preservesOrdinalWindow) this.#resetPaging();
       this.#columns = columnsAfterProfileChange(this.#columns, message.payload.columns, context.workspace.columnVisibility);
       // An unsolicited profile projection does not supersede a recovery that
       // is waiting for indexing. Explicit App setProfile already abandons it.
       if (restore !== undefined && !pendingRestore) return NO_FOLLOW_UP;
       const refresh = pendingRestore && !this.#followsSourceTail()
-        ? rowsOptionsForViewport(restore.firstVisibleOrdinal, restore.pageText, this.#pageSize, false, recoveryOptions)
-        : rowsOptionsAfterRebuild(this.#viewport?.firstVisibleOrdinal, this.#followsSourceTail());
+        ? rowsOptionsForViewport(restore.windowFirstOrdinal ?? restore.firstVisibleOrdinal,
+          restore.pageText, this.#pageSize, false, recoveryOptions, restore.sortDirection ?? 'asc')
+        : preservesOrdinalWindow ? this.currentViewportOptions()
+          : rowsOptionsAfterRebuild(this.#viewport?.windowFirstOrdinal ?? this.#viewport?.firstVisibleOrdinal,
+            this.#followsSourceTail(), this.#viewport?.sortDirection ?? 'asc');
       return () => this.requestRows({ ...refresh, ...(this.#query.trim() ? { query: this.#query } : {}),
-        filterColumns: message.payload.columns, ...(profile.sort === undefined || preservesSort ? {} : { sortOffset: '0' }) },
+        filterColumns: message.payload.columns,
+        ...(profile.sort === undefined || preservesSort || preservesOrdinalWindow ? {} : { sortOffset: '0' }) },
       pendingRestore ? { preserveOnRebuild: true, restoreAfterRebuild: true,
-        restorePhase: restore.phase === 'retrying' ? 'retrying' : 'initial', supersedesRestore: false }
-        : { preserveOnRebuild: true });
+        restorePhase: restore.phase === 'retrying' ? 'retrying' : 'initial', supersedesRestore: false,
+        navigation: isPhysicalOrdinalSort(profile.sort) && refresh.direction !== undefined ? 'physical' : 'logical' }
+        : { preserveOnRebuild: true,
+          navigation: isPhysicalOrdinalSort(profile.sort) && refresh.direction !== undefined ? 'physical' : 'logical' });
     }
     if (message.type === 'INDEX_PROGRESS') {
       const tailAdvanced = BigInt(message.payload.indexedRecords) > BigInt(this.#latestIndexedRecords);
@@ -637,7 +811,7 @@ export class RowQueryController {
       return () => {
         this.#ports.dispatch({ type: 'SET_SORT_DIRECTION', direction: message.payload.direction });
         this.#ports.dispatch({ type: 'SET_SORT', sort: this.#sort });
-        this.requestRows({ sortOffset: '0' });
+        this.requestRows({ sortOffset: '0' }, { navigation: 'logical' });
       };
     }
     if (message.type === 'ERROR') {

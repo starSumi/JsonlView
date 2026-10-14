@@ -9,7 +9,7 @@ import {
 import type { FollowRecoveryIdentity } from '../../src/extension/follow-recovery';
 import { DocumentController } from '../../src/extension/document-controller';
 import { PROTOCOL_VERSION, type ExtensionMessage } from '../../src/shared/types';
-import { keyPath, MAX_TABLE_COLUMNS, type ColumnSpec } from '../../src/shared/types';
+import { keyPath, MAX_TABLE_COLUMNS, type ColumnSpec, type Predicate, type RowSort } from '../../src/shared/types';
 import {
   otelFixture,
   softwareEngineeringAgentFixture,
@@ -83,6 +83,72 @@ const codexHistoryRecords = [
 ];
 
 describe('IntegratedJsonlSession', () => {
+  it.each([
+    { columnId: '__ordinal', direction: 'asc', physicalDirection: 'forward' },
+    { columnId: '__ordinal', direction: 'desc', physicalDirection: 'backward' },
+    { columnId: '$ordinal', direction: 'asc', physicalDirection: 'forward' },
+    { columnId: '$ordinal', direction: 'desc', physicalDirection: 'backward' },
+  ] as const)('walks $columnId $direction physical pages beyond 2048 against an independent oracle', async ({
+    columnId, direction, physicalDirection,
+  }) => {
+    const recordCount = 2_075;
+    const records = Array.from({ length: recordCount }, (_, id) => ({ id, keep: id % 7 === 0 }));
+    const { session } = await openFixture(records);
+    const sort: RowSort = { columnId, direction };
+    const expected = Array.from({ length: recordCount }, (_, ordinal) => String(ordinal));
+    if (direction === 'desc') expected.reverse();
+    const observed: string[] = [];
+    let anchorOrdinal: string | undefined;
+
+    for (let pageNumber = 0; pageNumber < 32; pageNumber += 1) {
+      const page = await session.getRows({
+        limit: 137, sort, direction: physicalDirection,
+        ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      }, new AbortController().signal);
+      const ordinals = page.rows.map((row) => row.ref.ordinal);
+      expect(ordinals.length).toBeGreaterThan(0);
+      observed.push(...ordinals);
+      if (!page.hasAfter) break;
+      anchorOrdinal = ordinals.at(-1);
+    }
+
+    expect(observed).toEqual(expected);
+    expect(new Set(observed).size).toBe(recordCount);
+  });
+
+  it('preserves bounded zero/one-match continuation and terminates zero progress through the session port', async () => {
+    const records = Array.from({ length: 10 }, (_, id) => ({ id }));
+    const { session } = await openFixture(records);
+    const sort: RowSort = { columnId: '$ordinal', direction: 'desc' };
+    const predicate: Predicate = { op: 'compare', path: keyPath('id'), cmp: 'eq', value: 0 };
+    const budget = { maxExaminedRecords: 3, maxExaminedBytes: '4096' };
+    const seen: string[] = [];
+    let anchorOrdinal: string | undefined;
+
+    for (let step = 0; step < 4; step += 1) {
+      const page = await session.getRows({
+        limit: 2, sort, predicate, scanBudget: budget, direction: 'backward',
+        ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      }, new AbortController().signal);
+      seen.push(...page.rows.map((row) => row.ref.ordinal));
+      if (!page.hasAfter) break;
+      expect(page.scan).toMatchObject({ direction: 'backward', truncatedReason: 'record_limit' });
+      const next = page.scan?.cursorOrdinal;
+      expect(next).toBeDefined();
+      expect(next).not.toBe(anchorOrdinal);
+      anchorOrdinal = next;
+    }
+    expect(seen).toEqual(['0']);
+
+    const stopped = await session.getRows({
+      anchorOrdinal: '5', direction: 'backward', limit: 2, sort, predicate,
+      scanBudget: { deadlineEpochMs: 1 },
+    }, new AbortController().signal);
+    expect(stopped.rows).toEqual([]);
+    expect(stopped.scan).toMatchObject({ examinedRecords: '0', direction: 'backward', truncatedReason: 'time_limit' });
+    expect(stopped.hasAfter).toBe(false);
+  });
+
   it('returns a generic shell before deferred profile detection publishes the semantic profile', async () => {
     const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
     expect(session.getSummary().profileId).toBe('generic');

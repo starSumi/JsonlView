@@ -1,5 +1,9 @@
 import { writeFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { JsonlFileEngine } from '../../src/engine';
 import {
   PROTOCOL_VERSION, keyPath, type ColumnSpec, type DocumentSummary, type ExtensionMessage,
   type RowPage, type RowProjection, type WebviewRequest,
@@ -150,6 +154,27 @@ function harness(persisted?: PersistedWorkspaceState) {
       dispatch({ type: 'REQUEST_SENT', request: client.send('SET_PROFILE', { profileId }) });
     },
   };
+}
+
+async function withEngineFixture(
+  records: unknown[],
+  run: (fixture: { path: string; open: (generation: string) => Promise<JsonlFileEngine> }) => Promise<void>,
+): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-controller-engine-'));
+  if (!resolve(directory).startsWith(resolve(tmpdir()) + sep)) throw new Error('Unsafe temporary fixture path');
+  const path = join(directory, 'fixture.jsonl');
+  const engines: JsonlFileEngine[] = [];
+  try {
+    await writeFile(path, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+    await run({ path, open: async (generation) => {
+      const engine = await JsonlFileEngine.open(path, { documentId: 'doc', generation, newlineScanner: 'off' });
+      engines.push(engine);
+      return engine;
+    } });
+  } finally {
+    await Promise.all(engines.map((engine) => engine.dispose()));
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 describe('multiple table conditions with synchronous controller capture', () => {
@@ -338,27 +363,398 @@ describe('row query controller with real client and reducer', () => {
     test.delayCommits();
     test.controller.nextPage();
     const explicit = test.last('GET_ROWS');
-    expect(explicit.payload).toMatchObject({ sort, sortOffset: '3' });
+    expect(explicit.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     test.opened('g2', 2, true, '1001');
     const recovery = test.last('GET_ROWS');
-    expect(recovery.payload).toMatchObject({ sort, sortOffset: '3' });
+    expect(recovery.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
     const projected = test.last('GET_ROWS');
-    expect(projected.payload).toEqual({ limit: 100, sort, sortOffset: '3' });
-    expect(test.controller.sortPage).toBe('2');
-    expect(test.controller.sortOffsetHistory).toEqual(['0']);
+    expect(projected.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
+    expect(test.controller.sortPage).toBe('1');
+    expect(test.controller.sortOffsetHistory).toEqual([]);
     test.opened('g3', 3, true, '1002');
     const latest = test.last('GET_ROWS');
-    expect(latest.payload).toEqual({ limit: 100, sort, sortOffset: '3' });
+    expect(latest.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     expect(test.rows(explicit, page(['996', '995']))).toBe(false);
     expect(test.rows(recovery, page(['996', '995'], 'g2'))).toBe(false);
     expect(test.rows(projected, page(['996', '995'], 'g2'))).toBe(false);
-    expect(test.rows(latest, page(['998', '997'], 'g3', { sort, sortOffset: '3', sortNextOffset: '5' }))).toBe(true);
+    expect(test.rows(latest, page(['996', '995'], 'g3', { sort }))).toBe(true);
     test.controller.previousPage();
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, anchorOrdinal: '996', direction: 'forward' });
     test.commit();
     expect(test.state.viewportMode).toBe('reading');
     expect(test.state.followMode).toBe(true);
+  });
+
+  it('uses descending row boundaries for Next and Previous across a partial final page', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ sortDirection: 'desc' });
+    test.boot();
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+    test.rows(test.last('GET_ROWS'), page(['224', '125'], 'g1', { sort, hasBefore: false, hasAfter: true }));
+
+    test.controller.nextPage();
+    expect(test.last('GET_ROWS').payload).toEqual({
+      limit: 100, sort, anchorOrdinal: '125', direction: 'backward',
+    });
+    test.rows(test.last('GET_ROWS'), page(['124', '25'], 'g1', { sort, hasBefore: true, hasAfter: true }));
+    test.controller.nextPage();
+    expect(test.last('GET_ROWS').payload).toEqual({
+      limit: 100, sort, anchorOrdinal: '25', direction: 'backward',
+    });
+    test.rows(test.last('GET_ROWS'), page(['24', '0'], 'g1', { sort, hasBefore: true, hasAfter: false }));
+    const atEnd = test.count('GET_ROWS');
+    test.controller.nextPage();
+    expect(test.count('GET_ROWS')).toBe(atEnd);
+
+    test.controller.previousPage();
+    expect(test.last('GET_ROWS').payload).toEqual({
+      limit: 100, sort, anchorOrdinal: '24', direction: 'forward',
+    });
+    test.rows(test.last('GET_ROWS'), page(['124', '25'], 'g1', { sort, hasBefore: true, hasAfter: true }));
+    test.controller.previousPage();
+    expect(test.last('GET_ROWS').payload).toEqual({
+      limit: 100, sort, anchorOrdinal: '124', direction: 'forward',
+    });
+  });
+
+  it('restores the same descending partial window after an append generation', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ followMode: false, sortDirection: 'desc' });
+    test.boot();
+    test.controller.requestRows({ anchorOrdinal: '25', direction: 'backward' }, { navigation: 'physical' });
+    test.rows(test.last('GET_ROWS'), page(['24', '0'], 'g1', {
+      sort, hasBefore: true, hasAfter: false, indexedRecords: '225', totalRecords: '225',
+    }));
+
+    test.opened('g2', 2, true, '226');
+    const recovery = test.last('GET_ROWS');
+    expect(recovery.payload).toEqual({
+      limit: 100, sort, anchorOrdinal: '25', direction: 'backward',
+    });
+    expect(test.rows(recovery, page(['24', '0'], 'g2', {
+      sort, hasBefore: true, hasAfter: false, indexedRecords: '226', totalRecords: '226',
+    }))).toBe(true);
+    expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['24', '0']);
+  });
+
+  it('keeps direct descending page jumps logical, including page one', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ sortDirection: 'desc' });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['999', '900'], 'g1', { sort, sortOffset: '0' }));
+
+    test.controller.focusPageInput(true);
+    test.controller.editPageInput('3');
+    test.controller.submitPageInput();
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '200' });
+    test.rows(test.last('GET_ROWS'), page(['799', '700'], 'g1', { sort, sortOffset: '200' }));
+
+    test.controller.editPageInput('1');
+    test.controller.submitPageInput();
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+  });
+
+  it('requires an explicit physical intent before sending sorted cursor fields', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ sortDirection: 'desc' });
+    test.boot();
+
+    test.controller.requestRows({ anchorOrdinal: '900', direction: 'backward' });
+
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+  });
+
+  it('converts a descending Navigator reveal to a logical rank', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ sortDirection: 'desc' });
+    test.boot();
+
+    test.controller.revealOrdinal('900');
+
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '99' });
+  });
+
+  it('replays the original sparse descending scan window after append', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ followMode: false, sortDirection: 'desc' });
+    test.boot();
+    test.controller.editQuery('needle');
+    test.controller.requestRows({ anchorOrdinal: '900', direction: 'backward' }, { navigation: 'physical' });
+    test.rows(test.last('GET_ROWS'), page(['850'], 'g1', {
+      sort, indexedRecords: '1000', totalRecords: '1000',
+      scan: { examinedRecords: '50', examinedBytes: '5000', cursorOrdinal: '850',
+        direction: 'backward', truncatedReason: 'record_limit' },
+    }));
+
+    test.opened('g2', 2, true, '1001');
+    const replay = test.last('GET_ROWS');
+    expect(replay.payload).toMatchObject({
+      limit: 100, sort, anchorOrdinal: '900', direction: 'backward',
+      scanBudget: { maxExaminedRecords: 50, maxExaminedBytes: '5000' },
+    });
+    expect(replay.payload).not.toHaveProperty('sortOffset');
+    expect(test.rows(replay, page(['850'], 'g2', {
+      sort, indexedRecords: '1001', totalRecords: '1001',
+      scan: { examinedRecords: '50', examinedBytes: '5000', cursorOrdinal: '850',
+        direction: 'backward', truncatedReason: 'record_limit' },
+    }))).toBe(true);
+    expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['850']);
+  });
+
+  it('keeps a sparse logical jump as matching rank through projection and append recovery in the real engine', async () => {
+    const records = Array.from({ length: 1000 }, (_, id) => ({
+      id: String(id).padStart(4, '0'), keep: id % 5 === 0 ? 'needle' : 'absent',
+    }));
+    await withEngineFixture(records, async ({ path, open }) => {
+      const engine = await open('g1');
+      const test = harness({ followMode: false, sortDirection: 'desc' });
+      test.boot();
+      test.controller.applyFilters([{ columnId: JSON.stringify(keyPath('keep').tokens), source: 'record',
+        path: keyPath('keep'), operator: 'eq', value: 'needle' }]);
+      test.controller.editPageInput('2');
+      test.controller.submitPageInput();
+      expect(test.last('GET_ROWS').payload.sortOffset).toBe('100');
+      test.controller.requestRows({ sortOffset: '100', scanBudget: { maxExaminedRecords: 506 } });
+      const original = test.last('GET_ROWS');
+      const firstPage = await engine.getRows({ ...original.payload, generation: original.generation });
+      // Independent matching-rank oracle: skip 100 matches while examining 506 source rows.
+      const expected = Array.from({ length: 506 }, (_, index) => 999 - index)
+        .filter((ordinal) => ordinal % 5 === 0).slice(100).map(String);
+      expect(expected).toEqual(['495']);
+      expect(firstPage.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      expect(firstPage.scan).toMatchObject({ examinedRecords: '506', cursorOrdinal: '494', truncatedReason: 'record_limit' });
+      expect(test.rows(original, firstPage)).toBe(true);
+      expect(test.controller.sortOffset).toBe('100');
+
+      const columns: ColumnSpec[] = [{ id: JSON.stringify(keyPath('id').tokens), label: 'ID', source: 'record', path: keyPath('id') }];
+      // This is the production Columns caller shape: no separate navigation metadata.
+      test.controller.requestRows({ ...test.controller.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+      const projection = test.last('GET_ROWS');
+      expect(projection.payload).toMatchObject({ sortOffset: '100',
+        scanBudget: { maxExaminedRecords: 506, maxExaminedBytes: firstPage.scan?.examinedBytes } });
+      expect(projection.payload.anchorOrdinal).toBeUndefined();
+      expect(projection.payload.direction).toBeUndefined();
+      const projectedPage = await engine.getRows({ ...projection.payload, generation: projection.generation });
+      expect(projectedPage.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      expect(test.rows(projection, projectedPage)).toBe(true);
+
+      test.deliver(wire('SOURCE_INVALIDATED', { reason: 'append' }, test.client.session));
+      await engine.dispose();
+      await appendFile(path, JSON.stringify({ id: '1000', keep: 'absent' }) + '\n');
+      const reopened = await open('g2');
+      test.opened('g2', 2, true, '1001');
+      const recovery = test.last('GET_ROWS');
+      expect(recovery.payload).toMatchObject({ sortOffset: '100',
+        scanBudget: { maxExaminedRecords: 506, maxExaminedBytes: firstPage.scan?.examinedBytes } });
+      expect(recovery.payload.anchorOrdinal).toBeUndefined();
+      expect(recovery.payload.direction).toBeUndefined();
+      const restoredPage = await reopened.getRows({ ...recovery.payload, generation: recovery.generation });
+      expect(restoredPage.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      expect(test.rows(original, firstPage)).toBe(false);
+      expect(test.rows(recovery, restoredPage)).toBe(true);
+      expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      expect(test.controller.sortOffset).toBe('100');
+    });
+  });
+
+  it.each([
+    { name: 'partial physical DESC page', count: 225, physical: true, anchor: '25', sparse: false, budget: undefined, offset: undefined },
+    { name: 'sparse bounded physical DESC page', count: 1000, physical: true, anchor: '900', sparse: true, budget: 50, offset: undefined },
+    { name: 'logical DESC page', count: 225, physical: false, anchor: undefined, sparse: false, budget: undefined, offset: '100' },
+  ])('preserves $name through Columns refresh and physical append recovery in the real engine', async (scenario) => {
+    const records = Array.from({ length: scenario.count }, (_, id) => ({
+      id: String(id).padStart(4, '0'), keep: id % 5 === 0 ? 'needle' : 'absent',
+    }));
+    await withEngineFixture(records, async ({ path, open }) => {
+      const engine = await open('g1');
+      const test = harness({ followMode: false, sortDirection: 'desc' });
+      test.boot();
+      if (scenario.sparse) test.controller.applyFilters([{ columnId: JSON.stringify(keyPath('keep').tokens), source: 'record',
+        path: keyPath('keep'), operator: 'eq', value: 'needle' }]);
+      test.controller.requestRows({
+        ...(scenario.anchor === undefined ? {} : { anchorOrdinal: scenario.anchor, direction: 'backward' }),
+        ...(scenario.offset === undefined ? {} : { sortOffset: scenario.offset }),
+        ...(scenario.budget === undefined ? {} : { scanBudget: { maxExaminedRecords: scenario.budget } }),
+      }, { navigation: scenario.physical ? 'physical' : 'logical' });
+      const original = test.last('GET_ROWS');
+      const firstPage = await engine.getRows({ ...original.payload, generation: original.generation });
+      const scanStart = scenario.anchor === undefined ? scenario.count - 1 : Number(scenario.anchor) - 1;
+      const examined = Array.from({ length: scenario.budget ?? scanStart + 1 }, (_, index) => scanStart - index)
+        .filter((ordinal) => ordinal >= 0 && (!scenario.sparse || ordinal % 5 === 0));
+      const expected = examined.slice(Number(scenario.offset ?? '0'), Number(scenario.offset ?? '0') + 100).map(String);
+      expect(firstPage.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      expect(test.rows(original, firstPage)).toBe(true);
+      const columns: ColumnSpec[] = [{ id: JSON.stringify(keyPath('id').tokens), label: 'ID', source: 'record', path: keyPath('id') }];
+      test.controller.requestRows({ ...test.controller.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+      const refresh = test.last('GET_ROWS');
+      if (scenario.physical) {
+        expect(refresh.payload).toMatchObject({ anchorOrdinal: scenario.anchor, direction: 'backward' });
+        expect(refresh.payload.sortOffset).toBeUndefined();
+      } else {
+        expect(refresh.payload.sortOffset).toBe(scenario.offset);
+        expect(refresh.payload.anchorOrdinal).toBeUndefined();
+        expect(refresh.payload.direction).toBeUndefined();
+      }
+      if (scenario.budget !== undefined) expect(refresh.payload.scanBudget).toMatchObject({
+        maxExaminedRecords: scenario.budget, maxExaminedBytes: firstPage.scan?.examinedBytes,
+      });
+      const refreshedPage = await engine.getRows({ ...refresh.payload, generation: refresh.generation });
+      expect(refreshedPage.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      expect(test.rows(refresh, refreshedPage)).toBe(true);
+      expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+      if (scenario.physical) {
+        test.deliver(wire('SOURCE_INVALIDATED', { reason: 'append' }, test.client.session));
+        await engine.dispose();
+        await appendFile(path, JSON.stringify({ id: String(scenario.count).padStart(4, '0'), keep: 'absent' }) + '\n');
+        const reopened = await open('g2');
+        test.opened('g2', 2, true, String(scenario.count + 1));
+        const recovery = test.last('GET_ROWS');
+        expect(recovery.payload).toMatchObject({ anchorOrdinal: scenario.anchor, direction: 'backward' });
+        expect(recovery.payload.sortOffset).toBeUndefined();
+        const restoredPage = await reopened.getRows({ ...recovery.payload, generation: recovery.generation });
+        expect(restoredPage.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+        expect(test.rows(recovery, restoredPage)).toBe(true);
+      }
+    });
+  });
+
+  it('renews each replay deadline without shrinking its original time-truncated range in the real engine', async () => {
+    const records = Array.from({ length: 20 }, (_, id) => ({ id: String(id).padStart(2, '0'), keep: 'needle' }));
+    await withEngineFixture(records, async ({ path, open }) => {
+      const engine = await open('g1');
+      let now = 1000;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const test = harness({ followMode: false, sortDirection: 'desc' });
+        test.boot();
+        test.controller.applyFilters([{ columnId: JSON.stringify(keyPath('keep').tokens), source: 'record',
+          path: keyPath('keep'), operator: 'eq', value: 'needle' }]);
+        test.controller.requestRows({ anchorOrdinal: '20', direction: 'backward' }, { navigation: 'physical' });
+        const original = test.last('GET_ROWS');
+        expect(original.payload.scanBudget).toEqual({ maxExaminedRecords: 100_000, maxExaminedBytes: '67108864', deadlineEpochMs: 6000 });
+        const first = await engine.getRows({ ...original.payload, generation: original.generation,
+          onHydrated: () => { now += 1000; } });
+        const expected = ['19', '18', '17', '16', '15'];
+        expect(now).toBe(6000);
+        expect(first.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+        expect(first.scan).toMatchObject({ examinedRecords: '5', truncatedReason: 'time_limit' });
+        expect(test.rows(original, first)).toBe(true);
+        const bytes = first.scan?.examinedBytes;
+        const columns: ColumnSpec[] = [{ id: JSON.stringify(keyPath('id').tokens), label: 'ID', source: 'record', path: keyPath('id') }];
+        const refresh = () => {
+          test.controller.requestRows({ ...test.controller.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+          return test.last('GET_ROWS');
+        };
+        now = 10_000;
+        const superseded = refresh();
+        expect(superseded.payload.scanBudget).toEqual({ maxExaminedRecords: 5, maxExaminedBytes: bytes, deadlineEpochMs: 15_000 });
+        now = 11_000;
+        const slow = refresh();
+        expect(slow.payload.scanBudget).toEqual({ maxExaminedRecords: 5, maxExaminedBytes: bytes, deadlineEpochMs: 16_000 });
+        const partial = await engine.getRows({ ...slow.payload, generation: slow.generation,
+          onHydrated: () => { now += 6000; } });
+        expect(now).toBe(17_000);
+        expect(partial.rows.map((item) => item.ref.ordinal)).toEqual(['19']);
+        expect(partial.scan).toMatchObject({ examinedRecords: '1', truncatedReason: 'time_limit' });
+        expect(test.rows(superseded, first)).toBe(false);
+        expect(test.rows(slow, partial)).toBe(true);
+        expect(test.controller.currentViewportOptions().scanWindow).toEqual({ records: 5, bytes });
+        now = 20_000;
+        const fast = refresh();
+        expect(fast.payload.scanBudget).toEqual({ maxExaminedRecords: 5, maxExaminedBytes: bytes, deadlineEpochMs: 25_000 });
+        const complete = await engine.getRows({ ...fast.payload, generation: fast.generation,
+          onHydrated: () => { now += 100; } });
+        expect(complete.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+        expect(complete.scan).toMatchObject({ examinedRecords: '5', truncatedReason: 'record_limit' });
+        expect(test.rows(fast, complete)).toBe(true);
+        test.deliver(wire('SOURCE_INVALIDATED', { reason: 'append' }, test.client.session));
+        await engine.dispose();
+        await appendFile(path, JSON.stringify({ id: '20', keep: 'absent' }) + '\n');
+        const reopened = await open('g2');
+        now = 30_000;
+        test.opened('g2', 2, true, '21');
+        const recovery = test.last('GET_ROWS');
+        expect(recovery.payload.scanBudget).toEqual({ maxExaminedRecords: 5, maxExaminedBytes: bytes, deadlineEpochMs: 35_000 });
+        const recovered = await reopened.getRows({ ...recovery.payload, generation: recovery.generation });
+        expect(recovered.rows.map((item) => item.ref.ordinal)).toEqual(expected);
+        expect(test.rows(recovery, recovered)).toBe(true);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+  });
+
+  it('renews a pending projection deadline while retaining its original record and byte caps', () => {
+    let now = 1000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const test = harness({ followMode: false, sortDirection: 'desc' });
+      test.boot();
+      test.controller.applyFilters([{ columnId: JSON.stringify(keyPath('keep').tokens), source: 'record',
+        path: keyPath('keep'), operator: 'eq', value: 'needle' }]);
+      // Generated budgets must be retained too, before the first response exists.
+      test.controller.requestRows({ sortOffset: '100' });
+      expect(test.controller.currentViewportOptions().scanBudget).toEqual({
+        maxExaminedRecords: 100_000, maxExaminedBytes: '67108864', deadlineEpochMs: 6000,
+      });
+      test.controller.requestRows({ sortOffset: '100', scanBudget: { maxExaminedRecords: 10, maxExaminedBytes: '240', deadlineEpochMs: 6000 } });
+      now = 10_000;
+      test.controller.requestRows(test.controller.currentViewportOptions(), { preserveOnRebuild: true });
+      expect(test.last('GET_ROWS').payload.scanBudget).toEqual({ maxExaminedRecords: 10, maxExaminedBytes: '240', deadlineEpochMs: 15_000 });
+      now = 20_000;
+      test.controller.requestRows(test.controller.currentViewportOptions(), { preserveOnRebuild: true });
+      expect(test.last('GET_ROWS').payload.scanBudget).toEqual({ maxExaminedRecords: 10, maxExaminedBytes: '240', deadlineEpochMs: 25_000 });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('keeps a zero-progress frozen window empty after its deadline expires in the real engine', async () => {
+    await withEngineFixture([{ id: 0 }, { id: 1 }], async ({ open }) => {
+      const engine = await open('g1');
+      let now = 1000;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const test = harness({ followMode: false, sortDirection: 'desc' });
+        test.boot();
+        test.controller.requestRows({ anchorOrdinal: '2', direction: 'backward', scanBudget: { deadlineEpochMs: now } }, { navigation: 'physical' });
+        const original = test.last('GET_ROWS');
+        const first = await engine.getRows({ ...original.payload, generation: original.generation });
+        expect(first.scan).toMatchObject({ examinedRecords: '0', truncatedReason: 'time_limit' });
+        expect(test.rows(original, first)).toBe(true);
+        for (const time of [10_000, 20_000]) {
+          now = time;
+          test.controller.requestRows(test.controller.currentViewportOptions(), { preserveOnRebuild: true });
+          const replay = test.last('GET_ROWS');
+          expect(replay.payload.scanBudget).toEqual({ deadlineEpochMs: time });
+          const next = await engine.getRows({ ...replay.payload, generation: replay.generation });
+          expect(next.rows).toEqual([]);
+          expect(next.scan).toMatchObject({ examinedRecords: '0', truncatedReason: 'time_limit' });
+          expect(test.rows(replay, next)).toBe(true);
+          expect(test.controller.currentViewportOptions().scanWindow).toEqual({ records: 0 });
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    });
+  });
+
+  it.each(['logical', 'physical'] as const)('keeps pending %s navigation when Columns refresh supersedes it', (navigation) => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ followMode: false, sortDirection: 'desc' });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['999', '900'], 'g1', { sort, sortOffset: '0' }));
+    const options = navigation === 'logical' ? { sortOffset: '200' }
+      : { anchorOrdinal: '25', direction: 'backward' as const, scanBudget: { maxExaminedRecords: 10 } };
+    test.controller.requestRows(options, { navigation });
+    const pending = test.last('GET_ROWS');
+    const columns: ColumnSpec[] = [{ id: JSON.stringify(keyPath('id').tokens), label: 'ID', source: 'record', path: keyPath('id') }];
+    test.controller.requestRows({ ...test.controller.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+    const projection = test.last('GET_ROWS');
+    expect(projection.payload).toEqual({ ...pending.payload, columns,
+      ...(navigation === 'physical' ? { scanBudget: { ...pending.payload.scanBudget, deadlineEpochMs: expect.any(Number) } } : {}) });
+    expect(test.rows(pending, page(['1'], 'g1', { sort }))).toBe(false);
   });
 
   it('removes a retired profile sort from a pending generation recovery', () => {
@@ -941,8 +1337,8 @@ describe('row query controller with real client and reducer', () => {
   });
 
   it('tracks partial sorted offsets, logical pages and history before reducer commits', () => {
-    const sort = { columnId: '__ordinal', direction: 'desc' as const };
-    const test = harness({ sortDirection: 'desc' });
+    const sort = { columnId: 'value', direction: 'desc' as const };
+    const test = harness({ sort });
     test.boot();
     test.delayCommits();
     test.rows(test.last('GET_ROWS'), page(['999', '998', '997'], 'g1', { sort, sortOffset: '0', sortNextOffset: '3' }));
@@ -1011,7 +1407,11 @@ describe('row query controller with real client and reducer', () => {
       .toEqual(['MESSAGE_RECEIVED', 'SET_SORT_DIRECTION', 'SET_SORT', 'REQUEST_SENT']);
     expect(test.controller.sortDirection).toBe('desc');
     expect(toPersistedState(test.state).sortDirection).toBe('desc');
-    expect(test.last('GET_ROWS').payload).toMatchObject({ sort: { columnId: '__ordinal', direction: 'desc' }, sortOffset: '0' });
+    expect(test.last('GET_ROWS').payload).toEqual({
+      limit: 100,
+      sort: { columnId: '__ordinal', direction: 'desc' },
+      sortOffset: '0',
+    });
   });
 
   it('keeps append reads available while row order and recovery stay behind the source barrier', () => {

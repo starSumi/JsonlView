@@ -1,4 +1,4 @@
-import type { RowSort } from '../../../shared/types';
+import type { RowScanBudget, RowSort } from '../../../shared/types';
 import {
   rowsOptionsAfterEmptyRebuild,
   rowsOptionsAfterOpened,
@@ -10,12 +10,24 @@ import {
 import { snapshotIdentityChanged, type AcceptedSnapshotIdentity } from '../../snapshot-identity';
 
 export interface RecoveryRowsOptions extends Readonly<RebuildRowsOptions> {
+  readonly navigation?: 'logical' | 'physical';
   readonly sort?: RowSort;
+  readonly scanBudget?: RowScanBudget;
+  /** Original examined range, independent of each replay's execution deadline. */
+  readonly scanWindow?: Readonly<{ records: number; bytes?: string }>;
+}
+
+export interface QueryWindowReplay {
+  readonly limit: number;
+  readonly options: RecoveryRowsOptions;
 }
 
 export interface QueryViewport extends AcceptedSnapshotIdentity {
   readonly query: string;
   readonly firstVisibleOrdinal?: string;
+  readonly windowFirstOrdinal?: string;
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly queryWindow?: QueryWindowReplay;
 }
 
 export interface PendingViewportIntent extends AcceptedSnapshotIdentity {
@@ -30,6 +42,9 @@ export interface RebuildViewportCapture extends AcceptedSnapshotIdentity {
   readonly query: string;
   readonly viewportQuery: string;
   readonly firstVisibleOrdinal?: string;
+  readonly windowFirstOrdinal?: string;
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly queryWindow?: QueryWindowReplay;
   readonly pageText: string;
   readonly options: RecoveryRowsOptions;
 }
@@ -44,6 +59,9 @@ export interface RestoreViewportIntent extends AcceptedSnapshotIdentity {
   readonly query: string;
   readonly requestId: string;
   readonly firstVisibleOrdinal?: string;
+  readonly windowFirstOrdinal?: string;
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly queryWindow?: QueryWindowReplay;
   readonly pageText: string;
   readonly phase: RestoreViewportPhase;
   readonly requestedOptions?: RecoveryRowsOptions;
@@ -53,7 +71,24 @@ function copyOptions(options: RecoveryRowsOptions): RecoveryRowsOptions {
   return {
     ...options,
     ...(options.sort === undefined ? {} : { sort: { ...options.sort } }),
+    ...(options.scanBudget === undefined ? {} : { scanBudget: { ...options.scanBudget } }),
+    ...(options.scanWindow === undefined ? {} : { scanWindow: { ...options.scanWindow } }),
   };
+}
+
+function copyQueryWindow(window: QueryWindowReplay | undefined): QueryWindowReplay | undefined {
+  return window === undefined ? undefined : {
+    ...window,
+    options: copyOptions(window.options),
+  };
+}
+
+function windowReplayOptions(
+  window: QueryWindowReplay | undefined,
+  pageSize: number | undefined,
+): RecoveryRowsOptions | undefined {
+  if (window === undefined || (pageSize !== undefined && window.limit !== pageSize)) return undefined;
+  return copyOptions(window.options);
 }
 
 /** Capture before cancellation; a pending explicit page-one intent remains {}. */
@@ -80,19 +115,32 @@ export function captureRebuild(input: {
   const firstVisibleOrdinal = queryMatchesViewport
     ? savedBelongsToSession ? saved.firstVisibleOrdinal : input.renderedFirstOrdinal
     : undefined;
+  const windowFirstOrdinal = queryMatchesViewport
+    ? savedBelongsToSession ? saved.windowFirstOrdinal : input.renderedFirstOrdinal
+    : undefined;
   const pageText = queryMatchesViewport ? input.pageText : '1';
+  const queryWindow = queryMatchesViewport && savedBelongsToSession
+    ? copyQueryWindow(saved.queryWindow) : undefined;
+  const replayOptions = windowReplayOptions(queryWindow, input.pageSize);
   return {
     ...input.session,
     query: input.query,
     viewportQuery,
     ...(firstVisibleOrdinal === undefined ? {} : { firstVisibleOrdinal }),
+    ...(windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal }),
+    ...(saved?.sortDirection === undefined ? {} : { sortDirection: saved.sortDirection }),
+    ...(queryWindow === undefined ? {} : { queryWindow }),
     pageText,
-    options: copyOptions(rowsOptionsForViewport(
-      firstVisibleOrdinal,
+    options: copyOptions(input.followMode ? rowsOptionsForViewport(
+      windowFirstOrdinal ?? firstVisibleOrdinal, pageText, input.pageSize, true, undefined,
+      saved?.sortDirection ?? 'asc')
+      : pendingMatchesSession ? pending.options : replayOptions ?? rowsOptionsForViewport(
+      windowFirstOrdinal ?? firstVisibleOrdinal,
       pageText,
       input.pageSize,
       input.followMode,
-      pendingMatchesSession ? pending.options : undefined,
+      undefined,
+      saved?.sortDirection ?? 'asc',
     )),
   };
 }
@@ -115,6 +163,7 @@ export function planOpened(input: {
   readonly query: string;
   readonly followMode: boolean;
   readonly pageText: string;
+  readonly pageSize?: number;
   readonly viewport?: QueryViewport | undefined;
   readonly pending?: PendingViewportIntent | undefined;
   readonly rebuild?: RebuildViewportIntent | undefined;
@@ -142,7 +191,9 @@ export function planOpened(input: {
   const resumeRows = replacesSnapshot && !input.followMode
     ? queryMatchesViewport
       ? pendingRebuild?.options ?? manualRebuild?.options
-        ?? rowsOptionsAfterRebuild(saved?.firstVisibleOrdinal, false)
+        ?? windowReplayOptions(saved?.queryWindow, input.pageSize)
+        ?? rowsOptionsAfterRebuild(saved?.windowFirstOrdinal ?? saved?.firstVisibleOrdinal,
+          false, saved?.sortDirection ?? 'asc')
       : {}
     : undefined;
   const candidateQuery = pendingRebuild?.query ?? manualRebuild?.query ?? saved?.query;
@@ -151,9 +202,14 @@ export function planOpened(input: {
     input.firstOpenedSession ? undefined : prior,
     input.opened,
     input.followMode,
-  ) ?? rowsOptionsAfterRebuild(prior === undefined ? undefined : saved?.firstVisibleOrdinal, input.followMode);
+  ) ?? rowsOptionsAfterRebuild(prior === undefined ? undefined : saved?.windowFirstOrdinal ?? saved?.firstVisibleOrdinal,
+    input.followMode, saved?.sortDirection ?? 'asc');
   const firstVisibleOrdinal = manualRebuild?.firstVisibleOrdinal
     ?? (queryMatchesViewport ? saved?.firstVisibleOrdinal : undefined);
+  const windowFirstOrdinal = manualRebuild?.windowFirstOrdinal
+    ?? (queryMatchesViewport ? saved?.windowFirstOrdinal : undefined);
+  const queryWindow = manualRebuild?.queryWindow
+    ?? (queryMatchesViewport ? copyQueryWindow(saved?.queryWindow) : undefined);
   const pageText = manualRebuild?.pageText ?? (queryMatchesViewport ? input.pageText : '1');
   return {
     kind: 'restore',
@@ -165,6 +221,9 @@ export function planOpened(input: {
         ...input.opened,
         query: query ?? input.query,
         ...(firstVisibleOrdinal === undefined ? {} : { firstVisibleOrdinal }),
+        ...(windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal }),
+        ...(saved?.sortDirection === undefined ? {} : { sortDirection: saved.sortDirection }),
+        ...(queryWindow === undefined ? {} : { queryWindow }),
         pageText,
         requestId: '',
         phase: 'initial' as const,
@@ -211,6 +270,10 @@ export function planEmptyRestore(input: {
     || snapshotIdentityChanged(restore, input.session) || restore.phase === 'retrying') {
     return { kind: 'stop' };
   }
+  // An incomplete physical scan is not evidence that the requested window is empty.
+  if (input.scanTruncated && requested?.sort !== undefined
+    && (requested.sort.columnId === '__ordinal' || requested.sort.columnId === '$ordinal')
+    && requested.sortOffset === undefined) return { kind: 'stop' };
   // Partial index progress is not a source-size or matched-count authority.
   if (!input.indexingComplete && input.totalRecords === undefined) {
     return { kind: 'wait-index', restore: { ...restore, phase: 'waiting-index',

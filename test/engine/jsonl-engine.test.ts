@@ -837,6 +837,112 @@ describe('JsonlFileEngine querying and pagination', () => {
     expect(older.hasAfter).toBe(true);
   });
 
+  it('walks descending physical windows forward and back without gaps or duplicates', async () => {
+    const source = Array.from({ length: 225 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 31, segmentTargetRecords: 17 });
+    const sort: RowSort = { columnId: '__ordinal', direction: 'desc' };
+    const ordinals = (page: Awaited<ReturnType<typeof engine.getRows>>) =>
+      page.rows.map((row) => BigInt(row.ref.ordinal));
+    const descending = Array.from({ length: 225 }, (_, index) => BigInt(224 - index));
+
+    const first = await engine.getRows({ direction: 'backward', limit: 100, sort });
+    const second = await engine.getRows({
+      anchorOrdinal: first.rows.at(-1)!.ref.ordinal,
+      direction: 'backward',
+      limit: 100,
+      sort,
+    });
+    const partial = await engine.getRows({
+      anchorOrdinal: second.rows.at(-1)!.ref.ordinal,
+      direction: 'backward',
+      limit: 100,
+      sort,
+    });
+
+    expect([...ordinals(first), ...ordinals(second), ...ordinals(partial)]).toEqual(descending);
+    expect([first.rows.length, second.rows.length, partial.rows.length]).toEqual([100, 100, 25]);
+    expect(first).toMatchObject({ hasBefore: false, hasAfter: true });
+    expect(second).toMatchObject({ hasBefore: true, hasAfter: true });
+    expect(partial).toMatchObject({ hasBefore: true, hasAfter: false });
+
+    const backToSecond = await engine.getRows({
+      anchorOrdinal: partial.rows[0]!.ref.ordinal,
+      direction: 'forward',
+      limit: 100,
+      sort,
+    });
+    const backToFirst = await engine.getRows({
+      anchorOrdinal: backToSecond.rows[0]!.ref.ordinal,
+      direction: 'forward',
+      limit: 100,
+      sort,
+    });
+    expect(ordinals(backToSecond)).toEqual(ordinals(second));
+    expect(ordinals(backToFirst)).toEqual(ordinals(first));
+  });
+
+  it('continues bounded descending scans and stops a zero-progress cursor', async () => {
+    const source = Array.from({ length: 8 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source);
+    const sort: RowSort = { columnId: '__ordinal', direction: 'desc' };
+    const predicate: Predicate = { op: 'compare', path: keyPath('id'), cmp: 'eq', value: 0 };
+    const budget = { maxExaminedRecords: 3, maxExaminedBytes: 1_024n };
+
+    const first = await engine.getRows({ direction: 'backward', limit: 2, sort, predicate, scanBudget: budget });
+    expect(first.rows).toEqual([]);
+    expect(first.scan).toMatchObject({ cursorOrdinal: '5', direction: 'backward', truncatedReason: 'record_limit' });
+    expect(first.hasAfter).toBe(true);
+    const second = await engine.getRows({
+      anchorOrdinal: first.scan!.cursorOrdinal!,
+      direction: 'backward',
+      limit: 2,
+      sort,
+      predicate,
+      scanBudget: budget,
+    });
+    expect(second.rows).toEqual([]);
+    expect(second.scan).toMatchObject({ cursorOrdinal: '2', direction: 'backward', truncatedReason: 'record_limit' });
+    expect(second.hasAfter).toBe(true);
+    const third = await engine.getRows({
+      anchorOrdinal: second.scan!.cursorOrdinal!,
+      direction: 'backward',
+      limit: 2,
+      sort,
+      predicate,
+      scanBudget: budget,
+    });
+    expect(third.rows.map((row) => row.ref.ordinal)).toEqual(['0']);
+    expect(third.hasAfter).toBe(false);
+
+    const expired = await engine.getRows({
+      anchorOrdinal: '5',
+      direction: 'backward',
+      limit: 2,
+      sort,
+      scanBudget: { deadlineEpochMs: Date.now() - 1 },
+    });
+    expect(expired.rows).toEqual([]);
+    expect(expired.scan).toMatchObject({ examinedRecords: '0', direction: 'backward', truncatedReason: 'time_limit' });
+    expect(expired.hasAfter).toBe(false);
+  });
+
+  it('rejects ambiguous physical and logical sort cursors', async () => {
+    const { engine } = await fixture('{\"id\":0}\n{\"id\":1}');
+    await expect(engine.getRows({
+      anchorOrdinal: '1',
+      direction: 'backward',
+      limit: 1,
+      sort: { columnId: '__ordinal', direction: 'desc' },
+      sortOffset: '0',
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    await expect(engine.getRows({
+      anchorOrdinal: '1',
+      direction: 'backward',
+      limit: 1,
+      sort: { columnId: JSON.stringify([{ kind: 'key', value: 'id' }]), direction: 'desc' },
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+  });
+
   it('rejects stale generations and already-cancelled work', async () => {
     const { engine } = await fixture('{"a":1}');
     await expect(engine.getRows({ generation: 'stale' })).rejects.toMatchObject({

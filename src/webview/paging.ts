@@ -12,6 +12,8 @@ export interface ViewportIdentity {
   generation: string;
   epoch?: number;
   firstVisibleOrdinal?: string;
+  windowFirstOrdinal?: string;
+  sortDirection?: 'asc' | 'desc';
 }
 
 export interface PreviousSortOffset {
@@ -189,8 +191,14 @@ export function anchorBeforeOrdinal(ordinal: string | undefined): string | undef
 export function rowsOptionsAfterRebuild(
   firstVisibleOrdinal: string | undefined,
   followMode: boolean,
+  direction: 'asc' | 'desc' = 'asc',
 ): RebuildRowsOptions {
   if (followMode) return { direction: 'backward' };
+  if (direction === 'desc') {
+    if (firstVisibleOrdinal === undefined) return { direction: 'backward' };
+    try { return { anchorOrdinal: (BigInt(firstVisibleOrdinal) + 1n).toString(), direction: 'backward' }; }
+    catch { return { direction: 'backward' }; }
+  }
   const anchorOrdinal = anchorBeforeOrdinal(firstVisibleOrdinal);
   return anchorOrdinal === undefined
     ? {}
@@ -209,6 +217,7 @@ export function rowsOptionsForViewport(
   pageSize: number,
   followMode: boolean,
   pendingOptions: RebuildRowsOptions | undefined = undefined,
+  direction: 'asc' | 'desc' = 'asc',
 ): RebuildRowsOptions {
   if (followMode) return { direction: 'backward' };
   // A direct page request can still be in flight when the source changes. Its
@@ -217,9 +226,9 @@ export function rowsOptionsForViewport(
   if (pendingOptions !== undefined) {
     return { ...pendingOptions };
   }
-  const byOrdinal = rowsOptionsAfterRebuild(firstVisibleOrdinal, false);
+  const byOrdinal = rowsOptionsAfterRebuild(firstVisibleOrdinal, false, direction);
   if (byOrdinal.anchorOrdinal !== undefined) return byOrdinal;
-  const pageAnchor = anchorForPage(pageText ?? '1', pageSize);
+  const pageAnchor = direction === 'desc' ? undefined : anchorForPage(pageText ?? '1', pageSize);
   return pageAnchor === undefined
     ? byOrdinal
     : { anchorOrdinal: pageAnchor, direction: 'forward' };
@@ -325,5 +334,6 @@ export function rowsOptionsAfterOpened(
     && opened.epoch !== undefined
     && viewport.epoch !== opened.epoch;
   if (viewport.generation === opened.generation && !epochChanged) return undefined;
-  return rowsOptionsAfterRebuild(viewport.firstVisibleOrdinal, followMode);
+  return rowsOptionsAfterRebuild(viewport.windowFirstOrdinal ?? viewport.firstVisibleOrdinal,
+    followMode, viewport.sortDirection ?? 'asc');
 }

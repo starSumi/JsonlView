@@ -129,6 +129,19 @@ describe('webview message validation', () => {
       sort: { columnId: 'status', direction: 'asc' },
       anchorOrdinal: '10',
     })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: '__ordinal', direction: 'desc' },
+      anchorOrdinal: '10',
+      direction: 'backward',
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: '__ordinal', direction: 'desc' },
+      sortOffset: '0',
+      anchorOrdinal: '10',
+      direction: 'backward',
+    })).ok).toBe(false);
   });
 
   it('accepts profile text and presence predicates', () => {
