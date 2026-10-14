@@ -1,9 +1,11 @@
 import type {
+  AnalysisIntentV1,
   ColumnSpec,
   DocumentSummary,
   ExtensionMessage,
   FieldStats,
   InsightDimension,
+  InsightScope,
   InsightSummary,
   ProblemRef,
   ProblemPage,
@@ -15,6 +17,7 @@ import type {
   RowSort,
   SortDirection,
 } from '../shared/types';
+import { analysisIntentEquals } from '../shared/analysis-intent';
 import { normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage } from './paging';
 import { DEFAULT_DETAIL_WIDTH } from './split-pane';
 import { snapshotIdentityChanged } from './snapshot-identity';
@@ -65,6 +68,11 @@ export interface WorkspaceState {
   schemaComplete: boolean;
   insights?: InsightSummary | undefined;
   insightDimension: InsightDimension;
+  insightScope: InsightScope;
+  analysisIntentRevision: number;
+  analysisIntent?: AnalysisIntentV1 | undefined;
+  /** Stops automatic retries of these conditions; explicit Refresh may retry. */
+  failedAnalysisIntent?: AnalysisIntentV1 | undefined;
   activeTab: WorkspaceTab;
   detailTab: DetailTab;
   detailWidth: number;
@@ -134,6 +142,7 @@ export interface PersistedWorkspaceState {
   sortPage?: string;
   followMode?: boolean;
   insightDimension?: InsightDimension;
+  insightScope?: InsightScope;
   columnVisibility?: Record<string, boolean>;
   columnWidths?: Record<string, number>;
   columnOrder?: string[];
@@ -146,6 +155,8 @@ export type WorkspaceAction =
   | { type: 'MESSAGE_RECEIVED'; message: ExtensionMessage }
   | { type: 'SET_ACTIVE_TAB'; tab: WorkspaceTab }
   | { type: 'SET_INSIGHT_DIMENSION'; dimension: InsightDimension }
+  | { type: 'SET_INSIGHT_SCOPE'; scope: InsightScope }
+  | { type: 'SET_ANALYSIS_INTENT'; intent: AnalysisIntentV1 }
   | { type: 'SET_DETAIL_TAB'; tab: DetailTab }
   | { type: 'SET_DETAIL_WIDTH'; width: number }
   | { type: 'SET_QUERY'; query: string }
@@ -184,6 +195,8 @@ export function createInitialState(restored?: PersistedWorkspaceState, pageSize 
     schemaTotal: 0,
     schemaComplete: false,
     insightDimension: restored?.insightDimension ?? 'eventKind',
+    insightScope: restored?.insightScope ?? 'current-view',
+    analysisIntentRevision: 0,
     activeTab: restored?.activeTab ?? 'table',
     detailTab: restored?.detailTab ?? 'tree',
     detailWidth: restored?.detailWidth ?? DEFAULT_DETAIL_WIDTH,
@@ -356,6 +369,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
   switch (message.type) {
     case 'OPENED': {
       const snapshotChanged = snapshotIdentityChanged(state.summary?.snapshot, message.payload.snapshot);
+      const analysisChanged = snapshotChanged || state.summary?.snapshot.epoch !== message.payload.snapshot.epoch
+        || state.summary?.profileId !== message.payload.profileId
+        || state.summary?.profileVersion !== message.payload.profileVersion;
       // Only an accepted new snapshot can clear the stale-source barrier.
       // Repeated OPENED broadcasts must not hide destructive invalidation.
       if (state.invalidationReason !== undefined && !snapshotChanged) return { ...state, pending };
@@ -448,7 +464,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         schema: snapshotChanged ? [] : state.schema,
         schemaTotal: snapshotChanged ? 0 : state.schemaTotal,
         schemaComplete: snapshotChanged ? false : state.schemaComplete,
-        insights: snapshotChanged ? undefined : state.insights,
+        insights: analysisChanged ? undefined : state.insights,
+        analysisIntent: analysisChanged ? undefined : state.analysisIntent,
+        analysisIntentRevision: analysisChanged ? state.analysisIntentRevision + 1 : state.analysisIntentRevision,
         pending: snapshotChanged ? {} : pending,
         invalidationReason: undefined,
         blockedDetailOrdinal: undefined,
@@ -598,15 +616,26 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     case 'INSIGHTS':
       if (!canReadSnapshot(state.invalidationReason)) return { ...state, pending };
+      if (state.pending.profile !== undefined) return { ...state, pending };
+      if (state.analysisIntent === undefined || !analysisIntentEquals(state.analysisIntent, message.payload.intent)) {
+        return { ...state, pending };
+      }
       return {
         ...state,
         insights: message.payload,
-        insightDimension: message.payload.dimension,
+        failedAnalysisIntent: undefined,
+        insightDimension: message.payload.intent.dimension,
+        insightScope: message.payload.intent.scope,
         pending,
         error: undefined,
       };
-    case 'INDEX_PROGRESS':
+    case 'INDEX_PROGRESS': {
       if (state.invalidationReason !== undefined) return { ...state, pending };
+      const analysisChanged = state.summary !== undefined
+        && (snapshotIdentityChanged(state.summary.snapshot, message.payload.snapshot)
+          || state.summary.snapshot.epoch !== message.payload.snapshot.epoch
+          || state.summary.profileId !== message.payload.profileId
+          || state.summary.profileVersion !== message.payload.profileVersion);
       return {
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
@@ -615,8 +644,12 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           ? message.payload.indexedRecords : state.latestSeq,
         unseenActivity: BigInt(message.payload.indexedRecords) > BigInt(state.seenSeq)
           || state.unseenActivity,
+        insights: analysisChanged ? undefined : state.insights,
+        analysisIntent: analysisChanged ? undefined : state.analysisIntent,
+        analysisIntentRevision: analysisChanged ? state.analysisIntentRevision + 1 : state.analysisIntentRevision,
         pending,
       };
+    }
     case 'PROFILE_CHANGED': {
       if (state.invalidationReason !== undefined) return { ...state, pending };
       const columns = columnsAfterProfileChange(state.columns, message.payload.columns, state.columnVisibility);
@@ -635,7 +668,11 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         columns,
         columnVisibility: reconcileVisibility(columns, state.columnVisibility),
         columnOrder: reconcileColumnOrder(columns, state.columnOrder),
-        summary: state.summary ? { ...state.summary, profileId: message.payload.profileId } : state.summary,
+        summary: state.summary ? {
+          ...state.summary,
+          profileId: message.payload.profileId,
+          profileVersion: message.payload.profileVersion,
+        } : state.summary,
         sort: profileQuery.sort,
         filter: filters[0],
         filters,
@@ -648,6 +685,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending,
         detail: undefined,
         insights: undefined,
+        analysisIntent: undefined,
+        analysisIntentRevision: state.analysisIntentRevision + 1,
       };
     }
     case 'ROW_ORDER_CHANGED':
@@ -666,7 +705,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         pending: reason === 'append' ? pending : {},
       };
     }
-    case 'ERROR':
+    case 'ERROR': {
+      const failedAnalysisIntent = state.pending.insights?.id === message.requestId
+        ? state.analysisIntent : state.failedAnalysisIntent;
       if (message.payload.code === 'SOURCE_UPDATING') {
         // A moving writer is a recoverable lifecycle hint, not a snapshot
         // barrier. Keep the old rows/detail mounted and let the host publish a
@@ -678,6 +719,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           // retry for the selected detail. The banner intentionally filters
           // this product-owned code; rows and drawer remain mounted.
           error: message.payload,
+          failedAnalysisIntent,
           pending,
         };
       }
@@ -692,6 +734,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           rebuildSelection: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildSelection,
           detailStale: state.pending.rebuild?.id === message.requestId ? false : state.detailStale,
           error: message.payload,
+          failedAnalysisIntent,
           pending,
         };
       }
@@ -702,8 +745,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         rebuildSelection: state.pending.rebuild?.id === message.requestId ? undefined : state.rebuildSelection,
         detailStale: state.pending.rebuild?.id === message.requestId ? false : state.detailStale,
         error: message.payload,
+        failedAnalysisIntent,
         pending,
       };
+    }
   }
 }
 
@@ -749,6 +794,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           rebuildDetail: rebuildSelection !== undefined && state.detail !== undefined ? rebuildSelection : undefined,
         } : {}),
         ...(action.request.kind === 'detail' ? { detailOpen: true } : {}),
+        ...(action.request.kind === 'profile' ? {
+          insights: undefined, analysisIntent: undefined, analysisIntentRevision: state.analysisIntentRevision + 1,
+        } : {}),
       };
     }
     case 'REQUEST_FINISHED':
@@ -769,21 +817,32 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.tab };
     case 'SET_INSIGHT_DIMENSION':
-      return { ...state, insightDimension: action.dimension, insights: undefined };
+      return { ...state, insightDimension: action.dimension, insights: undefined, analysisIntent: undefined,
+        analysisIntentRevision: state.analysisIntentRevision + 1 };
+    case 'SET_INSIGHT_SCOPE':
+      return { ...state, insightScope: action.scope, insights: undefined, analysisIntent: undefined,
+        analysisIntentRevision: state.analysisIntentRevision + 1 };
+    case 'SET_ANALYSIS_INTENT':
+      if (state.pending.profile !== undefined || action.intent.intentRevision <= state.analysisIntentRevision) return state;
+      return { ...state, analysisIntent: action.intent, analysisIntentRevision: action.intent.intentRevision };
     case 'SET_DETAIL_TAB':
       return { ...state, detailTab: action.tab };
     case 'SET_DETAIL_WIDTH':
       return { ...state, detailWidth: action.width };
     case 'SET_QUERY':
-      return { ...state, query: action.query, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
+      return { ...state, query: action.query, sortOffset: '0', sortOffsetHistory: [], sortPage: '1',
+        insights: undefined, analysisIntent: undefined, analysisIntentRevision: state.analysisIntentRevision + 1 };
     case 'SET_FILTER':
       return { ...state, filter: action.filter, filters: action.filter === undefined ? [] : [action.filter],
-        sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
+        sortOffset: '0', sortOffsetHistory: [], sortPage: '1', insights: undefined, analysisIntent: undefined,
+        analysisIntentRevision: state.analysisIntentRevision + 1 };
     case 'SET_FILTERS':
       return { ...state, filter: action.filters[0], filters: [...action.filters],
-        sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
+        sortOffset: '0', sortOffsetHistory: [], sortPage: '1', insights: undefined, analysisIntent: undefined,
+        analysisIntentRevision: state.analysisIntentRevision + 1 };
     case 'SET_ROW_TYPES':
-      return { ...state, rowTypes: action.rowTypes, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
+      return { ...state, rowTypes: action.rowTypes, sortOffset: '0', sortOffsetHistory: [], sortPage: '1',
+        insights: undefined, analysisIntent: undefined, analysisIntentRevision: state.analysisIntentRevision + 1 };
     case 'SET_SORT':
       return { ...state, sort: action.sort, sortOffset: '0', sortOffsetHistory: [], sortPage: '1' };
     case 'SET_SORT_DIRECTION':
@@ -924,6 +983,7 @@ export function toPersistedState(state: WorkspaceState): PersistedWorkspaceState
     sortPage: state.sortPage,
     followMode: state.followMode,
     insightDimension: state.insightDimension,
+    insightScope: state.insightScope,
     columnVisibility: state.columnVisibility,
     columnWidths: state.columnWidths,
     columnOrder: state.columnOrder,

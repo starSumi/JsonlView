@@ -71,6 +71,10 @@ export class AgentProfileRegistry {
     return [...this.profiles.values()];
   }
 
+  public version(profileId: string): string {
+    return this.requireProfile(profileId).version;
+  }
+
   public detect(samples: readonly GenericRecordSample[]): ProfileDetectionDecision {
     const boundedSamples = samples.slice(0, this.maxDetectionSamples);
     const detections = [...this.profiles.values()]

@@ -21,6 +21,7 @@ function summary(): DocumentSummary {
       observedAt: '2026-01-01T00:00:00.000Z',
     },
     profileId: 'generic',
+    profileVersion: '1',
     profileSuggestions: [],
     indexedBytes: '0',
     indexedRecords: '0',
@@ -31,7 +32,7 @@ function summary(): DocumentSummary {
 }
 
 function fakeSession(profileColumns: readonly ColumnSpec[] = []): JsonlSessionPort {
-  const value = summary();
+  let value = summary();
   return {
     getSummary: () => value,
     getProfileColumns: () => profileColumns,
@@ -61,8 +62,9 @@ function fakeSession(profileColumns: readonly ColumnSpec[] = []): JsonlSessionPo
       problems: [],
     }),
     getSchema: async () => ({ fields: [], totalFields: 0, complete: true }),
-    getInsights: async (dimension) => ({
-      dimension,
+    getInsights: async (intent) => ({
+      intent,
+      provenance: { scope: intent.scope, predicateApplied: intent.predicate !== undefined, coverage: 'complete' },
       categories: [],
       timeBuckets: [],
       processedRecords: '0',
@@ -72,7 +74,7 @@ function fakeSession(profileColumns: readonly ColumnSpec[] = []): JsonlSessionPo
       capacityReached: false,
       bucketWidthMs: 300_000,
     }),
-    setProfile: async (profileId) => ({ ...value, profileId }),
+    setProfile: async (profileId) => { value = { ...value, profileId }; return value; },
     setFollowMode: async () => value,
     rebuild: async () => value,
   };
@@ -347,12 +349,58 @@ describe('document controller', () => {
       },
     });
 
-    await controller.handleMessage(request('GET_INSIGHTS', { dimension: 'eventKind' }));
+    await controller.handleMessage(request('GET_INSIGHTS', { intent: {
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: 'document', generation: 'generation' },
+      profile: { id: 'generic', version: '1' },
+    } }));
 
     expect(messages[0]).toMatchObject({
       type: 'INSIGHTS',
-      payload: { dimension: 'eventKind', processedRecords: '0', examinedRecords: '0' },
+      payload: { intent: { dimension: 'eventKind' }, processedRecords: '0', examinedRecords: '0' },
     });
+  });
+
+  it.each([
+    { document: { documentId: 'document', generation: 'generation', sourceEpoch: 2 } },
+    { profile: { id: 'generic', version: 'retired' } },
+  ])('rejects an Insights source or adapter identity mismatch before scanning', async (identity) => {
+    const messages: ExtensionMessage[] = [];
+    let scans = 0;
+    const session = fakeSession();
+    const controller = new DocumentController({ ...session, getInsights: async (intent, signal) => {
+      scans += 1;
+      return session.getInsights(intent, signal);
+    } }, { postMessage: async (message) => { messages.push(message); return true; } });
+
+    await controller.handleMessage(request('GET_INSIGHTS', { intent: {
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: 'document', generation: 'generation' },
+      profile: { id: 'generic', version: '1' }, ...identity,
+    } }));
+
+    expect(scans).toBe(0);
+    expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'STALE_ANALYSIS_INTENT' } });
+  });
+
+  it('does not post a completed old Insights result after the selected adapter changes', async () => {
+    const messages: ExtensionMessage[] = [];
+    let selected = summary();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const session = fakeSession();
+    const controller = new DocumentController({ ...session, getSummary: () => selected,
+      getInsights: async (intent, signal) => { await paused; return session.getInsights(intent, signal); },
+    }, { postMessage: async (message) => { messages.push(message); return true; } });
+    const pending = controller.handleMessage(request('GET_INSIGHTS', { intent: {
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: 'document', generation: 'generation' },
+      profile: { id: 'generic', version: '1' },
+    } }));
+    selected = { ...selected, profileId: 'codex', profileVersion: '2' };
+    release?.();
+    await pending;
+    expect(messages).toEqual([]);
   });
 
   it('routes bounded problem scans without using the visible row page', async () => {
@@ -403,6 +451,50 @@ describe('document controller', () => {
       requestId: '',
       payload: { profileId: 'claude-code-session' },
     });
+  });
+
+  it('drops a superseded profile summary after its PROFILE_CHANGED delivery resumes', async () => {
+    let selected = summary();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController({ ...fakeSession(), getSummary: () => selected,
+      setProfile: async (profileId) => { selected = { ...selected, profileId }; return selected; },
+    }, { postMessage: async (message) => {
+      messages.push(message);
+      if (message.type === 'PROFILE_CHANGED' && message.payload.profileId === 'first') await paused;
+      return true;
+    } });
+    const first = controller.handleMessage(request('SET_PROFILE', { profileId: 'first' }, 'profile-first'));
+    await Promise.resolve();
+    await controller.handleMessage(request('SET_PROFILE', { profileId: 'second' }, 'profile-second'));
+    release?.();
+    await first;
+    expect(messages.filter((message) => message.type === 'INDEX_PROGRESS')
+      .map((message) => message.payload.profileId)).toEqual(['second']);
+  });
+
+  it('does not publish an aborted SET_PROFILE even when the returned profile identity still matches', async () => {
+    let selected = summary();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const messages: ExtensionMessage[] = [];
+    let calls = 0;
+    const controller = new DocumentController({ ...fakeSession(), getSummary: () => selected,
+      setProfile: async (profileId) => {
+        selected = { ...selected, profileId };
+        const updated = selected;
+        if (++calls === 1) await paused;
+        return updated;
+      },
+    }, { postMessage: async (message) => { messages.push(message); return true; } });
+    const first = controller.handleMessage(request('SET_PROFILE', { profileId: 'same' }, 'profile-first'));
+    await controller.handleMessage(request('SET_PROFILE', { profileId: 'same' }, 'profile-second'));
+    release?.();
+    await first;
+    expect(messages.filter((message) => message.type === 'PROFILE_CHANGED')
+      .map((message) => message.requestId)).toEqual(['profile-second']);
+    expect(messages.filter((message) => message.type === 'INDEX_PROGRESS')).toHaveLength(1);
   });
 
   it('drops a read response when a rebuild advances the generation while it is pending', async () => {

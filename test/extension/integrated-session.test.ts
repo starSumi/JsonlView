@@ -10,6 +10,7 @@ import type { FollowRecoveryIdentity } from '../../src/extension/follow-recovery
 import { DocumentController } from '../../src/extension/document-controller';
 import { PROTOCOL_VERSION, type ExtensionMessage } from '../../src/shared/types';
 import { keyPath, MAX_TABLE_COLUMNS, type ColumnSpec, type Predicate, type RowSort } from '../../src/shared/types';
+import { compileQueryCondition } from '../../src/webview/features/record-query/query-condition';
 import {
   otelFixture,
   softwareEngineeringAgentFixture,
@@ -365,8 +366,14 @@ describe('IntegratedJsonlSession', () => {
 
   it('computes bounded insights only when explicitly requested', async () => {
     const { session } = await openFixture(codexRecords);
+    const summary = session.getSummary();
 
-    const insights = await session.getInsights('eventKind', undefined, new AbortController().signal);
+    const insights = await session.getInsights({
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: summary.snapshot.documentId, generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }) },
+      profile: { id: summary.profileId, version: summary.profileVersion! },
+    }, new AbortController().signal);
 
     expect(insights.processedRecords).toBe('4');
     expect(insights.examinedRecords).toBe('4');
@@ -380,6 +387,38 @@ describe('IntegratedJsonlSession', () => {
     expect(insights.truncated).toBe(false);
   });
 
+  it('uses the same text, multiple field conditions and row types for Table and current-view Insights', async () => {
+    const { session } = await openFixture(codexRecords);
+    const summary = session.getSummary();
+    const path = keyPath('payload', 'role');
+    const predicate = compileQueryCondition({ query: 'hello',
+      filters: [
+        { columnId: 'actor', source: 'profile', operator: 'eq', value: 'assistant' },
+        { columnId: JSON.stringify(path.tokens), source: 'record', path, operator: 'eq', value: 'assistant' },
+      ],
+      rowTypes: { column: { id: 'eventKind', label: 'Event', source: 'profile' }, values: ['message', 'tool_call'] },
+      filterColumns: session.getProfileColumns(),
+    });
+    const rows = await session.getRows({ limit: 100, ...(predicate === undefined ? {} : { predicate }) },
+      new AbortController().signal);
+    const base = { version: 1 as const, intentRevision: 1, dimension: 'eventKind' as const,
+      document: { documentId: summary.snapshot.documentId, generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }) },
+      profile: { id: summary.profileId, version: summary.profileVersion! },
+    };
+    const current = await session.getInsights({ ...base, scope: 'current-view',
+      ...(predicate === undefined ? {} : { predicate }),
+    }, new AbortController().signal);
+    const whole = await session.getInsights({ ...base, intentRevision: 2, scope: 'whole-file' },
+      new AbortController().signal);
+    expect(rows.rows.map((row) => row.ref.ordinal)).toEqual(['2']);
+    expect(current.processedRecords).toBe(String(rows.rows.length));
+    expect(current.categories).toEqual([{ label: 'message', count: 1 }]);
+    expect(current.provenance).toEqual({ scope: 'current-view', predicateApplied: true, coverage: 'complete' });
+    expect(whole.processedRecords).toBe('4');
+    expect(whole.provenance).toEqual({ scope: 'whole-file', predicateApplied: false, coverage: 'complete' });
+  });
+
   it('stops zero-match insights at the physical record budget', async () => {
     const records = Array.from({ length: 20 }, (_, id) => ({ id, message: `record-${String(id)}` }));
     const { session } = await openFixture(records, {
@@ -388,10 +427,13 @@ describe('IntegratedJsonlSession', () => {
       insightsMaxMilliseconds: 60_000,
     });
 
-    const insights = await session.getInsights('eventKind', {
-      op: 'text_search',
-      value: 'never-present',
-      caseSensitive: false,
+    const summary = session.getSummary();
+    const insights = await session.getInsights({
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: summary.snapshot.documentId, generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }) },
+      profile: { id: summary.profileId, version: summary.profileVersion! },
+      predicate: { op: 'text_search', value: 'never-present', caseSensitive: false },
     }, new AbortController().signal);
 
     expect(insights).toMatchObject({

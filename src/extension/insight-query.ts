@@ -1,9 +1,8 @@
 import { CategoricalAggregator, TimeBucketAggregator } from '../aggregation';
 import type { GetRowsOptions, RowEnricher } from '../engine';
 import type {
-  InsightDimension,
+  AnalysisIntentV1,
   InsightSummary,
-  Predicate,
   RowPage,
   ScanTruncationReason,
 } from '../shared/types';
@@ -31,14 +30,14 @@ export interface InsightQueryRequest {
   source: InsightRowSource;
   generation: string;
   enricher: RowEnricher;
-  dimension: InsightDimension;
-  predicate: Predicate | undefined;
+  intent: AnalysisIntentV1;
   signal: AbortSignal;
   limits: InsightQueryLimits;
 }
 
 export async function runInsightQuery(request: InsightQueryRequest): Promise<InsightSummary> {
-  const { source, generation, enricher, dimension, predicate, signal, limits } = request;
+  const { source, generation, enricher, intent, signal, limits } = request;
+  const { dimension, predicate } = intent;
   throwIfAborted(signal);
   const categories = new CategoricalAggregator({
     selector: { kind: 'common', dimension },
@@ -127,7 +126,14 @@ export async function runInsightQuery(request: InsightQueryRequest): Promise<Ins
   const categoryResult = categories.finish();
   const timeResult = time.finish();
   return {
-    dimension,
+    intent,
+    provenance: {
+      scope: intent.scope,
+      predicateApplied: predicate !== undefined,
+      coverage: truncatedReason === undefined
+        && !categoryResult.meta.truncatedByRecordLimit
+        && !timeResult.meta.truncatedByRecordLimit ? 'complete' : 'bounded',
+    },
     categories: categoryResult.groups.map((group) => ({
       label: group.label,
       count: group.count,

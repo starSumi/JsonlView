@@ -10,7 +10,6 @@ export {
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
   SORT_WINDOW_LIMIT,
-  textPredicate,
 } from './model';
 export type { RecordQueryRequestOptions, RowsRequestPayload, StructuredFilterDraft } from './model';
 export { RecordPager } from './RecordPager';
@@ -25,5 +24,6 @@ export * from './row-query-controller';
 export * from './row-query-recovery-policy';
 export * from './query-selection';
 export * from './column-catalog';
+export * from './query-condition';
 export { ColumnChooser } from './ColumnChooser';
 export { RowTypeChooser } from './RowTypeChooser';

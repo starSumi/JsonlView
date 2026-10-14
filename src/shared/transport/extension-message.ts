@@ -51,6 +51,8 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
     case 'PROFILE_CHANGED':
       return isObject(envelope.envelope.payload)
         && isString(envelope.envelope.payload.profileId)
+        && (envelope.envelope.payload.profileVersion === undefined
+          || isString(envelope.envelope.payload.profileVersion))
         && isColumns(envelope.envelope.payload.columns);
     case 'ROW_ORDER_CHANGED':
       return isObject(envelope.envelope.payload)
@@ -78,6 +80,7 @@ function isDocumentSummary(value: unknown): value is DocumentSummary {
   if (!isObject(value)) return false;
   return isSnapshot(value.snapshot)
     && isString(value.profileId)
+    && (value.profileVersion === undefined || isString(value.profileVersion))
     && isArray(value.profileSuggestions, isProfileSuggestion)
     && isDecimal(value.indexedBytes)
     && isDecimal(value.indexedRecords)
@@ -239,16 +242,50 @@ function isKinds(value: unknown): boolean {
 
 function isInsightSummary(value: unknown): value is InsightSummary {
   if (!isObject(value)) return false;
-  return ['eventKind', 'severity', 'service', 'status'].includes(String(value.dimension))
+  return isObject(value.intent)
+    && isAnalysisIntent(value.intent)
+    && isObject(value.provenance)
+    && value.provenance.scope === value.intent.scope
+    && value.provenance.predicateApplied === (value.intent.predicate !== undefined)
+    && (value.provenance.coverage === 'complete' || value.provenance.coverage === 'bounded')
     && isArray(value.categories, isInsightCategory)
     && isArray(value.timeBuckets, isInsightTimeBucket)
     && isDecimal(value.processedRecords)
     && isDecimal(value.examinedRecords)
     && isDecimal(value.examinedBytes)
     && typeof value.truncated === 'boolean'
+    && (value.provenance.coverage === 'bounded') === value.truncated
     && (value.truncatedReason === undefined || SCAN_TRUNCATION_REASONS.has(String(value.truncatedReason)))
     && typeof value.capacityReached === 'boolean'
     && isFiniteNumber(value.bucketWidthMs);
+}
+
+function isAnalysisIntent(value: unknown): boolean {
+  return isObject(value)
+    && value.version === 1
+    && isSafeNonNegativeInteger(value.intentRevision)
+    && ['eventKind', 'severity', 'service', 'status'].includes(String(value.dimension))
+    && (value.scope === 'current-view' || value.scope === 'whole-file')
+    && isObject(value.document)
+    && isString(value.document.documentId)
+    && isString(value.document.generation)
+    && (value.document.sourceEpoch === undefined || isSafeNonNegativeInteger(value.document.sourceEpoch))
+    && isObject(value.profile)
+    && isString(value.profile.id)
+    && isString(value.profile.version)
+    && (value.predicate === undefined || isPredicateShape(value.predicate))
+    && (value.scope === 'current-view' || value.predicate === undefined);
+}
+
+function isPredicateShape(value: unknown, depth = 0): boolean {
+  if (!isObject(value) || depth > 16 || typeof value.op !== 'string') return false;
+  if (value.op === 'and' || value.op === 'or') {
+    return Array.isArray(value.args) && value.args.length <= 256
+      && value.args.every((argument) => isPredicateShape(argument, depth + 1));
+  }
+  if (value.op === 'not') return isPredicateShape(value.arg, depth + 1);
+  return ['compare', 'contains', 'starts_with', 'ends_with', 'exists', 'is_null', 'kind_is',
+    'text_search', 'profile_field', 'profile_text', 'profile_exists', 'profile_is_null'].includes(value.op);
 }
 
 function isInsightCategory(value: unknown): boolean {

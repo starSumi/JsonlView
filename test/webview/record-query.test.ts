@@ -4,6 +4,7 @@ import {
   buildRecordQueryRequest,
   buildStructuredFilter,
   canRequestSortedPage,
+  compileQueryCondition,
   createFilterScanBudget,
   isPhysicalOrdinalSort,
   recordColumnCandidates,
@@ -256,6 +257,40 @@ describe('record-query vertical slice', () => {
         { op: 'compare', path: keyPath('status'), cmp: 'eq', value: 'failed' },
       ],
     });
+  });
+
+  it('shares one canonical condition across table and current-view analysis without projection columns', () => {
+    const profileColumns: ColumnSpec[] = [
+      { id: 'eventKind', label: 'Event', source: 'profile' },
+      { id: 'status', label: 'Status', source: 'profile' },
+    ];
+    const filters = [
+      { columnId: 'status', operator: 'eq' as const, value: 'failed', source: 'profile' as const },
+      { columnId: columns[0]!.id, operator: 'contains' as const, value: 'err',
+        source: 'record' as const, path: keyPath('status'), caseSensitive: false },
+    ];
+    const rowTypes = { column: profileColumns[0]!, values: ['tool_call', 'message'] };
+    const condition = compileQueryCondition({
+      query: 'exception', filters, rowTypes, filterColumns: [...profileColumns, ...columns],
+    });
+    const table = buildRecordQueryRequest({
+      limit: 100, query: 'exception', filters, rowTypes,
+      filterColumns: [...profileColumns, ...columns],
+      columns: [columns[0]!], now: 1_000,
+    });
+    const differentProjection = buildRecordQueryRequest({
+      limit: 100, query: 'exception', filters, rowTypes,
+      filterColumns: [...profileColumns, ...columns],
+      columns: [], now: 1_000,
+    });
+
+    expect(table.predicate).toEqual(condition);
+    expect(differentProjection.predicate).toEqual(condition);
+    expect(compileQueryCondition({
+      query: ' exception ', filters: [...filters].reverse(),
+      rowTypes: { ...rowTypes, values: [...rowTypes.values].reverse() },
+      filterColumns: [...profileColumns, ...columns],
+    })).toEqual(condition);
   });
 
   it('keeps sorted logical paging bounded while allowing physical ordinal pages', () => {

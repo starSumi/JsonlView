@@ -23,6 +23,7 @@ import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPromp
 import { appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
 import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
 import { parseStartupStageReceipt } from './startup-stage';
+import { summaryIdentityMatches } from './summary-identity';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 const STARTUP_STALL_MS = 10_000;
@@ -35,6 +36,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private reconcilePending = false;
   private disposed = false;
   private publishedProfileId: string;
+  private publishedProfileVersion: string | undefined;
   private pendingReveal: RevealIntent | undefined;
   private readonly recovery: FollowRecoveryCoordinator;
   private readonly followModeRegistration: { dispose(): void };
@@ -46,6 +48,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
     public readonly session: IntegratedJsonlSession,
   ) {
     this.publishedProfileId = session.getSummary().profileId;
+    this.publishedProfileVersion = session.getSummary().profileVersion;
     this.recovery = new FollowRecoveryCoordinator({
       getExpectedIdentity: () => followIdentity(this.session.getSummary()),
       isExpectedIdentityCurrent: (expected) => this.isExpectedIdentityCurrent(expected),
@@ -308,15 +311,18 @@ class JsonlViewDocument implements vscode.CustomDocument {
   }
 
   private async handleProgress(summary: DocumentSummary): Promise<void> {
-    if (this.disposed) return;
-    if (summary.profileId !== this.publishedProfileId) {
+    if (this.disposed || !summaryIdentityMatches(summary, this.session.getSummary())) return;
+    if (summary.profileId !== this.publishedProfileId || summary.profileVersion !== this.publishedProfileVersion) {
       this.publishedProfileId = summary.profileId;
+      this.publishedProfileVersion = summary.profileVersion;
       await this.broadcast('PROFILE_CHANGED', {
         profileId: summary.profileId,
+        ...(summary.profileVersion === undefined ? {} : { profileVersion: summary.profileVersion }),
         columns: [...this.session.getProfileColumns()],
-      });
+      }, summary);
     }
-    await this.broadcast('INDEX_PROGRESS', summary);
+    if (this.disposed || !summaryIdentityMatches(summary, this.session.getSummary())) return;
+    await this.broadcast('INDEX_PROGRESS', summary, summary);
   }
 
   private isExpectedIdentityCurrent(expected: FollowRecoveryIdentity): boolean {
@@ -390,12 +396,14 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private async broadcast<TType extends ExtensionMessage['type']>(
     type: TType,
     payload: Extract<ExtensionMessage, { type: TType }>['payload'],
+    expectedSummary?: DocumentSummary,
   ): Promise<boolean> {
     if (this.disposed) return false;
+    if (expectedSummary !== undefined && !summaryIdentityMatches(expectedSummary, this.session.getSummary())) return false;
     if (type === 'OPENED' || type === 'SOURCE_INVALIDATED') {
       appendOutputLog(outputChannel, 'webview-lifecycle', `type=${type} panels=${String(this.panels.size)}`);
     }
-    const snapshot = this.session.getSummary().snapshot;
+    const snapshot = (expectedSummary ?? this.session.getSummary()).snapshot;
     const message = createProtocolEnvelope({
       type,
       documentId: snapshot.documentId,
@@ -405,7 +413,11 @@ class JsonlViewDocument implements vscode.CustomDocument {
       payload,
     }) as unknown as Extract<ExtensionMessage, { type: TType }>;
     return postMessageBestEffort(
-      [...this.panels].map((panel) => panel.webview),
+      [...this.panels].map((panel) => ({ postMessage: (value: typeof message) => {
+        if (this.disposed || (expectedSummary !== undefined
+          && !summaryIdentityMatches(expectedSummary, this.session.getSummary()))) return Promise.resolve(false);
+        return panel.webview.postMessage(value);
+      } })),
       message,
       (error, index) => {
         const detail = error instanceof Error ? error.message : String(error);

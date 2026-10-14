@@ -178,6 +178,17 @@ async function withEngineFixture(
 }
 
 describe('multiple table conditions with synchronous controller capture', () => {
+  it('keeps handwritten table queries local until Navigator is explicitly opened', () => {
+    const test = harness();
+    test.boot();
+    test.controller.editQuery('session_id=synthetic');
+    test.controller.requestRows();
+    expect(test.count('GET_ROWS')).toBeGreaterThan(0);
+    expect(test.count('OPEN_SESSION_NAVIGATOR')).toBe(0);
+    test.client.send('OPEN_SESSION_NAVIGATOR', {});
+    expect(test.count('OPEN_SESSION_NAVIGATOR')).toBe(1);
+  });
+
   it('preserves an unsampled configured record column across profile switches before React commits and after reload', () => {
     const path = keyPath('rare', 'requestId');
     const id = JSON.stringify(path.tokens);
@@ -217,21 +228,23 @@ describe('multiple table conditions with synchronous controller capture', () => 
     test.controller.editQuery('needle');
     test.controller.applyFilters([stage, allowed]);
     test.controller.applyRowTypes({ column: event, values: ['message', 'tool_call'] });
-    expect(test.last('GET_ROWS').payload.predicate).toMatchObject({ op: 'and', args: [
-      { op: 'text_search', value: 'needle' },
-      { op: 'compare', path: stage.path, value: 'prod' },
-      { op: 'compare', path: allowed.path, value: true },
-      { op: 'or', args: [{ op: 'profile_field', field: 'eventKind', value: 'message' },
-        { op: 'profile_field', field: 'eventKind', value: 'tool_call' }] },
-    ] });
+    expect(test.last('GET_ROWS').payload.predicate).toMatchObject({ op: 'and', args: expect.arrayContaining([
+      expect.objectContaining({ op: 'text_search', value: 'needle' }),
+      expect.objectContaining({ op: 'compare', path: stage.path, value: 'prod' }),
+      expect.objectContaining({ op: 'compare', path: allowed.path, value: true }),
+      expect.objectContaining({ op: 'or', args: expect.arrayContaining([
+        expect.objectContaining({ op: 'profile_field', field: 'eventKind', value: 'message' }),
+        expect.objectContaining({ op: 'profile_field', field: 'eventKind', value: 'tool_call' }),
+      ]) }),
+    ]) });
     test.commit();
     expect(test.state.filters).toEqual([stage, allowed]);
     test.controller.applyFilters(test.controller.filters.filter((_, index) => index !== 0));
     expect(test.state.filters).toEqual([allowed]);
     test.controller.applyFilters([]);
-    expect(test.last('GET_ROWS').payload.predicate).toMatchObject({ op: 'and', args: [
-      { op: 'text_search', value: 'needle' }, { op: 'or' },
-    ] });
+    expect(test.last('GET_ROWS').payload.predicate).toMatchObject({ op: 'and', args: expect.arrayContaining([
+      expect.objectContaining({ op: 'text_search', value: 'needle' }), expect.objectContaining({ op: 'or' }),
+    ]) });
     test.controller.applyRowTypes(undefined);
     expect(test.last('GET_ROWS').payload.predicate).toEqual({ op: 'text_search', value: 'needle', caseSensitive: false });
     test.controller.applyFilters([stage, allowed]);

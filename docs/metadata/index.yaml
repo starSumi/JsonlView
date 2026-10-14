@@ -561,6 +561,16 @@ documents:
     evidence: []
     revisit: when query, profile Event or scan continuation contracts change
     rollback: revert the table controls and retain source bytes
+  - id: adr-046-insights-analysis-intent-and-scope
+    path: docs/decisions/046-insights-analysis-intent-and-scope.md
+    title: Insights Analysis Intent And Scope
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [query, insights, lifecycle, bounded-scan]
+    evidence: []
+    revisit: when adapter revision or analysis source watermark contracts change
+    rollback: revert shared analysis protocol and host and webview together
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

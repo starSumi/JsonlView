@@ -269,6 +269,8 @@ export interface RecordDetail {
 export interface DocumentSummary {
   snapshot: SnapshotIdentity;
   profileId: string;
+  /** Selected semantic adapter revision. Older protocol fixtures may omit it. */
+  profileVersion?: string | undefined;
   profileSuggestions: ProfileSuggestion[];
   indexedBytes: string;
   indexedRecords: string;
@@ -285,6 +287,32 @@ export interface ProfileSuggestion {
 }
 
 export type InsightDimension = 'eventKind' | 'severity' | 'service' | 'status';
+export type InsightScope = 'current-view' | 'whole-file';
+
+export interface AnalysisIntentV1 {
+  version: 1;
+  intentRevision: number;
+  dimension: InsightDimension;
+  scope: InsightScope;
+  document: {
+    documentId: string;
+    generation: string;
+    sourceEpoch?: number;
+  };
+  profile: {
+    id: string;
+    /** Existing AgentProfile.version; this is the adapter/projection revision. */
+    version: string;
+  };
+  /** Canonical typed predicate for current-view analysis. Absent for whole-file analysis. */
+  predicate?: Predicate;
+}
+
+export interface InsightProvenance {
+  scope: InsightScope;
+  predicateApplied: boolean;
+  coverage: 'complete' | 'bounded';
+}
 
 export interface InsightCategory {
   label: string;
@@ -298,7 +326,8 @@ export interface InsightTimeBucket {
 }
 
 export interface InsightSummary {
-  dimension: InsightDimension;
+  intent: AnalysisIntentV1;
+  provenance: InsightProvenance;
   categories: InsightCategory[];
   timeBuckets: InsightTimeBucket[];
   processedRecords: string;
@@ -344,7 +373,7 @@ export type WebviewRequest =
   }>
   | ProtocolEnvelope<'GET_DETAIL', { ref: RecordRef; full?: boolean }>
   | ProtocolEnvelope<'GET_SCHEMA', { offset: number; limit: number }>
-  | ProtocolEnvelope<'GET_INSIGHTS', { dimension: InsightDimension; predicate?: Predicate }>
+  | ProtocolEnvelope<'GET_INSIGHTS', { intent: AnalysisIntentV1 }>
   | ProtocolEnvelope<'SET_PROFILE', { profileId: string }>
   | ProtocolEnvelope<'SET_FOLLOW_MODE', { enabled: boolean }>
   | ProtocolEnvelope<'SET_ROW_ORDER', { direction: RowSort['direction'] }>
@@ -361,7 +390,7 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'SCHEMA', { fields: FieldStats[]; totalFields: number; complete: boolean }>
   | ProtocolEnvelope<'INSIGHTS', InsightSummary>
   | ProtocolEnvelope<'INDEX_PROGRESS', DocumentSummary>
-  | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; columns: ColumnSpec[] }>
+  | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; profileVersion?: string; columns: ColumnSpec[] }>
   | ProtocolEnvelope<'ROW_ORDER_CHANGED', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'REVEAL', { sourceId: string; generation: string; nativeId: string; anchorOrdinal: string }>
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>

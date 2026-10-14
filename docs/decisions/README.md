@@ -68,6 +68,7 @@ Read these before changing a shared boundary:
 44. [ADR-043 core closure and evidence-gated evolution](043-core-closure-and-evidence-gated-evolution.md)
 45. [ADR-044 data format ecosystem and conversion boundary](044-data-format-ecosystem-boundary.md)
 46. [ADR-045 table query and column ownership](045-table-query-and-column-ownership.md)
+47. [ADR-046 Insights analysis intent and scope](046-insights-analysis-intent-and-scope.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

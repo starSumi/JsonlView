@@ -3,7 +3,6 @@ import type {
   FieldStats,
   FieldPath,
   JsonKind,
-  Predicate,
   RowFilter,
   RowFilterOperator,
   RowScanBudget,
@@ -13,8 +12,9 @@ import type {
 } from '../../../shared/types';
 import { MAX_TABLE_COLUMNS } from '../../../shared/types';
 import { recordColumnForPath, schemaRecordColumns } from '../../format';
-import { combinePredicates, parseFilterLiteral, predicateForFilter } from '../../query';
-import { rowTypePredicate, type RowTypeSelection } from './query-selection';
+import { parseFilterLiteral, predicateForFilter } from '../../query';
+import type { RowTypeSelection } from './query-selection';
+import { compileQueryCondition } from './query-condition';
 
 export const SORT_WINDOW_LIMIT = 2_048n;
 export const SCHEMA_PAGE_SIZE = 250;
@@ -156,11 +156,6 @@ export function buildStructuredFilter(draft: StructuredFilterDraft): RowFilter |
   return predicateForFilter(filter, draft.filterColumns) === undefined ? undefined : filter;
 }
 
-export function textPredicate(query: string): Predicate | undefined {
-  const value = query.trim();
-  return value ? { op: 'text_search', value, caseSensitive: false } : undefined;
-}
-
 export function createFilterScanBudget(now = Date.now()): Required<RowScanBudget> {
   return {
     maxExaminedRecords: FILTER_SCAN_MAX_RECORDS,
@@ -182,12 +177,12 @@ export function canRequestSortedPage(
 }
 
 export function buildRecordQueryRequest(options: RecordQueryRequestOptions): RowsRequestPayload {
-  const predicate = combinePredicates(
-    textPredicate(options.query ?? ''),
-    ...(options.filters ?? (options.filter === undefined ? [] : [options.filter]))
-      .map((filter) => predicateForFilter(filter, options.filterColumns)),
-    rowTypePredicate(options.rowTypes),
-  );
+  const predicate = compileQueryCondition({
+    query: options.query ?? '',
+    filters: options.filters ?? (options.filter === undefined ? [] : [options.filter]),
+    ...(options.rowTypes === undefined ? {} : { rowTypes: options.rowTypes }),
+    filterColumns: options.filterColumns,
+  });
   const sort = options.sort;
   const physicalCursor = sort === undefined || (isPhysicalOrdinalSort(sort)
     && (options.anchorOrdinal !== undefined || options.direction !== undefined));

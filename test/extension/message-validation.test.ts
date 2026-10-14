@@ -176,11 +176,24 @@ describe('webview message validation', () => {
   });
 
   it('accepts bounded insight requests and rejects unknown dimensions', () => {
+    const intent = {
+      version: 1 as const,
+      intentRevision: 3,
+      dimension: 'eventKind' as const,
+      scope: 'current-view' as const,
+      document: { documentId: 'document', generation: 'generation', sourceEpoch: 2 },
+      profile: { id: 'generic', version: '1' },
+      predicate: { op: 'text_search' as const, value: 'error', caseSensitive: false },
+    };
     expect(validateWebviewRequest(envelope('GET_INSIGHTS', {
-      dimension: 'eventKind',
-      predicate: { op: 'text_search', value: 'error', caseSensitive: false },
+      intent,
     })).ok).toBe(true);
-    expect(validateWebviewRequest(envelope('GET_INSIGHTS', { dimension: 'arbitrary' })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_INSIGHTS', {
+      intent: { ...intent, dimension: 'arbitrary' },
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_INSIGHTS', {
+      intent: { ...intent, scope: 'whole-file' },
+    })).ok).toBe(false);
   });
 
   it('accepts bounded problem continuation and rejects an unsafe problem budget', () => {

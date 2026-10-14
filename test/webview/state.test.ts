@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DocumentSummary, ExtensionMessage, RecordDetail, RowProjection } from '../../src/shared/types';
+import type { AnalysisIntentV1, DocumentSummary, ExtensionMessage, InsightSummary, RecordDetail, RowProjection } from '../../src/shared/types';
 import { keyPath, PROTOCOL_VERSION } from '../../src/shared/types';
 import {
   createInitialState,
@@ -7,6 +7,7 @@ import {
   selectTimelineRows,
   toPersistedState,
   workspaceReducer,
+  type WorkspaceAction,
 } from '../../src/webview/state';
 
 describe('persisted table query migration', () => {
@@ -87,6 +88,7 @@ const summary: DocumentSummary = {
     observedAt: '2026-08-30T00:00:00Z',
   },
   profileId: 'generic',
+  profileVersion: '1',
   profileSuggestions: [],
   indexedBytes: '4096',
   indexedRecords: '2',
@@ -1188,10 +1190,15 @@ describe('workspace reducer', () => {
 
   it('stores bounded insight results and clears them when the dimension changes', () => {
     let state = createInitialState();
+    const intent: AnalysisIntentV1 = { version: 1, intentRevision: 1, dimension: 'eventKind',
+      scope: 'current-view', document: { documentId: 'doc', generation: 'g1' },
+      profile: { id: 'generic', version: '1' } };
+    state = workspaceReducer(state, { type: 'SET_ANALYSIS_INTENT', intent });
     state = workspaceReducer(state, {
       type: 'MESSAGE_RECEIVED',
       message: envelope('INSIGHTS', {
-        dimension: 'eventKind',
+        intent,
+        provenance: { scope: 'current-view', predicateApplied: false, coverage: 'complete' },
         categories: [{ label: 'message', count: 2 }],
         timeBuckets: [{ start: '2026-08-30T00:00:00.000Z', count: 2 }],
         processedRecords: '2',
@@ -1208,6 +1215,122 @@ describe('workspace reducer', () => {
     expect(state.insightDimension).toBe('severity');
     expect(state.insights).toBeUndefined();
   });
+
+  it.each<[string, WorkspaceAction]>([
+    ['text query', { type: 'SET_QUERY', query: 'new query' }],
+    ['field filter', { type: 'SET_FILTERS', filters: [{
+      columnId: 'status', source: 'profile', operator: 'eq', value: 'failed',
+    }] }],
+    ['row type', { type: 'SET_ROW_TYPES', rowTypes: {
+      column: { id: 'eventKind', label: 'Event', source: 'profile' }, values: ['tool_call'],
+    } }],
+    ['profile', { type: 'MESSAGE_RECEIVED', message: envelope('PROFILE_CHANGED', {
+      profileId: 'codex', profileVersion: '2', columns: [],
+    }) }],
+    ['scope', { type: 'SET_INSIGHT_SCOPE', scope: 'whole-file' }],
+  ])('rejects delayed old Insights after changing %s, including after a new intent is active', (_, change) => {
+    const oldIntent: AnalysisIntentV1 = { version: 1, intentRevision: 10, dimension: 'eventKind',
+      scope: 'current-view', document: { documentId: 'doc', generation: 'g1' },
+      profile: { id: 'generic', version: '1' } };
+    const result: InsightSummary = { intent: oldIntent,
+      provenance: { scope: 'current-view', predicateApplied: false, coverage: 'complete' },
+      categories: [{ label: 'old', count: 99 }], timeBuckets: [], processedRecords: '99',
+      examinedRecords: '99', examinedBytes: '990', truncated: false, capacityReached: false, bucketWidthMs: 300_000 };
+    let state = createInitialState();
+    state = { ...state, summary };
+    state = workspaceReducer(state, { type: 'SET_ANALYSIS_INTENT', intent: oldIntent });
+    state = workspaceReducer(state, change);
+    expect(state.analysisIntentRevision).toBe(11);
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('INSIGHTS', result) });
+    expect(state.insights).toBeUndefined();
+
+    const newIntent = { ...oldIntent, intentRevision: 12 };
+    state = workspaceReducer(state, { type: 'SET_ANALYSIS_INTENT', intent: newIntent });
+    const nextResult = { ...result, intent: newIntent, categories: [{ label: 'new', count: 1 }] };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('INSIGHTS', nextResult) });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('INSIGHTS', result) });
+    expect(state.insights?.categories).toEqual([{ label: 'new', count: 1 }]);
+    expect(state.analysisIntent).toEqual(newIntent);
+  });
+
+  it('keeps display projection changes outside the analysis intent and persists explicit scope', () => {
+    expect(createInitialState().insightScope).toBe('current-view');
+    const restored = createInitialState({ insightScope: 'whole-file' });
+    expect(toPersistedState(restored).insightScope).toBe('whole-file');
+    const intent: AnalysisIntentV1 = { version: 1, intentRevision: 1, dimension: 'eventKind',
+      scope: 'current-view', document: { documentId: 'doc', generation: 'g1' },
+      profile: { id: 'generic', version: '1' } };
+    let state = workspaceReducer(createInitialState(), { type: 'SET_ANALYSIS_INTENT', intent });
+    state = workspaceReducer(state, { type: 'SET_COLUMN_VISIBILITY', columnId: 'status', visible: false });
+    expect(state.analysisIntent).toEqual(intent);
+    expect(state.analysisIntentRevision).toBe(1);
+  });
+
+  it('blocks analysis reissuance while a selected profile is awaiting the host', () => {
+    const intent: AnalysisIntentV1 = { version: 1, intentRevision: 1, dimension: 'eventKind',
+      scope: 'current-view', document: { documentId: 'doc', generation: 'g1' },
+      profile: { id: 'generic', version: '1' } };
+    let state = workspaceReducer(createInitialState(), { type: 'SET_ANALYSIS_INTENT', intent });
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'profile', id: 'profile-pending' } });
+    expect(state.analysisIntent).toBeUndefined();
+    expect(state.analysisIntentRevision).toBe(2);
+    state = workspaceReducer(state, { type: 'SET_ANALYSIS_INTENT', intent: { ...intent, intentRevision: 3 } });
+    expect(state.analysisIntent).toBeUndefined();
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
+      ...envelope('PROFILE_CHANGED', { profileId: 'codex', profileVersion: '2', columns: [] }),
+      requestId: 'profile-pending',
+    } });
+    expect(state.pending.profile).toBeUndefined();
+    const nextIntent = { ...intent, intentRevision: 4, profile: { id: 'codex', version: '2' } };
+    state = workspaceReducer(state, { type: 'SET_ANALYSIS_INTENT', intent: nextIntent });
+    expect(state.analysisIntent).toEqual(nextIntent);
+  });
+
+  it.each(['STALE_ANALYSIS_INTENT', 'REQUEST_FAILED'])(
+    'remembers the correlated failed analysis conditions for %s', (code) => {
+      const intent: AnalysisIntentV1 = { version: 1, intentRevision: 1, dimension: 'eventKind',
+        scope: 'current-view', document: { documentId: 'doc', generation: 'g1' },
+        profile: { id: 'generic', version: '1' } };
+      let state = workspaceReducer(createInitialState(), { type: 'SET_ANALYSIS_INTENT', intent });
+      state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { kind: 'insights', id: 'analysis' } });
+      state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
+        ...envelope('ERROR', { code, message: 'failed', recoverable: true }), requestId: 'analysis',
+      } });
+      expect(state.pending.insights).toBeUndefined();
+      expect(state.failedAnalysisIntent).toEqual(intent);
+    },
+  );
+
+  it.each(['OPENED', 'INDEX_PROGRESS'] as const)(
+    'invalidates delayed Insights when %s changes source epoch or profile identity', (type) => {
+      const initialSummary = { ...summary, profileVersion: '1', snapshot: { ...summary.snapshot, epoch: 1 } };
+      const intent: AnalysisIntentV1 = { version: 1, intentRevision: 1, dimension: 'eventKind',
+        scope: 'current-view', document: { documentId: initialSummary.snapshot.documentId,
+          generation: initialSummary.snapshot.generation, sourceEpoch: 1 },
+        profile: { id: initialSummary.profileId, version: '1' } };
+      const result: InsightSummary = { intent,
+        provenance: { scope: 'current-view', predicateApplied: false, coverage: 'complete' },
+        categories: [{ label: 'old', count: 2 }], timeBuckets: [], processedRecords: '2',
+        examinedRecords: '2', examinedBytes: '200', truncated: false, capacityReached: false, bucketWidthMs: 300_000 };
+      for (const nextSummary of [
+        { ...initialSummary, snapshot: { ...initialSummary.snapshot, epoch: 2 } },
+        { ...initialSummary, profileId: 'changed' },
+        { ...initialSummary, profileVersion: '2' },
+      ]) {
+        let state = createInitialState();
+        state = { ...state, summary: initialSummary };
+        state = workspaceReducer(state, { type: 'SET_ANALYSIS_INTENT', intent });
+        state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('INSIGHTS', result) });
+        expect(state.insights).toBe(result);
+        state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope(type, nextSummary) });
+        expect(state.analysisIntent).toBeUndefined();
+        expect(state.insights).toBeUndefined();
+        state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('INSIGHTS', result) });
+        expect(state.insights).toBeUndefined();
+        expect(state.summary).toBe(nextSummary);
+      }
+    },
+  );
 
   it('keeps ordinal first while persisting sort, filter, and column order', () => {
     let state = createInitialState();

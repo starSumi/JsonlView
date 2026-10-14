@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type {
   InsightDimension,
+  InsightScope,
   RecordRef,
   RowFilterOperator,
   SortDirection,
@@ -24,6 +25,8 @@ import {
 } from './full-record-intent';
 import { deferIdle } from './idle';
 import { InsightsView } from './insights-view';
+import { InsightsToolbar } from './insights-toolbar';
+import { shouldIssueInsightRequest } from './insight-request';
 import { visibleColumns } from './format';
 import {
   buildStructuredFilter,
@@ -36,9 +39,9 @@ import {
   RecordQueryControls,
   RowTypeChooser,
   rowTypeSources,
+  compileQueryCondition,
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
-  textPredicate,
 } from './features/record-query';
 import { configuredRecordColumns } from './features/record-query/model';
 import type { ViewportIdentity } from './paging';
@@ -152,6 +155,7 @@ export function App(): React.JSX.Element {
   );
   const [pageInput, setPageInputState] = React.useState('1');
   const stateRef = useRef(state);
+  const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
   const clientRef = useRef(new VsCodeMessageClient(vscode, bodySession()));
   const startupErrorRef = useRef(false);
@@ -225,6 +229,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     stateRef.current = state;
+    analysisIntentRevisionRef.current = Math.max(analysisIntentRevisionRef.current, state.analysisIntentRevision);
     persistedStateRef.current = toPersistedState(state);
     // State persistence is non-critical for first paint. Coalesce bursts of
     // indexing/progress updates and flush the latest snapshot during idle time.
@@ -311,19 +316,48 @@ export function App(): React.JSX.Element {
 
   const requestInsights = useCallback((options?: {
     dimension?: InsightDimension;
-    query?: string;
+    scope?: InsightScope;
+    minimumRevision?: number;
+    automatic?: boolean;
   }): void => {
     if (!canReadSnapshot(invalidationRef.current)) return;
     const client = clientRef.current;
-    finishCancelled('insights', client.cancel('insights'));
-    const dimension = options?.dimension ?? stateRef.current.insightDimension;
-    const predicate = textPredicate(options?.query ?? queryController.query);
-    const request = client.send('GET_INSIGHTS', {
+    if (client.hasPending('profile')) return;
+    const workspace = stateRef.current;
+    const summary = workspace.summary;
+    if (summary?.profileVersion === undefined) return;
+    const dimension = options?.dimension ?? workspace.insightDimension;
+    const scope = options?.scope ?? workspace.insightScope;
+    const predicate = scope === 'current-view' ? compileQueryCondition({
+      query: queryController.query,
+      filters: queryController.filters,
+      ...(queryController.rowTypes === undefined ? {} : { rowTypes: queryController.rowTypes }),
+      filterColumns: workspace.columns.length > 0 ? workspace.columns : fallbackColumns(workspace.rows),
+    }) : undefined;
+    const intentRevision = Math.max(analysisIntentRevisionRef.current, workspace.analysisIntentRevision,
+      options?.minimumRevision ?? 0) + 1;
+    const intent = {
+      version: 1 as const,
+      intentRevision,
       dimension,
-      ...(predicate ? { predicate } : {}),
+      scope,
+      document: {
+        documentId: summary.snapshot.documentId,
+        generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }),
+      },
+      profile: { id: summary.profileId, version: summary.profileVersion },
+      ...(predicate === undefined ? {} : { predicate }),
+    };
+    if (!shouldIssueInsightRequest(intent, workspace.failedAnalysisIntent, options?.automatic === true)) return;
+    finishCancelled('insights', client.cancel('insights'));
+    analysisIntentRevisionRef.current = intentRevision;
+    dispatch({ type: 'SET_ANALYSIS_INTENT', intent });
+    const request = client.send('GET_INSIGHTS', {
+      intent,
     });
     dispatch({ type: 'REQUEST_SENT', request });
-  }, [finishCancelled, queryController.query]);
+  }, [finishCancelled, queryController]);
 
   const requestDetail = useCallback((ref: RecordRef, full = false, select = true): void => {
     const client = clientRef.current;
@@ -521,19 +555,26 @@ export function App(): React.JSX.Element {
     state.page, state.pending.rows, state.schema, state.summary, queryController.currentViewportOptions]);
 
   useEffect(() => {
+    if (state.pending.insights && state.analysisIntent === undefined) {
+      finishCancelled('insights', clientRef.current.cancel('insights'));
+      return;
+    }
     if (
       canReadSnapshot(state.invalidationReason)
       && state.activeTab === 'insights'
       && state.summary
       && !state.insights
       && !state.pending.insights
+      && !state.pending.profile
     ) {
-      requestInsights();
+      requestInsights({ automatic: true, minimumRevision: state.analysisIntentRevision });
     }
     if (state.activeTab !== 'insights' && state.pending.insights) {
       finishCancelled('insights', clientRef.current.cancel('insights'));
     }
-  }, [finishCancelled, requestInsights, state.activeTab, state.invalidationReason, state.insights, state.pending.insights, state.summary]);
+  }, [finishCancelled, requestInsights, state.activeTab, state.analysisIntent, state.invalidationReason,
+    state.analysisIntentRevision, state.insights, state.pending.insights, state.pending.profile,
+    state.summary]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
@@ -675,6 +716,7 @@ export function App(): React.JSX.Element {
   const setProfile = (profileId: string): void => {
     if (invalidationRef.current !== undefined) return;
     queryController.abandonRestore();
+    finishCancelled('insights', clientRef.current.cancel('insights'));
     finishCancelled('profile', clientRef.current.cancel('profile'));
     const request = clientRef.current.send('SET_PROFILE', { profileId });
     dispatch({ type: 'REQUEST_SENT', request });
@@ -1087,44 +1129,21 @@ export function App(): React.JSX.Element {
           <div {...workspaceTabs.getPanelProps('insights')} className="workspace-tab-panel">
           {state.activeTab === 'insights' ? (
             <div className="insights-shell">
-              <div className="insights-toolbar">
-                <label className="compact-field">
-                  <span>Group by</span>
-                  <select
-                    value={state.insightDimension}
-                    disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.insights)}
-                    onChange={(event) => {
-                      const dimension = event.target.value as InsightDimension;
-                      dispatch({ type: 'SET_INSIGHT_DIMENSION', dimension });
-                      requestInsights({ dimension });
-                    }}
-                  >
-                    <option value="eventKind">Event</option>
-                    <option value="severity">Severity</option>
-                    <option value="service">Service</option>
-                    <option value="status">Status</option>
-                  </select>
-                </label>
-                <span className="insights-meta">
-                  {state.insights
-                    ? `${state.insights.examinedRecords} examined · ${state.insights.processedRecords} matched`
-                    : ''}
-                  {state.insights?.truncatedReason
-                    ? ` · ${formatInsightLimit(state.insights.truncatedReason)}`
-                    : (state.insights?.truncated ? ' · limited' : '')}
-                  {state.insights?.capacityReached ? ' · grouped overflow' : ''}
-                </span>
-                <button
-                  type="button"
-                  className="icon-button"
-                  title="Refresh aggregates"
-                  aria-label="Refresh aggregates"
-                  disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.insights)}
-                  onClick={() => requestInsights()}
-                >
-                  <RefreshCw size={14} className={state.pending.insights ? 'spin' : ''} aria-hidden />
-                </button>
-              </div>
+              <InsightsToolbar
+                dimension={state.insightDimension} scope={state.insightScope}
+                disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.profile)}
+                pending={Boolean(state.pending.insights)}
+                result={state.insights}
+                onDimensionChange={(dimension) => {
+                  dispatch({ type: 'SET_INSIGHT_DIMENSION', dimension });
+                  requestInsights({ dimension, minimumRevision: state.analysisIntentRevision + 1 });
+                }}
+                onScopeChange={(scope) => {
+                  dispatch({ type: 'SET_INSIGHT_SCOPE', scope });
+                  requestInsights({ scope, minimumRevision: state.analysisIntentRevision + 1 });
+                }}
+                onRefresh={() => requestInsights()}
+              />
               <InsightsView
                 categories={state.insights?.categories ?? []}
                 timeBuckets={state.insights?.timeBuckets ?? []}
@@ -1213,8 +1232,4 @@ export function App(): React.JSX.Element {
       </div>
     </div>
   );
-}
-
-function formatInsightLimit(reason: import('../shared/types').ScanTruncationReason): string {
-  return formatScanLimit(reason);
 }

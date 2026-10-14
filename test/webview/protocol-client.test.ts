@@ -15,6 +15,7 @@ const summary: DocumentSummary = {
     observedAt: '2026-08-30T00:00:00Z',
   },
   profileId: 'generic',
+  profileVersion: '1',
   profileSuggestions: [],
   indexedBytes: '100',
   indexedRecords: '1',
@@ -310,9 +311,14 @@ describe('VS Code message client', () => {
       documentId: 'doc',
       generation: 'g2',
     });
-    const request = client.send('GET_INSIGHTS', { dimension: 'eventKind' });
+    const intent = {
+      version: 1 as const, intentRevision: 1, dimension: 'eventKind' as const, scope: 'current-view' as const,
+      document: { documentId: 'doc', generation: 'g2' }, profile: { id: 'generic', version: '1' },
+    };
+    const request = client.send('GET_INSIGHTS', { intent });
     const payload = {
-      dimension: 'eventKind' as const,
+      intent,
+      provenance: { scope: 'current-view' as const, predicateApplied: false, coverage: 'complete' as const },
       categories: [{ label: 'message', count: 2 }],
       timeBuckets: [],
       processedRecords: '2',

@@ -136,15 +136,8 @@ export function validateWebviewRequest(rawValue: unknown): ValidationResult {
       }
       break;
     case 'GET_INSIGHTS': {
-      if (!['eventKind', 'severity', 'service', 'status'].includes(String(value.payload.dimension))) {
-        return failure('Invalid insight dimension.');
-      }
-      if (value.payload.predicate !== undefined) {
-        const budget = { nodes: 0 };
-        if (!isPredicate(value.payload.predicate, 0, budget)) {
-          return failure('Invalid or over-budget insight predicate.');
-        }
-      }
+      const intent = value.payload.intent;
+      if (!isAnalysisIntent(intent)) return failure('Invalid or over-budget analysis intent.');
       break;
     }
     case 'SET_PROFILE':
@@ -187,6 +180,24 @@ export function validateWebviewRequest(rawValue: unknown): ValidationResult {
   }
 
   return { ok: true, request: value as unknown as WebviewRequest };
+}
+
+function isAnalysisIntent(value: unknown): boolean {
+  if (!isObject(value) || value.version !== 1 || !isNonNegativeSafeInteger(value.intentRevision)
+    || !['eventKind', 'severity', 'service', 'status'].includes(String(value.dimension))
+    || (value.scope !== 'current-view' && value.scope !== 'whole-file')
+    || !isObject(value.document) || !isBoundedString(value.document.documentId, 512)
+    || !isBoundedString(value.document.generation, 512)
+    || (value.document.sourceEpoch !== undefined && !isNonNegativeSafeInteger(value.document.sourceEpoch))
+    || !isObject(value.profile) || !isBoundedString(value.profile.id, 128)
+    || !isBoundedString(value.profile.version, 128)) return false;
+  if (value.scope === 'whole-file' && value.predicate !== undefined) return false;
+  if (value.predicate === undefined) return true;
+  return isPredicate(value.predicate, 0, { nodes: 0 });
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isRowSort(value: unknown): value is { columnId: string; direction: 'asc' | 'desc' } {

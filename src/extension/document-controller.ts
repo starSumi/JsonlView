@@ -3,9 +3,8 @@ import type {
   DocumentSummary,
   ExtensionMessage,
   FieldStats,
-  InsightDimension,
+  AnalysisIntentV1,
   InsightSummary,
-  Predicate,
   ProblemPage,
   RecordDetail,
   RecordRef,
@@ -16,6 +15,7 @@ import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPa
 import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transport';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
+import { summaryIdentityMatches } from './summary-identity';
 
 type ExtensionMessageByType = {
   [TType in ExtensionMessage['type']]: Extract<ExtensionMessage, { type: TType }>;
@@ -40,8 +40,7 @@ export interface JsonlSessionPort extends RecordPageReader, ProblemPageReader {
     complete: boolean;
   }>;
   getInsights(
-    dimension: InsightDimension,
-    predicate: Predicate | undefined,
+    intent: AnalysisIntentV1,
     signal: AbortSignal,
   ): Promise<InsightSummary>;
   setProfile(profileId: string, signal: AbortSignal): Promise<DocumentSummary>;
@@ -206,23 +205,39 @@ export class DocumentController {
             await this.session.getSchema(request.payload.offset, request.payload.limit, signal),
           );
           return;
-        case 'GET_INSIGHTS':
+        case 'GET_INSIGHTS': {
+          if (!this.matchesAnalysisIntent(request.payload.intent)) {
+            await this.postError(request, 'STALE_ANALYSIS_INTENT', 'Insights intent no longer matches the open document.', true);
+            return;
+          }
           signal = this.requests.startLatest('insights', request.requestId);
+          const insights = await this.session.getInsights(request.payload.intent, signal);
+          if (signal.aborted || !this.matchesAnalysisIntent(request.payload.intent)) return;
           await this.postIfCurrent(
             request,
             operationGeneration,
             'INSIGHTS',
-            await this.session.getInsights(request.payload.dimension, request.payload.predicate, signal),
+            insights,
           );
           return;
+        }
         case 'SET_PROFILE': {
           signal = this.requests.startLatest('profile', request.requestId);
           const updated = await this.session.setProfile(request.payload.profileId, signal);
-          if (!this.isCurrentGeneration(operationGeneration)) return;
+          if (signal.aborted || updated.snapshot.documentId !== request.documentId
+            || !this.isCurrentGeneration(operationGeneration)
+            || !summaryIdentityMatches(updated, this.session.getSummary())) return;
+          if (updated.profileVersion === undefined) {
+            await this.postError(request, 'PROFILE_REVISION_UNAVAILABLE',
+              'The selected profile did not provide a stable revision.', false);
+            return;
+          }
           await this.postIfCurrent(request, operationGeneration, 'PROFILE_CHANGED', {
             profileId: updated.profileId,
+            profileVersion: updated.profileVersion,
             columns: [...this.session.getProfileColumns()],
           });
+          if (signal.aborted || !summaryIdentityMatches(updated, this.session.getSummary())) return;
           // PROFILE_CHANGED completes the correlated request on the webview
           // side. Publish the follow-up summary as unsolicited progress so it
           // is accepted after that completion and cannot leave counts stale.
@@ -332,6 +347,16 @@ export class DocumentController {
 
   private isCurrentGeneration(expectedGeneration: string): boolean {
     return this.session.getSummary().snapshot.generation === expectedGeneration;
+  }
+
+  private matchesAnalysisIntent(intent: AnalysisIntentV1): boolean {
+    const summary = this.session.getSummary();
+    return intent.document.documentId === summary.snapshot.documentId
+      && intent.document.generation === summary.snapshot.generation
+      && intent.document.sourceEpoch === summary.snapshot.epoch
+      && intent.profile.id === summary.profileId
+      && intent.profile.version === summary.profileVersion
+      && (intent.scope === 'current-view' || intent.predicate === undefined);
   }
 
   private canPublishRebuild(

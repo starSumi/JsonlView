@@ -8,6 +8,7 @@ import {
 } from '../../src/extension/insight-query';
 import type {
   AgentEventKind,
+  AnalysisIntentV1,
   Predicate,
   RowPage,
   RowProjection,
@@ -34,7 +35,7 @@ describe('runInsightQuery', () => {
     const controller = new AbortController();
     const predicate: Predicate = { op: 'text_search', value: 'query', caseSensitive: false };
 
-    const result = await runInsightQuery(request(source, controller.signal, { predicate }));
+    const result = await runInsightQuery(request(source, controller.signal, { intent: analysisIntent(predicate) }));
 
     expect(source.calls).toHaveLength(2);
     const first = source.calls[0]!;
@@ -167,11 +168,19 @@ function request(
     source,
     generation,
     enricher,
-    dimension: 'eventKind',
-    predicate: undefined,
+    intent: analysisIntent(),
     signal,
     limits: defaultLimits,
     ...override,
+  };
+}
+
+function analysisIntent(predicate?: Predicate): AnalysisIntentV1 {
+  return {
+    version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+    document: { documentId: 'document', generation },
+    profile: { id: 'test-profile', version: '1' },
+    ...(predicate === undefined ? {} : { predicate }),
   };
 }
 

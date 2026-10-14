@@ -104,6 +104,9 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Treat filesystem notifications as invalidation hints and re-check source
   state before incremental work.
 - Keep messages bounded and reject stale generations.
+- Insights results commit only against the current AnalysisIntent v1, including
+  normalized query conditions, scope, monotonic intent revision, source identity,
+  and the selected profile revision. Display columns remain independent.
 - Do not silently drop blank, malformed, oversized, unknown, or uncorrelated
   records.
 - Do not execute source content, arbitrary JavaScript, or concatenated SQL.

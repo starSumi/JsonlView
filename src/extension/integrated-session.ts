@@ -2,7 +2,7 @@ import type {
   DocumentSummary,
   ColumnSpec,
   FieldStats,
-  InsightDimension,
+  AnalysisIntentV1,
   InsightSummary,
   JsonScalar,
   ProfileSuggestion,
@@ -140,6 +140,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     const summary = this.engine.getSummary(this.profileId);
     return {
       ...summary,
+      profileVersion: this.registry.version(this.profileId),
       profileSuggestions: this.suggestions.map((suggestion) => ({
         ...suggestion,
         reasons: [...suggestion.reasons],
@@ -213,8 +214,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
   }
 
   public async getInsights(
-    dimension: InsightDimension,
-    predicate: import('../shared/types').Predicate | undefined,
+    intent: AnalysisIntentV1,
     signal: AbortSignal,
   ): Promise<InsightSummary> {
     throwIfAborted(signal);
@@ -225,8 +225,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       source: engine,
       generation,
       enricher,
-      dimension,
-      predicate,
+      intent,
       signal,
       limits: {
         maxExaminedRecords: this.options.insightsMaxExaminedRecords,
