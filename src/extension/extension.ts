@@ -319,9 +319,11 @@ export class JsonlViewDocument implements vscode.CustomDocument {
   }
 
   private async handleProgress(summary: DocumentSummary): Promise<void> {
-    if (this.disposed || !summaryIdentityMatches(summary, this.session.getSummary())) return;
     const identity = capturePublicationIdentity(summary.snapshot);
-    if (!this.isPublicationIdentityCurrent(identity)) return;
+    // Profile publication is itself a valid transition. Gate the incoming
+    // snapshot tuple first, then recheck the full summary after delivery so a
+    // concurrent epoch/profile change cannot publish the follow-up progress.
+    if (this.disposed || !this.isPublicationIdentityCurrent(identity)) return;
     if (summary.profileId !== this.publishedProfileId || summary.profileVersion !== this.publishedProfileVersion) {
       this.publishedProfileId = summary.profileId;
       this.publishedProfileVersion = summary.profileVersion;
@@ -329,7 +331,7 @@ export class JsonlViewDocument implements vscode.CustomDocument {
         profileId: summary.profileId,
         ...(summary.profileVersion === undefined ? {} : { profileVersion: summary.profileVersion }),
         columns: [...this.session.getProfileColumns()],
-      }, summary);
+      });
     }
     if (this.disposed || !summaryIdentityMatches(summary, this.session.getSummary())) return;
     await this.broadcast(identity, 'INDEX_PROGRESS', summary, summary);
