@@ -12,6 +12,7 @@ import {
   textPredicate,
 } from '../../src/webview/features/record-query';
 import { rowsOptionsAfterEmptyRebuild } from '../../src/webview/paging';
+import { columnsAfterProfileChange, configuredRecordColumns } from '../../src/webview/features/record-query/model';
 
 const columns: ColumnSpec[] = [{
   id: JSON.stringify([{ kind: 'key', value: 'status' }]),
@@ -63,6 +64,52 @@ describe('record-query vertical slice', () => {
     const nestedId = JSON.stringify(nestedPath.tokens);
     expect(selectedRecordColumns([], [nestedField], { [nestedId]: true })
       ?.map((column) => column.id)).toEqual([nestedId]);
+  });
+
+  it('restores configured paths without schema samples and replaces only semantic profile columns', () => {
+    const nestedId = JSON.stringify(nestedPath.tokens);
+    const visibility = { [nestedId]: true, eventKind: true };
+    const oldEvent: ColumnSpec = { id: 'eventKind', label: 'Event', source: 'profile' };
+    const newProfile: ColumnSpec = { id: 'severity', label: 'Severity', source: 'profile' };
+    const next = columnsAfterProfileChange([oldEvent], [newProfile], visibility);
+    expect(next).toEqual([newProfile, {
+      id: nestedId, label: '$.message.role', source: 'record', path: nestedPath,
+    }]);
+    expect(selectedRecordColumns(next, [], visibility)?.map((column) => column.id)).toEqual([nestedId]);
+    expect(recordColumnOptions([], [], visibility)).toEqual([next[1]]);
+    expect(selectedRecordColumns([], [], visibility)).toEqual([next[1]]);
+    expect(columnsAfterProfileChange(next, [], visibility)).toEqual([next[1]]);
+  });
+
+  it('restores only canonical bounded record paths and preserves an unsampled all-hidden choice', () => {
+    const invalidIds = [
+      'eventKind', '$.message.role', '[]', '[null]', '[{"kind":"key","value":""}]',
+      '[{"kind":"index","value":-1}]', '[{"kind":"index","value":1.5}]',
+      '[{"kind":"unknown","value":"x"}]', ' [{"kind":"key","value":"status"}]',
+      JSON.stringify(keyPath('x'.repeat(260)).tokens),
+      JSON.stringify(Array.from({ length: 33 }, () => ({ kind: 'index', value: 0 }))),
+    ];
+    expect(recordColumnOptions([], [], Object.fromEntries(invalidIds.map((id) => [id, true])))).toEqual([]);
+    const nestedId = JSON.stringify(nestedPath.tokens);
+    expect(recordColumnOptions([], [], { [nestedId]: false })).toEqual([]);
+    expect(selectedRecordColumns([], [], { [nestedId]: false })).toEqual([]);
+    expect(selectedRecordColumns([], [{ ...nestedField, path: keyPath('different'), displayPath: '$.different' }],
+      { [nestedId]: false })).toEqual([]);
+    expect(selectedRecordColumns([], [], { eventKind: false })).toBeUndefined();
+    expect(columnsAfterProfileChange(columns, [], { [columns[0]!.id]: false })).toEqual([]);
+  });
+
+  it('caps only the requested projection while keeping overflow selections available', () => {
+    const visibility = Object.fromEntries(Array.from({ length: MAX_TABLE_COLUMNS + 2 }, (_, index) => [
+      JSON.stringify(keyPath('field' + index).tokens), true,
+    ]));
+    const semantic: ColumnSpec = { id: 'severity', label: 'Severity', source: 'profile' };
+    expect(configuredRecordColumns([semantic], [], visibility)).toHaveLength(MAX_TABLE_COLUMNS + 2);
+    expect(selectedRecordColumns([semantic], [], visibility)).toHaveLength(MAX_TABLE_COLUMNS - 1);
+    const changed = columnsAfterProfileChange([semantic], [], visibility);
+    expect(changed).toHaveLength(MAX_TABLE_COLUMNS);
+    expect(configuredRecordColumns(changed, [], visibility)).toHaveLength(MAX_TABLE_COLUMNS + 2);
+    expect(recordColumnOptions(changed, [], visibility)).toHaveLength(MAX_TABLE_COLUMNS + 2);
   });
 
   it('offers nested schema leaves and keeps explicit visibility within the column cap', () => {
@@ -157,7 +204,7 @@ describe('record-query vertical slice', () => {
       caseSensitive: false,
       selectedColumn: columns[0],
       filterColumns: columns,
-    })).toBeUndefined();
+    })).toMatchObject({ operator: 'contains', value: '42' });
     expect(buildStructuredFilter({
       columnId: columns[0]!.id,
       operator: 'kind_is',

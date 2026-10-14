@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Trace startup stages across the extension host and Webview with generation-safe acknowledgements, a bounded startup watchdog, and first-row diagnostics for stalled loads.
+- Preserve an unfinished page navigation across live index updates and profile refreshes, including sorted pages and empty-page recovery.
+- Group search, row-type and field filters, and column visibility in the table toolbar, with explicit current-file query scope and bounded scan status. Combine multiple row types with OR and field conditions with AND; keep nested content paths in on-demand column choices.
+- Preserve the physical reading anchor through manual Rebuild with Follow disabled, including delayed browser scroll clamping.
+- Keep Tree's selected-record content preview visible by default above the JSON fields, including text, Markdown, JSON, and code presentation controls.
+- Resume viewport following when scrolling to the current source tail, and dismiss Back to bottom without requiring a click.
+- Keep live source updates independent of table scrolling. Preserve history anchors and clicked-row detail while reading, show new activity, and return to the latest page on demand.
+- Restore single-record detail scrolling. Selecting another row starts at the top; safe generation recovery preserves that record's scroll and expanded content without reopening a closed drawer or retrying a failed detail request.
 - Future staged evolution work will be recorded here.
 - Expose bounded file navigation actions on Agent source nodes while keeping session-only actions scoped to entities.
 - Keep append-invalidated snapshots readable while preserving the selected row and detail drawer until an explicit rebuild.

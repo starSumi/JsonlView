@@ -178,6 +178,19 @@ export type EmptyRestoreDecision =
   | { readonly kind: 'retry'; readonly options: RecoveryRowsOptions; readonly restore: RestoreViewportIntent }
   | { readonly kind: 'stop' };
 
+/** A pending page can differ from the old visible anchor, including page one. */
+function firstOrdinalForRestore(restore: RestoreViewportIntent, pageSize: number,
+  requested: RecoveryRowsOptions | undefined): string | undefined {
+  if (requested === undefined || requested.sortOffset !== undefined) return restore.firstVisibleOrdinal;
+  if (requested.anchorOrdinal === undefined) return requested.direction === 'backward' ? restore.firstVisibleOrdinal : '0';
+  try {
+    const anchor = BigInt(requested.anchorOrdinal);
+    const first = requested.direction === 'backward'
+      ? anchor - BigInt(Math.max(1, Math.floor(pageSize))) : anchor + 1n;
+    return (first < 0n ? 0n : first).toString();
+  } catch { return restore.firstVisibleOrdinal; }
+}
+
 /** A completed empty restore permits at most one distinct clamped request. */
 export function planEmptyRestore(input: {
   readonly restore: RestoreViewportIntent;
@@ -204,7 +217,7 @@ export function planEmptyRestore(input: {
       ...(requested === undefined ? {} : { requestedOptions: copyOptions(requested) }) } };
   }
   const fallback = rowsOptionsAfterEmptyRebuild(
-    restore.firstVisibleOrdinal,
+    firstOrdinalForRestore(restore, input.pageSize, requested),
     restore.pageText,
     input.pageSize,
     input.totalRecords,

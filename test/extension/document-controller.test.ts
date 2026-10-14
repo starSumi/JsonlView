@@ -107,6 +107,57 @@ describe('document controller', () => {
     expect(messages[0]?.type).toBe('OPENED');
   });
 
+  it('reports a failed OPENED delivery and does not run post-handshake actions', async () => {
+    const deliveries: boolean[] = [];
+    let readyActions = 0;
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async () => false,
+    }, {
+      onOpenedDelivery: (delivered) => { deliveries.push(delivered); },
+      onReady: () => { readyActions += 1; },
+    });
+
+    await controller.handleMessage(request('READY'));
+
+    expect(deliveries).toEqual([false]);
+    expect(readyActions).toBe(0);
+  });
+
+  it('records READY only after validating its document identity', async () => {
+    let readyReceipts = 0;
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async () => true,
+    }, {
+      onReadyReceived: () => { readyReceipts += 1; },
+    });
+    const wrongDocument = request('READY');
+    wrongDocument.documentId = 'another-document';
+
+    await controller.handleMessage(wrongDocument);
+    await controller.handleMessage(request('READY'));
+
+    expect(readyReceipts).toBe(1);
+  });
+
+  it('records a rejected first row post and its successful retry', async () => {
+    const events: string[] = [];
+    let rowPosts = 0;
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => message.type !== 'ROWS' || ++rowPosts > 1,
+    }, {
+      onFirstRowsRequest: () => { events.push('requested'); },
+      onFirstRowsResult: ({ status, rows, indexedRecords }) => {
+        events.push([status, rows, indexedRecords].join(':'));
+      },
+    });
+
+    await controller.handleMessage(request('GET_ROWS', { limit: 100 }, 'rows-1'));
+    await controller.handleMessage(request('GET_ROWS', { limit: 100 }, 'rows-2'));
+    await controller.handleMessage(request('GET_ROWS', { limit: 100 }, 'rows-3'));
+
+    expect(events).toEqual(['requested', 'rejected:0:0', 'posted:0:0']);
+  });
+
   it('hands a bounded diagnostic banner action to the host without a data response', async () => {
     const diagnostics: Array<{ code: string; message: string; action?: 'explain' | 'copy' }> = [];
     const messages: ExtensionMessage[] = [];

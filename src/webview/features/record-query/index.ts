@@ -23,3 +23,7 @@ export { RecordTable } from './RecordTable';
 export type { RecordTableProps } from './RecordTable';
 export * from './row-query-controller';
 export * from './row-query-recovery-policy';
+export * from './query-selection';
+export * from './column-catalog';
+export { ColumnChooser } from './ColumnChooser';
+export { RowTypeChooser } from './RowTypeChooser';

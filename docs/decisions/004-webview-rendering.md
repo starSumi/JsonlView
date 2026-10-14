@@ -42,6 +42,17 @@ content across representative profiles.
 
 Use virtualized DOM for the primary workbench, bounded syntax/tree previews for
 detail, explicit truncation labels, and optional charts only when requested.
+The detail drawer displays only the selected record, identified by its complete
+`RecordRef`. Scrolling browses that record's content and never selects another
+record. Selecting a different record replaces the scroll container at its top
+while preserving the active detail tab. Hydration updates for the same identity
+retain the container, including a verified generation rebind of that same
+physical record. Explicit row selection owns record changes; Follow owns only
+source adoption and table viewport intent;
+detail responses still use the latest-wins single-record request channel.
+Tree shows the selected record's structured content preview by default above
+its JSON fields. Text, Markdown, JSON, and code presentation controls stay
+available in that preview; opening it requires no additional disclosure action.
 Keep the workspace header presentational: the host identifies the file, while
 the Webview header groups profile, Follow, query, and rebuild controls with
 bounded status. `App.tsx` retains query and source-generation state. Use CSS
@@ -55,7 +66,7 @@ problem list from the current visible row page or from the summary counter.
 
 ## Evidence
 
-Webview tests, Engine/Host contract tests, CDP smoke captures, `docs/assets/`,
+Webview state, record-identity, and rendering tests; Engine/Host contract tests; CDP smoke captures; `docs/assets/`,
 and the harness showcase. A Problems page marked partial is evidence of a
 bounded scan window only; it is not evidence that the file has no later
 problems.
@@ -73,11 +84,20 @@ current header has passed a narrow-host interaction check.
 
 Rich Markdown is conservative and bounded; unsupported embedded formats remain
 plain text or Raw source. A truncated preview is not the full record.
+The drawer may retain a selected record outside the current table page. It does
+not add other records to its scroll range. The protocol hydrates one active
+record at a time.
 Container queries govern header presentation only; detail-drawer sizing and
 source-generation behavior keep their existing owners. Preserve keyboard
 focus, labels, and access to search and Rebuild while the container narrows.
 
 ## Revisit Trigger
+
+The candidate's multi-record virtual detail stream is superseded by the
+single-record drawer contract. Even bounded placeholder anchors changed the
+established row-selection behavior and produced scroll space unrelated to the
+selected record. Cross-record detail scrolling requires an explicit future
+interaction decision and its own host acceptance checks.
 
 Revisit rendering only after a measured frame or memory failure identifies a
 specific surface that a secondary canvas layer can improve without removing

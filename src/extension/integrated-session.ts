@@ -52,6 +52,8 @@ export interface IntegratedSessionOptions {
   pageHydrationMaxBytes?: number;
   newlineScanner?: NativeNewlineScannerSetting;
   backgroundIndexing?: boolean;
+  /** Report a non-cancellation background indexing failure without source data. */
+  onBackgroundIndexError?: (error: unknown) => void;
   insightsMaxExaminedRecords?: number;
   insightsMaxExaminedBytes?: number;
   insightsMaxMilliseconds?: number;
@@ -673,7 +675,13 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       for (const listener of this.listeners) listener(current);
       if (summary.indexingComplete) this.startDeferredProfileDetection();
     }, { generation: engine.snapshot.generation });
-    void this.background.done.catch(() => undefined);
+    void this.background.done.catch((error: unknown) => {
+      try {
+        this.options.onBackgroundIndexError?.(error);
+      } catch {
+        // Diagnostic callbacks cannot make the indexing failure unhandled.
+      }
+    });
   }
 }
 

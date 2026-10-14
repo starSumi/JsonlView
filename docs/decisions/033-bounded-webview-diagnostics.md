@@ -29,6 +29,26 @@ The command `jsonlView.diagnoseWebview` gives a recoverable entry point when a
 renderer-owned host error has no extension callback. The command uses a known
 symptom template and marks the source boundary explicitly.
 
+For product-owned editor startup, register the host message receiver before
+publishing Webview HTML. The Webview uses one VS Code API handle, retries READY
+for a bounded interval, and shows a named startup error if no OPENED summary
+arrives. Opening, resolving, READY receipt, OPENED host-post acceptance, and
+the first row request/result log stage and aggregate outcome only; they never
+log source bytes or full source paths. A successful host post does not prove
+the Webview rendered it; a subsequent row request is a separate receipt. A late valid
+OPENED may still recover the editor after the timeout is displayed.
+
+The host correlates a fixed stage receipt with a per-resolve startup ID, the
+current document ID, generation, and monotonic source epoch. Retired receipts
+and receipts from an earlier editor resolve are ignored. The
+Webview reports OPENED acceptance, first page state commit (including zero
+rows), or startup error; these receipts do not prove pixels were painted. A
+10-second host watchdog records a stalled outcome and last accepted stage when
+startup has not committed. This exceeds the Webview's 7.5-second bounded READY
+retry window. The Webview also reports the bounded READY timeout as a startup
+error when its script is running. The watchdog permits late recovery; it does not
+automatically recreate the Webview or infer the underlying renderer cause.
+
 ## Alternatives and deferred work
 
 - Registering a service worker to suppress the host error was rejected: the
@@ -55,6 +75,13 @@ Pure tests cover field bounds, path redaction, policy markers, and prompt
 construction. Focused intake tests cover the message schema and CSP. Installed
 host acceptance must separately verify the command palette action, clipboard
 fallback, and behavior when Chat is unavailable.
+Startup tests must deliver READY as soon as HTML is assigned, drop the first
+READY, and withhold OPENED; verify listener order, bounded retry/error, and
+late-response recovery. Installed-host acceptance must match the running
+extension bundle to the tested candidate before interpreting its output log.
+Fault injection must also verify stale epoch and startup ID receipts are ignored,
+and a late page commit after a startup error or watchdog stall is logged as
+recovery.
 
 ## Boundary and rollback
 

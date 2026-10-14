@@ -1,5 +1,5 @@
-import { MAX_TABLE_COLUMNS } from '../shared/types';
-import type { CellProjection, ColumnSpec, FieldStats, JsonKind, RowProjection } from '../shared/types';
+import { displayFieldPath, MAX_TABLE_COLUMNS } from '../shared/types';
+import type { CellProjection, ColumnSpec, FieldPath, FieldStats, JsonKind, RowProjection } from '../shared/types';
 
 export interface TreePreviewRow {
   path: string;
@@ -19,6 +19,20 @@ export const MIN_COLUMN_WIDTH = 96;
 export const MAX_COLUMN_WIDTH = 720;
 const MAX_SCHEMA_COLUMN_CANDIDATES = 250;
 
+/** The same bounded record path contract applies to sampled and saved columns. */
+export function recordColumnForPath(path: FieldPath, label?: string): ColumnSpec | undefined {
+  const tokens = path.tokens;
+  if (!Array.isArray(tokens) || tokens.length === 0 || tokens.length > 32
+    || !tokens.every((token) => token !== null && typeof token === 'object'
+      && (token.kind === 'key'
+        ? typeof token.value === 'string' && token.value.length > 0 && token.value.length <= 1024
+        : token.kind === 'index' && Number.isSafeInteger(token.value) && Number(token.value) >= 0))) return undefined;
+  const id = JSON.stringify(tokens);
+  const display = label ?? displayFieldPath(path);
+  if (id.length > 256 || display.length === 0 || display.length > 256) return undefined;
+  return { id, label: display, path, source: 'record' };
+}
+
 export function schemaRecordColumns(fields: readonly FieldStats[], limit = MAX_TABLE_COLUMNS): ColumnSpec[] {
   const maxColumns = Number.isSafeInteger(limit)
     ? Math.max(0, Math.min(limit, MAX_SCHEMA_COLUMN_CANDIDATES))
@@ -27,17 +41,10 @@ export function schemaRecordColumns(fields: readonly FieldStats[], limit = MAX_T
   const seen = new Set<string>();
   for (const field of fields) {
     if (columns.length >= maxColumns) break;
-    const tokens = field.path.tokens;
-    // The root value describes the whole record; it is not a selectable
-    // field projection and cannot be addressed as a table cell column.
-    if (tokens.length === 0) continue;
-    if (tokens.length > 32 || !tokens.every((token) => token.kind === 'key'
-      ? typeof token.value === 'string' && token.value.length > 0 && token.value.length <= 1024
-      : token.kind === 'index' && Number.isSafeInteger(token.value) && Number(token.value) >= 0)) continue;
-    const id = JSON.stringify(tokens);
-    if (id.length > 256 || field.displayPath.length === 0 || field.displayPath.length > 256 || seen.has(id)) continue;
-    seen.add(id);
-    columns.push({ id, label: field.displayPath, path: field.path, source: 'record' });
+    const column = recordColumnForPath(field.path, field.displayPath);
+    if (column === undefined || seen.has(column.id)) continue;
+    seen.add(column.id);
+    columns.push(column);
   }
   return columns;
 }

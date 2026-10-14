@@ -1,8 +1,10 @@
-import React, { useRef } from 'react';
+import type React from 'react';
+import { useRef, useState } from 'react';
 import { ArrowDownNarrowWide, ArrowDownWideNarrow, Filter, Search, X } from 'lucide-react';
-import type { ColumnSpec, RowFilterOperator, SortDirection } from '../../../shared/types';
+import type { ColumnSpec, RowFilter, RowFilterOperator, SortDirection } from '../../../shared/types';
 import { useLightDismiss } from '../../use-light-dismiss';
 import { useViewportPopover } from '../../use-viewport-popover';
+import { describeFieldFilter, MAX_FIELD_FILTERS } from './query-selection';
 
 export interface FilterOperatorOption {
   value: RowFilterOperator;
@@ -21,6 +23,7 @@ export interface RecordQueryControlsProps {
   onSearchChange: (query: string) => void;
   onSearchClear: () => void;
   filterActive: boolean;
+  filters?: readonly RowFilter[];
   filterableColumns: readonly ColumnSpec[];
   filterColumnId: string;
   filterOperator: RowFilterOperator;
@@ -33,6 +36,7 @@ export interface RecordQueryControlsProps {
   onFilterCaseSensitiveChange: (enabled: boolean) => void;
   onFilterSubmit: () => void;
   onFilterClear: () => void;
+  onFilterRemove?: (index: number) => void;
 }
 
 export function RecordQueryControls({
@@ -46,6 +50,7 @@ export function RecordQueryControls({
   onSearchChange,
   onSearchClear,
   filterActive,
+  filters = [],
   filterableColumns,
   filterColumnId,
   filterOperator,
@@ -58,10 +63,17 @@ export function RecordQueryControls({
   onFilterCaseSensitiveChange,
   onFilterSubmit,
   onFilterClear,
+  onFilterRemove,
 }: RecordQueryControlsProps): React.JSX.Element {
   const filterMenuRef = useRef<HTMLDetailsElement>(null);
   useLightDismiss(filterMenuRef);
   useViewportPopover(filterMenuRef);
+  const [fieldSearch, setFieldSearch] = useState('');
+  const term = fieldSearch.trim().toLocaleLowerCase();
+  const matchingFields = filterableColumns.filter((column) => column.label.toLocaleLowerCase().includes(term));
+  const displayedFields = matchingFields.slice(0, 50);
+  const selectedColumn = filterableColumns.find((column) => column.id === filterColumnId);
+  if (selectedColumn !== undefined && !displayedFields.some((column) => column.id === filterColumnId)) displayedFields.unshift(selectedColumn);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
   const rowOrderTitle = descendingDisabled
@@ -72,6 +84,7 @@ export function RecordQueryControls({
 
   return (
     <>
+      {/* biome-ignore lint/a11y/useSemanticElements: This form both submits the table query and provides its search landmark. */}
       <form
         className="search-box"
         role="search"
@@ -85,6 +98,7 @@ export function RecordQueryControls({
           value={query}
           placeholder="Search records"
           aria-label="Search records"
+          aria-description="Search and filters query the current file together in bounded scans; results appear in this table."
           disabled={searchDisabled}
           onChange={(event) => onSearchChange(event.target.value)}
         />
@@ -94,9 +108,8 @@ export function RecordQueryControls({
           </button>
         ) : null}
       </form>
-      <div
+      <fieldset
         className="row-order-control"
-        role="group"
         aria-label="Record order"
         title={descendingDisabled ? descendingDisabledReason : undefined}
       >
@@ -114,19 +127,34 @@ export function RecordQueryControls({
             ? <ArrowDownNarrowWide size={15} aria-hidden />
             : <ArrowDownWideNarrow size={15} aria-hidden />}
         </button>
-      </div>
+      </fieldset>
       <details className="filter-menu" ref={filterMenuRef}>
-        <summary className={`icon-button${filterActive ? ' is-active' : ''}`} title="Filter records" aria-label="Filter records">
-          <Filter size={15} aria-hidden />
+        <summary className={`query-tool-button${filterActive ? ' is-active' : ''}`} title="Field filters: match all conditions" aria-label="Field filters">
+          <Filter size={15} aria-hidden /><span>Field filters{filters.length ? ` (${filters.length})` : ''}</span>
         </summary>
         <form
           className="filter-popover"
+          data-popover-width="340"
+          data-popover-height="480"
           onSubmit={(event) => {
             event.preventDefault();
             onFilterSubmit();
           }}
         >
+          <strong>Field filters</strong>
+          <small>Match all field conditions, the search, and any selected row type.</small>
+          {filters.length > 0 ? <ul className="applied-filters" aria-label="Applied field conditions">
+            {filters.map((filter, index) => <li key={JSON.stringify(filter)}>
+              <span title={describeFieldFilter(filter, filterableColumns)}>{describeFieldFilter(filter, filterableColumns)}</span>
+              <button type="button" className="icon-button" aria-label={`Remove condition ${index + 1}`}
+                onClick={() => onFilterRemove?.(index)} disabled={searchDisabled}>
+                <X size={13} aria-hidden />
+              </button>
+            </li>)}
+          </ul> : null}
           <div className="filter-fields">
+          <label><span>Find field</span><input aria-label="Search filter fields" placeholder="Search a field path"
+            value={fieldSearch} onChange={(event) => setFieldSearch(event.target.value)} /></label>
           <label>
             <span>Field</span>
             <select
@@ -134,7 +162,7 @@ export function RecordQueryControls({
               disabled={filterableColumns.length === 0}
               onChange={(event) => onFilterColumnChange(event.target.value)}
             >
-              {filterableColumns.map((column) => <option value={column.id} key={column.id}>{column.label}</option>)}
+              {displayedFields.map((column) => <option value={column.id} key={column.id}>{column.label}</option>)}
             </select>
           </label>
           <label>
@@ -162,9 +190,12 @@ export function RecordQueryControls({
           ) : null}
           </div>
           <div className="filter-actions">
-            <button type="submit" disabled={!filterColumnId || filterableColumns.length === 0}>Apply</button>
-            <button type="button" onClick={onFilterClear} disabled={!filterActive}>Clear</button>
+            <button type="submit" disabled={searchDisabled || !filterColumnId || filterableColumns.length === 0
+              || filters.length >= MAX_FIELD_FILTERS}>Add condition</button>
+            <button type="button" onClick={onFilterClear} disabled={searchDisabled || !filterActive}>Clear fields</button>
           </div>
+          {filters.length >= MAX_FIELD_FILTERS ? <small>Up to {MAX_FIELD_FILTERS} field conditions. Remove one to add another.</small> : null}
+          {matchingFields.length > 50 ? <small>Search a more specific path to find additional fields.</small> : null}
           <small>Scans a bounded source window; limited results are marked.</small>
         </form>
       </details>

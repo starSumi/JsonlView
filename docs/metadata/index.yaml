@@ -551,6 +551,16 @@ documents:
     evidence: []
     revisit: when a format contract gains conformance evidence
     rollback: keep JSONL authoritative and disable the adapter
+  - id: adr-045-table-query-and-column-ownership
+    path: docs/decisions/045-table-query-and-column-ownership.md
+    title: Table Query And Column Ownership
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [webview, query, columns, bounded-scan]
+    evidence: []
+    revisit: when query, profile Event or scan continuation contracts change
+    rollback: revert the table controls and retain source bytes
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

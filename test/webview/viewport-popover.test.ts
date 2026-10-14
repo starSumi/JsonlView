@@ -31,4 +31,21 @@ describe('native details popup viewport placement', () => {
     expect(clampPopoverToViewport({ top: Number.NaN, bottom: Number.NaN, right: Number.NaN },
       Number.NaN, Number.NaN, Number.NaN, 0)).toEqual({ left: 0, top: 0, width: 0, maxHeight: 0 });
   });
+
+  it('keeps a wide column chooser inside the left table pane beside a detail drawer', () => {
+    const placement = clampPopoverToViewport({ top: 70, bottom: 98, right: 620 },
+      340, 480, 1000, 700, { left: 0, right: 310 });
+    expect(placement.width).toBe(294);
+    expect(placement.left).toBe(8);
+    expect(placement.left + placement.width).toBeLessThanOrEqual(302);
+  });
+
+  it('repositions after the splitter makes the table narrower', () => {
+    const anchor = { top: 70, bottom: 98, right: 260 };
+    const wide = clampPopoverToViewport(anchor, 320, 400, 1000, 700, { left: 0, right: 700 });
+    const narrow = clampPopoverToViewport(anchor, 320, 400, 1000, 700, { left: 0, right: 220 });
+    expect(wide.width).toBe(320);
+    expect(narrow.width).toBe(204);
+    expect(narrow.left + narrow.width).toBeLessThanOrEqual(212);
+  });
 });

@@ -5,23 +5,20 @@ import {
   BarChart3,
   Braces,
   CircleAlert,
-  Columns3,
   RefreshCw,
   Table2,
   X,
 } from 'lucide-react';
 import type {
-  ColumnSpec,
   InsightDimension,
   RecordRef,
-  RowFilter,
   RowFilterOperator,
-  RowSort,
   SortDirection,
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
 import { DetailDrawer } from './detail-drawer';
+import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
 } from './full-record-intent';
@@ -30,32 +27,36 @@ import { InsightsView } from './insights-view';
 import { visibleColumns } from './format';
 import {
   buildStructuredFilter,
+  ColumnChooser,
   canRequestSortedPage,
   formatScanLimit,
   RecordPager,
   recordColumnOptions,
   RecordQueryBanner,
   RecordQueryControls,
+  RowTypeChooser,
+  rowTypeSources,
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
   textPredicate,
 } from './features/record-query';
+import { configuredRecordColumns } from './features/record-query/model';
 import type { ViewportIdentity } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
 import { RowQueryController, type RowsRequestMetadata, type RowsRequestOptions } from './row-query-controller';
 import { snapshotIdentityChanged } from './snapshot-identity';
+import { createStartupStageReceipt, startStartupHandshake, type StartupStage } from './startup-handshake';
 import { profileOptionList } from './profile-options';
 import { WorkspaceHeader } from './workspace-header';
-import { useLightDismiss } from './use-light-dismiss';
 import { useManualTabs } from './use-manual-tabs';
 import { useNarrowViewport } from './use-modal-focus';
-import { useViewportPopover } from './use-viewport-popover';
 import {
   canReadSnapshot,
   createInitialState,
   nextInvalidationReason,
   selectProblems,
   selectTimelineRows,
+  shouldCloseDetailOnEscape,
   toPersistedState,
   workspaceReducer,
   type PersistedWorkspaceState,
@@ -84,7 +85,8 @@ const configuredPageSize = Number(document.body.dataset.pageSize ?? '100');
 const PAGE_SIZE = Number.isSafeInteger(configuredPageSize)
   ? Math.min(500, Math.max(20, configuredPageSize))
   : 100;
-const vscode = acquireVsCodeApi<PersistedWorkspaceState>();
+const vscode = (window as Window & { __jsonlViewVscodeApi?: ReturnType<typeof acquireVsCodeApi<PersistedWorkspaceState>> })
+  .__jsonlViewVscodeApi ?? acquireVsCodeApi<PersistedWorkspaceState>();
 
 function bodySession(): { documentId: string; generation: string; epoch?: number } {
   const rawEpoch = document.body.dataset.epoch;
@@ -96,6 +98,18 @@ function bodySession(): { documentId: string; generation: string; epoch?: number
       ? { epoch: parsedEpoch }
       : {}),
   };
+}
+
+function reportStartupStage(
+  stage: StartupStage,
+  session: { documentId: string; generation: string; epoch?: number },
+  rows?: number,
+): void {
+  const receipt = createStartupStageReceipt(stage, {
+    ...session,
+    startupId: document.body.dataset.startupId ?? '',
+  }, rows);
+  if (receipt !== undefined) vscode.postMessage(receipt);
 }
 
 const tabs: Array<{
@@ -140,17 +154,20 @@ export function App(): React.JSX.Element {
   const stateRef = useRef(state);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
   const clientRef = useRef(new VsCodeMessageClient(vscode, bodySession()));
-  const startedRef = useRef(false);
+  const startupErrorRef = useRef(false);
+  const startupReadyIdsRef = useRef(new Set<string>());
+  const startupStopRef = useRef<(() => void) | undefined>(undefined);
+  const startupStagesRef = useRef({ opened: false, page: false, error: false });
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const columnsMenuRef = useRef<HTMLDetailsElement>(null);
-  useLightDismiss(columnsMenuRef);
-  useViewportPopover(columnsMenuRef);
   const narrowViewport = useNarrowViewport();
   const drawerId = 'record-detail';
   const workspaceTabs = useManualTabs({
     ids: tabs.map((tab) => tab.id),
     activeId: state.activeTab,
-    onActivate: (tab) => dispatch({ type: 'SET_ACTIVE_TAB', tab }),
+    onActivate: (tab) => {
+      if (tab !== 'table') queryController.pauseFollowing();
+      dispatch({ type: 'SET_ACTIVE_TAB', tab });
+    },
     idPrefix: 'workspace-views',
   });
   const indexingCompleteRef = useRef(false);
@@ -167,6 +184,7 @@ export function App(): React.JSX.Element {
   // same-generation OPENED must not accidentally clear the stale barrier.
   const acceptedSessionRef = useRef<ViewportIdentity | undefined>(undefined);
   const automaticFullDetailKeyRef = useRef<string | undefined>(undefined);
+  const selectedDetailKeyRef = useRef<string | undefined>(undefined);
   const detailIntentRef = useRef<{ ref: RecordRef; full: boolean } | undefined>(undefined);
   const sourceUpdateRetryRef = useRef<{ generation: string; attempts: number }>({ generation: '', attempts: 0 });
   const schemaRequestKeyRef = useRef('');
@@ -307,14 +325,24 @@ export function App(): React.JSX.Element {
     dispatch({ type: 'REQUEST_SENT', request });
   }, [finishCancelled, queryController.query]);
 
-  const requestDetail = useCallback((ref: RecordRef, full = false): void => {
+  const requestDetail = useCallback((ref: RecordRef, full = false, select = true): void => {
     const client = clientRef.current;
+    if (ref.generation !== client.session.generation) return;
+    if (select) queryController.pauseFollowing();
+    selectedDetailKeyRef.current = recordRefKey(ref);
+    if (select) automaticFullDetailKeyRef.current = undefined;
     detailIntentRef.current = { ref, full };
     finishCancelled('detail', client.cancel('detail'));
-    dispatch({ type: 'SELECT_ROW', ordinal: ref.ordinal });
+    if (select) dispatch({ type: 'SELECT_ROW', ref, ordinal: ref.ordinal });
     if (!canReadSnapshot(invalidationRef.current)) return;
     const request = client.send('GET_DETAIL', { ref, ...(full ? { full: true } : {}) });
     dispatch({ type: 'REQUEST_SENT', request });
+  }, [finishCancelled, queryController]);
+
+  const closeDetail = useCallback((): void => {
+    detailIntentRef.current = undefined;
+    finishCancelled('detail', clientRef.current.cancel('detail'));
+    dispatch({ type: 'CLOSE_DETAIL' });
   }, [finishCancelled]);
 
   const setColumnWidth = useCallback((columnId: string, width: number | undefined): void => {
@@ -325,16 +353,8 @@ export function App(): React.JSX.Element {
     dispatch({ type: 'SET_COLUMN_ORDER', order });
   }, []);
 
-  const setSort = useCallback((sort: RowSort | undefined): void => {
-    queryController.changeSort(sort);
-  }, [queryController]);
-
   const setSortDirection = useCallback((direction: SortDirection): void => {
     queryController.requestRowOrder(direction);
-  }, [queryController]);
-
-  const applyFilter = useCallback((filter: RowFilter | undefined): void => {
-    queryController.applyFilter(filter);
   }, [queryController]);
 
   const rebuild = useCallback((): void => {
@@ -355,7 +375,7 @@ export function App(): React.JSX.Element {
     sourceUpdateRetryRef.current.attempts += 1;
     const timer = window.setTimeout(() => {
       const intent = detailIntentRef.current;
-      if (intent !== undefined) requestDetail(intent.ref, intent.full);
+      if (intent !== undefined && stateRef.current.detailOpen) requestDetail(intent.ref, intent.full, false);
       else requestRows();
     }, 500);
     return () => window.clearTimeout(timer);
@@ -377,6 +397,15 @@ export function App(): React.JSX.Element {
     const onMessage = (event: MessageEvent<unknown>): void => {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
+      if (message.type === 'ERROR' && acceptedSessionRef.current === undefined
+        && startupReadyIdsRef.current.has(message.requestId)) {
+        startupErrorRef.current = true;
+        startupStopRef.current?.();
+        if (!startupStagesRef.current.error) {
+          startupStagesRef.current.error = true;
+          reportStartupStage('startup-error', bodySession());
+        }
+      }
       const currentFollowMode = followModeRef.current;
       const firstOpenedSession = message.type === 'OPENED' && acceptedSessionRef.current === undefined;
       const openedGenerationChanged = message.type === 'OPENED'
@@ -387,6 +416,11 @@ export function App(): React.JSX.Element {
       if (openedGenerationChanged || message.type === 'DETAIL') {
         detailIntentRef.current = undefined;
       }
+      if (openedGenerationChanged || message.type === 'PROFILE_CHANGED') {
+        selectedDetailKeyRef.current = undefined;
+        automaticFullDetailKeyRef.current = undefined;
+        if (message.type === 'PROFILE_CHANGED') detailIntentRef.current = undefined;
+      }
       if (message.type === 'REVEAL') queryController.revealOrdinal(message.payload.anchorOrdinal);
       if (message.type === 'OPENED') {
         if (openedGenerationChanged) setSchemaLoadFailed(false);
@@ -396,6 +430,11 @@ export function App(): React.JSX.Element {
           generation: message.payload.snapshot.generation,
           ...(message.payload.snapshot.epoch === undefined ? {} : { epoch: message.payload.snapshot.epoch }),
         };
+        if (firstOpenedSession && !startupStagesRef.current.opened) {
+          startupStopRef.current?.();
+          startupStagesRef.current.opened = true;
+          reportStartupStage('opened-accepted', message.payload.snapshot);
+        }
       } else if (message.type === 'INDEX_PROGRESS'
         && acceptedSessionRef.current?.generation === message.generation) {
         indexingCompleteRef.current = message.payload.indexingComplete;
@@ -426,12 +465,38 @@ export function App(): React.JSX.Element {
   }, [cancelReadRequests, finishCancelled, queryController]);
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
     const payload = restored === undefined ? {} : { restoredState: restored };
-    const request = clientRef.current.send('READY', payload);
-    dispatch({ type: 'REQUEST_SENT', request });
+    const stop = startStartupHandshake(
+      () => {
+        const request = clientRef.current.send('READY', payload);
+        startupReadyIdsRef.current.add(request.id);
+        dispatch({ type: 'REQUEST_SENT', request });
+      },
+      () => acceptedSessionRef.current !== undefined || startupErrorRef.current,
+      () => {
+        dispatch({ type: 'STARTUP_TIMEOUT' });
+        if (!startupStagesRef.current.error) {
+          startupStagesRef.current.error = true;
+          reportStartupStage('startup-error', bodySession());
+        }
+        vscode.postMessage({ type: 'JSONLVIEW_DIAGNOSTIC', name: 'StartupTimeout', message: 'OPENED was not received after three READY attempts' });
+      },
+    );
+    startupStopRef.current = stop;
+    return () => {
+      stop();
+      if (startupStopRef.current === stop) startupStopRef.current = undefined;
+    };
   }, [restored]);
+
+  useEffect(() => {
+    if (startupStagesRef.current.page || state.page === undefined || state.summary === undefined) return;
+    const session = acceptedSessionRef.current;
+    if (session?.documentId !== state.summary.snapshot.documentId
+      || session.generation !== state.summary.snapshot.generation) return;
+    startupStagesRef.current.page = true;
+    reportStartupStage('page-committed', session, state.rows.length);
+  }, [state.page, state.rows, state.summary]);
 
   useEffect(() => {
     const summary = state.summary;
@@ -472,16 +537,13 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && (
-        stateRef.current.detail || stateRef.current.pending.detail || stateRef.current.blockedDetailOrdinal
-      )) {
-        finishCancelled('detail', clientRef.current.cancel('detail'));
-        dispatch({ type: 'CLOSE_DETAIL' });
+      if (shouldCloseDetailOnEscape(event.key, stateRef.current)) {
+        closeDetail();
       }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [finishCancelled]);
+  }, [closeDetail]);
 
   const summary = state.summary;
   const profileOptions = profileOptionList(
@@ -493,11 +555,11 @@ export function App(): React.JSX.Element {
     [state.columns, state.rows],
   );
   const selectedRecordIds = new Set(
-    selectedRecordColumns(baseColumns, state.schema, state.columnVisibility)?.map((column) => column.id) ?? [],
+    configuredRecordColumns(baseColumns, state.schema, state.columnVisibility)?.map((column) => column.id) ?? [],
   );
   const availableColumns = useMemo(
-    () => recordColumnOptions(baseColumns, state.schema),
-    [baseColumns, state.schema],
+    () => recordColumnOptions(baseColumns, state.schema, state.columnVisibility),
+    [baseColumns, state.schema, state.columnVisibility],
   );
   const recordColumnLimit = Math.max(
     0,
@@ -513,39 +575,40 @@ export function App(): React.JSX.Element {
       ...problem,
       ...(problem.ref?.ordinal === undefined ? {} : { ordinal: problem.ref.ordinal }),
     }));
-  const drawerOpen = Boolean(
-    state.detail
-    || state.pending.detail
-    || state.blockedDetailOrdinal
-    || (state.error?.code === 'SOURCE_UPDATING' && state.selectedOrdinal !== undefined),
-  );
+  const drawerOpen = state.detailOpen;
 
   useEffect(() => {
     if (!state.detailStale || state.rebuildDetail === undefined || state.pending.detail
       || !state.summary || !canReadSnapshot(state.invalidationReason)
       || !canReadSnapshot(invalidationRef.current)) return;
-    const row = state.rows.find((candidate) => candidate.ref.ordinal === state.rebuildDetail?.ref.ordinal
-      && candidate.ref.byteStart === state.rebuildDetail.ref.byteStart);
     // A recovery page is intentionally bounded and may not contain the pinned
     // record.  A rebased intent proves this is the same physical append-only
     // source, so request the detail directly by byte coordinates. Keep the
     // old payload marked stale until the response arrives; never relabel
     // cached content as the new snapshot.
-    const ref = row?.ref ?? (state.rebuildDetail.ref.generation === state.summary.snapshot.generation ? {
-      ...state.rebuildDetail.ref,
-      generation: state.summary.snapshot.generation,
-    } : undefined);
+    const ref = state.rebuildDetail.ref.generation === state.summary.snapshot.generation
+      ? state.rebuildDetail.ref
+      : undefined;
     if (ref === undefined) return;
-    const key = `rebuild:${ref.generation}:${ref.ordinal}:${ref.byteStart}`;
+    const key = `rebuild:${recordRefKey(ref)}`;
     if (automaticFullDetailKeyRef.current === key) return;
     automaticFullDetailKeyRef.current = key;
-    requestDetail(ref, true);
-  }, [requestDetail, state.detailStale, state.invalidationReason, state.pending.detail, state.rebuildDetail, state.rows, state.summary]);
+    requestDetail(ref, true, false);
+  }, [requestDetail, state.detailStale, state.invalidationReason, state.pending.detail, state.rebuildDetail, state.summary]);
+
+  useEffect(() => {
+    const ref = state.selectedRef;
+    if (!state.detailOpen || ref === undefined || state.detailStale || state.pending.detail
+      || !canReadSnapshot(state.invalidationReason) || !canReadSnapshot(invalidationRef.current)
+      || sameRecordRef(state.detail?.ref, ref)) return;
+    const key = recordRefKey(ref);
+    if (selectedDetailKeyRef.current === key) return;
+    requestDetail(ref, false, false);
+  }, [requestDetail, state.detail, state.detailOpen, state.detailStale, state.invalidationReason, state.pending.detail, state.selectedRef]);
 
   useEffect(() => {
     const detail = state.detail;
     if (detail === undefined || state.selectedOrdinal !== detail.ref.ordinal) {
-      automaticFullDetailKeyRef.current = undefined;
       return;
     }
     if (state.detailStale) return;
@@ -562,10 +625,10 @@ export function App(): React.JSX.Element {
       return;
     }
 
-    const key = `${detail.ref.generation}:${detail.ref.ordinal}`;
+    const key = `full:${recordRefKey(detail.ref)}`;
     if (automaticFullDetailKeyRef.current === key) return;
     automaticFullDetailKeyRef.current = key;
-    requestDetail(detail.ref, true);
+    requestDetail(detail.ref, true, false);
   }, [drawerOpen, requestDetail, state.detail, state.detailStale, state.invalidationReason, state.pending.detail, state.selectedOrdinal]);
 
   const workspaceWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
@@ -606,7 +669,7 @@ export function App(): React.JSX.Element {
       filterColumns: filterableColumns,
     });
     if (filter === undefined) return;
-    applyFilter(filter);
+    queryController.applyFilters([...queryController.filters, filter]);
   };
 
   const setProfile = (profileId: string): void => {
@@ -625,8 +688,30 @@ export function App(): React.JSX.Element {
     finishCancelled('follow', clientRef.current.cancel('follow'));
     const request = clientRef.current.send('SET_FOLLOW_MODE', { enabled });
     dispatch({ type: 'REQUEST_SENT', request });
-    if (enabled) queryController.requestFollowRows();
+    if (enabled) queryController.returnToLatest();
   };
+
+  const returnToLatest = (): void => {
+    queryController.returnToLatest();
+    dispatch({ type: 'SET_ACTIVE_TAB', tab: 'table' });
+    setFilterValue('');
+  };
+
+  const reportTailVisible = useCallback((ref: RecordRef): void => {
+    dispatch({ type: 'TAIL_VISIBLE', generation: ref.generation, ordinal: ref.ordinal, indexedRecords: state.latestSeq });
+  }, [state.latestSeq]);
+
+  const pauseFollowing = useCallback((ref?: RecordRef): void => {
+    queryController.pauseFollowing(ref);
+  }, [queryController]);
+
+  const reportViewport = useCallback((ref: RecordRef): void => {
+    queryController.reportViewport(ref);
+  }, [queryController]);
+
+  const resumeFollowingAtTail = useCallback((ref: RecordRef): boolean => {
+    return queryController.resumeFollowingAtTail(ref);
+  }, [queryController]);
 
   const selectProblem = (ordinal: string): void => {
     const problem = state.problems?.items.find((candidate) => candidate.ref?.ordinal === ordinal);
@@ -692,6 +777,7 @@ export function App(): React.JSX.Element {
 
   const resizeDetailFromPointer = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return;
+    queryController.pauseFollowing();
     const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
     const initialPointerX = event.clientX;
     const initialWidth = displayedDetailWidth;
@@ -729,6 +815,7 @@ export function App(): React.JSX.Element {
     if (event.key === 'Home') desired = 0;
     if (event.key === 'End') desired = containerWidth;
     if (desired === undefined) return;
+    queryController.pauseFollowing();
     event.preventDefault();
     dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(desired, containerWidth) });
   };
@@ -738,7 +825,10 @@ export function App(): React.JSX.Element {
     : undefined;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" onFocusCapture={(event) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type !== 'checkbox') queryController.pauseFollowing();
+    }}>
       <WorkspaceHeader
         indexedBytes={summary?.indexedBytes ?? '0'}
         sizeBytes={summary?.snapshot.sizeBytes ?? '0'}
@@ -791,50 +881,6 @@ export function App(): React.JSX.Element {
           />
           <span>Follow</span>
         </label>
-        <RecordQueryControls
-          query={state.query}
-          searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
-          sortDirection={state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc'}
-           descendingDisabled={summary?.indexingComplete !== true
-             || state.invalidationReason !== undefined
-             || Boolean(state.pending.rebuild)
-             || Boolean(state.pending.order)}
-           descendingDisabledReason={state.invalidationReason !== undefined
-             ? 'Rebuild the changed source before reversing row order'
-             : state.pending.rebuild
-               ? 'Rebuilding the index'
-               : state.pending.order
-                 ? 'Saving the row order preference'
-                 : 'Indexing the file before reverse order is available'}
-          onSortDirectionChange={setSortDirection}
-          onSearchSubmit={() => {
-            const query = queryController.query;
-            if (state.activeTab === 'insights') requestInsights({ query });
-            else requestRows({ query });
-          }}
-          onSearchChange={(query) => queryController.editQuery(query)}
-          onSearchClear={() => {
-            // Clear is an explicit cross-control action. Release a stale
-            // Page focus gate even when the host did not deliver onBlur.
-            queryController.releasePageInputFocus();
-            queryController.editQuery('');
-            if (state.activeTab === 'insights') requestInsights({ query: '' });
-            else requestRows({ query: '' });
-          }}
-          filterActive={Boolean(state.filter)}
-          filterableColumns={filterableColumns}
-          filterColumnId={filterColumnId}
-          filterOperator={filterOperator}
-          filterOperators={availableFilterOperators}
-          filterValue={filterValue}
-          filterCaseSensitive={filterCaseSensitive}
-          onFilterColumnChange={setFilterColumnId}
-          onFilterOperatorChange={setFilterOperator}
-          onFilterValueChange={setFilterValue}
-          onFilterCaseSensitiveChange={setFilterCaseSensitive}
-          onFilterSubmit={submitStructuredFilter}
-          onFilterClear={() => applyFilter(undefined)}
-        />
         {state.invalidationReason === undefined ? (
           <button
             type="button"
@@ -847,41 +893,6 @@ export function App(): React.JSX.Element {
             <RefreshCw size={15} className={state.pending.rebuild ? 'spin' : ''} aria-hidden />
           </button>
         ) : null}
-        <details ref={columnsMenuRef} className="columns-menu">
-          <summary className="icon-button" title="Choose columns" aria-label="Choose columns">
-            <Columns3 size={15} aria-hidden />
-          </summary>
-          <div className="columns-popover">
-            {schemaLoadFailed ? (
-              <button type="button" onClick={requestSchema}>Retry fields</button>
-            ) : null}
-            {([{ id: '__ordinal', label: '#', source: 'system' }, ...availableColumns] as ColumnSpec[]).map((column) => {
-              const record = column.source === 'record';
-              const checked = column.id === '__ordinal'
-                || (record
-                  ? selectedRecordIds.has(column.id)
-                  : state.columnVisibility[column.id] !== false);
-              const limitReached = record && !checked && selectedRecordIds.size >= recordColumnLimit;
-              return <label key={column.id} title={limitReached ? `Up to ${recordColumnLimit} record fields can be shown at once` : undefined}>
-                <input
-                  type="checkbox"
-                  disabled={column.id === '__ordinal' || limitReached}
-                  checked={checked}
-                  onChange={(event) => {
-                    const visible = event.target.checked;
-                    dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
-                    if (!record) return;
-                    const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
-                    const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
-                    const viewport = queryController.currentViewportOptions();
-                    requestRows({ ...viewport, columns }, { preserveOnRebuild: true });
-                  }}
-                />
-                <span title={column.label}>{column.label}</span>
-              </label>;
-            })}
-          </div>
-        </details>
       </WorkspaceHeader>
 
       {state.invalidationReason !== undefined && state.invalidationReason !== 'append' ? (
@@ -890,14 +901,14 @@ export function App(): React.JSX.Element {
           <span>Source changed ({state.invalidationReason ?? 'unknown'}). This view is a stale snapshot.</span>
         </div>
       ) : null}
-      {state.error && state.error.code !== 'SOURCE_UPDATING' ? (
+      {state.error && (state.error.code !== 'SOURCE_UPDATING' || state.summary === undefined) ? (
         <div className={`workspace-banner error-banner${state.error.recoverable ? ' is-recoverable' : ''}`} role="alert">
           <CircleAlert size={15} aria-hidden />
           <span><strong>{state.error.code}</strong> {state.error.message}</span>
           <>
             <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'explain')}>Explain with VS Code Chat</button>
             <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'copy')}>Copy context</button>
-            {state.error.recoverable ? (
+            {state.error.recoverable && state.summary !== undefined ? (
               <button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => dispatch({ type: 'DISMISS_ERROR' })}>
                 <X size={14} aria-hidden />
               </button>
@@ -905,7 +916,6 @@ export function App(): React.JSX.Element {
           </>
         </div>
       ) : null}
-      <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
 
       <nav {...workspaceTabs.tabListProps} className="workspace-tabs" aria-label="Workspace views">
         {tabs.map(({ id, label, icon: Icon }) => {
@@ -940,21 +950,118 @@ export function App(): React.JSX.Element {
       >
         <section className="workspace-primary" aria-label={`${state.activeTab} view`}>
           <div {...workspaceTabs.getPanelProps('table')} className="workspace-tab-panel">
+          {state.activeTab === 'table' ? <>
+        <fieldset className="table-query-toolbar" aria-label="Table search and display">
+        <RecordQueryControls
+          query={state.query}
+          searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
+          sortDirection={state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc'}
+           descendingDisabled={summary?.indexingComplete !== true
+             || state.invalidationReason !== undefined
+             || Boolean(state.pending.rebuild)
+             || Boolean(state.pending.order)}
+           descendingDisabledReason={state.invalidationReason !== undefined
+             ? 'Rebuild the changed source before reversing row order'
+             : state.pending.rebuild
+               ? 'Rebuilding the index'
+               : state.pending.order
+                 ? 'Saving the row order preference'
+                 : 'Indexing the file before reverse order is available'}
+          onSortDirectionChange={setSortDirection}
+          onSearchSubmit={() => {
+            const query = queryController.query;
+            requestRows({ query });
+          }}
+          onSearchChange={(query) => {
+            queryController.pauseFollowing();
+            queryController.editQuery(query);
+          }}
+          onSearchClear={() => {
+            // Clear is an explicit cross-control action. Release a stale
+            // Page focus gate even when the host did not deliver onBlur.
+            queryController.releasePageInputFocus();
+            queryController.editQuery('');
+            requestRows({ query: '' });
+          }}
+          filterActive={state.filters.length > 0}
+          filters={state.filters}
+          filterableColumns={filterableColumns}
+          filterColumnId={filterColumnId}
+          filterOperator={filterOperator}
+          filterOperators={availableFilterOperators}
+          filterValue={filterValue}
+          filterCaseSensitive={filterCaseSensitive}
+          onFilterColumnChange={setFilterColumnId}
+          onFilterOperatorChange={setFilterOperator}
+          onFilterValueChange={setFilterValue}
+          onFilterCaseSensitiveChange={setFilterCaseSensitive}
+          onFilterSubmit={submitStructuredFilter}
+          onFilterClear={() => queryController.applyFilters([])}
+          onFilterRemove={(index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index))}
+        />
+          <RowTypeChooser
+            sources={rowTypeSources(baseColumns, state.schema, state.rows, state.rowTypes)}
+            selection={state.rowTypes}
+            disabled={!summary || !canReadSnapshot(state.invalidationReason)}
+            onChange={(selection) => queryController.applyRowTypes(selection)}
+          />
+          <ColumnChooser
+            columns={availableColumns}
+            schema={state.schema}
+            selectedRecordIds={selectedRecordIds}
+            visibility={state.columnVisibility}
+            recordColumnLimit={recordColumnLimit}
+            schemaComplete={state.schemaComplete}
+            schemaLoadFailed={schemaLoadFailed}
+            onRetrySchema={requestSchema}
+            onVisibilityChange={(column, visible) => {
+              dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
+              if (column.source !== 'record') return;
+              const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
+              const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
+              requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+            }}
+          />
+          <small className="table-query-scope">Search and filters query this file together in bounded scans. Results appear in this table.</small>
+        </fieldset>
+        <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
+          </> : null}
           {state.activeTab === 'table' ? (
             <RecordTable
               sessionId={clientRef.current.session.documentId}
               rows={state.rows}
               columns={tableColumns}
               selectedOrdinal={state.selectedOrdinal}
-              loading={Boolean(state.pending.rows) || state.phase === 'booting'}
+              loading={Boolean(state.pending.rows) || (state.summary === undefined && state.error === undefined)}
+              emptyTitle={state.summary === undefined && state.error !== undefined ? 'Unable to open records' : undefined}
               onSelect={requestDetail}
               columnWidths={state.columnWidths}
               onColumnWidthChange={setColumnWidth}
               sort={state.sort ?? { columnId: '__ordinal', direction: 'asc' }}
               onColumnOrderChange={setColumnOrder}
+              followMode={state.followMode}
+              viewportMode={state.viewportMode}
+              viewportRevision={state.viewportRevision}
+              latestSeq={state.latestSeq}
+              latestGeneration={state.summary?.snapshot.generation}
+              onReadingAnchor={pauseFollowing}
+              onViewportAnchor={reportViewport}
+              onTailVisible={reportTailVisible}
+              onManualTailVisible={resumeFollowingAtTail}
             />
           ) : null}
           </div>
+          {state.followMode && (state.unseenActivity || state.viewportMode === 'reading') ? (
+            <div className="new-activity" role="status">
+              {state.unseenActivity ? <span>New activity</span> : null}
+              <button type="button" onClick={returnToLatest}
+                aria-label="Back to latest records"
+                title="Show latest records and clear search and filters"
+                disabled={Boolean(state.pending.rows) || !canReadSnapshot(state.invalidationReason)}>
+                {state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? '↑ Back to latest' : '↓ Back to bottom'}
+              </button>
+            </div>
+          ) : null}
           <div {...workspaceTabs.getPanelProps('timeline')} className="workspace-tab-panel">
           {state.activeTab === 'timeline' ? (
             <TimelineView rows={timelineRows} selectedOrdinal={state.selectedOrdinal} onSelect={requestDetail} />
@@ -1075,6 +1182,7 @@ export function App(): React.JSX.Element {
               onPointerDown={resizeDetailFromPointer}
               onKeyDown={resizeDetailFromKeyboard}
               onDoubleClick={() => {
+                queryController.pauseFollowing();
                 const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
                 dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(DEFAULT_DETAIL_WIDTH, containerWidth) });
               }}
@@ -1084,22 +1192,21 @@ export function App(): React.JSX.Element {
               id={drawerId}
               modal={narrowViewport}
               detail={state.detail}
+              selectedRef={state.selectedRef}
               loading={Boolean(state.pending.detail)}
               readBlocked={state.detailStale || !canReadSnapshot(state.invalidationReason)}
               blockedOrdinal={state.blockedDetailOrdinal}
               activeTab={state.detailTab}
               onTabChange={(tab) => dispatch({ type: 'SET_DETAIL_TAB', tab })}
+              onInteraction={pauseFollowing}
               onRequestFull={() => {
                 const ref = stateRef.current.detail?.ref;
                 if (ref !== undefined) {
-                  automaticFullDetailKeyRef.current = `${ref.generation}:${ref.ordinal}`;
-                  requestDetail(ref, true);
+                  automaticFullDetailKeyRef.current = `full:${recordRefKey(ref)}`;
+                  requestDetail(ref, true, false);
                 }
               }}
-              onClose={() => {
-                finishCancelled('detail', clientRef.current.cancel('detail'));
-                dispatch({ type: 'CLOSE_DETAIL' });
-              }}
+              onClose={closeDetail}
             />
           </>
         ) : null}

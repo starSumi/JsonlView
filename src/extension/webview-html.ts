@@ -9,6 +9,7 @@ export function getWebviewHtml(
   snapshot: SnapshotIdentity,
   pageSize = 100,
   rowOrder: 'asc' | 'desc' = 'asc',
+  startupId = randomBytes(12).toString('hex'),
 ): string {
   const nonce = randomBytes(18).toString('base64url');
   const scriptUri = webview.asWebviewUri(extensionUri.with({
@@ -30,6 +31,7 @@ export function getWebviewHtml(
 <body
   data-document-id="${escapeAttribute(snapshot.documentId)}"
   data-generation="${escapeAttribute(snapshot.generation)}"
+  data-startup-id="${escapeAttribute(startupId)}"
   ${snapshot.epoch === undefined ? '' : `data-epoch="${String(snapshot.epoch)}"`}
   data-uri="${escapeAttribute(snapshot.uri)}"
   data-page-size="${String(Math.min(500, Math.max(20, Math.trunc(pageSize))))}"
@@ -39,6 +41,7 @@ export function getWebviewHtml(
   <script nonce="${nonce}">
     (() => {
       const vscode = acquireVsCodeApi();
+      window.__jsonlViewVscodeApi = vscode;
       const clean = (value, limit) => String(value || '').replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit);
       const report = (name, message) => vscode.postMessage({ type: 'JSONLVIEW_DIAGNOSTIC', name: clean(name, 128) || 'Error', message: clean(message, 512) || 'Unknown Webview error' });
       window.addEventListener('error', event => report('Error', event.message));

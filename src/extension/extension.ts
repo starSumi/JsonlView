@@ -22,8 +22,10 @@ import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
 import { appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
 import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
+import { parseStartupStageReceipt } from './startup-stage';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
+const STARTUP_STALL_MS = 10_000;
 
 class JsonlViewDocument implements vscode.CustomDocument {
   private readonly panels = new Set<vscode.WebviewPanel>();
@@ -116,6 +118,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
   public static async create(
     uri: vscode.Uri,
     token: vscode.CancellationToken,
+    onBackgroundIndexError?: (error: unknown) => void,
   ): Promise<JsonlViewDocument> {
     if (uri.scheme !== 'file') {
       throw new Error('JsonlView currently requires a file-backed JSONL or NDJSON resource.');
@@ -129,6 +132,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
       fullRecordMaxBytes: configuration.get<number>('hydration.fullMaxBytes', 16 * 1024 * 1024),
       pageHydrationMaxBytes: configuration.get<number>('hydration.pageMaxBytes', 8 * 1024 * 1024),
       newlineScanner: configuration.get<NativeNewlineScannerSetting>('native.newlineScanner', 'off'),
+      ...(onBackgroundIndexError === undefined ? {} : { onBackgroundIndexError }),
     }, cancellationSignal(token));
     if (token.isCancellationRequested) {
       await session.dispose();
@@ -431,8 +435,11 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
 }
 
-class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlViewDocument> {
+export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlViewDocument> {
   private readonly resolvedDocuments = new Set<JsonlViewDocument>();
+  private readonly traceIds = new WeakMap<JsonlViewDocument, string>();
+  private nextTraceId = 0;
+  private nextStartupId = 0;
   private lastResolvedDocument: JsonlViewDocument | undefined;
   private rowOrderWrite: Promise<void> = Promise.resolve();
 
@@ -443,16 +450,53 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
     private readonly output: JsonlViewOutputChannel | undefined,
   ) {}
 
-  public openCustomDocument(
+  public async openCustomDocument(
     uri: vscode.Uri,
     _openContext: vscode.CustomDocumentOpenContext,
     token: vscode.CancellationToken,
   ): Promise<JsonlViewDocument> {
-    appendOutputLog(this.output, 'open-document', `name=${basename(uri.path)}`);
-    return JsonlViewDocument.create(uri, token);
+    const traceId = String(++this.nextTraceId);
+    appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=begin');
+    try {
+      const document = await JsonlViewDocument.create(uri, token, (error) => {
+        const reason = error instanceof Error ? error.name.replace(/[^A-Za-z0-9_]/gu, '').slice(0, 48) : 'unknown';
+        appendOutputLog(this.output, 'index-failed', 'trace=' + traceId + ' reason=' + reason);
+      });
+      this.traceIds.set(document, traceId);
+      const summary = document.session.getSummary();
+      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=complete'
+        + ' indexedBytes=' + summary.indexedBytes + ' indexedRecords=' + summary.indexedRecords
+        + ' indexingComplete=' + String(summary.indexingComplete));
+      return document;
+    } catch (error) {
+      const reason = error instanceof Error ? error.name.replace(/[^A-Za-z0-9_]/gu, '').slice(0, 48) : 'unknown';
+      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=failed reason=' + reason + ' cancelled=' + String(token.isCancellationRequested));
+      throw error;
+    }
   }
 
   public resolveCustomEditor(document: JsonlViewDocument, panel: vscode.WebviewPanel): void {
+    const traceId = this.traceIds.get(document) ?? String(++this.nextTraceId);
+    const startupId = String(++this.nextStartupId);
+    this.traceIds.set(document, traceId);
+    appendOutputLog(this.output, 'resolve-editor', 'trace=' + traceId + ' startup=' + startupId + ' stage=begin');
+    const startedAt = performance.now();
+    let lastStage = 'resolve-begin';
+    let startupFinished = false;
+    let startupOutcome: 'page-committed' | 'startup-error' | 'stalled' | 'disposed' | undefined;
+    let startupStalled = false;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const finishStartup = (status: 'page-committed' | 'startup-error' | 'stalled' | 'disposed', rows?: number): void => {
+      if (startupFinished) return;
+      startupFinished = true;
+      startupOutcome = status;
+      if (stallTimer !== undefined) clearTimeout(stallTimer);
+      appendOutputLog(this.output, 'startup-outcome', 'trace=' + traceId
+        + ' status=' + status + ' lastStage=' + lastStage + ' startup=' + startupId
+        + ' elapsedMs=' + String(Math.round(performance.now() - startedAt))
+        + (rows === undefined ? '' : ' rows=' + String(rows))
+        + (startupStalled ? ' afterStall=true' : ''));
+    };
     this.resolvedDocuments.add(document);
     this.lastResolvedDocument = document;
     const pendingReveal = this.revealRegistry.take(document.uri.toString());
@@ -463,14 +507,6 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
     };
     const pageSize = vscode.workspace.getConfiguration('jsonlView', document.uri).get<number>('pageSize', 100);
     const savedRowOrder = this.context.globalState.get('jsonlView.rowOrder');
-    panel.webview.html = getWebviewHtml(
-      panel.webview,
-      this.context.extensionUri,
-      document.session.getSummary().snapshot,
-      pageSize,
-      savedRowOrder === 'desc' ? 'desc' : 'asc',
-    );
-
     const controller = new DocumentController(document.session, panel.webview, {
       beforeRebuild: () => document.resetRecovery(),
       onRowOrderChanged: (direction) => {
@@ -480,6 +516,26 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
         return this.rowOrderWrite;
       },
       onReady: () => document.flushPendingReveal(),
+      onReadyReceived: () => {
+        lastStage = 'ready-received';
+        appendOutputLog(this.output, 'webview-ready', 'trace=' + traceId + ' received=true startup=' + startupId);
+      },
+      onOpenedDelivery: (delivered) => {
+        lastStage = delivered ? 'opened-posted' : 'opened-post-rejected';
+        appendOutputLog(this.output, 'webview-delivery', 'trace=' + traceId + ' type=OPENED delivered=' + String(delivered)
+          + ' startup=' + startupId);
+      },
+      onFirstRowsRequest: () => {
+        lastStage = 'rows-requested';
+        appendOutputLog(this.output, 'first-rows', 'trace=' + traceId + ' stage=requested startup=' + startupId);
+      },
+      onFirstRowsResult: ({ status, rows, indexedRecords }) => {
+        lastStage = 'rows-' + status;
+        appendOutputLog(this.output, 'first-rows', 'trace=' + traceId + ' stage=result status=' + status
+          + ' startup=' + startupId
+          + (rows === undefined ? '' : ' rows=' + String(rows))
+          + (indexedRecords === undefined ? '' : ' indexedRecords=' + indexedRecords));
+      },
       onOpenSessionNavigator: () => this.openSessionNavigator(),
       onTransientSourceChange: () => document.notifyTransientSourceChange(),
       onDiagnosticError: ({ code, message, action }) => offerDiagnostic({
@@ -490,6 +546,29 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
+      const startupStage = parseStartupStageReceipt(message);
+      if (startupStage !== undefined) {
+        const snapshot = document.session.getSummary().snapshot;
+        if (startupStage.startupId !== startupId
+          || startupStage.documentId !== snapshot.documentId || startupStage.generation !== snapshot.generation
+          || startupStage.epoch !== snapshot.epoch) return;
+        lastStage = startupStage.stage;
+        appendOutputLog(this.output, 'webview-receipt', 'trace=' + traceId + ' stage=' + startupStage.stage
+          + ' startup=' + startupId
+          + (startupStage.rows === undefined ? '' : ' rows=' + String(startupStage.rows)));
+        if (startupStage.stage === 'page-committed') {
+          if (startupOutcome === 'startup-error' || startupOutcome === 'stalled') {
+            appendOutputLog(this.output, 'startup-recovered', 'trace=' + traceId
+              + ' after=' + startupOutcome + ' rows=' + String(startupStage.rows)
+              + ' startup=' + startupId);
+            startupOutcome = 'page-committed';
+          } else {
+            finishStartup('page-committed', startupStage.rows);
+          }
+        }
+        if (startupStage.stage === 'startup-error') finishStartup('startup-error');
+        return;
+      }
       if (isWebviewDiagnostic(message)) {
         void offerDiagnostic({ stage: 'editor-webview', name: message.name, message: message.message });
         return;
@@ -509,7 +588,8 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
         this.lastResolvedDocument = document;
       }
     });
-    panel.onDidDispose(() => {
+    const disposePanel = () => {
+      finishStartup('disposed');
       controller.dispose();
       messageRegistration.dispose();
       viewStateRegistration.dispose();
@@ -518,7 +598,34 @@ class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlView
       if (this.lastResolvedDocument === document && !document.hasPanels) {
         this.lastResolvedDocument = [...this.resolvedDocuments].at(-1);
       }
-    });
+    };
+    const disposeRegistration = panel.onDidDispose(disposePanel);
+    try {
+      lastStage = 'html-assigned';
+      panel.webview.html = getWebviewHtml(
+        panel.webview,
+        this.context.extensionUri,
+        document.session.getSummary().snapshot,
+        pageSize,
+        savedRowOrder === 'desc' ? 'desc' : 'asc',
+        startupId,
+      );
+      appendOutputLog(this.output, 'resolve-editor', 'trace=' + traceId + ' stage=html-assigned startup=' + startupId);
+      if (!startupFinished) {
+        stallTimer = setTimeout(() => {
+          startupStalled = true;
+          appendOutputLog(this.output, 'startup-stalled', 'trace=' + traceId
+            + ' startup=' + startupId + ' lastStage=' + lastStage
+            + ' elapsedMs=' + String(Math.round(performance.now() - startedAt)));
+          finishStartup('stalled');
+        }, STARTUP_STALL_MS);
+      }
+    } catch (error) {
+      disposeRegistration.dispose();
+      disposePanel();
+      appendOutputLog(this.output, 'resolve-editor', 'trace=' + traceId + ' stage=failed startup=' + startupId);
+      throw error;
+    }
   }
 
   public async rebuildActiveDocument(): Promise<void> {

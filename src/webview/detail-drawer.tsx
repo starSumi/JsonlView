@@ -1,6 +1,7 @@
-import React, { useMemo, useRef } from 'react';
+import type React from 'react';
+import { useMemo, useRef } from 'react';
 import { Braces, Code2, Database, GitBranch, LoaderCircle, X } from 'lucide-react';
-import type { RecordDetail } from '../shared/types';
+import type { RecordDetail, RecordRef } from '../shared/types';
 import { AUTOMATIC_FULL_RECORD_LIMIT_BYTES } from './full-record-intent';
 import { formatBytes } from './format';
 import { CopyButton } from './copy-button';
@@ -8,6 +9,7 @@ import { RawJsonView } from './json-raw';
 import { JsonCode, stringifyJsonBounded } from './json-syntax';
 import { JsonTree } from './json-tree';
 import { AgentEventPresentation } from './event-presentation';
+import { recordPresentationKey, recordRefKey, sameRecordRef } from './record-identity';
 import type { DetailTab } from './state';
 import { useManualTabs } from './use-manual-tabs';
 import { useModalFocus } from './use-modal-focus';
@@ -16,12 +18,14 @@ interface DetailDrawerProps {
   id?: string;
   modal?: boolean;
   detail?: RecordDetail | undefined;
+  selectedRef?: RecordRef | undefined;
   loading: boolean;
   readBlocked?: boolean;
   blockedOrdinal?: string | undefined;
   activeTab: DetailTab;
   onTabChange: (tab: DetailTab) => void;
   onRequestFull: () => void;
+  onInteraction?: () => void;
   onClose: () => void;
 }
 
@@ -65,43 +69,66 @@ const detailTabs: Array<{
   { id: 'bytes', label: 'Bytes', icon: Database },
 ];
 
-export function DetailDrawer({ id = 'record-detail', modal = false, detail, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onClose }: DetailDrawerProps): React.JSX.Element {
+export function DetailDrawer({ id = 'record-detail', modal = false, detail, selectedRef, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onInteraction, onClose }: DetailDrawerProps): React.JSX.Element {
   const drawerRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const tabs = useManualTabs({ ids: detailTabs.map((tab) => tab.id), activeId: activeTab,
     onActivate: onTabChange, idPrefix: `${id}-views` });
   useModalFocus({ modal, dialogRef: drawerRef, initialFocusRef: titleRef, onClose });
+  // A late response can cross the host boundary after selection changes. The
+  // reducer rejects it, but keep the drawer fail-closed if a caller races the
+  // state update: never render one record under another record's header.
+  const detailMatchesSelection = selectedRef === undefined
+    || detail === undefined
+    || sameRecordRef(detail.ref, selectedRef)
+    || (readBlocked && sameRecordRef({ ...detail.ref, generation: selectedRef.generation }, selectedRef));
+  const visibleDetail = detailMatchesSelection ? detail : undefined;
   const derived = useMemo(
-    () => detail?.profile ? stringifyJsonBounded(detail.profile) : undefined,
-    [detail?.profile],
+    () => visibleDetail?.profile ? stringifyJsonBounded(visibleDetail.profile) : undefined,
+    [visibleDetail?.profile],
   );
+  const activeRef = selectedRef ?? detail?.ref;
+  const recordKey = activeRef ? recordRefKey(activeRef) : 'loading';
+  const presentationKey = activeRef ? recordPresentationKey(activeRef) : 'loading';
+  const drawerA11y = modal
+    ? { role: 'dialog' as const, 'aria-modal': true as const, 'aria-labelledby': `${id}-title` }
+    : { 'aria-label': 'Record detail' };
+  const keyedProblems = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return (visibleDetail?.problems ?? []).map((problem) => {
+      const baseKey = `${problem.code}:${problem.severity}:${problem.message}`;
+      const occurrence = occurrences.get(baseKey) ?? 0;
+      occurrences.set(baseKey, occurrence + 1);
+      return { key: `${baseKey}:${occurrence}`, problem };
+    });
+  }, [visibleDetail?.problems]);
 
   return (
     <>
     {modal ? <div className="detail-backdrop" aria-hidden="true" /> : null}
     <aside ref={drawerRef} id={id} className={`detail-drawer${modal ? ' is-modal' : ''}`}
-      role={modal ? 'dialog' : undefined} aria-modal={modal || undefined}
-      aria-labelledby={modal ? `${id}-title` : undefined} aria-label="Record detail" tabIndex={-1}>
+      {...drawerA11y} tabIndex={-1} onPointerDownCapture={onInteraction}
+      onWheelCapture={onInteraction} onKeyDownCapture={onInteraction}>
       <header className="detail-header">
         <div>
-          <div ref={titleRef} id={`${id}-title`} className="detail-title" tabIndex={-1}>Record {detail ? `#${detail.ref.ordinal}` : blockedOrdinal ? `#${blockedOrdinal}` : ''}</div>
+          <div ref={titleRef} id={`${id}-title`} className="detail-title" tabIndex={-1}>Record {activeRef ? `#${activeRef.ordinal}` : blockedOrdinal ? `#${blockedOrdinal}` : ''}</div>
           <div className="detail-subtitle">
-            {detail ? `${formatBytes(detail.ref.contentByteLength)} · ${detail.ref.parseState}` : blockedOrdinal ? 'Source changed' : 'Loading'}
+            {visibleDetail ? `${formatBytes(visibleDetail.ref.contentByteLength)} · ${visibleDetail.ref.parseState}` : blockedOrdinal ? 'Source changed' : 'Loading'}
           </div>
         </div>
         <div className="detail-header-actions">
-          {detail ? <CopyButton text={detail.rawPreview} label={readBlocked ? 'Copy cached snapshot preview (source changed)' : detail.rawComplete ? 'Copy record JSON' : 'Copy source preview'} /> : null}
+          {visibleDetail ? <CopyButton text={visibleDetail.rawPreview} label={readBlocked ? 'Copy cached snapshot preview (source changed)' : visibleDetail.rawComplete ? 'Copy record JSON' : 'Copy source preview'} /> : null}
           <button type="button" className="icon-button" title="Close detail" aria-label="Close detail" onClick={onClose}>
             <X size={16} aria-hidden />
           </button>
         </div>
       </header>
-      {detail && readBlocked ? (
+      {visibleDetail && readBlocked ? (
         <div className="detail-stale" role="status">
-          Source changed. Showing cached detail from generation {detail.ref.generation}, not the current file. Copy uses this old snapshot; select Rebuild to refresh.
+          Source changed. Showing cached detail from generation {visibleDetail.ref.generation}, not the current file. Copy uses this old snapshot; select Rebuild to refresh.
         </div>
       ) : null}
-      {detail || !blockedOrdinal ? <nav {...tabs.tabListProps} className="detail-tabs" aria-label="Detail views">
+      {visibleDetail || !blockedOrdinal ? <nav {...tabs.tabListProps} className="detail-tabs" aria-label="Detail views">
         {detailTabs.map(({ id, label, icon: Icon }) => (
           <button
             type="button"
@@ -114,66 +141,63 @@ export function DetailDrawer({ id = 'record-detail', modal = false, detail, load
           </button>
         ))}
       </nav> : null}
-      <div className="detail-content">
-        {blockedOrdinal && !detail ? (
+      <div key={presentationKey} className="detail-content" data-record-ref={activeRef ? recordKey : undefined}>
+        {blockedOrdinal && !visibleDetail ? (
           <div className="detail-unavailable" role="status">
             <strong>Record #{blockedOrdinal} unavailable</strong>
             <span>The source changed, so this record cannot be read from the previous snapshot. Select Rebuild to refresh the view.</span>
           </div>
         ) : null}
-        {loading && !detail ? (
+        {(!detailMatchesSelection || loading) && !visibleDetail ? (
           <div className="detail-loading"><LoaderCircle size={18} aria-hidden /> Loading record</div>
         ) : null}
-        {detail || !blockedOrdinal ? detailTabs.map(({ id: tabId }) => (
+        {visibleDetail || !blockedOrdinal ? detailTabs.map(({ id: tabId }) => (
           <div key={tabId} className="detail-tab-panel" {...tabs.getPanelProps(tabId)}>
-        {detail && activeTab === tabId && tabId === 'tree' ? (
+        {visibleDetail && activeTab === tabId && tabId === 'tree' ? (
           <>
-            <AgentEventPresentation
-              key={`${detail.ref.generation}:${detail.ref.ordinal}`}
-              value={detail.value}
-              profile={detail.profile}
-              autoExpandFirstFullSection
-            />
-            {detail.value !== undefined
-              ? <JsonTree key={`${detail.ref.generation}:${detail.ref.ordinal}`} value={detail.value} />
-              : <UnavailableRecordView detail={detail} loading={loading} readBlocked={readBlocked} onRequestFull={onRequestFull} />}
+            {visibleDetail.value !== undefined
+              ? <AgentEventPresentation key={`preview:${presentationKey}`} value={visibleDetail.value} profile={visibleDetail.profile} autoExpandFirstFullSection />
+              : null}
+            {visibleDetail.value !== undefined
+              ? <JsonTree key={`tree:${presentationKey}`} value={visibleDetail.value} />
+              : <UnavailableRecordView detail={visibleDetail} loading={loading} readBlocked={readBlocked} onRequestFull={onRequestFull} />}
           </>
         ) : null}
-        {detail && activeTab === tabId && tabId === 'raw' ? (
+        {visibleDetail && activeTab === tabId && tabId === 'raw' ? (
           <div className="code-pane">
             <RawJsonView
-              key={`${detail.ref.generation}:${detail.ref.ordinal}`}
-              source={detail.rawPreview}
-              rawComplete={detail.rawComplete}
-              parseState={detail.ref.parseState}
+              key={presentationKey}
+              source={visibleDetail.rawPreview}
+              rawComplete={visibleDetail.rawComplete}
+              parseState={visibleDetail.ref.parseState}
             />
           </div>
         ) : null}
-        {detail && activeTab === tabId && tabId === 'derived' ? (
-          detail.profile && derived
+        {visibleDetail && activeTab === tabId && tabId === 'derived' ? (
+          visibleDetail.profile && derived
             ? <div className="code-pane">
                 {derived.truncated ? <div className="bounded-notice">Derived JSON was bounded for display</div> : null}
                 <JsonCode source={derived.text} ariaLabel="Derived semantic JSON syntax preview" collapsible />
               </div>
             : <div className="detail-empty">No semantic projection for this record.</div>
         ) : null}
-        {detail && activeTab === tabId && tabId === 'bytes' ? (
+        {visibleDetail && activeTab === tabId && tabId === 'bytes' ? (
           <dl className="byte-facts">
-            <dt>Ordinal</dt><dd>{detail.ref.ordinal}</dd>
-            <dt>Start</dt><dd>{detail.ref.byteStart}</dd>
-            <dt>End exclusive</dt><dd>{detail.ref.byteEndExclusive}</dd>
-            <dt>Content length</dt><dd>{detail.ref.contentByteLength}</dd>
-            <dt>Delimiter length</dt><dd>{detail.ref.delimiterByteLength}</dd>
-            <dt>Parse state</dt><dd>{detail.ref.parseState}</dd>
-            <dt>Generation</dt><dd>{detail.ref.generation}</dd>
+            <dt>Ordinal</dt><dd>{visibleDetail.ref.ordinal}</dd>
+            <dt>Start</dt><dd>{visibleDetail.ref.byteStart}</dd>
+            <dt>End exclusive</dt><dd>{visibleDetail.ref.byteEndExclusive}</dd>
+            <dt>Content length</dt><dd>{visibleDetail.ref.contentByteLength}</dd>
+            <dt>Delimiter length</dt><dd>{visibleDetail.ref.delimiterByteLength}</dd>
+            <dt>Parse state</dt><dd>{visibleDetail.ref.parseState}</dd>
+            <dt>Generation</dt><dd>{visibleDetail.ref.generation}</dd>
           </dl>
         ) : null}
           </div>
         )) : null}
-        {detail?.problems.length ? (
+        {keyedProblems.length ? (
           <section className="detail-problems" aria-label="Record problems">
-            {detail.problems.map((problem, index) => (
-              <div key={`${problem.code}:${index}`} data-severity={problem.severity}>
+            {keyedProblems.map(({ key, problem }) => (
+              <div key={key} data-severity={problem.severity}>
                 <strong>{problem.code}</strong>
                 <span>{problem.message}</span>
               </div>

@@ -9,6 +9,72 @@ import {
   workspaceReducer,
 } from '../../src/webview/state';
 
+describe('persisted table query migration', () => {
+  const filter = { columnId: 'actor', source: 'profile' as const, operator: 'eq' as const, value: 'assistant' };
+  it('restores a legacy single filter as the first condition and round-trips multiple conditions and types', () => {
+    const initial = createInitialState({ filter });
+    expect(initial.filters).toEqual([filter]);
+    const filters = [filter, { columnId: 'status', source: 'profile' as const, operator: 'eq' as const, value: 'ok' }];
+    let state = workspaceReducer(initial, { type: 'SET_FILTERS', filters });
+    const rowTypes = { column: { id: 'eventKind', label: 'Event', source: 'profile' as const }, values: ['message', 'tool_call'] };
+    state = workspaceReducer(state, { type: 'SET_ROW_TYPES', rowTypes });
+    const restored = createInitialState(toPersistedState(state));
+    expect(restored.filters).toEqual(filters);
+    expect(restored.filter).toEqual(filters[0]);
+    expect(restored.rowTypes).toEqual(rowTypes);
+  });
+
+  it('respects an explicit empty new filter list over a legacy field', () => {
+    const state = createInitialState({ followMode: true, filter, filters: [] });
+    expect(state.filters).toEqual([]);
+    expect(state.filter).toBeUndefined();
+    expect(state.viewportMode).toBe('following');
+  });
+
+  it('clears incompatible profile conditions and Event selections without losing record conditions or configured columns', () => {
+    const path = keyPath('stage');
+    const recordFilter = { columnId: JSON.stringify(path.tokens), source: 'record' as const, path,
+      operator: 'eq' as const, value: 'prod' };
+    const visibility = { [JSON.stringify(keyPath('payload', 'output').tokens)]: true };
+    let state = createInitialState({ filters: [filter, recordFilter], columnVisibility: visibility,
+      rowTypes: { column: { id: 'eventKind', label: 'Event', source: 'profile' }, values: ['message'] } });
+    state = { ...state, columns: [{ id: 'actor', label: 'Actor', source: 'profile' }] };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('PROFILE_CHANGED', {
+      profileId: 'generic', columns: [],
+    }) });
+    expect(state.filters).toEqual([recordFilter]);
+    expect(state.filter).toEqual(recordFilter);
+    expect(state.rowTypes).toBeUndefined();
+    expect(state.columnVisibility).toMatchObject(visibility);
+    expect(state.columns).toEqual([{
+      id: JSON.stringify(keyPath('payload', 'output').tokens), label: '$.payload.output', source: 'record',
+      path: keyPath('payload', 'output'),
+    }]);
+    expect(state.schema).toEqual([]);
+    const restored = createInitialState(toPersistedState(state));
+    const other = { id: 'severity', label: 'Severity', source: 'profile' as const };
+    const switched = workspaceReducer(restored, { type: 'MESSAGE_RECEIVED', message: envelope('PROFILE_CHANGED', {
+      profileId: 'other', columns: [other],
+    }) });
+    expect(switched.columns).toEqual([other, ...state.columns]);
+  });
+
+  it('does not retain an old profile column or a deselected record when changing profiles', () => {
+    const path = keyPath('status');
+    const id = JSON.stringify(path.tokens);
+    let state = createInitialState({ columnVisibility: { [id]: false, actor: true } });
+    state = { ...state, columns: [
+      { id: 'actor', label: 'Actor', source: 'profile' },
+      { id, label: '$.status', source: 'record', path },
+    ] };
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('PROFILE_CHANGED', {
+      profileId: 'generic', columns: [],
+    }) });
+    expect(state.columns).toEqual([]);
+    expect(state.columnVisibility[id]).toBe(false);
+  });
+});
+
 const summary: DocumentSummary = {
   snapshot: {
     documentId: 'doc',
@@ -81,6 +147,168 @@ const rows: RowProjection[] = [
 ];
 
 describe('workspace reducer', () => {
+  it('reports a missing startup response and recovers if OPENED arrives late', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'REQUEST_SENT', request: { kind: 'ready', id: 'request-1' },
+    });
+    state = workspaceReducer(state, { type: 'STARTUP_TIMEOUT' });
+    expect(state.phase).toBe('error');
+    expect(state.summary).toBeUndefined();
+    expect(state.error?.code).toBe('STARTUP_TIMEOUT');
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
+    expect(state.phase).toBe('ready');
+    expect(state.summary?.indexedRecords).toBe('2');
+    expect(state.error).toBeUndefined();
+    expect(workspaceReducer(state, { type: 'STARTUP_TIMEOUT' })).toBe(state);
+  });
+
+  it('does not replace a startup host error with a timeout', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'REQUEST_SENT', request: { kind: 'ready', id: 'request-1' },
+    });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('ERROR', {
+      code: 'OPEN_FAILED', message: 'Unable to read the source', recoverable: false,
+    }) });
+    expect(state.error?.code).toBe('OPEN_FAILED');
+    expect(workspaceReducer(state, { type: 'STARTUP_TIMEOUT' })).toBe(state);
+    state = workspaceReducer(state, {
+      type: 'REQUEST_SENT', request: { kind: 'ready', id: 'request-2' },
+    });
+    expect(state.phase).toBe('error');
+    expect(state.error?.code).toBe('OPEN_FAILED');
+  });
+
+  it('increments the viewport revision only for accepted explicit navigation', () => {
+    const initial = createInitialState({ followMode: true });
+    expect(initial.viewportRevision).toBe(0);
+    const reset = workspaceReducer(initial, { type: 'RESET_VIEWPORT' });
+    expect(reset.viewportRevision).toBe(1);
+    expect(reset.viewportMode).toBe('following');
+    const reading = workspaceReducer(reset, { type: 'SET_VIEWPORT_MODE', mode: 'reading' });
+    expect(reading.viewportRevision).toBe(1);
+    expect(workspaceReducer(reading, { type: 'RESET_VIEWPORT' }).viewportRevision).toBe(2);
+  });
+
+  it('tracks appended activity above safe integer precision without rows or request ACK clearing it', () => {
+    const indexedRecords = '9007199254740993';
+    let state = workspaceReducer(createInitialState({ followMode: true }), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', { ...summary, indexedRecords }),
+    });
+    expect(state.seenSeq).toBe(indexedRecords);
+    state = workspaceReducer(state, { type: 'SET_VIEWPORT_MODE', mode: 'reading' });
+    const latestSeq = '9007199254740994';
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('INDEX_PROGRESS', { ...summary, indexedRecords: latestSeq }),
+    });
+    expect(state.latestSeq).toBe(latestSeq);
+    expect(state.unseenActivity).toBe(true);
+    const tailRef = { ...rows[0]!.ref, ordinal: '9007199254740993' };
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows: [{ ...rows[0]!, ref: tailRef }], columns: [], anchorOrdinal: tailRef.ordinal,
+        hasBefore: true, hasAfter: false, indexedRecords: latestSeq,
+      }),
+    });
+    expect(state.unseenActivity).toBe(true);
+    state = workspaceReducer(state, { type: 'SET_VIEWPORT_MODE', mode: 'following' });
+    expect(state.unseenActivity).toBe(true);
+    for (const observation of [
+      { generation: 'retired', ordinal: tailRef.ordinal, indexedRecords: latestSeq },
+      { generation: 'g1', ordinal: tailRef.ordinal, indexedRecords },
+      { generation: 'g1', ordinal: '9007199254740992', indexedRecords: latestSeq },
+      { generation: 'g1', ordinal: tailRef.ordinal, indexedRecords: latestSeq, epoch: 9 },
+    ]) {
+      expect(workspaceReducer(state, { type: 'TAIL_VISIBLE', ...observation })).toBe(state);
+    }
+    state = workspaceReducer(state, {
+      type: 'TAIL_VISIBLE', generation: 'g1', ordinal: tailRef.ordinal, indexedRecords: latestSeq,
+    });
+    expect(state.seenSeq).toBe(latestSeq);
+    expect(state.unseenActivity).toBe(false);
+  });
+
+  it('keeps append activity through recovery but resets it across destructive snapshot replacement', () => {
+    let state = workspaceReducer(createInitialState({ followMode: true }), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('INDEX_PROGRESS', { ...summary, indexedRecords: '3' }),
+    });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('SOURCE_INVALIDATED', { reason: 'append' }) });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
+      ...envelope('OPENED', { ...summary, snapshot: { ...summary.snapshot, generation: 'g2' }, indexedRecords: '0', indexingComplete: false }),
+      generation: 'g2',
+    } });
+    expect(state.latestSeq).toBe('3');
+    expect(state.unseenActivity).toBe(true);
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: { ...envelope('SOURCE_INVALIDATED', { reason: 'replace' }), generation: 'g2' } });
+    state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
+      ...envelope('OPENED', { ...summary, snapshot: { ...summary.snapshot, generation: 'g3' }, indexedRecords: '1' }), generation: 'g3',
+    } });
+    expect(state.latestSeq).toBe('1');
+    expect(state.seenSeq).toBe('1');
+    expect(state.unseenActivity).toBe(false);
+  });
+
+  it('rejects a retained old-generation selection without removing recovery state', () => {
+    let state = workspaceReducer(createInitialState({ followMode: true }), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows, columns: [], anchorOrdinal: '1', hasBefore: false, hasAfter: false, indexedRecords: '2',
+      }),
+    });
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ref: rows[1]!.ref });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('DETAIL', {
+        ref: rows[1]!.ref, rawPreview: 'cached old generation', rawComplete: true, problems: [],
+      }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: {
+        ...envelope('OPENED', { ...summary, snapshot: { ...summary.snapshot, generation: 'g2' } }),
+        generation: 'g2',
+      },
+    });
+    expect(state.detailStale).toBe(true);
+    expect(state.selectedRef?.generation).toBe('g2');
+    expect(workspaceReducer(state, { type: 'SELECT_ROW', ref: rows[1]!.ref })).toBe(state);
+    expect(workspaceReducer(state, { type: 'SELECT_ROW', ordinal: '1' })).toBe(state);
+    const recovery = state.rebuildDetail;
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: { ...envelope('ERROR', {
+        code: 'DETAIL_FAILED', message: 'Synthetic recovery failure', recoverable: true,
+      }), generation: 'g2' },
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: {
+        ...envelope('OPENED', { ...summary, snapshot: { ...summary.snapshot, generation: 'g2' } }), generation: 'g2',
+      },
+    });
+    expect(state.detailStale).toBe(true);
+    expect(state.rebuildDetail).toEqual(recovery);
+    expect(state.detail?.ref.generation).toBe('g1');
+  });
+
+  it.each([true, false])('keeps explicit detail selection independent of descending page=%s', (descendingPage) => {
+    let state = workspaceReducer(createInitialState({ followMode: true, sortDirection: 'desc' }), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('ROWS', {
+        rows: descendingPage ? [...rows].reverse() : rows, columns: [], anchorOrdinal: '2',
+        hasBefore: false, hasAfter: false, indexedRecords: '2',
+      }),
+    });
+    expect(state.selectedRef).toEqual((descendingPage ? rows[1] : rows[0])!.ref);
+    expect(state.detailOpen).toBe(false);
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ref: rows[0]!.ref });
+    expect(state.detailFollow).toBe(false);
+    state = workspaceReducer(state, { type: 'SELECT_ROW', ref: rows[1]!.ref });
+    expect(state.detailFollow).toBe(false);
+  });
+
   it.each([false, true])('replaces stale projections on a same-generation newer epoch (invalidated=%s)', (invalidated) => {
     const initialSummary = { ...summary, snapshot: { ...summary.snapshot, epoch: 1 } };
     let state = workspaceReducer(createInitialState(), {
@@ -333,7 +561,7 @@ describe('workspace reducer', () => {
       },
     });
     expect(state.rows).toEqual(refreshedRows);
-    expect(state.selectedOrdinal).toBe('3');
+    expect(state.selectedOrdinal).toBe('2');
   });
 
   it('keeps a followed physical selection and drawer mounted across auto-adopt', () => {
@@ -391,7 +619,7 @@ describe('workspace reducer', () => {
     expect(state.detailStale).toBe(false);
   });
 
-  it('keeps a followed detail pinned when invalidation precedes the new tail page', () => {
+  it('pins an explicitly opened detail when the new tail page arrives', () => {
     let state = createInitialState({ followMode: true });
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary) });
     state = workspaceReducer(state, {
@@ -431,9 +659,14 @@ describe('workspace reducer', () => {
 
     expect(state.rows).toEqual(tailRows);
     expect(state.selectedOrdinal).toBe('2');
+    expect(state.selectedRef).toEqual({ ...rows[1]!.ref, generation: 'g2' });
     expect(state.detail).toEqual(oldDetail);
     expect(state.detailStale).toBe(true);
-    expect(state.rebuildDetail?.ref.generation).toBe('g2');
+    expect(state.rebuildDetail?.ref.ordinal).toBe('2');
+    expect(state.detailOpen).toBe(true);
+    state = workspaceReducer(state, { type: 'REQUEST_SENT', request: { id: 'manual-rebuild', kind: 'rebuild' } });
+    expect(state.rebuildSelection?.ref.ordinal).toBe('2');
+    expect(state.rebuildDetail?.ref.ordinal).toBe('2');
   });
 
   it('keeps transient non-follow detail mounted when recovery publishes a generation', () => {
@@ -749,6 +982,9 @@ describe('workspace reducer', () => {
   it('retains already-hydrated detail only as a blocked-generation cache', () => {
     let state = workspaceReducer(createInitialState(), {
       type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),
+    });
+    state = workspaceReducer(state, {
+      type: 'SELECT_ROW', ref: rows[0]!.ref, ordinal: rows[0]!.ref.ordinal,
     });
     state = workspaceReducer(state, {
       type: 'MESSAGE_RECEIVED',

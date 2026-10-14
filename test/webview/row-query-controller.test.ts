@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  PROTOCOL_VERSION, type ColumnSpec, type DocumentSummary, type ExtensionMessage,
+  PROTOCOL_VERSION, keyPath, type ColumnSpec, type DocumentSummary, type ExtensionMessage,
   type RowPage, type RowProjection, type WebviewRequest,
 } from '../../src/shared/types';
 import { VsCodeMessageClient, type ProtocolSession } from '../../src/webview/protocol-client';
@@ -12,6 +12,7 @@ import {
   type PersistedWorkspaceState, type RequestKind, type WorkspaceAction,
 } from '../../src/webview/state';
 import { fallbackColumns } from '../../src/webview/views';
+import { recordColumnOptions } from '../../src/webview/features/record-query/model';
 
 function summary(generation = 'g1', epoch = 1, indexingComplete = true, indexedRecords = '1000'): DocumentSummary {
   return {
@@ -141,7 +142,7 @@ function harness(persisted?: PersistedWorkspaceState) {
       dispatch({ type: 'SET_FOLLOW_MODE', enabled });
       cancel(['follow']);
       dispatch({ type: 'REQUEST_SENT', request: client.send('SET_FOLLOW_MODE', { enabled }) });
-      if (enabled) controller.requestFollowRows();
+      if (enabled) controller.returnToLatest();
     },
     profile(profileId: string) {
       controller.abandonRestore();
@@ -150,6 +151,91 @@ function harness(persisted?: PersistedWorkspaceState) {
     },
   };
 }
+
+describe('multiple table conditions with synchronous controller capture', () => {
+  it('preserves an unsampled configured record column across profile switches before React commits and after reload', () => {
+    const path = keyPath('rare', 'requestId');
+    const id = JSON.stringify(path.tokens);
+    const event: ColumnSpec = { id: 'eventKind', label: 'Event', source: 'profile' };
+    const severity: ColumnSpec = { id: 'severity', label: 'Severity', source: 'profile' };
+    const record: ColumnSpec = { id, label: '$.rare.requestId', source: 'record', path };
+    const test = harness({ columnVisibility: { [id]: true, eventKind: true } });
+    test.boot();
+    expect(test.last('GET_ROWS').payload.columns).toEqual([record]);
+    test.rows(test.last('GET_ROWS'), page(['0'], 'g1', { columns: [event, record] }));
+    expect(test.state.schema).toEqual([]); // The bounded sample has not observed the configured path.
+    test.delayCommits();
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
+    expect(test.last('GET_ROWS').payload.columns).toEqual([record]);
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'other', columns: [severity] }, test.client.session));
+    expect(test.last('GET_ROWS').payload.columns).toEqual([record]);
+    test.commit();
+    expect(test.state.columns).toEqual([severity, record]);
+    expect(recordColumnOptions(test.state.columns, [], test.state.columnVisibility)).toEqual([severity, record]);
+    const reloaded = harness(toPersistedState(test.state));
+    reloaded.boot();
+    expect(reloaded.state.schema).toEqual([]);
+    expect(reloaded.last('GET_ROWS').payload.columns).toEqual([record]);
+    expect(recordColumnOptions(reloaded.state.columns, [], reloaded.state.columnVisibility)).toEqual([record]);
+  });
+
+  it('captures type alternatives and all conditions before React commits, removes one, and clears each group independently', () => {
+    const event: ColumnSpec = { id: 'eventKind', label: 'Event', source: 'profile' };
+    const test = harness();
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['0'], 'g1', { columns: [event] }));
+    const stage = { columnId: JSON.stringify(keyPath('stage').tokens), source: 'record' as const,
+      path: keyPath('stage'), operator: 'eq' as const, value: 'prod' };
+    const allowed = { columnId: JSON.stringify(keyPath('allowed').tokens), source: 'record' as const,
+      path: keyPath('allowed'), operator: 'eq' as const, value: true };
+    test.delayCommits();
+    test.controller.editQuery('needle');
+    test.controller.applyFilters([stage, allowed]);
+    test.controller.applyRowTypes({ column: event, values: ['message', 'tool_call'] });
+    expect(test.last('GET_ROWS').payload.predicate).toMatchObject({ op: 'and', args: [
+      { op: 'text_search', value: 'needle' },
+      { op: 'compare', path: stage.path, value: 'prod' },
+      { op: 'compare', path: allowed.path, value: true },
+      { op: 'or', args: [{ op: 'profile_field', field: 'eventKind', value: 'message' },
+        { op: 'profile_field', field: 'eventKind', value: 'tool_call' }] },
+    ] });
+    test.commit();
+    expect(test.state.filters).toEqual([stage, allowed]);
+    test.controller.applyFilters(test.controller.filters.filter((_, index) => index !== 0));
+    expect(test.state.filters).toEqual([allowed]);
+    test.controller.applyFilters([]);
+    expect(test.last('GET_ROWS').payload.predicate).toMatchObject({ op: 'and', args: [
+      { op: 'text_search', value: 'needle' }, { op: 'or' },
+    ] });
+    test.controller.applyRowTypes(undefined);
+    expect(test.last('GET_ROWS').payload.predicate).toEqual({ op: 'text_search', value: 'needle', caseSensitive: false });
+    test.controller.applyFilters([stage, allowed]);
+    test.controller.applyRowTypes({ column: event, values: ['message'] });
+    test.controller.returnToLatest();
+    expect(test.last('GET_ROWS').payload.predicate).toBeUndefined();
+    expect(test.state.filters).toEqual([]);
+    expect(test.state.rowTypes).toBeUndefined();
+    expect(test.state.query).toBe('');
+  });
+
+  it('removes Event selections on a Generic switch while retaining record-path conditions synchronously', () => {
+    const event: ColumnSpec = { id: 'eventKind', label: 'Event', source: 'profile' };
+    const test = harness();
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['0'], 'g1', { columns: [event] }));
+    const path = keyPath('stage');
+    const filter = { columnId: JSON.stringify(path.tokens), source: 'record' as const, path,
+      operator: 'eq' as const, value: 'prod' };
+    test.controller.applyFilters([filter]);
+    test.controller.applyRowTypes({ column: event, values: ['message', 'tool_call'] });
+    test.delayCommits();
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
+    expect(test.last('GET_ROWS').payload.predicate).toEqual({ op: 'compare', path, cmp: 'eq', value: 'prod' });
+    test.commit();
+    expect(test.state.filters).toEqual([filter]);
+    expect(test.state.rowTypes).toBeUndefined();
+  });
+});
 
 function waitingRestore() {
   const test = harness();
@@ -167,6 +253,444 @@ function waitingRestore() {
 const failed = { code: 'REQUEST_FAILED', message: 'synthetic failure', recoverable: true };
 
 describe('row query controller with real client and reducer', () => {
+  const navigationCases = [
+    { name: 'Previous', navigate: (controller: RowQueryController) => controller.previousPage(),
+      cursor: { anchorOrdinal: '300', direction: 'backward' as const }, ordinals: ['200', '299'] },
+    { name: 'Next', navigate: (controller: RowQueryController) => controller.nextPage(),
+      cursor: { anchorOrdinal: '399', direction: 'forward' as const }, ordinals: ['400', '499'] },
+    { name: 'page one input', navigate: (controller: RowQueryController) => {
+      controller.focusPageInput(true); controller.editPageInput('1'); controller.submitPageInput();
+    }, cursor: {}, ordinals: ['0', '99'] },
+    { name: 'page three input', navigate: (controller: RowQueryController) => {
+      controller.focusPageInput(true); controller.editPageInput('3'); controller.submitPageInput();
+    }, cursor: { anchorOrdinal: '199', direction: 'forward' as const }, ordinals: ['200', '299'] },
+  ];
+
+  for (const arrival of ['before', 'after'] as const) {
+    it.each(navigationCases)('keeps $name in Reading when append arrives ' + arrival + ' its rows', ({ navigate, cursor, ordinals }) => {
+      const test = harness({ followMode: true });
+      test.boot();
+      test.rows(test.last('GET_ROWS'), page(['300', '399']));
+      test.delayCommits();
+      navigate(test.controller);
+      const explicit = test.last('GET_ROWS');
+      expect(explicit.payload).toEqual({ limit: 100, ...cursor });
+      expect(test.controller.viewportMode).toBe('reading');
+      if (arrival === 'after') expect(test.rows(explicit, page(ordinals))).toBe(true);
+      test.opened('g2', 2, true, '1001');
+      const recovery = test.last('GET_ROWS');
+      const recoveryCursor = arrival === 'before' ? cursor
+        : ordinals[0] === '0' ? {} : { anchorOrdinal: (BigInt(ordinals[0]!) - 1n).toString(), direction: 'forward' };
+      expect(recovery.payload).toEqual({ limit: 100, ...recoveryCursor });
+      const requests = test.count('GET_ROWS');
+      test.opened('g2', 2, true, '1001');
+      test.controller.requestFollowRows();
+      expect(test.count('GET_ROWS')).toBe(requests);
+      test.opened('g3', 3, true, '1002');
+      const latest = test.last('GET_ROWS');
+      expect(latest.payload).toEqual({ limit: 100, ...recoveryCursor });
+      expect(test.rows(recovery, page(ordinals, 'g2'))).toBe(false);
+      if (arrival === 'before') expect(test.rows(explicit, page(ordinals))).toBe(false);
+      expect(test.rows(latest, page(ordinals, 'g3', { indexedRecords: '1002', totalRecords: '1002' }))).toBe(true);
+      test.commit();
+      expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(ordinals);
+      expect(test.state.rows[0]?.ref.generation).toBe('g3');
+      expect(test.state.followMode).toBe(true);
+      expect(test.state.viewportMode).toBe('reading');
+      expect(test.state.latestSeq).toBe('1002');
+      expect(test.state.unseenActivity).toBe(true);
+    });
+  }
+
+  it.each(navigationCases)('preserves pending $name through append and unsolicited profile projection', ({ navigate, cursor, ordinals }) => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['300', '350', '399']));
+    test.controller.reportViewport(row('350').ref);
+    test.delayCommits();
+    navigate(test.controller);
+    const explicit = test.last('GET_ROWS');
+    test.opened('g2', 2, true, '1001');
+    const recovery = test.last('GET_ROWS');
+    expect(recovery.payload).toEqual({ limit: 100, ...cursor });
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
+    const projected = test.last('GET_ROWS');
+    expect(projected.requestId).not.toBe(recovery.requestId);
+    expect(projected.payload).toEqual({ limit: 100, ...cursor });
+    expect(test.rows(explicit, page(ordinals))).toBe(false);
+    expect(test.rows(recovery, page(ordinals, 'g2'))).toBe(false);
+    test.opened('g3', 3, true, '1002');
+    const latest = test.last('GET_ROWS');
+    expect(latest.payload).toEqual({ limit: 100, ...cursor });
+    expect(test.rows(projected, page(ordinals, 'g2'))).toBe(false);
+    expect(test.rows(latest, page(ordinals, 'g3', { indexedRecords: '1002', totalRecords: '1002' }))).toBe(true);
+    test.commit();
+    expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(ordinals);
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.followMode).toBe(true);
+  });
+
+  it('keeps a compatible sorted page cursor through consecutive OPENED and profile projection', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ followMode: true, sortDirection: 'desc' });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['999', '998', '997'], 'g1', { sort, sortOffset: '0', sortNextOffset: '3' }));
+    test.delayCommits();
+    test.controller.nextPage();
+    const explicit = test.last('GET_ROWS');
+    expect(explicit.payload).toMatchObject({ sort, sortOffset: '3' });
+    test.opened('g2', 2, true, '1001');
+    const recovery = test.last('GET_ROWS');
+    expect(recovery.payload).toMatchObject({ sort, sortOffset: '3' });
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
+    const projected = test.last('GET_ROWS');
+    expect(projected.payload).toEqual({ limit: 100, sort, sortOffset: '3' });
+    expect(test.controller.sortPage).toBe('2');
+    expect(test.controller.sortOffsetHistory).toEqual(['0']);
+    test.opened('g3', 3, true, '1002');
+    const latest = test.last('GET_ROWS');
+    expect(latest.payload).toEqual({ limit: 100, sort, sortOffset: '3' });
+    expect(test.rows(explicit, page(['996', '995']))).toBe(false);
+    expect(test.rows(recovery, page(['996', '995'], 'g2'))).toBe(false);
+    expect(test.rows(projected, page(['996', '995'], 'g2'))).toBe(false);
+    expect(test.rows(latest, page(['998', '997'], 'g3', { sort, sortOffset: '3', sortNextOffset: '5' }))).toBe(true);
+    test.controller.previousPage();
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+    test.commit();
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.followMode).toBe(true);
+  });
+
+  it('removes a retired profile sort from a pending generation recovery', () => {
+    const column: ColumnSpec = { id: 'eventKind', label: 'Event', source: 'profile' };
+    const sort = { columnId: column.id, direction: 'asc' as const };
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['300', '399'], 'g1', { columns: [column] }));
+    test.controller.changeSort(sort);
+    test.rows(test.last('GET_ROWS'), page(['300', '399'], 'g1', { columns: [column], sort, sortOffset: '300' }));
+    test.controller.nextPage();
+    test.opened('g2', 2, true, '1001');
+    const recovery = test.last('GET_ROWS');
+    expect(recovery.payload).toMatchObject({ sort, sortOffset: '400' });
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
+    const projected = test.last('GET_ROWS');
+    expect(test.controller.sort).toBeUndefined();
+    expect(projected.payload.sort).toBeUndefined();
+    expect(projected.payload.sortOffset).toBeUndefined();
+    expect(test.rows(recovery, page(['400', '499'], 'g2', { sort, sortOffset: '400' }))).toBe(false);
+    expect(test.rows(projected, page(['0', '99'], 'g2'))).toBe(true);
+  });
+
+  it.each(navigationCases)('clamps the pending $name target after an empty partial-index recovery', ({ name, navigate, cursor }) => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['300', '350', '399']));
+    test.controller.reportViewport(row('350').ref);
+    navigate(test.controller);
+    test.opened('g2', 2, false, '100');
+    const recovery = test.last('GET_ROWS');
+    test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
+    const projected = test.last('GET_ROWS');
+    expect(projected.payload).toEqual({ limit: 100, ...cursor });
+    const partial: RowPage = { rows: [], columns: [], anchorOrdinal: '0', hasBefore: true,
+      hasAfter: false, indexedRecords: '100' };
+    expect(test.rows(projected, partial)).toBe(true);
+    const requests = test.count('GET_ROWS');
+    test.deliver(wire('INDEX_PROGRESS', summary('g2', 2, true, '250'), test.client.session));
+    const retry = test.last('GET_ROWS');
+    const needsClamp = name === 'Previous' || name === 'Next';
+    expect(test.count('GET_ROWS')).toBe(requests + (needsClamp ? 1 : 0));
+    if (needsClamp) {
+      expect(retry.payload).toEqual({ limit: 100, anchorOrdinal: '199', direction: 'forward' });
+      expect(test.rows(retry, page(['200', '249'], 'g2', { totalRecords: '250', indexedRecords: '250' }))).toBe(true);
+      expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['200', '249']);
+    }
+    expect(test.rows(recovery, page(['300', '399'], 'g2'))).toBe(false);
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.followMode).toBe(true);
+  });
+
+  it('restores the actual reading anchor on append while source Follow stays enabled', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    test.controller.pauseFollowing(row('950').ref);
+    test.delayCommits();
+    test.opened('g2', 2, true, '1001');
+    expect(test.last('GET_ROWS').payload).toMatchObject({ anchorOrdinal: '949', direction: 'forward' });
+    const count = test.count('GET_ROWS');
+    test.controller.requestFollowRows();
+    expect(test.count('GET_ROWS')).toBe(count);
+    test.commit();
+    expect(test.state.followMode).toBe(true);
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['900', '950', '999']);
+    expect(test.state.unseenActivity).toBe(true);
+  });
+
+  it('cancels a late automatic tail page synchronously when reading begins', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    test.controller.requestFollowRows();
+    const tail = test.last('GET_ROWS');
+    test.delayCommits();
+    test.controller.pauseFollowing(row('950').ref);
+    expect(test.last('CANCEL').payload.targetRequestId).toBe(tail.requestId);
+    expect(test.rows(tail, page(['901', '1000']))).toBe(false);
+    test.controller.requestFollowRows();
+    expect(test.last('GET_ROWS').requestId).toBe(tail.requestId);
+    test.commit();
+    expect(test.state.rows.at(-1)?.ref.ordinal).toBe('999');
+  });
+
+  it('requeries the retained semantic anchor when reading starts during generation adoption', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    test.opened('g2', 2, true, '1001');
+    const tail = test.last('GET_ROWS');
+    test.controller.pauseFollowing(row('950').ref);
+    const reading = test.last('GET_ROWS');
+    expect(reading.requestId).not.toBe(tail.requestId);
+    expect(reading.generation).toBe('g2');
+    expect(reading.payload).toMatchObject({ anchorOrdinal: '949', direction: 'forward' });
+    expect(test.rows(tail, page(['901', '1000'], 'g2'))).toBe(false);
+  });
+
+  it('recovers the last observed actual anchor when a non-table interaction pauses generation adoption', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    test.controller.reportViewport(row('950').ref);
+    test.opened('g2', 2, true, '1001');
+    const tail = test.last('GET_ROWS');
+    test.controller.pauseFollowing();
+    const reading = test.last('GET_ROWS');
+    expect(test.last('CANCEL').payload.targetRequestId).toBe(tail.requestId);
+    expect(reading.requestId).not.toBe(tail.requestId);
+    expect(reading.generation).toBe('g2');
+    expect(reading.payload).toMatchObject({ anchorOrdinal: '949', direction: 'forward' });
+    expect(test.rows(tail, page(['901', '1000'], 'g2'))).toBe(false);
+    test.rows(reading, page(['950', '999'], 'g2'));
+    expect(test.state.rows[0]?.ref.generation).toBe('g2');
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.unseenActivity).toBe(true);
+  });
+
+  it('returns to the physical tail and clears filters without clearing unseen activity early', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    test.controller.editQuery('tool');
+    test.controller.applyFilter({ columnId: 'eventKind', operator: 'eq', value: 'tool', source: 'profile' });
+    test.controller.changeSort({ columnId: 'eventKind', direction: 'asc' });
+    test.opened('g2', 2, true, '1001');
+    test.delayCommits();
+    test.controller.returnToLatest();
+    expect(test.controller.viewportMode).toBe('following');
+    expect(test.controller.query).toBe('');
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, direction: 'backward' });
+    test.commit();
+    expect(test.state.query).toBe('');
+    expect(test.state.filter).toBeUndefined();
+    expect(test.state.sort).toBeUndefined();
+    expect(test.state.unseenActivity).toBe(true);
+    test.rows(test.last('GET_ROWS'), page(['901', '1000'], 'g2', { indexedRecords: '1001' }));
+    expect(test.state.unseenActivity).toBe(true);
+    test.dispatch({ type: 'TAIL_VISIBLE', generation: 'g2', ordinal: '1000', indexedRecords: '1001', epoch: 2 });
+    expect(test.state.unseenActivity).toBe(false);
+  });
+
+  it('does not request automatic tail pages with source Follow disabled', () => {
+    const test = harness();
+    test.boot();
+    const count = test.count('GET_ROWS');
+    test.controller.requestFollowRows();
+    expect(test.count('GET_ROWS')).toBe(count);
+  });
+
+  it('resumes at a manually observed latest row without requesting rows or changing the clicked detail', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    test.controller.pauseFollowing(row('900').ref);
+    test.dispatch({ type: 'SELECT_ROW', ref: row('900').ref });
+    test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1001'), test.client.session));
+    test.controller.requestRows({ direction: 'backward' });
+    test.rows(test.last('GET_ROWS'), page(['901', '1000'], 'g1', { indexedRecords: '1001' }));
+    const selected = test.state.selectedRef;
+    const requests = test.count('GET_ROWS');
+    const actionCount = test.actions.length;
+    test.delayCommits();
+    expect(test.controller.resumeFollowingAtTail(row('1000').ref)).toBe(true);
+    expect(test.controller.viewportMode).toBe('following');
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.actions.slice(actionCount)).toEqual([{ type: 'SET_VIEWPORT_MODE', mode: 'following' }]);
+    expect(test.count('GET_ROWS')).toBe(requests);
+    test.commit();
+    expect(test.state.selectedRef).toBe(selected);
+    expect(test.state.detailOpen).toBe(true);
+    expect(test.state.unseenActivity).toBe(true);
+    test.dispatch({ type: 'TAIL_VISIBLE', generation: 'g1', ordinal: '1000', indexedRecords: '1001', epoch: 1 });
+    expect(test.state.unseenActivity).toBe(false);
+    test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1002'), test.client.session));
+    expect(test.count('GET_ROWS')).toBe(requests + 1);
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, direction: 'backward' });
+  });
+
+  it.each([
+    { name: 'a historical page bottom', ordinals: ['0', '99'], ref: row('99').ref },
+    { name: 'an unloaded latest row', ordinals: ['900', '950'], ref: row('999').ref },
+    { name: 'a stale generation', ordinals: ['900', '999'], ref: row('999', 'old').ref },
+    { name: 'different bytes at the latest ordinal', ordinals: ['900', '999'],
+      ref: { ...row('999').ref, byteStart: '1' } },
+  ])('does not resume at $name', ({ ordinals, ref }) => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(ordinals, 'g1', { hasAfter: false }));
+    test.controller.pauseFollowing();
+    const actions = test.actions.length;
+    const requests = test.count('GET_ROWS');
+    expect(test.controller.resumeFollowingAtTail(ref)).toBe(false);
+    expect(test.controller.viewportMode).toBe('reading');
+    expect(test.actions).toHaveLength(actions);
+    expect(test.count('GET_ROWS')).toBe(requests);
+  });
+
+  it.each(['query', 'filter', 'sort'] as const)('does not resume at the final %s result or clear its view', (kind) => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    if (kind === 'query') {
+      test.controller.editQuery('tool');
+      test.controller.requestRows();
+    } else if (kind === 'filter') {
+      test.controller.applyFilter({ columnId: 'eventKind', operator: 'eq', value: 'tool', source: 'profile' });
+    } else test.controller.changeSort({ columnId: 'eventKind', direction: 'asc' });
+    test.rows(test.last('GET_ROWS'), page(['999'], 'g1', { hasAfter: false, matchedRecords: '1' }));
+    const state = test.state;
+    const actions = test.actions.length;
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(false);
+    expect(test.controller.viewportMode).toBe('reading');
+    expect(test.actions).toHaveLength(actions);
+    expect(test.state).toBe(state);
+  });
+
+  it('rejects an old tail watermark before and after a delayed progress commit', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    test.controller.pauseFollowing();
+    test.delayCommits();
+    test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1001'), test.client.session));
+    expect(test.state.latestSeq).toBe('1000');
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(false);
+    test.commit();
+    expect(test.state.latestSeq).toBe('1001');
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(false);
+    expect(test.controller.viewportMode).toBe('reading');
+  });
+
+  it('does not resume with source Follow disabled', () => {
+    const test = harness();
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(false);
+    expect(test.controller.viewportMode).toBe('reading');
+  });
+
+  it('waits for pending rows and rebuild recovery before resuming', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    test.controller.pauseFollowing();
+    test.controller.requestRows({ direction: 'backward' });
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(false);
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    test.controller.rebuild();
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(false);
+    test.opened('g2', 2, true, '1000', test.last('REBUILD_INDEX').requestId);
+    expect(test.controller.resumeFollowingAtTail(row('999', 'g2').ref)).toBe(false);
+    test.rows(test.last('GET_ROWS'), page(['900', '999'], 'g2'));
+    expect(test.controller.resumeFollowingAtTail(row('999', 'g2').ref)).toBe(true);
+  });
+
+  it('allows the physical latest row in descending ordinal order without changing the order', () => {
+    const test = harness({ followMode: true, sortDirection: 'desc' });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['999', '998'], 'g1', {
+      sort: { columnId: '__ordinal', direction: 'desc' }, sortOffset: '0',
+    }));
+    test.controller.pauseFollowing(row('998').ref);
+    const requests = test.count('GET_ROWS');
+    expect(test.controller.resumeFollowingAtTail(row('999').ref)).toBe(true);
+    expect(test.controller.sort).toEqual({ columnId: '__ordinal', direction: 'desc' });
+    expect(test.count('GET_ROWS')).toBe(requests);
+  });
+
+  it('uses a backward physical tail during incomplete indexing with descending preference', () => {
+    const test = harness({ followMode: true, sortDirection: 'desc' });
+    test.boot(false);
+    test.controller.pauseFollowing();
+    test.controller.returnToLatest();
+    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, direction: 'backward' });
+    expect(test.controller.sort).toBeUndefined();
+    expect(test.controller.sortDirection).toBe('desc');
+  });
+
+  it('releases a retained reading anchor when an explicit replacement page includes that row', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    test.controller.pauseFollowing(row('950').ref);
+    expect(test.state.viewportRevision).toBe(0);
+    test.controller.requestRows({ anchorOrdinal: '899', direction: 'forward' });
+    expect(test.state.viewportRevision).toBe(0);
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    expect(test.state.viewportRevision).toBe(1);
+    test.opened('g2', 2, true, '1001');
+    expect(test.last('GET_ROWS').payload).toMatchObject({ anchorOrdinal: '899', direction: 'forward' });
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999'], 'g2'));
+    expect(test.state.viewportRevision).toBe(1);
+  });
+
+  it('does not reset the reading viewport for rejected, preserved or tail row responses', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    const revision = test.state.viewportRevision;
+    test.controller.pauseFollowing(row('950').ref);
+    test.controller.requestRows({ anchorOrdinal: '899', direction: 'forward' });
+    const retired = test.last('GET_ROWS');
+    test.controller.requestRows({ anchorOrdinal: '899', direction: 'forward' }, { preserveOnRebuild: true });
+    expect(test.rows(retired, page(['900', '950', '999']))).toBe(false);
+    expect(test.state.viewportRevision).toBe(revision);
+    test.rows(test.last('GET_ROWS'), page(['900', '950', '999']));
+    expect(test.state.viewportRevision).toBe(revision);
+    test.controller.returnToLatest();
+    test.rows(test.last('GET_ROWS'), page(['901', '1000']));
+    expect(test.state.viewportRevision).toBe(revision);
+  });
+
+  it('refreshes the bounded live tail on index progress while Reading only updates activity', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['900', '999']));
+    const count = test.count('GET_ROWS');
+    test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1001'), test.client.session));
+    expect(test.count('GET_ROWS')).toBe(count + 1);
+    expect(test.last('GET_ROWS').payload.direction).toBe('backward');
+    test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1001'), test.client.session));
+    expect(test.count('GET_ROWS')).toBe(count + 1);
+    test.controller.pauseFollowing(row('900').ref);
+    test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1002'), test.client.session));
+    expect(test.count('GET_ROWS')).toBe(count + 1);
+    expect(test.state.latestSeq).toBe('1002');
+    expect(test.state.unseenActivity).toBe(true);
+  });
+
   it('cancels a replaced rows request and finishes its exact reducer id', () => {
     const test = harness();
     test.boot();
@@ -354,7 +878,7 @@ describe('row query controller with real client and reducer', () => {
     if (mode === 'rebuild') test.controller.rebuild();
     const count = test.count('GET_ROWS');
     test.deliver(wire('INDEX_PROGRESS', summary('g2', 2, true, '250'), test.client.session));
-    expect(test.count('GET_ROWS')).toBe(count);
+    expect(test.count('GET_ROWS')).toBe(count + (mode === 'follow' ? 1 : 0));
     if (mode === 'follow') expect(test.last('GET_ROWS').payload.direction).toBe('backward');
   });
 

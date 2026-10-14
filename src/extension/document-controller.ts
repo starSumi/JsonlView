@@ -59,6 +59,11 @@ export interface DocumentControllerHooks {
   onRowOrderChanged?: (direction: RowSort['direction']) => Promise<void>;
   /** Deliver host-owned positioning intents only after the Webview handshake. */
   onReady?: () => Promise<void> | void;
+  onReadyReceived?: () => void;
+  /** Observe whether the Webview host accepted the initial summary post. */
+  onOpenedDelivery?: (delivered: boolean) => void;
+  onFirstRowsRequest?: () => void;
+  onFirstRowsResult?: (result: { status: 'posted' | 'rejected' | 'stale' | 'failed' | 'cancelled'; rows?: number; indexedRecords?: string }) => void;
   /** Focus the opt-in Session Navigator without changing the document. */
   onOpenSessionNavigator?: () => Promise<void> | void;
   /** Hand off a bounded Webview error to the host-owned diagnostic flow. */
@@ -73,6 +78,8 @@ export class DocumentController {
   private readonly loadProblemPage: LoadProblemPage;
   private disposed = false;
   private rebuildRequestSequence = 0;
+  private firstRowsRequested = false;
+  private firstRowsPosted = false;
 
   public constructor(
     private readonly session: JsonlSessionPort,
@@ -132,24 +139,46 @@ export class DocumentController {
 
 
     let signal: AbortSignal | undefined;
+    let firstRowsRequest = false;
     try {
       switch (request.type) {
         case 'READY':
-          await this.post(request, 'OPENED', summary);
-          await this.hooks.onReady?.();
+          this.hooks.onReadyReceived?.();
+          if (await this.post(request, 'OPENED', summary)) {
+            this.hooks.onOpenedDelivery?.(true);
+            await this.hooks.onReady?.();
+          } else {
+            this.hooks.onOpenedDelivery?.(false);
+          }
           return;
         case 'OPEN_SESSION_NAVIGATOR':
           await this.hooks.onOpenSessionNavigator?.();
           return;
-        case 'GET_ROWS':
+        case 'GET_ROWS': {
+          firstRowsRequest = !this.firstRowsPosted;
+          if (firstRowsRequest) {
+            if (!this.firstRowsRequested) {
+              this.firstRowsRequested = true;
+              this.hooks.onFirstRowsRequest?.();
+            }
+          }
           signal = this.requests.startLatest('viewport', request.requestId);
-          await this.postIfCurrent(
+          const page = await this.loadRecordPage.execute(request.payload, signal);
+          const current = this.isCurrentGeneration(operationGeneration);
+          const posted = current && await this.postIfCurrent(
             request,
             operationGeneration,
             'ROWS',
-            await this.loadRecordPage.execute(request.payload, signal),
+            page,
           );
+          if (firstRowsRequest) this.hooks.onFirstRowsResult?.({
+            status: !current ? 'stale' : posted ? 'posted' : 'rejected',
+            rows: page.rows.length,
+            indexedRecords: page.indexedRecords,
+          });
+          if (firstRowsRequest && posted) this.firstRowsPosted = true;
           return;
+        }
         case 'GET_PROBLEMS':
           signal = this.requests.startLatest('problems', request.requestId);
           await this.postIfCurrent(
@@ -231,6 +260,7 @@ export class DocumentController {
           await this.postError(request, 'UNSUPPORTED_MESSAGE', 'Unsupported request.', false);
       }
     } catch (error) {
+      if (firstRowsRequest) this.hooks.onFirstRowsResult?.({ status: signal?.aborted ? 'cancelled' : 'failed' });
       if (signal?.aborted) {
         return;
       }
@@ -267,8 +297,8 @@ export class DocumentController {
     type: TType,
     payload: ExtensionPayload<TType>,
     generation = this.session.getSummary().snapshot.generation,
-  ): Promise<void> {
-    await this.postEnvelope<TType>(request, type, payload, generation);
+  ): Promise<boolean> {
+    return this.postEnvelope<TType>(request, type, payload, generation);
   }
 
   private async postEnvelope<TType extends ExtensionMessage['type']>(
@@ -276,7 +306,7 @@ export class DocumentController {
     type: TType,
     payload: ExtensionPayload<TType>,
     generation: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const message = createProtocolEnvelope({
       type,
       documentId: request.documentId,
@@ -287,7 +317,7 @@ export class DocumentController {
       requestId: request.requestId,
       payload,
     }) as unknown as ExtensionMessageByType[TType];
-    await this.channel.postMessage(message);
+    return this.channel.postMessage(message);
   }
 
   private async postIfCurrent<TType extends ExtensionMessage['type']>(
@@ -297,8 +327,7 @@ export class DocumentController {
     payload: ExtensionPayload<TType>,
   ): Promise<boolean> {
     if (!this.isCurrentGeneration(expectedGeneration)) return false;
-    await this.postEnvelope<TType>(request, type, payload, expectedGeneration);
-    return true;
+    return this.postEnvelope<TType>(request, type, payload, expectedGeneration);
   }
 
   private isCurrentGeneration(expectedGeneration: string): boolean {

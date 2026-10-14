@@ -138,6 +138,16 @@ new interpretation of truncation.
 - The primary table remains a virtualized DOM grid. Header, body, and detail
   surfaces keep an opaque, token-backed stacking layer so rows cannot bleed
   through a sticky header or drawer boundary.
+- The detail drawer scrolls only the selected record. Selecting another record
+  starts its content at the top and preserves the active detail tab; scrolling
+  within the drawer never changes record selection.
+- With Follow enabled, reading history keeps a physical row anchor and its
+  visible offset while source updates continue. A token-backed control at the
+  bottom of the primary pane offers Back to bottom and announces New activity
+  when the latest physical record has not been seen. It clears only when that
+  record is visible. Search, selection, and existing keyboard navigation take
+  precedence over automatic scrolling. Safe generation rebinding preserves
+  the selected detail's scroll and expanded content.
 - The column chooser and other bounded popovers keep a stable scroll gutter,
   contain overscroll, and preserve the current scroll position while their
   options or viewport change. They must be reachable with the keyboard and must
@@ -200,6 +210,15 @@ private transcripts at runtime.
   compatibility.
 
 ## Validation and rollback
+
+Table Search, Row types, Field filters and Columns live inside the left Table
+pane. The file header retains status, Profile and Follow, and the right drawer
+retains selected-record controls. The Table toolbar wraps at narrow widths;
+its native disclosure popups stay inside the Table pane with a scrollable body.
+Labels, focus rings, input borders and selected checkboxes use existing VS Code
+tokens in light, dark and high-contrast themes. Column groups distinguish common
+profile columns, selected record fields, short scalars and searchable Advanced
+fields. ADR-045 owns their query and projection semantics.
 
 For a documentation-only update, run:
 

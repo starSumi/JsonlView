@@ -24,7 +24,7 @@ describe('getWebviewHtml', () => {
       with: ({ path }: { path: string }) => ({ toString: () => `vscode-extension://${path}` }),
     };
 
-    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot, 250, 'desc');
+    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot, 250, 'desc', 'boot-1');
 
     expect(html).toContain("default-src 'none'");
     expect(html).toContain("style-src-elem vscode-webview://unit-test");
@@ -32,6 +32,7 @@ describe('getWebviewHtml', () => {
     expect(html).toMatch(/script-src 'nonce-[A-Za-z0-9_-]+'/);
     expect(html).not.toContain("script-src 'unsafe-inline'");
     expect(html).toContain('data-generation="generation&quot;unsafe"');
+    expect(html).toContain('data-startup-id="boot-1"');
     expect(html).not.toContain('data-uri="file:///fixture.jsonl?value=<unsafe>"');
     expect(html).toContain('data-page-size="250"');
     expect(html).toContain('data-row-order="desc"');

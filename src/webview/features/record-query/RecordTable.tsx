@@ -1,9 +1,12 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { Braces, GripVertical, LoaderCircle } from 'lucide-react';
 import type { ColumnSpec, RecordRef, RowProjection, RowSort } from '../../../shared/types';
 import { columnGridTemplate, getColumnText, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from '../../format';
 import { gridCellId, gridCellRowIndex, pinActiveGridRow, useGridFocus, type GridCell } from '../../use-grid-focus';
+import { captureViewportAnchor, GRID_HEADER_HEIGHT, GRID_ROW_HEIGHT, isRowVisible, latestRowIndex,
+  physicalRowKey, resolveViewportAnchor, type ViewportAnchor } from './viewport-anchor';
 
 interface EmptyStateProps {
   icon?: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
@@ -27,14 +30,22 @@ export interface RecordTableProps {
   columns: ColumnSpec[];
   selectedOrdinal?: string | undefined;
   loading: boolean;
+  emptyTitle?: string | undefined;
   onSelect: (ref: RecordRef) => void;
   columnWidths: Record<string, number>;
   onColumnWidthChange: (columnId: string, width: number | undefined) => void;
   sort?: RowSort | undefined;
   onColumnOrderChange: (order: string[]) => void;
+  followMode?: boolean;
+  viewportMode?: 'following' | 'reading';
+  viewportRevision?: number;
+  latestGeneration?: string | undefined;
+  latestSeq?: string | undefined;
+  onReadingAnchor?: (ref?: RecordRef) => void;
+  onViewportAnchor?: (ref: RecordRef) => void;
+  onTailVisible?: (ref: RecordRef) => void;
+  onManualTailVisible?: (ref: RecordRef) => boolean;
 }
-
-const GRID_HEADER_HEIGHT = 30;
 
 export function RecordTable({
   sessionId = 'jsonl-view',
@@ -42,35 +53,217 @@ export function RecordTable({
   columns,
   selectedOrdinal,
   loading,
+  emptyTitle,
   onSelect,
   columnWidths,
   onColumnWidthChange,
   sort,
   onColumnOrderChange,
+  followMode = false,
+  viewportMode = 'following',
+  viewportRevision = 0,
+  latestGeneration,
+  latestSeq,
+  onReadingAnchor,
+  onViewportAnchor,
+  onTailVisible,
+  onManualTailVisible,
 }: RecordTableProps): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const resizersRef = useRef(new Map<string, HTMLButtonElement>());
   const pointerFocusRef = useRef(false);
+  const anchorRef = useRef<ViewportAnchor | undefined>(undefined);
+  const interactionPausedRef = useRef(false);
+  const manualFollowingRef = useRef(false);
+  const manualIntentRef = useRef<{ rows: RowProjection[]; sessionId: string; revision: number; scrollTop: number } | undefined>(undefined);
+  const manualFrameRef = useRef<number | undefined>(undefined);
+  const pointerInteractionRef = useRef(false);
+  const scrollContextRef = useRef({ rows, sessionId, revision: viewportRevision });
+  scrollContextRef.current = { rows, sessionId, revision: viewportRevision };
+  const previousModeRef = useRef({ sessionId, followMode, viewportMode });
+  const programmaticScrollRef = useRef<number | undefined>(undefined);
+  const reportedTailRef = useRef<string | undefined>(undefined);
+  const preservedSelectionRef = useRef<string | undefined>(undefined);
+  const committedViewportRef = useRef({ sessionId, revision: viewportRevision, rows, selectedOrdinal });
+  const previousMode = previousModeRef.current;
+  if (previousMode.sessionId !== sessionId || previousMode.followMode !== followMode
+    || previousMode.viewportMode !== viewportMode) {
+    if (previousMode.sessionId !== sessionId) anchorRef.current = undefined;
+    interactionPausedRef.current = viewportMode === 'reading';
+    manualFollowingRef.current = false;
+    reportedTailRef.current = undefined;
+    previousModeRef.current = { sessionId, followMode, viewportMode };
+  }
   const [measuredWidths, setMeasuredWidths] = useState<Record<string, number>>({});
   const focus = useGridFocus({ sessionId, rows, columns, selectedOrdinal });
   const activeIndex = gridCellRowIndex(focus.activeCell, rows);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 30,
+    estimateSize: () => GRID_ROW_HEIGHT,
     overscan: 10,
     scrollMargin: GRID_HEADER_HEIGHT,
     scrollPaddingStart: GRID_HEADER_HEIGHT,
-    getItemKey: (index) => rows[index]
-      ? gridCellId(sessionId, rows[index]!.ref.generation, rows[index]!.ref.ordinal, '') : index,
+    getItemKey: (index) => rows[index] ? `${sessionId}:${physicalRowKey(rows[index]!.ref)}` : index,
     rangeExtractor: (range) => pinActiveGridRow(defaultRangeExtractor(range), activeIndex, rows.length),
   });
   const selectedIndex = rows.findIndex((row) => row.ref.ordinal === selectedOrdinal);
-  const selectedGeneration = rows[selectedIndex]?.ref.generation;
+  const selectedRecordKey = rows[selectedIndex] === undefined ? undefined : [
+    sessionId,
+    rows[selectedIndex]!.ref.generation,
+    rows[selectedIndex]!.ref.ordinal,
+    rows[selectedIndex]!.ref.byteStart,
+    rows[selectedIndex]!.ref.byteEndExclusive,
+    rows[selectedIndex]!.ref.contentByteLength,
+    rows[selectedIndex]!.ref.delimiterByteLength,
+  ].join(':');
   const template = useMemo(() => columnGridTemplate(columns, columnWidths), [columnWidths, columns]);
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | undefined>(undefined);
   const dragColumnRef = useRef<string | undefined>(undefined);
+
+  const isFollowing = useCallback((): boolean => followMode && (viewportMode === 'following' || manualFollowingRef.current)
+    && !interactionPausedRef.current, [followMode, viewportMode]);
+  const captureAnchor = useCallback((): ViewportAnchor | undefined => {
+    const grid = scrollRef.current;
+    return grid ? captureViewportAnchor(sessionId, rows, grid.scrollTop) : undefined;
+  }, [sessionId, rows]);
+  const pauseForInteraction = (): void => {
+    programmaticScrollRef.current = undefined;
+    anchorRef.current = captureAnchor();
+    if (!followMode) return;
+    manualFollowingRef.current = false;
+    if (!interactionPausedRef.current) {
+      interactionPausedRef.current = true;
+      reportedTailRef.current = undefined;
+      onReadingAnchor?.(anchorRef.current?.ref);
+    }
+  };
+  const visibleTail = useCallback((): RecordRef | undefined => {
+    if (loading) return undefined;
+    const grid = scrollRef.current;
+    const index = latestRowIndex(rows, latestGeneration, latestSeq, sort);
+    const row = rows[index];
+    if (!grid || !row || !isRowVisible(index, grid.scrollTop, grid.clientHeight)) return undefined;
+    const mounted = [...grid.querySelectorAll<HTMLElement>('[data-row-ordinal]')].find((element) =>
+      element.dataset.rowOrdinal === row.ref.ordinal && element.dataset.rowGeneration === row.ref.generation);
+    if (!mounted) return undefined;
+    const viewport = grid.getBoundingClientRect();
+    const bounds = mounted.getBoundingClientRect();
+    if (bounds.top < viewport.top + GRID_HEADER_HEIGHT - 1 || bounds.bottom > viewport.bottom + 1) return undefined;
+    return row.ref;
+  }, [loading, rows, latestGeneration, latestSeq, sort]);
+  const reportTail = useCallback((): void => {
+    const ref = visibleTail();
+    if (!ref) { reportedTailRef.current = undefined; return; }
+    if (!isFollowing()) return;
+    const key = `${ref.generation}:${latestSeq}:${physicalRowKey(ref)}`;
+    if (reportedTailRef.current === key) return;
+    reportedTailRef.current = key;
+    onTailVisible?.(ref);
+  }, [isFollowing, latestSeq, visibleTail, onTailVisible]);
+  const tryManualTail = (): void => {
+    const intent = manualIntentRef.current;
+    const context = scrollContextRef.current;
+    if (!followMode || isFollowing() || !intent || intent.rows !== rows || context.rows !== rows
+      || intent.sessionId !== sessionId || intent.revision !== viewportRevision
+      || intent.sessionId !== context.sessionId || intent.revision !== context.revision
+      || programmaticScrollRef.current !== undefined || pointerInteractionRef.current
+      || resizeRef.current || dragColumnRef.current) return;
+    const grid = scrollRef.current;
+    if (!grid || grid.ownerDocument.getSelection()?.isCollapsed === false
+      || grid.ownerDocument.activeElement?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="textbox"]')) return;
+    const ref = visibleTail();
+    if (!ref || !onManualTailVisible?.(ref)) return;
+    manualIntentRef.current = undefined;
+    manualFollowingRef.current = true;
+    interactionPausedRef.current = false;
+    anchorRef.current = undefined;
+    reportTail();
+  };
+  const armManualScroll = (): void => {
+    if (manualFrameRef.current !== undefined) cancelAnimationFrame(manualFrameRef.current);
+    manualFrameRef.current = undefined;
+    programmaticScrollRef.current = undefined;
+    manualIntentRef.current = { rows, sessionId, revision: viewportRevision, scrollTop: scrollRef.current?.scrollTop ?? 0 };
+  };
+  const suppressManualScroll = (): void => {
+    manualIntentRef.current = undefined;
+    if (manualFrameRef.current !== undefined) cancelAnimationFrame(manualFrameRef.current);
+    manualFrameRef.current = undefined;
+  };
+
+  useLayoutEffect(() => {
+    const grid = scrollRef.current;
+    if (!grid || loading) return;
+    const previous = committedViewportRef.current;
+    const navigationCommitted = previous.sessionId === sessionId && previous.revision !== viewportRevision;
+    const rowsReplaced = previous.rows !== rows;
+    const historicalAnchor = resolveViewportAnchor(anchorRef.current, sessionId, rows);
+    committedViewportRef.current = { sessionId, revision: viewportRevision, rows, selectedOrdinal };
+    if (navigationCommitted && !isFollowing()) {
+      // An accepted explicit query/page owns its new origin, even if the old
+      // physical reading record happens to be present on the new page.
+      anchorRef.current = captureViewportAnchor(sessionId, rows, 0);
+      manualIntentRef.current = undefined;
+      programmaticScrollRef.current = 0;
+      preservedSelectionRef.current = selectedRecordKey;
+      virtualizer.scrollToOffset(0);
+    }
+    let frame: number | undefined;
+    const maintainViewport = (resized = false): void => {
+      if (resized) {
+        manualIntentRef.current = undefined;
+        programmaticScrollRef.current = grid.scrollTop;
+      }
+      if (isFollowing()) {
+        const index = latestRowIndex(rows, latestGeneration, latestSeq, sort);
+        if (index < 0) return;
+        const top = sort?.direction === 'desc' ? 0
+          : Math.max(0, GRID_HEADER_HEIGHT + rows.length * GRID_ROW_HEIGHT - grid.clientHeight);
+        programmaticScrollRef.current = top;
+        manualIntentRef.current = undefined;
+        virtualizer.scrollToIndex(index, { align: sort?.direction === 'desc' ? 'start' : 'end' });
+      } else {
+        anchorRef.current ??= captureAnchor();
+        const resolved = resolveViewportAnchor(anchorRef.current, sessionId, rows);
+        if (resolved) {
+          anchorRef.current = resolved.anchor;
+          if (!followMode && rowsReplaced && previous.sessionId === sessionId && historicalAnchor
+            && previous.selectedOrdinal === selectedOrdinal) {
+            // Rebuilding the same selection must not reveal it over the
+            // physical reading position restored by this layout.
+            preservedSelectionRef.current = selectedRecordKey;
+          }
+          const top = Math.min(resolved.scrollTop, Math.max(0, grid.scrollHeight - grid.clientHeight));
+          const reposition = Math.abs(grid.scrollTop - top) > 1;
+          if (rowsReplaced || reposition) {
+            // DOM clamping may already have reached this target; its delayed
+            // scroll still belongs to restoration, not a new reading anchor.
+            programmaticScrollRef.current = top;
+            manualIntentRef.current = undefined;
+          }
+          if (reposition) {
+            virtualizer.scrollToOffset(top);
+          }
+          const visible = captureViewportAnchor(sessionId, rows, top);
+          if (visible) onViewportAnchor?.(visible.ref);
+        }
+      }
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        reportTail();
+      });
+    };
+    maintainViewport();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => maintainViewport(true));
+    observer?.observe(grid);
+    return () => {
+      observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, [sessionId, rows, followMode, viewportRevision, latestGeneration, latestSeq, loading, sort, selectedOrdinal, selectedRecordKey,
+    virtualizer, onViewportAnchor, captureAnchor, reportTail, isFollowing]);
 
   useLayoutEffect(() => {
     const header = headerRef.current;
@@ -104,6 +297,7 @@ export function RecordTable({
     const stopResize = (): void => {
       resizeRef.current = undefined;
       pointerFocusRef.current = false;
+      pointerInteractionRef.current = false;
       document.body.classList.remove('is-resizing-column');
     };
     window.addEventListener('pointermove', onPointerMove);
@@ -114,26 +308,43 @@ export function RecordTable({
       window.removeEventListener('pointerup', stopResize);
       window.removeEventListener('pointercancel', stopResize);
       stopResize();
+      if (manualFrameRef.current !== undefined) cancelAnimationFrame(manualFrameRef.current);
     };
   }, [onColumnWidthChange]);
 
   useEffect(() => {
-    if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
-  }, [selectedIndex, virtualizer]);
+    if (selectedRecordKey === undefined) preservedSelectionRef.current = undefined;
+    if (!followMode && selectedRecordKey !== undefined && selectedIndex >= 0
+      && preservedSelectionRef.current !== selectedRecordKey) {
+      preservedSelectionRef.current = undefined;
+      programmaticScrollRef.current = undefined;
+      virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
+    }
+  }, [selectedIndex, selectedRecordKey, virtualizer, followMode]);
 
   const revealCell = (cell: GridCell | undefined): void => {
+    suppressManualScroll();
     const index = gridCellRowIndex(cell, rows);
     if (index >= 0) virtualizer.scrollToIndex(index, { align: 'auto' });
     else if (cell?.kind === 'header') scrollRef.current?.scrollTo({ top: 0 });
   };
-  const clearPointerFocus = (): void => { pointerFocusRef.current = false; };
+  const clearPointerFocus = (): void => {
+    pointerFocusRef.current = false;
+    pointerInteractionRef.current = false;
+  };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (loading || event.target !== event.currentTarget || event.altKey || event.metaKey) return;
+    if (event.key === 'PageDown' || event.key === 'PageUp') {
+      pauseForInteraction();
+      armManualScroll();
+    }
     if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      pauseForInteraction();
       event.preventDefault();
       revealCell(focus.move(event.key, event.ctrlKey));
     } else if (event.key === 'Enter' || event.key === ' ') {
+      pauseForInteraction();
       event.preventDefault();
       const cell = focus.activeCell ?? focus.enter();
       if (cell?.kind === 'header') resizersRef.current.get(cell.columnId)?.focus();
@@ -166,7 +377,7 @@ export function RecordTable({
   if (rows.length === 0) {
     return loading
       ? <EmptyState Icon={LoaderCircle} title="Loading records" />
-      : <EmptyState title="No records match the current query" />;
+      : <EmptyState title={emptyTitle ?? 'No records match the current query'} />;
   }
 
   return (
@@ -174,7 +385,7 @@ export function RecordTable({
     <div
       className={`data-grid-scroll${loading ? ' is-refreshing' : ''}`}
       ref={scrollRef}
-      role={/* biome-ignore lint/a11y/useSemanticElements: virtualized absolute-positioned CSS grid requires ARIA grid semantics */ 'grid'}
+      role="grid"
       aria-label="JSONL records"
       aria-rowcount={rows.length + 1}
       aria-colcount={columns.length}
@@ -182,18 +393,70 @@ export function RecordTable({
       aria-activedescendant={activeDescendant}
       aria-description="Arrow keys move cell focus. Enter or Space opens a record. Enter on a header enables column resizing; Escape returns to grid navigation."
       tabIndex={0}
-      onPointerDownCapture={() => { pointerFocusRef.current = true; }}
+      style={{ overflowAnchor: 'none' }}
+      onWheelCapture={(event) => {
+        if (event.ctrlKey) return;
+        const towardTail = sort?.direction === 'desc' ? event.deltaY < 0 : event.deltaY > 0;
+        if (event.deltaX !== 0 || (!towardTail && event.deltaY !== 0)) pauseForInteraction();
+        if (event.deltaX !== 0 || event.deltaY === 0) { suppressManualScroll(); return; }
+        armManualScroll();
+        if (towardTail && onManualTailVisible && !isFollowing()) {
+          if (manualFrameRef.current !== undefined) cancelAnimationFrame(manualFrameRef.current);
+          manualFrameRef.current = requestAnimationFrame(() => {
+            manualFrameRef.current = undefined;
+            tryManualTail();
+          });
+        }
+      }}
+      onTouchStartCapture={() => { pauseForInteraction(); armManualScroll(); }}
+      onPointerDownCapture={(event) => {
+        pointerFocusRef.current = true;
+        pauseForInteraction();
+        pointerInteractionRef.current = event.pointerType !== 'touch' && event.target !== event.currentTarget;
+        if (!pointerInteractionRef.current) armManualScroll();
+        else suppressManualScroll();
+      }}
       onPointerUpCapture={clearPointerFocus}
       onPointerCancelCapture={clearPointerFocus}
-      onPointerLeave={clearPointerFocus}
+      onPointerLeave={() => { pointerFocusRef.current = false; }}
       onFocus={(event) => {
         // Pointer focus on the gutter or virtual space must not reveal a default row.
         const pointerEntry = pointerFocusRef.current;
-        clearPointerFocus();
+        pointerFocusRef.current = false;
         if (!loading && !pointerEntry && event.target === event.currentTarget
-          && !event.currentTarget.contains(event.relatedTarget as Node | null)) revealCell(focus.enter());
+          && !event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          pauseForInteraction();
+          revealCell(focus.enter());
+        }
       }}
       onKeyDown={handleKeyDown}
+      onScroll={() => {
+        const grid = scrollRef.current;
+        if (!grid || loading || committedViewportRef.current.rows !== rows) return;
+        const expected = programmaticScrollRef.current;
+        if (expected !== undefined) {
+          reportTail();
+          return;
+        }
+        if (!followMode) {
+          anchorRef.current = captureAnchor();
+          if (anchorRef.current) onViewportAnchor?.(anchorRef.current.ref);
+          return;
+        }
+        const intent = manualIntentRef.current;
+        const deltaY = intent ? grid.scrollTop - intent.scrollTop : 0;
+        if (intent) intent.scrollTop = grid.scrollTop;
+        if (isFollowing()) {
+          const index = latestRowIndex(rows, latestGeneration, latestSeq, sort);
+          if (!isRowVisible(index, grid.scrollTop, grid.clientHeight)) pauseForInteraction();
+        }
+        if (!isFollowing()) {
+          anchorRef.current = captureAnchor();
+          if (anchorRef.current) onViewportAnchor?.(anchorRef.current.ref);
+        }
+        if (sort?.direction === 'desc' ? deltaY < 0 : deltaY > 0) tryManualTail();
+        reportTail();
+      }}
     >
       {/* biome-ignore lint/a11y/useSemanticElements: virtualized CSS grid header cannot be a native table row */}
       <div ref={headerRef} className="data-grid-header" role="row" aria-rowindex={1} tabIndex={-1} style={{ gridTemplateColumns: template, height: GRID_HEADER_HEIGHT }}>
@@ -301,7 +564,6 @@ export function RecordTable({
           if (!row) return null;
           const selected = row.ref.ordinal === selectedOrdinal;
           return (
-            // biome-ignore lint/a11y/useFocusableInteractive: grid focus is owned by the aria-activedescendant container
             // biome-ignore lint/a11y/useSemanticElements: virtualized absolute-positioned CSS grid row cannot be a native table row
             <div
               className={`data-grid-row${selected ? ' is-selected' : ''}${row.problems?.length ? ' has-problem' : ''}`}
@@ -309,7 +571,9 @@ export function RecordTable({
               aria-rowindex={item.index + 2}
               aria-selected={selected}
               tabIndex={-1}
-              key={gridCellId(sessionId, row.ref.generation, row.ref.ordinal, '')}
+              key={`${sessionId}:${physicalRowKey(row.ref)}`}
+              data-row-ordinal={row.ref.ordinal}
+              data-row-generation={row.ref.generation}
               style={{ gridTemplateColumns: template, height: item.size, transform: `translateY(${item.start - GRID_HEADER_HEIGHT}px)` }}
             >
               {columns.map((column, columnIndex) => {
@@ -318,7 +582,6 @@ export function RecordTable({
                   && activeCell.ordinal === row.ref.ordinal && activeCell.columnId === column.id;
                 return (
                   // biome-ignore lint/a11y/useSemanticElements: virtualized CSS grid cell cannot be a native table cell
-                  // biome-ignore lint/a11y/useFocusableInteractive: grid focus is owned by the aria-activedescendant container
                   <div
                     className={`data-grid-cell${active ? ' is-active-cell' : ''}`}
                     role="gridcell"
@@ -329,6 +592,7 @@ export function RecordTable({
                     title={text}
                     onClick={() => {
                       if (loading) return;
+                      pauseForInteraction();
                       focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
                         ordinal: row.ref.ordinal, columnId: column.id });
                       scrollRef.current?.focus({ preventScroll: true });
@@ -337,6 +601,7 @@ export function RecordTable({
                     onKeyDown={(event) => {
                       if (loading || (event.key !== 'Enter' && event.key !== ' ')) return;
                       event.preventDefault();
+                      pauseForInteraction();
                       focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
                         ordinal: row.ref.ordinal, columnId: column.id });
                       scrollRef.current?.focus({ preventScroll: true });
