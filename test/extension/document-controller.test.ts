@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DocumentController, type JsonlSessionPort, type MessageChannel } from '../../src/extension/document-controller';
 import {
   PROTOCOL_VERSION,
@@ -532,6 +532,69 @@ describe('document controller', () => {
     releaseRows(page);
     await pendingRequest;
 
+    expect(messages).toEqual([]);
+  });
+
+  it.each(['success', 'failure', 'transient-failure'] as const)('drops late %s when the epoch advances within the same generation', async (outcome) => {
+    const initial = summary();
+    initial.snapshot.epoch = 1;
+    const page: RowPage = {
+      rows: [],
+      columns: [],
+      anchorOrdinal: '0',
+      hasBefore: false,
+      hasAfter: false,
+      indexedRecords: '0',
+      totalRecords: '0',
+    };
+    let releaseRows: (value: RowPage) => void = () => undefined;
+    let rejectRows: (error: Error) => void = () => undefined;
+    const pendingRows = new Promise<RowPage>((resolve, reject) => {
+      releaseRows = resolve;
+      rejectRows = reject;
+    });
+    let markStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const session: JsonlSessionPort = {
+      ...fakeSession(),
+      getSummary: () => initial,
+      getRows: async () => { markStarted(); return pendingRows; },
+    };
+    const messages: ExtensionMessage[] = [];
+    const onTransientSourceChange = vi.fn(() => true);
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => {
+        messages.push(message);
+        return true;
+      },
+    }, { onTransientSourceChange });
+    const rowsRequest = request('GET_ROWS', { limit: 100 });
+    rowsRequest.epoch = 1;
+
+    const pendingRequest = controller.handleMessage(rowsRequest);
+    await started;
+    initial.snapshot.epoch = 2;
+    if (outcome === 'success') releaseRows(page);
+    else rejectRows(Object.assign(new Error('late failure'), { code: outcome === 'transient-failure' ? 'UNEXPECTED_EOF' : 'OTHER' }));
+    await pendingRequest;
+
+    expect(messages).toEqual([]);
+    expect(onTransientSourceChange).not.toHaveBeenCalled();
+  });
+
+  it('does not publish an old-epoch transient error when recovery advances the epoch', async () => {
+    const initial = summary();
+    initial.snapshot.epoch = 1;
+    const session = { ...fakeSession(), getSummary: () => initial, getRows: async () => {
+      throw Object.assign(new Error('source settling'), { code: 'UNEXPECTED_EOF' });
+    } };
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(session, { postMessage: async (message) => { messages.push(message); return true; } }, {
+      onTransientSourceChange: () => { initial.snapshot.epoch = 2; return true; },
+    });
+    const rowsRequest = request('GET_ROWS', { limit: 100 });
+    rowsRequest.epoch = 1;
+    await controller.handleMessage(rowsRequest);
     expect(messages).toEqual([]);
   });
 

@@ -4,6 +4,7 @@
 
 - Use exclusive physical cursors for adjacent ordinal pages in either order. Preserve partial windows and bounded scan identity through append recovery and column refresh; keep direct page jumps at their logical matching rank.
 - Give Insights an explicit Current view or Whole file scope, share Table query conditions, label bounded scan coverage, and discard results from superseded query or profile intents.
+- Report one verifiable, path-free execution identity from the Extension Host, Webview startup receipts and packaged build manifest. Verify the complete runtime binding and completed bundle bytes, reject stale dist or changed build inputs, and discard late requests or recovery publications when document generation or epoch has advanced. Report build optimization separately from the actual host extension mode.
 - Trace startup stages across the extension host and Webview with generation-safe acknowledgements, a bounded startup watchdog, and first-row diagnostics for stalled loads.
 - Preserve an unfinished page navigation across live index updates and profile refreshes, including sorted pages and empty-page recovery.
 - Group search, row-type and field filters, and column visibility in the table toolbar, with explicit current-file query scope and bounded scan status. Combine multiple row types with OR and field conditions with AND; keep nested content paths in on-demand column choices.

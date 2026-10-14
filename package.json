@@ -463,6 +463,7 @@
   },
   "scripts": {
     "build": "node esbuild.mjs",
+    "verify:execution-identity": "node scripts/execution-identity.mjs --dist dist",
     "benchmark:engine": "node scripts/benchmark-engine.mjs",
     "benchmark:trend": "node scripts/benchmark-trend.mjs",
     "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
@@ -510,6 +511,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@babel/parser": "7.29.8",
     "@biomejs/biome": "2.5.15",
     "@napi-rs/cli": "3.10.5",
     "@types/node": "26.6.4",

@@ -1,3 +1,5 @@
+import { EXECUTION_IDENTITY, isRuntimeExecutionIdentity, UNKNOWN_RUNTIME_IDENTITY, type ExecutionIdentity, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+
 const READY_RETRY_MS = 2500;
 const MAX_READY_ATTEMPTS = 3;
 const MAX_STAGE_ID_LENGTH = 128;
@@ -9,11 +11,13 @@ export function createStartupStageReceipt(
   stage: StartupStage,
   session: { documentId: string; generation: string; startupId: string; epoch?: number },
   rows?: number,
-): { type: 'JSONLVIEW_STARTUP_STAGE'; stage: StartupStage; documentId: string; generation: string; startupId: string; epoch?: number; rows?: number } | undefined {
+  runtimeIdentity: RuntimeExecutionIdentity = readRuntimeExecutionIdentity(),
+): { type: 'JSONLVIEW_STARTUP_STAGE'; stage: StartupStage; documentId: string; generation: string; startupId: string; executionIdentity: ExecutionIdentity; runtimeIdentity: RuntimeExecutionIdentity; epoch?: number; rows?: number } | undefined {
   if (!session.documentId || session.documentId.length > MAX_STAGE_ID_LENGTH
     || !session.generation || session.generation.length > MAX_STAGE_ID_LENGTH
     || !session.startupId || session.startupId.length > MAX_STAGE_ID_LENGTH) return undefined;
   if (session.epoch !== undefined && (!Number.isSafeInteger(session.epoch) || session.epoch < 0)) return undefined;
+  if (!isRuntimeExecutionIdentity(runtimeIdentity)) return undefined;
   if (stage === 'page-committed' && (rows === undefined || !Number.isSafeInteger(rows) || rows < 0 || rows > MAX_STAGE_ROWS)) {
     return undefined;
   }
@@ -23,6 +27,8 @@ export function createStartupStageReceipt(
     documentId: session.documentId,
     generation: session.generation,
     startupId: session.startupId,
+    executionIdentity: EXECUTION_IDENTITY,
+    runtimeIdentity: Object.freeze({ ...runtimeIdentity }),
     ...(session.epoch === undefined ? {} : { epoch: session.epoch }),
   };
   if (stage === 'page-committed' && rows !== undefined) return { ...base, rows };
@@ -56,4 +62,16 @@ export function startStartupHandshake(
   };
   attempt();
   return stop;
+}
+
+export function readRuntimeExecutionIdentity(): Readonly<RuntimeExecutionIdentity> {
+  if (typeof document === 'undefined') return UNKNOWN_RUNTIME_IDENTITY;
+  const serialized = document.body?.dataset.runtimeIdentity;
+  if (serialized === undefined || serialized.length > 1024) return UNKNOWN_RUNTIME_IDENTITY;
+  try {
+    const runtime: unknown = JSON.parse(serialized);
+    return isRuntimeExecutionIdentity(runtime) ? Object.freeze({ ...runtime }) : UNKNOWN_RUNTIME_IDENTITY;
+  } catch {
+    return UNKNOWN_RUNTIME_IDENTITY;
+  }
 }

@@ -33,6 +33,7 @@ describe('getWebviewHtml', () => {
     expect(html).not.toContain("script-src 'unsafe-inline'");
     expect(html).toContain('data-generation="generation&quot;unsafe"');
     expect(html).toContain('data-startup-id="boot-1"');
+    expect(html).toContain('data-runtime-identity="{&quot;extensionId&quot;:&quot;unknown&quot;');
     expect(html).not.toContain('data-uri="file:///fixture.jsonl?value=<unsafe>"');
     expect(html).toContain('data-page-size="250"');
     expect(html).toContain('data-row-order="desc"');

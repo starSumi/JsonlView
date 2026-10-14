@@ -3,14 +3,15 @@ import type { SourceRefreshKind } from '../engine';
 
 /**
  * The identity used by follow recovery is deliberately smaller than a full
- * snapshot. A generation is included so a recovery run cannot publish over a
- * newer manual rebuild; device/inode are required when the host can observe
+ * snapshot. Generation and epoch keep a recovery run from publishing over a
+ * newer lifecycle; device/inode are required when the host can observe
  * them because a path alone is not a file identity.
  */
 export interface FollowRecoveryIdentity {
   documentId: string;
   uri: string;
   generation: string;
+  epoch?: number;
   /** Size of the snapshot that became unknown. Used to reject truncation. */
   sizeBytes: string;
   device?: string;
@@ -43,9 +44,9 @@ export interface FollowRecoveryHost {
   /** Publish only after rebuildStable has atomically adopted the candidate. */
   publish(summary: DocumentSummary): Promise<void>;
   /** Keep the old page visible but tell the UI that automatic follow stopped. */
-  invalidate(reason: 'truncate' | 'replace' | 'delete' | 'unknown'): Promise<void>;
+  invalidate(reason: 'truncate' | 'replace' | 'delete' | 'unknown', expected?: FollowRecoveryIdentity): Promise<void>;
   /** Explain why a bounded recovery run stopped and what the user can do. */
-  report(message: string): Promise<void>;
+  report(message: string, expected?: FollowRecoveryIdentity): Promise<void>;
   /** Let the existing watcher/reconcile loop consume events queued meanwhile. */
   scheduleReconcile?(): void;
 }
@@ -513,6 +514,7 @@ export class FollowRecoveryCoordinator {
   }
 
   private async terminate(reason: 'delete' | 'replace' | 'truncate'): Promise<void> {
+    const expected = this.expected;
     this.clearTimers();
     this.controller?.abort();
     this.controller = undefined;
@@ -521,7 +523,7 @@ export class FollowRecoveryCoordinator {
     this.resetGap();
     this.state = 'exhausted';
     try {
-      await this.host.invalidate(reason);
+      await this.host.invalidate(reason, expected);
     } catch {
       // The source transition is terminal even if all panels were disposed.
     }
@@ -533,6 +535,7 @@ export class FollowRecoveryCoordinator {
       return;
     }
     const gap = this.gap;
+    const expected = this.expected;
     this.clearTimers();
     this.controller?.abort();
     this.controller = undefined;
@@ -543,12 +546,12 @@ export class FollowRecoveryCoordinator {
     try {
       await this.host.invalidate(gap === undefined
         ? 'unknown'
-        : (gap === 'missing' ? 'delete' : 'replace'));
+        : (gap === 'missing' ? 'delete' : 'replace'), expected);
     } catch {
       // Keep the recovery state terminal even if the UI has gone away.
     }
     try {
-      await this.host.report(message);
+      await this.host.report(message, expected);
     } catch {
       // Reporting is best effort and must not restart recovery.
     }
@@ -574,6 +577,7 @@ export class FollowRecoveryCoordinator {
   }
 
   private async fail(message: string): Promise<void> {
+    const expected = this.expected;
     this.clearTimers();
     this.controller?.abort();
     this.controller = undefined;
@@ -582,12 +586,12 @@ export class FollowRecoveryCoordinator {
     this.gap = undefined;
     this.state = 'exhausted';
     try {
-      await this.host.invalidate('unknown');
+      await this.host.invalidate('unknown', expected);
     } catch {
       // Keep the recovery state terminal even if the UI has gone away.
     }
     try {
-      await this.host.report(`Follow recovery failed: ${message}`);
+      await this.host.report(`Follow recovery failed: ${message}`, expected);
     } catch {
       // Reporting is best effort and must never restart the state machine.
     }

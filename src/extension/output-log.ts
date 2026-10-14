@@ -4,11 +4,24 @@ import {
   type ObservabilityEvent,
   type ObservabilitySink,
 } from './observability-contract';
+import { isExecutionIdentity, isRuntimeExecutionIdentity, type ExecutionIdentity, type RuntimeExecutionIdentity } from '../shared/execution-identity';
 
 const MAX_DETAIL_LENGTH = 512;
 
 export interface JsonlViewOutputChannel {
   appendLine(value: string): void;
+}
+
+/** Fixed identity fields are validated and serialized whole, never truncated JSON. */
+export function appendExecutionIdentityLog(
+  channel: JsonlViewOutputChannel | undefined,
+  executionIdentity: ExecutionIdentity,
+  runtimeIdentity: RuntimeExecutionIdentity,
+): void {
+  if (channel === undefined || !isExecutionIdentity(executionIdentity) || !isRuntimeExecutionIdentity(runtimeIdentity)) return;
+  const receipt = JSON.stringify({ executionIdentity, runtimeIdentity });
+  if (receipt.length > 2048) return;
+  channel.appendLine(`${new Date().toISOString()} [execution-identity] ${receipt}`);
 }
 
 /** Keep the user-visible channel useful without copying source or payload data. */

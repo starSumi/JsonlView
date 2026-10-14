@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   appendObservabilityEvent,
+  appendExecutionIdentityLog,
   appendOutputLog,
   createOutputLogObservabilitySink,
   formatOutputLogLine,
   formatObservabilityLogLine,
 } from '../../src/extension/output-log';
+import { EXECUTION_IDENTITY } from '../../src/shared/execution-identity';
 
 describe('JsonlView output log', () => {
   it('formats bounded single-line entries without copying control characters', () => {
@@ -20,6 +22,19 @@ describe('JsonlView output log', () => {
     appendOutputLog(undefined, 'ignored');
     appendOutputLog(channel, 'ready', 'registered');
     expect(channel.appendLine).toHaveBeenCalledWith(expect.stringContaining('[ready] registered'));
+  });
+
+  it('keeps the full validated identity receipt parseable beyond the generic log bound', () => {
+    const channel = { appendLine: vi.fn() };
+    const identity = { ...EXECUTION_IDENTITY, extensionId: 'x'.repeat(128), extensionVersion: '1.2.3-' + 'x'.repeat(58) };
+    const runtime = { extensionId: identity.extensionId, extensionVersion: identity.extensionVersion, extensionMode: 'development' as const };
+    appendExecutionIdentityLog(channel, identity, runtime);
+    const line = channel.appendLine.mock.calls[0]?.[0] as string;
+    expect(line.length).toBeGreaterThan(512);
+    expect(line.length).toBeLessThan(2100);
+    expect(JSON.parse(line.split('[execution-identity] ')[1] ?? '')).toEqual({ executionIdentity: identity, runtimeIdentity: runtime });
+    appendExecutionIdentityLog(channel, { ...identity, path: 'private' } as never, runtime);
+    expect(channel.appendLine).toHaveBeenCalledTimes(1);
   });
 
   it('writes only validated lifecycle metadata to the local output channel', () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createStartupStageReceipt, startStartupHandshake } from '../../src/webview/startup-handshake';
+import { createStartupStageReceipt, readRuntimeExecutionIdentity, startStartupHandshake } from '../../src/webview/startup-handshake';
+import { EXECUTION_IDENTITY, UNKNOWN_RUNTIME_IDENTITY } from '../../src/shared/execution-identity';
 
 describe('startup handshake', () => {
   afterEach(() => vi.useRealTimers());
@@ -75,14 +76,34 @@ describe('startup handshake', () => {
     const session = { documentId: 'document-1', generation: 'generation-1', startupId: 'boot-1', epoch: 2 };
     expect(createStartupStageReceipt('page-committed', session, 0)).toEqual({
       type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed', ...session, rows: 0,
+      executionIdentity: EXECUTION_IDENTITY,
+      runtimeIdentity: UNKNOWN_RUNTIME_IDENTITY,
     });
     expect(createStartupStageReceipt('opened-accepted', session, 10)).toEqual({
       type: 'JSONLVIEW_STARTUP_STAGE', stage: 'opened-accepted', ...session,
+      executionIdentity: EXECUTION_IDENTITY,
+      runtimeIdentity: UNKNOWN_RUNTIME_IDENTITY,
     });
     expect(createStartupStageReceipt('page-committed', session, 501)).toBeUndefined();
     expect(createStartupStageReceipt('page-committed', session, NaN)).toBeUndefined();
     expect(createStartupStageReceipt('opened-accepted', { ...session, epoch: -1 })).toBeUndefined();
     expect(createStartupStageReceipt('opened-accepted', { ...session, startupId: '' })).toBeUndefined();
     expect(createStartupStageReceipt('startup-error', { ...session, documentId: 'x'.repeat(129) })).toBeUndefined();
+  });
+
+  it('reads runtime mode only from the host bootstrap and keeps missing data unknown', () => {
+    const runtime = { extensionId: 'Sumi-Sophia.jsonl-view', extensionVersion: '0.2.11', extensionMode: 'development' };
+    vi.stubGlobal('document', { body: { dataset: { runtimeIdentity: JSON.stringify(runtime) } } });
+    try {
+      expect(readRuntimeExecutionIdentity()).toEqual(runtime);
+      expect(createStartupStageReceipt('opened-accepted', { documentId: 'd', generation: 'g', startupId: 's' }))
+        .toMatchObject({ runtimeIdentity: runtime });
+      vi.stubGlobal('document', { body: { dataset: { runtimeIdentity: '{' } } });
+      expect(readRuntimeExecutionIdentity()).toEqual(UNKNOWN_RUNTIME_IDENTITY);
+      vi.stubGlobal('document', { body: { dataset: {} } });
+      expect(readRuntimeExecutionIdentity()).toEqual(UNKNOWN_RUNTIME_IDENTITY);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -14,6 +14,7 @@ const requiredContractText = [
   'pnpm check:agent-spec',
   'pnpm check:docs-index',
   'pnpm check:contract',
+  'pnpm verify:execution-identity',
 ];
 const adrFiles = [
   '001-format-profile-boundary.md',
@@ -141,7 +142,7 @@ for (const pin of pinnedWorkflowActions) {
 }
 
 const packageJson = JSON.parse(await text('package.json'));
-for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'check:contract', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
+for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'verify:execution-identity', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'check:contract', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
   if (typeof packageJson.scripts?.[script] !== 'string') failures.push(`package.json missing script: ${script}`);
 }
 

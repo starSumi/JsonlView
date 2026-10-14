@@ -352,7 +352,7 @@ async function readCodeVersion(runtime) {
 
 async function digestBundles() {
   const result = {};
-  for (const name of ['dist/extension.cjs', 'dist/webview.js', 'dist/webview.css']) {
+  for (const name of ['dist/execution-bundle-inventory.json', 'dist/execution-identity.json', 'dist/extension.cjs', 'dist/webview.js', 'dist/webview.css']) {
     const path = resolve(root, name);
     if (await isRegularFile(path)) result[name] = (await digestFile(path)).sha256;
   }
@@ -361,7 +361,7 @@ async function digestBundles() {
 
 async function digestBundlesAt(directory) {
   const result = {};
-  for (const name of ['dist/extension.cjs', 'dist/webview.js', 'dist/webview.css']) {
+  for (const name of ['dist/execution-bundle-inventory.json', 'dist/execution-identity.json', 'dist/extension.cjs', 'dist/webview.js', 'dist/webview.css']) {
     const path = join(directory, name);
     if (await isRegularFile(path)) result[name] = (await digestFile(path)).sha256;
   }

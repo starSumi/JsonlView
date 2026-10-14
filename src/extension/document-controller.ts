@@ -9,6 +9,7 @@ import type {
   RecordDetail,
   RecordRef,
   RowSort,
+  SnapshotIdentity,
   WebviewRequest,
 } from '../shared/types';
 import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
@@ -22,6 +23,8 @@ type ExtensionMessageByType = {
 };
 
 type ExtensionPayload<TType extends ExtensionMessage['type']> = ExtensionMessageByType[TType]['payload'];
+type RequestAddress = Pick<WebviewRequest, 'requestId'>;
+type AcceptedRequestIdentity = Readonly<Pick<SnapshotIdentity, 'documentId' | 'generation' | 'epoch'>>;
 
 /** @deprecated Import RecordPageRequest from application ports for new code. */
 export type RowsRequest = RecordPageRequest;
@@ -95,13 +98,20 @@ export class DocumentController {
     }
     const validation = validateWebviewRequest(value);
     if (!validation.ok || validation.request === undefined) {
-      await this.postError(readProtocolIdentity(value), 'INVALID_REQUEST', validation.error ?? 'Invalid request.', false);
+      await this.postError(
+        readProtocolIdentity(value),
+        captureSnapshotIdentity(this.session.getSummary().snapshot),
+        'INVALID_REQUEST',
+        validation.error ?? 'Invalid request.',
+        false,
+      );
       return;
     }
     const request = validation.request;
     const summary = this.session.getSummary();
+    const acceptedIdentity = captureSnapshotIdentity(summary.snapshot);
     if (request.documentId !== summary.snapshot.documentId) {
-      await this.postError(request, 'WRONG_DOCUMENT', 'The request belongs to a different document.', false);
+      await this.postError(request, acceptedIdentity, 'WRONG_DOCUMENT', 'The request belongs to a different document.', false);
       return;
     }
     // Cancellation is a control message for a request that may belong to the
@@ -119,7 +129,7 @@ export class DocumentController {
       return;
     }
     if (request.type !== 'READY' && request.generation !== summary.snapshot.generation) {
-      await this.postError(request, 'STALE_GENERATION', 'The source file changed. Refreshing the current view is required.', true);
+      await this.postError(request, acceptedIdentity, 'STALE_GENERATION', 'The source file changed. Refreshing the current view is required.', true);
       return;
     }
     if (
@@ -128,14 +138,9 @@ export class DocumentController {
       && summary.snapshot.epoch !== undefined
       && request.epoch !== summary.snapshot.epoch
     ) {
-      await this.postError(request, 'STALE_EPOCH', 'The source lifecycle advanced. Refreshing the current view is required.', true);
+      await this.postError(request, acceptedIdentity, 'STALE_EPOCH', 'The source lifecycle advanced. Refreshing the current view is required.', true);
       return;
     }
-    // Keep the generation that the operation actually read. A rebuild may
-    // swap the session engine while an awaited request is in flight; such a
-    // response must never be relabeled with the newer generation.
-    const operationGeneration = summary.snapshot.generation;
-
 
     let signal: AbortSignal | undefined;
     let firstRowsRequest = false;
@@ -143,7 +148,7 @@ export class DocumentController {
       switch (request.type) {
         case 'READY':
           this.hooks.onReadyReceived?.();
-          if (await this.post(request, 'OPENED', summary)) {
+          if (await this.postIfCurrent(request, acceptedIdentity, 'OPENED', summary)) {
             this.hooks.onOpenedDelivery?.(true);
             await this.hooks.onReady?.();
           } else {
@@ -163,10 +168,10 @@ export class DocumentController {
           }
           signal = this.requests.startLatest('viewport', request.requestId);
           const page = await this.loadRecordPage.execute(request.payload, signal);
-          const current = this.isCurrentGeneration(operationGeneration);
+          const current = this.isCurrentIdentity(acceptedIdentity);
           const posted = current && await this.postIfCurrent(
             request,
-            operationGeneration,
+            acceptedIdentity,
             'ROWS',
             page,
           );
@@ -182,7 +187,7 @@ export class DocumentController {
           signal = this.requests.startLatest('problems', request.requestId);
           await this.postIfCurrent(
             request,
-            operationGeneration,
+            acceptedIdentity,
             'PROBLEMS',
             await this.loadProblemPage.execute(request.payload, signal),
           );
@@ -191,7 +196,7 @@ export class DocumentController {
           signal = this.requests.startLatest('detail', request.requestId);
           await this.postIfCurrent(
             request,
-            operationGeneration,
+            acceptedIdentity,
             'DETAIL',
             await this.session.getDetail(request.payload.ref, request.payload.full ?? false, signal),
           );
@@ -200,14 +205,14 @@ export class DocumentController {
           signal = this.requests.startLatest('schema', request.requestId);
           await this.postIfCurrent(
             request,
-            operationGeneration,
+            acceptedIdentity,
             'SCHEMA',
             await this.session.getSchema(request.payload.offset, request.payload.limit, signal),
           );
           return;
         case 'GET_INSIGHTS': {
           if (!this.matchesAnalysisIntent(request.payload.intent)) {
-            await this.postError(request, 'STALE_ANALYSIS_INTENT', 'Insights intent no longer matches the open document.', true);
+            await this.postError(request, acceptedIdentity, 'STALE_ANALYSIS_INTENT', 'Insights intent no longer matches the open document.', true);
             return;
           }
           signal = this.requests.startLatest('insights', request.requestId);
@@ -215,7 +220,7 @@ export class DocumentController {
           if (signal.aborted || !this.matchesAnalysisIntent(request.payload.intent)) return;
           await this.postIfCurrent(
             request,
-            operationGeneration,
+            acceptedIdentity,
             'INSIGHTS',
             insights,
           );
@@ -224,15 +229,15 @@ export class DocumentController {
         case 'SET_PROFILE': {
           signal = this.requests.startLatest('profile', request.requestId);
           const updated = await this.session.setProfile(request.payload.profileId, signal);
-          if (signal.aborted || updated.snapshot.documentId !== request.documentId
-            || !this.isCurrentGeneration(operationGeneration)
+          if (signal.aborted || !this.isCurrentIdentity(acceptedIdentity)
+            || updated.snapshot.documentId !== request.documentId
             || !summaryIdentityMatches(updated, this.session.getSummary())) return;
           if (updated.profileVersion === undefined) {
-            await this.postError(request, 'PROFILE_REVISION_UNAVAILABLE',
+            await this.postError(request, acceptedIdentity, 'PROFILE_REVISION_UNAVAILABLE',
               'The selected profile did not provide a stable revision.', false);
             return;
           }
-          await this.postIfCurrent(request, operationGeneration, 'PROFILE_CHANGED', {
+          await this.postIfCurrent(request, acceptedIdentity, 'PROFILE_CHANGED', {
             profileId: updated.profileId,
             profileVersion: updated.profileVersion,
             columns: [...this.session.getProfileColumns()],
@@ -241,20 +246,20 @@ export class DocumentController {
           // PROFILE_CHANGED completes the correlated request on the webview
           // side. Publish the follow-up summary as unsolicited progress so it
           // is accepted after that completion and cannot leave counts stale.
-          await this.postIfCurrent({ ...request, requestId: '' }, operationGeneration, 'INDEX_PROGRESS', updated);
+          await this.postIfCurrent({ requestId: '' }, acceptedIdentity, 'INDEX_PROGRESS', updated);
           return;
         }
         case 'SET_FOLLOW_MODE':
           await this.postIfCurrent(
             request,
-            operationGeneration,
+            acceptedIdentity,
             'INDEX_PROGRESS',
             await this.session.setFollowMode(request.payload.enabled),
           );
           return;
         case 'SET_ROW_ORDER':
           await this.hooks.onRowOrderChanged?.(request.payload.direction);
-          await this.postIfCurrent(request, operationGeneration, 'ROW_ORDER_CHANGED', request.payload);
+          await this.postIfCurrent(request, acceptedIdentity, 'ROW_ORDER_CHANGED', request.payload);
           return;
         case 'REBUILD_INDEX': {
           const rebuildRequestSequence = ++this.rebuildRequestSequence;
@@ -268,22 +273,25 @@ export class DocumentController {
             rebuilt.snapshot.documentId !== request.documentId
             || !this.canPublishRebuild(rebuildRequestSequence, signal, rebuilt)
           ) return;
-          await this.post(request, 'OPENED', rebuilt, rebuilt.snapshot.generation);
+          await this.post(request, captureSnapshotIdentity(rebuilt.snapshot), 'OPENED', rebuilt);
           return;
         }
         default:
-          await this.postError(request, 'UNSUPPORTED_MESSAGE', 'Unsupported request.', false);
+          await this.postError(request, acceptedIdentity, 'UNSUPPORTED_MESSAGE', 'Unsupported request.', false);
       }
     } catch (error) {
       if (firstRowsRequest) this.hooks.onFirstRowsResult?.({ status: signal?.aborted ? 'cancelled' : 'failed' });
       if (signal?.aborted) {
         return;
       }
+      if (!this.isCurrentIdentity(acceptedIdentity)) return;
       if (isTransientSourceChange(error)) {
         const handled = await this.hooks.onTransientSourceChange?.();
+        if (!this.isCurrentIdentity(acceptedIdentity)) return;
         if (handled === true) {
           await this.postError(
             request,
+            acceptedIdentity,
             'SOURCE_UPDATING',
             'The source is still changing; the previous snapshot remains visible while it settles.',
             true,
@@ -291,8 +299,9 @@ export class DocumentController {
           return;
         }
       }
+      if (!this.isCurrentIdentity(acceptedIdentity)) return;
       const message = error instanceof Error ? error.message : String(error);
-      await this.postError(request, 'REQUEST_FAILED', message, true);
+      await this.postError(request, acceptedIdentity, 'REQUEST_FAILED', message, true);
     } finally {
       this.requests.finish(request.requestId);
     }
@@ -308,27 +317,25 @@ export class DocumentController {
   }
 
   private async post<TType extends ExtensionMessage['type']>(
-    request: Pick<WebviewRequest, 'documentId' | 'generation' | 'requestId'>,
+    request: RequestAddress,
+    identity: AcceptedRequestIdentity,
     type: TType,
     payload: ExtensionPayload<TType>,
-    generation = this.session.getSummary().snapshot.generation,
   ): Promise<boolean> {
-    return this.postEnvelope<TType>(request, type, payload, generation);
+    return this.postEnvelope<TType>(request, identity, type, payload);
   }
 
   private async postEnvelope<TType extends ExtensionMessage['type']>(
-    request: Pick<WebviewRequest, 'documentId' | 'generation' | 'requestId'>,
+    request: RequestAddress,
+    identity: AcceptedRequestIdentity,
     type: TType,
     payload: ExtensionPayload<TType>,
-    generation: string,
   ): Promise<boolean> {
     const message = createProtocolEnvelope({
       type,
-      documentId: request.documentId,
-      generation,
-      ...(this.session.getSummary().snapshot.epoch === undefined
-        ? {}
-        : { epoch: this.session.getSummary().snapshot.epoch }),
+      documentId: identity.documentId,
+      generation: identity.generation,
+      ...(identity.epoch === undefined ? {} : { epoch: identity.epoch }),
       requestId: request.requestId,
       payload,
     }) as unknown as ExtensionMessageByType[TType];
@@ -336,17 +343,20 @@ export class DocumentController {
   }
 
   private async postIfCurrent<TType extends ExtensionMessage['type']>(
-    request: Pick<WebviewRequest, 'documentId' | 'generation' | 'requestId'>,
-    expectedGeneration: string,
+    request: RequestAddress,
+    expectedIdentity: AcceptedRequestIdentity,
     type: TType,
     payload: ExtensionPayload<TType>,
   ): Promise<boolean> {
-    if (!this.isCurrentGeneration(expectedGeneration)) return false;
-    return this.postEnvelope<TType>(request, type, payload, expectedGeneration);
+    if (!this.isCurrentIdentity(expectedIdentity)) return false;
+    return this.postEnvelope<TType>(request, expectedIdentity, type, payload);
   }
 
-  private isCurrentGeneration(expectedGeneration: string): boolean {
-    return this.session.getSummary().snapshot.generation === expectedGeneration;
+  private isCurrentIdentity(expectedIdentity: AcceptedRequestIdentity): boolean {
+    const current = this.session.getSummary().snapshot;
+    return current.documentId === expectedIdentity.documentId
+      && current.generation === expectedIdentity.generation
+      && current.epoch === expectedIdentity.epoch;
   }
 
   private matchesAnalysisIntent(intent: AnalysisIntentV1): boolean {
@@ -367,26 +377,34 @@ export class DocumentController {
     if (this.disposed || signal.aborted || requestSequence !== this.rebuildRequestSequence) return false;
     const current = this.session.getSummary().snapshot;
     return current.documentId === summary.snapshot.documentId
-      && current.generation === summary.snapshot.generation;
+      && current.generation === summary.snapshot.generation
+      && current.epoch === summary.snapshot.epoch;
   }
 
   private async postError(
-    request: Pick<WebviewRequest, 'documentId' | 'generation' | 'requestId'>,
+    request: RequestAddress,
+    identity: AcceptedRequestIdentity,
     code: string,
     message: string,
     recoverable: boolean,
   ): Promise<void> {
     await this.channel.postMessage(createProtocolEnvelope({
       type: 'ERROR',
-      documentId: request.documentId,
-      generation: this.session.getSummary().snapshot.generation,
-      ...(this.session.getSummary().snapshot.epoch === undefined
-        ? {}
-        : { epoch: this.session.getSummary().snapshot.epoch }),
+      documentId: identity.documentId,
+      generation: identity.generation,
+      ...(identity.epoch === undefined ? {} : { epoch: identity.epoch }),
       requestId: request.requestId,
       payload: { code, message, recoverable },
     }));
   }
+}
+
+function captureSnapshotIdentity(snapshot: SnapshotIdentity): AcceptedRequestIdentity {
+  return Object.freeze({
+    documentId: snapshot.documentId,
+    generation: snapshot.generation,
+    ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }),
+  });
 }
 
 function isTransientSourceChange(error: unknown): boolean {

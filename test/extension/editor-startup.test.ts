@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '../../src/shared/types';
+import { EXECUTION_IDENTITY, UNKNOWN_RUNTIME_IDENTITY } from '../../src/shared/execution-identity';
+
+const executionReceipt = { executionIdentity: EXECUTION_IDENTITY, runtimeIdentity: UNKNOWN_RUNTIME_IDENTITY };
 
 vi.mock('vscode', () => ({
   Uri: { joinPath: () => ({ path: '/extension/dist' }) },
@@ -57,12 +60,12 @@ describe('editor startup', () => {
       await vi.advanceTimersByTimeAsync(10_000);
       expect(output.some((line) => line.includes('[startup-outcome] trace=1 status=stalled lastStage=html-assigned'))).toBe(true);
 
-      receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
+      receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
         startupId: '1', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 1, rows: 0 });
-      receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
+      receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
         startupId: 'old', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 2, rows: 0 });
       expect(output.some((line) => line.includes('[startup-recovered]'))).toBe(false);
-      receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
+      receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
         startupId: '1', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 2, rows: 0 });
       expect(output.some((line) => line.includes('[startup-recovered] trace=1 after=stalled rows=0'))).toBe(true);
       disposePanel?.();
@@ -147,19 +150,19 @@ describe('editor startup', () => {
     expect(events).toEqual(['receiver-installed', 'html-assigned']);
     expect(output.some((line) => line.includes('[webview-ready] trace=1 received=true'))).toBe(true);
     expect(output.some((line) => line.includes('[webview-delivery] trace=1 type=OPENED delivered=true'))).toBe(true);
-    receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
+    receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
       startupId: '1', documentId: snapshot.documentId, generation: 'stale-generation', epoch: 2, rows: 10 });
-    receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
+    receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
       startupId: '1', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 1, rows: 10 });
     expect(output.some((line) => line.includes('[startup-outcome]'))).toBe(false);
-    receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'opened-accepted',
+    receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'opened-accepted',
       startupId: '1', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 2 });
     if (scenario === 'recovery') {
-      receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'startup-error',
+      receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'startup-error',
         startupId: '1', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 2 });
       expect(output.some((line) => line.includes('[startup-outcome] trace=1 status=startup-error'))).toBe(true);
     }
-    receive?.({ type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
+    receive?.({ ...executionReceipt, type: 'JSONLVIEW_STARTUP_STAGE', stage: 'page-committed',
       startupId: '1', documentId: snapshot.documentId, generation: snapshot.generation, epoch: 2, rows: 0 });
     expect(output.some((line) => line.includes('[webview-receipt] trace=1 stage=opened-accepted'))).toBe(true);
     if (scenario === 'recovery') {

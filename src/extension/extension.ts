@@ -20,15 +20,17 @@ import { getWebviewHtml } from './webview-html';
 import { RevealIntentRegistry, type RevealIntent } from '../experimental';
 import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
-import { appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
+import { appendExecutionIdentityLog, appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
 import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
 import { parseStartupStageReceipt } from './startup-stage';
 import { summaryIdentityMatches } from './summary-identity';
+import { EXECUTION_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+import { captureRuntimeExecutionIdentity } from './execution-runtime';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 const STARTUP_STALL_MS = 10_000;
 
-class JsonlViewDocument implements vscode.CustomDocument {
+export class JsonlViewDocument implements vscode.CustomDocument {
   private readonly panels = new Set<vscode.WebviewPanel>();
   private readonly disposables: vscode.Disposable[] = [];
   private reconcileTimer: NodeJS.Timeout | undefined;
@@ -64,7 +66,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
           this.recoveryTrace = undefined;
         }
       },
-      invalidate: async (reason) => {
+      invalidate: async (reason, expected) => {
+        if (expected === undefined || !this.isExpectedIdentityCurrent(expected)) return;
         appendOutputLog(outputChannel, 'recovery-decision', `mode=${this.session.followMode ? 'follow' : 'normal'} action=invalidate reason=${reason}`);
         // A terminal recovery does not publish a new snapshot. Retire its
         // partial trace so a later attempt starts with a fresh causal root.
@@ -78,15 +81,16 @@ class JsonlViewDocument implements vscode.CustomDocument {
           this.scheduleReconcile();
           return Promise.resolve();
         }
-        await this.broadcast('SOURCE_INVALIDATED', { reason });
+        await this.broadcast(expected, 'SOURCE_INVALIDATED', { reason });
       },
-      report: async (message) => {
+      report: async (message, expected) => {
+        if (expected === undefined || !this.isExpectedIdentityCurrent(expected)) return;
         if (!this.session.followMode) {
           this.recovery.reset();
           this.scheduleReconcile();
           return Promise.resolve();
         }
-        await this.broadcast('ERROR', {
+        await this.broadcast(expected, 'ERROR', {
           code: 'FOLLOW_RECOVERY_STOPPED',
           message,
           recoverable: true,
@@ -156,7 +160,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
   public async rebuild(): Promise<void> {
     this.resetRecovery();
     const summary = await this.session.rebuild(new AbortController().signal);
-    await this.broadcast('OPENED', summary);
+    await this.broadcast(summary.snapshot, 'OPENED', summary);
   }
 
   public resetRecovery(): void {
@@ -167,12 +171,14 @@ class JsonlViewDocument implements vscode.CustomDocument {
   /** Schedule the same bounded recovery used by watcher hints. */
   public async notifyTransientSourceChange(): Promise<boolean> {
     if (this.disposed) return false;
+    const identity = capturePublicationIdentity(this.session.getSummary().snapshot);
     let refresh: SourceRefreshResult;
     try {
       refresh = await this.session.classifyRefresh();
     } catch {
       return false;
     }
+    if (!this.isPublicationIdentityCurrent(identity)) return false;
     if (refresh.kind !== 'unknown' && refresh.kind !== 'append') return false;
     if (!this.session.followMode) {
       // A normal view never adopts a candidate generation in the background.
@@ -191,7 +197,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
         trace.record('snapshot_publish', 'invalidate');
         appendOutputLog(outputChannel, 'recovery-decision', 'mode=normal action=source-invalidated reason=append');
         appendOutputLog(outputChannel, 'source-invalidated', 'reason=append');
-        const delivered = await this.broadcast('SOURCE_INVALIDATED', { reason: 'append' });
+        const delivered = await this.broadcast(identity, 'SOURCE_INVALIDATED', { reason: 'append' });
         trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
       } else {
         // Unknown metadata is a transient read barrier in a normal view. Do
@@ -219,8 +225,8 @@ class JsonlViewDocument implements vscode.CustomDocument {
     const intent = this.pendingReveal;
     this.pendingReveal = undefined;
     if (intent === undefined) return;
-    const current = this.session.getSummary().snapshot;
-    await this.broadcast('REVEAL', {
+    const current = { ...this.session.getSummary().snapshot };
+    await this.broadcast(current, 'REVEAL', {
       sourceId: intent.sourceId,
       generation: current.generation,
       nativeId: intent.nativeId,
@@ -255,8 +261,10 @@ class JsonlViewDocument implements vscode.CustomDocument {
   private async reconcileSource(): Promise<void> {
     if (this.disposed || this.reconciling) return;
     this.reconciling = true;
+    const identity = capturePublicationIdentity(this.session.getSummary().snapshot);
     try {
       const refresh = await this.session.classifyRefresh();
+      if (!this.isPublicationIdentityCurrent(identity)) return;
       appendOutputLog(outputChannel, 'source-classified', `mode=${this.session.followMode ? 'follow' : 'normal'} kind=${refresh.kind}`);
       if (refresh.kind === 'unchanged') return;
       if (!this.session.followMode && refresh.kind === 'unknown') {
@@ -280,7 +288,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
         trace.record('recovery_decision', 'rebuild');
         const summary = await this.session.rebuild(new AbortController().signal);
         trace.record('snapshot_publish', 'published');
-        const delivered = await this.broadcast('OPENED', summary);
+        const delivered = await this.broadcast(summary.snapshot, 'OPENED', summary);
         trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
         return;
       }
@@ -292,11 +300,11 @@ class JsonlViewDocument implements vscode.CustomDocument {
       trace.record('recovery_decision', 'invalidate');
       appendOutputLog(outputChannel, 'source-invalidated', `reason=${refresh.kind}`);
       trace.record('snapshot_publish', 'invalidate');
-      const delivered = await this.broadcast('SOURCE_INVALIDATED', { reason: refresh.kind });
+      const delivered = await this.broadcast(identity, 'SOURCE_INVALIDATED', { reason: refresh.kind });
       trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
     } catch (error) {
       appendOutputLog(outputChannel, 'source-reconcile-failed', error instanceof Error ? error.message : String(error));
-      await this.broadcast('ERROR', {
+      await this.broadcast(identity, 'ERROR', {
         code: 'SOURCE_RECONCILE_FAILED',
         message: error instanceof Error ? error.message : String(error),
         recoverable: true,
@@ -312,17 +320,19 @@ class JsonlViewDocument implements vscode.CustomDocument {
 
   private async handleProgress(summary: DocumentSummary): Promise<void> {
     if (this.disposed || !summaryIdentityMatches(summary, this.session.getSummary())) return;
+    const identity = capturePublicationIdentity(summary.snapshot);
+    if (!this.isPublicationIdentityCurrent(identity)) return;
     if (summary.profileId !== this.publishedProfileId || summary.profileVersion !== this.publishedProfileVersion) {
       this.publishedProfileId = summary.profileId;
       this.publishedProfileVersion = summary.profileVersion;
-      await this.broadcast('PROFILE_CHANGED', {
+      await this.broadcast(identity, 'PROFILE_CHANGED', {
         profileId: summary.profileId,
         ...(summary.profileVersion === undefined ? {} : { profileVersion: summary.profileVersion }),
         columns: [...this.session.getProfileColumns()],
       }, summary);
     }
     if (this.disposed || !summaryIdentityMatches(summary, this.session.getSummary())) return;
-    await this.broadcast('INDEX_PROGRESS', summary, summary);
+    await this.broadcast(identity, 'INDEX_PROGRESS', summary, summary);
   }
 
   private isExpectedIdentityCurrent(expected: FollowRecoveryIdentity): boolean {
@@ -331,6 +341,7 @@ class JsonlViewDocument implements vscode.CustomDocument {
     return snapshot.documentId === expected.documentId
       && snapshot.uri === expected.uri
       && snapshot.generation === expected.generation
+      && snapshot.epoch === expected.epoch
       && snapshot.sizeBytes === expected.sizeBytes
       && snapshot.device === expected.device
       && snapshot.inode === expected.inode;
@@ -338,17 +349,18 @@ class JsonlViewDocument implements vscode.CustomDocument {
 
   private async probeSource(signal: AbortSignal): Promise<FollowRecoveryProbe> {
     if (signal.aborted) throw new Error('Follow recovery was cancelled.');
+    const current = { ...this.session.getSummary().snapshot };
     try {
       const metadata = await stat(this.uri.fsPath, { bigint: true });
       if (signal.aborted) throw new Error('Follow recovery was cancelled.');
       if (!metadata.isFile()) return { kind: 'not_file' };
-      const current = this.session.getSummary().snapshot;
       return {
         kind: 'present',
         identity: {
           documentId: current.documentId,
           uri: current.uri,
           generation: current.generation,
+          ...(current.epoch === undefined ? {} : { epoch: current.epoch }),
           sizeBytes: metadata.size.toString(),
           ...(metadata.dev === 0n ? {} : { device: metadata.dev.toString() }),
           ...(metadata.ino === 0n ? {} : { inode: metadata.ino.toString() }),
@@ -373,11 +385,9 @@ class JsonlViewDocument implements vscode.CustomDocument {
 
   private async publishRecovered(summary: DocumentSummary): Promise<{ published: boolean; delivered: boolean }> {
     if (this.disposed) return { published: false, delivered: false };
-    const current = this.session.getSummary();
-    // A newer manual rebuild wins; never relabel its payload with the
-    // candidate summary supplied by an older recovery attempt.
-    if (current.snapshot.generation !== summary.snapshot.generation) return { published: false, delivered: false };
-    return { published: true, delivered: await this.broadcast('OPENED', current) };
+    const identity = capturePublicationIdentity(summary.snapshot);
+    if (!this.isPublicationIdentityCurrent(identity)) return { published: false, delivered: false };
+    return { published: true, delivered: await this.broadcast(identity, 'OPENED', summary) };
   }
 
   private beginLifecycleTrace(kind: SourceRefreshResult['kind']): CausalLifecycleTrace {
@@ -394,28 +404,29 @@ class JsonlViewDocument implements vscode.CustomDocument {
   }
 
   private async broadcast<TType extends ExtensionMessage['type']>(
+    identity: PublicationIdentity,
     type: TType,
     payload: Extract<ExtensionMessage, { type: TType }>['payload'],
     expectedSummary?: DocumentSummary,
   ): Promise<boolean> {
-    if (this.disposed) return false;
+    const captured = capturePublicationIdentity(identity);
+    if (this.disposed || !this.isPublicationIdentityCurrent(captured)) return false;
     if (expectedSummary !== undefined && !summaryIdentityMatches(expectedSummary, this.session.getSummary())) return false;
     if (type === 'OPENED' || type === 'SOURCE_INVALIDATED') {
       appendOutputLog(outputChannel, 'webview-lifecycle', `type=${type} panels=${String(this.panels.size)}`);
     }
-    const snapshot = (expectedSummary ?? this.session.getSummary()).snapshot;
     const message = createProtocolEnvelope({
       type,
-      documentId: snapshot.documentId,
-      generation: snapshot.generation,
-      ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }),
+      documentId: captured.documentId,
+      generation: captured.generation,
+      ...(captured.epoch === undefined ? {} : { epoch: captured.epoch }),
       requestId: '',
       payload,
     }) as unknown as Extract<ExtensionMessage, { type: TType }>;
     return postMessageBestEffort(
       [...this.panels].map((panel) => ({ postMessage: (value: typeof message) => {
-        if (this.disposed || (expectedSummary !== undefined
-          && !summaryIdentityMatches(expectedSummary, this.session.getSummary()))) return Promise.resolve(false);
+        if (this.disposed || !this.isPublicationIdentityCurrent(captured)
+          || (expectedSummary !== undefined && !summaryIdentityMatches(expectedSummary, this.session.getSummary()))) return Promise.resolve(false);
         return panel.webview.postMessage(value);
       } })),
       message,
@@ -429,6 +440,19 @@ class JsonlViewDocument implements vscode.CustomDocument {
       },
     );
   }
+
+  private isPublicationIdentityCurrent(identity: PublicationIdentity): boolean {
+    if (this.disposed) return false;
+    const current = this.session.getSummary().snapshot;
+    return current.documentId === identity.documentId && current.generation === identity.generation && current.epoch === identity.epoch;
+  }
+}
+
+type PublicationIdentity = Pick<DocumentSummary['snapshot'], 'documentId' | 'generation' | 'epoch'>;
+
+function capturePublicationIdentity(snapshot: PublicationIdentity): Readonly<PublicationIdentity> {
+  return Object.freeze({ documentId: snapshot.documentId, generation: snapshot.generation,
+    ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }) });
 }
 
 function followIdentity(summary: DocumentSummary): FollowRecoveryIdentity {
@@ -437,6 +461,7 @@ function followIdentity(summary: DocumentSummary): FollowRecoveryIdentity {
     documentId: snapshot.documentId,
     uri: snapshot.uri,
     generation: snapshot.generation,
+    ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }),
     sizeBytes: snapshot.sizeBytes,
     ...(snapshot.device === undefined ? {} : { device: snapshot.device }),
     ...(snapshot.inode === undefined ? {} : { inode: snapshot.inode }),
@@ -460,6 +485,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     private readonly revealRegistry: RevealIntentRegistry,
     private readonly openSessionNavigator: () => Promise<void>,
     private readonly output: JsonlViewOutputChannel | undefined,
+    private readonly runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
   ) {}
 
   public async openCustomDocument(
@@ -558,7 +584,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
-      const startupStage = parseStartupStageReceipt(message);
+      const startupStage = parseStartupStageReceipt(message, EXECUTION_IDENTITY, this.runtimeIdentity);
       if (startupStage !== undefined) {
         const snapshot = document.session.getSummary().snapshot;
         if (startupStage.startupId !== startupId
@@ -567,6 +593,8 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
         lastStage = startupStage.stage;
         appendOutputLog(this.output, 'webview-receipt', 'trace=' + traceId + ' stage=' + startupStage.stage
           + ' startup=' + startupId
+          + ' identity=' + startupStage.executionIdentity.manifestSha256
+          + ' extensionMode=' + startupStage.runtimeIdentity.extensionMode
           + (startupStage.rows === undefined ? '' : ' rows=' + String(startupStage.rows)));
         if (startupStage.stage === 'page-committed') {
           if (startupOutcome === 'startup-error' || startupOutcome === 'stalled') {
@@ -579,6 +607,10 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
           }
         }
         if (startupStage.stage === 'startup-error') finishStartup('startup-error');
+        return;
+      }
+      if (message !== null && typeof message === 'object' && message.type === 'JSONLVIEW_STARTUP_STAGE') {
+        appendOutputLog(this.output, 'webview-receipt', 'trace=' + traceId + ' stage=rejected reason=invalid-startup-receipt startup=' + startupId);
         return;
       }
       if (isWebviewDiagnostic(message)) {
@@ -621,6 +653,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
         pageSize,
         savedRowOrder === 'desc' ? 'desc' : 'asc',
         startupId,
+        this.runtimeIdentity,
       );
       appendOutputLog(this.output, 'resolve-editor', 'trace=' + traceId + ' stage=html-assigned startup=' + startupId);
       if (!startupFinished) {
@@ -712,6 +745,8 @@ export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('JsonlView', { log: true });
   context.subscriptions.push(outputChannel);
   appendOutputLog(outputChannel, 'activated', 'output-channel=JsonlView');
+  const runtimeIdentity = captureRuntimeExecutionIdentity(context);
+  appendExecutionIdentityLog(outputChannel, EXECUTION_IDENTITY, runtimeIdentity);
   const conflict = findExtensionContributionConflict(context.extension.id, vscode.extensions.all);
   if (conflict !== undefined) {
     appendOutputLog(outputChannel, 'activation-blocked', `conflict=${conflict.extensionId}`);
@@ -722,7 +757,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   const revealRegistry = new RevealIntentRegistry();
   const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
-  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open(), outputChannel);
+  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open(), outputChannel, runtimeIdentity);
   context.subscriptions.push(
     ...navigator.register(),
     navigator,

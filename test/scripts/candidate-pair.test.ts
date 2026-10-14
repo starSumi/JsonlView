@@ -6,6 +6,8 @@ import { bundleInventoryDigest } from '../../scripts/bundle-integrity.mjs';
 import { describe, expect, it } from 'vitest';
 
 const distFiles = [
+  { path: 'execution-bundle-inventory.json', bytes: 8, sha256: '9'.repeat(64) },
+  { path: 'execution-identity.json', bytes: 9, sha256: '0'.repeat(64) },
   { path: 'extension.cjs', bytes: 10, sha256: '1'.repeat(64) },
   { path: 'webview.css', bytes: 11, sha256: '2'.repeat(64) },
   { path: 'webview.js', bytes: 12, sha256: '3'.repeat(64) },
@@ -33,8 +35,8 @@ function evidence(native = nativeSha256) {
       },
       native: { sha256: native },
       bundle: {
-        files: distFiles,
-        bytes: 33,
+        files: distFiles.map((file) => ({ ...file })),
+        bytes: 50,
         sha256: bundleInventoryDigest(distFiles),
       },
     },

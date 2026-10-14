@@ -13,6 +13,7 @@ import { resolveNpmInvocation, resolvePnpmInvocation } from './package-manager-i
 import { getReleaseTargets } from './release-targets.mjs';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 import { extractReferencedAssets } from './check-public-surface.mjs';
+import { assertExecutionIdentityMatchesSource, verifyBuiltExecutionIdentityForSource } from './execution-identity.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
@@ -97,6 +98,7 @@ try {
   if (options.dist === undefined) await run('pnpm', ['build']);
   const frozenDist = resolve(options.dist ?? resolve(root, 'dist'));
   if (publicCandidate) await assertOutsideSourceTree(frozenDist, 'frozen dist');
+  const executionIdentity = await verifyBuiltExecutionIdentityForSource({ rootDirectory: root, distDirectory: frozenDist, requireCleanProduction: publicCandidate });
   const frozenBundle = await inventoryFrozenBundle(frozenDist);
   await mkdir(artifactRoot, { recursive: true });
   if (options.native === undefined) {
@@ -212,6 +214,7 @@ try {
   const npmTarball = await createAndInspectTarball(output, tarballPath, options.replace, packageJson, files);
   const finalGitState = await readGitState();
   assertGitStateStable(gitState, finalGitState);
+  await assertExecutionIdentityMatchesSource(root, executionIdentity, { requireCleanProduction: publicCandidate });
   const manifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -223,6 +226,7 @@ try {
       gitState: gitState.dirty ? 'dirty' : 'clean',
       statusSha256: gitState.statusSha256,
       diffSha256: gitState.diffSha256,
+      executionIdentity,
     },
     package: {
       name: packageJson.name,

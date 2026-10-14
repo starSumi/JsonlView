@@ -54,6 +54,7 @@ Run these commands for a normal product change:
     pnpm typecheck
     pnpm test
     pnpm build
+    pnpm verify:execution-identity
 
 The CI form of check:agent-spec (the agent-spec-lint guard) receives --base
 <commit> --head <commit>.

@@ -19,7 +19,8 @@
     { "script": "check:biome", "text": "pnpm check:biome" },
     { "script": "typecheck", "text": "pnpm typecheck" },
     { "script": "test", "text": "pnpm test" },
-    { "script": "build", "text": "pnpm build" }
+    { "script": "build", "text": "pnpm build" },
+    { "script": "verify:execution-identity", "text": "pnpm verify:execution-identity" }
   ],
   "architectureMarkers": [
     "src/extension/",

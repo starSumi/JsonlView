@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { posix } from 'node:path';
 import type * as vscode from 'vscode';
 import type { SnapshotIdentity } from '../shared/types';
+import { UNKNOWN_RUNTIME_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
 
 export function getWebviewHtml(
   webview: vscode.Webview,
@@ -10,6 +11,7 @@ export function getWebviewHtml(
   pageSize = 100,
   rowOrder: 'asc' | 'desc' = 'asc',
   startupId = randomBytes(12).toString('hex'),
+  runtimeIdentity: RuntimeExecutionIdentity = UNKNOWN_RUNTIME_IDENTITY,
 ): string {
   const nonce = randomBytes(18).toString('base64url');
   const scriptUri = webview.asWebviewUri(extensionUri.with({
@@ -32,6 +34,7 @@ export function getWebviewHtml(
   data-document-id="${escapeAttribute(snapshot.documentId)}"
   data-generation="${escapeAttribute(snapshot.generation)}"
   data-startup-id="${escapeAttribute(startupId)}"
+  data-runtime-identity="${escapeAttribute(JSON.stringify(runtimeIdentity))}"
   ${snapshot.epoch === undefined ? '' : `data-epoch="${String(snapshot.epoch)}"`}
   data-uri="${escapeAttribute(snapshot.uri)}"
   data-page-size="${String(Math.min(500, Math.max(20, Math.trunc(pageSize))))}"

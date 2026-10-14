@@ -21,6 +21,9 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
     devDependencies:
+      '@babel/parser':
+        specifier: 7.29.8
+        version: 7.29.8
       '@biomejs/biome':
         specifier: 2.5.15
         version: 2.5.15

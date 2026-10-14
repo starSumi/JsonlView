@@ -349,6 +349,7 @@ describe('IntegratedJsonlSession', () => {
       documentId: before.snapshot.documentId,
       uri: before.snapshot.uri,
       generation: before.snapshot.generation,
+      ...(before.snapshot.epoch === undefined ? {} : { epoch: before.snapshot.epoch }),
       sizeBytes: before.snapshot.sizeBytes,
       ...(before.snapshot.device === undefined ? {} : { device: before.snapshot.device }),
       ...(before.snapshot.inode === undefined ? {} : { inode: before.snapshot.inode }),

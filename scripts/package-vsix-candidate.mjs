@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 import { copyFrozenBundle, compareBundleInventories, inventoryFrozenBundle } from './bundle-integrity.mjs';
+import { assertExecutionIdentityMatchesSource, verifyBuiltExecutionIdentityForSource } from './execution-identity.mjs';
 import { compareVsixArchiveIdentity, inspectVsixArchive } from './vsix-archive-integrity.mjs';
 import { assertOutsideTree, assertPathsDoNotOverlap, isWithin } from './path-boundary.mjs';
 import { resolveExtensionTarget } from './release-targets.mjs';
@@ -28,6 +29,7 @@ const frozenDist = resolve(options.dist);
 await assertRegularFile(nativeBinary, 'native candidate');
 await assertRegularFile(declaration, 'native candidate declaration');
 await assertOutsideCheckout(frozenDist, 'frozen dist');
+const executionIdentity = await verifyBuiltExecutionIdentityForSource({ rootDirectory: root, distDirectory: frozenDist });
 const frozenBundle = await inventoryFrozenBundle(frozenDist);
 
 const output = resolve(options.out);
@@ -153,6 +155,7 @@ try {
   if (bundleIssues.length > 0) throw new Error(`finished VSIX bundle differs from frozen staging: ${bundleIssues.join(', ')}`);
   const afterPackageState = await readGitState();
   assertGitStateStable(sourceState, afterPackageState);
+  await assertExecutionIdentityMatchesSource(root, executionIdentity, { requireCleanProduction: true });
   const manifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -162,6 +165,7 @@ try {
       statusSha256: sourceState.statusSha256,
       diffSha256: sourceState.diffSha256,
       root: '<workspace>',
+      executionIdentity,
     },
     reproducibility: {
       sourceDateEpoch: sourceDateEpoch ?? null,

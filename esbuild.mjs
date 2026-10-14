@@ -2,10 +2,34 @@ import { build, context } from 'esbuild';
 import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectExecutionIdentityInputs, createExecutionIdentity, createExecutionIdentityPlugin, finalizeExecutionBuild } from './scripts/execution-identity.mjs';
 
 const watch = process.argv.includes('--watch');
 const production = !watch;
 const outputDirectory = resolve(process.env.JSONLVIEW_DIST_OUTPUT ?? fileURLToPath(new URL('./dist/', import.meta.url)));
+const rootDirectory = fileURLToPath(new URL('./', import.meta.url));
+const buildMode = watch ? 'development' : 'production';
+const buildIdentity = await createExecutionIdentity({ rootDirectory, buildMode });
+const watchFiles = await collectExecutionIdentityInputs(rootDirectory);
+
+// Watch output is development-only: independent incremental rebuilds do not
+// publish a frozen pair, manifest or byte inventory. Production shares one
+// captured identity and revalidates the source after both compilers finish.
+function identityPlugin() {
+  if (!watch) return createExecutionIdentityPlugin({ identity: buildIdentity, watchFiles });
+  return {
+    name: 'jsonlview-development-identity',
+    setup(api) {
+      let roundIdentity = buildIdentity;
+      api.initialOptions.banner = { js: '' };
+      api.onStart(async () => { roundIdentity = await createExecutionIdentity({ rootDirectory, buildMode }); });
+      api.onResolve({ filter: /^jsonlview:execution-identity$/ }, () => ({ path: 'development-identity', namespace: 'jsonlview-development-identity' }));
+      api.onLoad({ filter: /.*/, namespace: 'jsonlview-development-identity' }, () => ({
+        contents: `export default Object.freeze(${JSON.stringify(roundIdentity)});`, loader: 'js', watchFiles,
+      }));
+    },
+  };
+}
 
 await rm(outputDirectory, { recursive: true, force: true });
 
@@ -20,6 +44,7 @@ const extensionOptions = {
   sourcemap: !production,
   minify: production,
   logLevel: 'info',
+  plugins: [identityPlugin()],
 };
 
 const webviewOptions = {
@@ -35,13 +60,15 @@ const webviewOptions = {
     'process.env.NODE_ENV': production ? '"production"' : '"development"',
   },
   logLevel: 'info',
+  plugins: [identityPlugin()],
 };
 
 if (watch) {
   const extension = await context(extensionOptions);
   const webview = await context(webviewOptions);
   await Promise.all([extension.watch(), webview.watch()]);
-  console.log('JsonlView build is watching for changes.');
+  console.log('JsonlView development build is watching; output is not a frozen production pair.');
 } else {
   await Promise.all([build(extensionOptions), build(webviewOptions)]);
+  await finalizeExecutionBuild({ rootDirectory, outputDirectory, identity: buildIdentity });
 }

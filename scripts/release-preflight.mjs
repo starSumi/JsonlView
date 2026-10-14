@@ -804,7 +804,7 @@ function isAllowedVsixPath(path) {
   const foldedPath = relativePath.toLowerCase();
   if (['package.json', 'readme.md', 'changelog.md', 'license.txt', 'third-party-notices.txt'].includes(foldedPath)) return true;
   if (foldedPath === 'images/jsonlview-icon.png') return true;
-  if (['dist/extension.cjs', 'dist/webview.css', 'dist/webview.js'].includes(foldedPath)) return true;
+  if (['dist/execution-bundle-inventory.json', 'dist/execution-identity.json', 'dist/extension.cjs', 'dist/webview.css', 'dist/webview.js'].includes(foldedPath)) return true;
   if (['native/jsonl-core/jsonl_core.win32-x64-msvc.node', 'native/jsonl-core/index.d.ts', 'native/jsonl-core/package.json'].includes(foldedPath)) return true;
   if (['docs/acceleration-roadmap.md', 'docs/format-and-profile-boundaries.md'].includes(foldedPath)) return true;
   return /^(?:docs\/assets|docs\/decisions|third_party\/licenses)\/.+/i.test(relativePath);

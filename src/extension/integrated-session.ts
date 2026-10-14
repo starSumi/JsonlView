@@ -710,7 +710,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function identityKey(identity: FollowRecoveryIdentity): string {
-  return [identity.documentId, identity.uri, identity.generation, identity.sizeBytes, identity.device ?? '', identity.inode ?? ''].join('|');
+  return [identity.documentId, identity.uri, identity.generation, identity.epoch ?? '', identity.sizeBytes, identity.device ?? '', identity.inode ?? ''].join('|');
 }
 
 function parseSize(value: string): bigint {
@@ -782,7 +782,7 @@ function sameExpectedSnapshot(
   snapshot: DocumentSummary['snapshot'],
   expected: FollowRecoveryIdentity,
 ): boolean {
-  return snapshot.generation === expected.generation && sameFileIdentity(snapshot, expected);
+  return snapshot.generation === expected.generation && snapshot.epoch === expected.epoch && sameFileIdentity(snapshot, expected);
 }
 
 function waitForOperation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {

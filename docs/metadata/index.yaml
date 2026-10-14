@@ -571,6 +571,16 @@ documents:
     evidence: []
     revisit: when adapter revision or analysis source watermark contracts change
     rollback: revert shared analysis protocol and host and webview together
+  - id: adr-047-execution-identity-and-request-correlation
+    path: docs/decisions/047-execution-identity-and-request-correlation.md
+    title: Execution Identity And Request Correlation
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [build, identity, lifecycle, correlation]
+    evidence: []
+    revisit: when runtime bundles, build inputs or epoch semantics change
+    rollback: revert identity distribution while retaining request correlation
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions
