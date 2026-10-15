@@ -542,7 +542,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
       return document;
     } catch (error) {
       const reason = error instanceof Error ? error.name.replace(/[^A-Za-z0-9_]/gu, '').slice(0, 48) : 'unknown';
-      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=failed reason=' + reason + ' cancelled=' + String(token.isCancellationRequested)
+      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=failed reason=' + reason + ' cancelled=' + String(cancelled || token.isCancellationRequested)
         + ' elapsedMs=' + String(Math.round(performance.now() - startedAt))
         + (stalled ? ' afterStall=true' : ''));
       throw error;
