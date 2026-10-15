@@ -88,6 +88,45 @@ must not overlap.
 
 ## Boundary and rollback
 
+### Local GET_ROWS operation diagnostics (C2)
+
+The existing local Output channel may record `jsonlview.query.started` and
+`jsonlview.query.settled` for validated, identity-accepted GET_ROWS requests.
+Each controller assigns a positive safe-integer `request_seq`; the existing
+host-generated `trace` and panel `startup` counters correlate these two lines.
+These are local counters, not OpenTelemetry trace/span identifiers. The
+[OpenTelemetry log data model](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/logs/data-model.md#trace-context-fields)
+makes trace context optional and associates it with actual traces and spans;
+this slice has no SDK, span, propagation, or outbound telemetry.
+
+The event attributes are limited to `stage=get_rows`, `request_seq`, and, for
+the terminal, `outcome`, `delivery`, `abort_observed`, `duration_ms`, optional
+`rows`, `stale_reason`, and a fixed `error_name`. Raw request/document/generation
+identifiers, epochs, query terms, values, paths, error messages, stacks and
+causes never enter these events. Error classification reuses the descriptor-only
+lifecycle classifier and its fixed name allowlist.
+
+`outcome` is `completed`, `stale`, `cancelled`, or `failed`. Independently,
+`delivery` describes the ROWS host post: `accepted`, `rejected`, `skipped`, or
+`failed` (the post threw/rejected). Host acceptance does not prove rendering.
+Cancellation or staleness after a failed post keeps `delivery=failed`.
+The original identity gate records `stale_reason=document|generation|epoch`;
+this is a reason, not full cross-generation trace identity. The original
+aborted catch branch records cancellation; its registry does not distinguish
+user cancellation, supersession, and disposal. A non-cooperative reader can
+still resolve and deliver after abort under the existing controller behavior:
+that remains `completed` with `abort_observed=true`. A later abort never
+rewrites a delivered operation into cancellation.
+
+There are at most two new lines per accepted request and exactly one terminal
+when its existing handler settles, including late resolution/rejection. A
+non-settling operation has only its start: this slice adds no timeout, timer,
+queue, retained identity map, dependency, setting, or exporter. Sink failures
+are contained and cannot change results, cancellation, or protocol messages.
+Cost is constant per request, not a global log-rate bound; installed-host and
+performance acceptance remain separate. Rollback this local slice as one
+commit without a data migration.
+
 This ADR authorizes a contract, redaction tests, and bounded host probes. It
 does not authorize an exporter dependency, a persisted setting, network access,
 OTLP protobuf/gRPC capture, automatic configuration, raw-log export, or public

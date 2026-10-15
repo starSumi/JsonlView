@@ -589,7 +589,12 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     };
     const pageSize = vscode.workspace.getConfiguration('jsonlView', document.uri).get<number>('pageSize', 100);
     const savedRowOrder = this.context.globalState.get('jsonlView.rowOrder');
+    // These existing host counters are local correlators, not OTel trace context.
+    const querySink = createOutputLogObservabilitySink(this.output === undefined ? undefined : {
+      appendLine: (line) => this.output?.appendLine(line + ' trace=' + traceId + ' startup=' + startupId),
+    });
     const controller = new DocumentController(document.session, panel.webview, {
+      onQueryOperation: (event) => querySink.record(event),
       beforeRebuild: () => document.resetRecovery(),
       onRowOrderChanged: (direction) => {
         this.rowOrderWrite = this.rowOrderWrite.catch(() => {}).then(

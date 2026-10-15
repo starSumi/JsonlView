@@ -84,6 +84,51 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+describe('panel-local GET_ROWS output correlation', () => {
+  it('separates two panels of one document without retaining raw request identities', async () => {
+    const first = startupFixture();
+    const second = startupFixture();
+    Object.assign(first.document.session, { getRows: async () => ({ rows: [], columns: [],
+      anchorOrdinal: '0', hasBefore: false, hasAfter: false, indexedRecords: '0', totalRecords: '0' }) });
+    try {
+      first.provider.resolveCustomEditor(first.document as never, first.panel as never);
+      first.provider.resolveCustomEditor(first.document as never, second.panel as never);
+      const request = { protocolVersion: PROTOCOL_VERSION, documentId: first.snapshot.documentId,
+        generation: first.snapshot.generation, epoch: first.snapshot.epoch, requestId: 'private-same-request',
+        type: 'GET_ROWS', payload: { limit: 10 } };
+      first.receive(request);
+      second.receive(request);
+      await vi.waitFor(() => expect(first.output.filter((line) => line.includes('[jsonlview.query.'))).toHaveLength(4));
+      const queryLines = first.output.filter((line) => line.includes('[jsonlview.query.'));
+      for (const startup of [1, 2]) {
+        const panelLines = queryLines.filter((line) => line.endsWith('trace=1 startup=' + startup));
+        expect(panelLines).toHaveLength(2);
+        expect(panelLines.every((line) => line.includes('request_seq=1 '))).toBe(true);
+        expect(panelLines[1]).toContain('[jsonlview.query.settled]');
+      }
+      expect(queryLines.join(' ')).not.toMatch(/private|test-document|test-generation|epoch=/u);
+    } finally {
+      first.dispose(); second.dispose();
+    }
+  });
+
+  it('adds only host-generated counters to the two bounded event lines', async () => {
+    const f = startupFixture();
+    Object.assign(f.document.session, { getRows: async () => ({ rows: [], columns: [],
+      anchorOrdinal: '0', hasBefore: false, hasAfter: false, indexedRecords: '0', totalRecords: '0' }) });
+    f.provider.resolveCustomEditor(f.document as never, f.panel as never);
+    f.receive({ protocolVersion: PROTOCOL_VERSION, documentId: f.snapshot.documentId,
+      generation: f.snapshot.generation, epoch: f.snapshot.epoch, requestId: 'private-request',
+      type: 'GET_ROWS', payload: { limit: 10 } });
+    await vi.waitFor(() => expect(f.output.filter((line) => line.includes('[jsonlview.query.'))).toHaveLength(2));
+    const queryLines = f.output.filter((line) => line.includes('[jsonlview.query.'));
+    expect(queryLines[0]).toMatch(/\[jsonlview.query.started\] stage=get_rows request_seq=1 trace=1 startup=1$/u);
+    expect(queryLines[1]).toMatch(/\[jsonlview.query.settled\] stage=get_rows request_seq=1 outcome=completed delivery=accepted abort_observed=false duration_ms=\d+ rows=0 trace=1 startup=1$/u);
+    expect(queryLines.join(' ')).not.toMatch(/private|test-document|test-generation|fixture.jsonl|epoch=/u);
+    f.dispose();
+  });
+});
+
 describe('document creation watchdog', () => {
   it.each(['complete', 'failed'] as const)('observes a hung create once and preserves its late %s result', async (outcome) => {
     vi.useFakeTimers();

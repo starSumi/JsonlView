@@ -71,3 +71,48 @@ describe('contract-first observability boundary', () => {
     expect(createObservabilityEvent('jsonlview.private.export' as never, { result: 'accepted' })).toBeUndefined();
   });
 });
+
+describe('local query operation event contract', () => {
+  const terminal = { stage: 'get_rows', request_seq: 1, outcome: 'completed',
+    delivery: 'accepted', abort_observed: false, duration_ms: 0, rows: 0 };
+
+  it('accepts a bounded begin and settled event without trace context', () => {
+    expect(createObservabilityEvent('jsonlview.query.started', { stage: 'get_rows', request_seq: 1 }))
+      .toMatchObject({ attributes: { stage: 'get_rows', request_seq: 1 } });
+    expect(createObservabilityEvent('jsonlview.query.settled', terminal)).toMatchObject({ attributes: terminal });
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'stale', delivery: 'skipped', stale_reason: 'epoch' }))
+      .toBeDefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'failed', delivery: 'failed', error_name: 'TypeError' }))
+      .toBeDefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'stale', delivery: 'failed', stale_reason: 'generation' }))
+      .toBeDefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'cancelled', delivery: 'failed', abort_observed: true }))
+      .toBeDefined();
+  });
+
+  it.each(['requestId', 'documentId', 'generation', 'epoch', 'correlationId', 'trace_id', 'span_id', 'query', 'path', 'message', 'stack'])(
+    'rejects raw identity or source key %s', (key) => {
+      expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, [key]: 'private' })).toBeUndefined();
+    },
+  );
+
+  it.each([
+    { stage: 'private' }, { request_seq: 0 }, { request_seq: Number.MAX_SAFE_INTEGER + 1 },
+    { request_seq: 1.5 }, { outcome: 'private' }, { delivery: 'private' },
+    { abort_observed: 'false' }, { duration_ms: -1 }, { duration_ms: Infinity },
+    { rows: -1 }, { rows: 0.5 }, { error_name: 'private_Error' },
+    { stale_reason: 'private' }, { profile: 'private' },
+  ])('rejects invalid terminal metadata %j', (invalid) => {
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, ...invalid })).toBeUndefined();
+  });
+
+  it('requires terminal fields and forbids metadata inconsistent with the outcome', () => {
+    expect(createObservabilityEvent('jsonlview.query.started', terminal)).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { stage: 'get_rows', request_seq: 1 })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, stale_reason: 'epoch' })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, error_name: 'Error' })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'stale', delivery: 'skipped' })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'cancelled', delivery: 'accepted' })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, outcome: 'failed', error_name: 'Error' })).toBeUndefined();
+  });
+});

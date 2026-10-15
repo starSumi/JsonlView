@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DocumentController, type JsonlSessionPort, type MessageChannel } from '../../src/extension/document-controller';
+import type { ObservabilityEvent } from '../../src/extension/observability-contract';
 import {
   PROTOCOL_VERSION,
   type ColumnSpec,
@@ -94,6 +95,205 @@ function request(
     payload,
   };
 }
+
+function queryDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise; reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('GET_ROWS local operation observations', () => {
+  function fixture() {
+    const session = fakeSession();
+    const events: ObservabilityEvent[] = [];
+    const messages: ExtensionMessage[] = [];
+    const channel: MessageChannel = { postMessage: async (message) => { messages.push(message); return true; } };
+    const controller = new DocumentController(session, channel, { onQueryOperation: (event) => { events.push(event); } });
+    return { session, events, messages, channel, controller };
+  }
+
+  it('pairs starts and terminals with per-controller sequence, including empty rows', async () => {
+    const f = fixture();
+    await f.controller.handleMessage(request('READY'));
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'private-request-one'));
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'private-request-two'));
+    expect(f.events.map((event) => [event.name, event.attributes.request_seq])).toEqual([
+      ['jsonlview.query.started', 1], ['jsonlview.query.settled', 1],
+      ['jsonlview.query.started', 2], ['jsonlview.query.settled', 2],
+    ]);
+    expect(f.events[1]?.attributes).toEqual({ stage: 'get_rows', request_seq: 1,
+      outcome: 'completed', delivery: 'accepted', abort_observed: false, duration_ms: expect.any(Number), rows: 0 });
+    expect(f.events[1]?.attributes.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(f.events)).not.toMatch(/private-request|documentId|generation|epoch|fixture.jsonl/u);
+    const allowed = new Set(['stage', 'request_seq', 'outcome', 'delivery', 'abort_observed', 'duration_ms', 'rows']);
+    expect(f.events.every((event) => Object.keys(event.attributes).every((key) => allowed.has(key)))).toBe(true);
+    const second = fixture();
+    await second.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(second.events[0]?.attributes.request_seq).toBe(1);
+  });
+
+  it('does not observe rejected identities, invalid requests, or non-query operations', async () => {
+    const f = fixture();
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 0 }));
+    await f.controller.handleMessage({ ...request('GET_ROWS', { limit: 10 }), generation: 'other' });
+    await f.controller.handleMessage({ ...request('GET_ROWS', { limit: 10 }), documentId: 'other' });
+    await f.controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 10 }));
+    expect(f.events).toEqual([]);
+    expect(f.messages.map((message) => message.type)).toEqual(['ERROR', 'ERROR', 'ERROR', 'SCHEMA']);
+  });
+
+  it('distinguishes a rejected ROWS post from a failed operation', async () => {
+    const f = fixture();
+    f.channel.postMessage = async () => false;
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'completed', delivery: 'rejected' });
+    expect(f.events).toHaveLength(2);
+  });
+
+  it('records a failed ROWS post even if sending the existing error response also fails', async () => {
+    const f = fixture();
+    const error = new TypeError('private delivery body at C:/secret/file.jsonl');
+    f.channel.postMessage = async () => { throw error; };
+    await expect(f.controller.handleMessage(request('GET_ROWS', { limit: 10 }))).rejects.toBe(error);
+    expect(f.events).toHaveLength(2);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'failed', delivery: 'failed', error_name: 'TypeError' });
+    expect(JSON.stringify(f.events)).not.toContain('private');
+  });
+
+  it('classifies failures with fixed metadata while preserving the existing error response', async () => {
+    const f = fixture();
+    const error = Object.assign(new Error('private query value at C:/secret/file.jsonl'), { name: 'PrivateError', code: 'private' });
+    f.session.getRows = async () => { throw error; };
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(f.messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'REQUEST_FAILED', message: error.message } });
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'failed', delivery: 'skipped', error_name: 'UnknownError' });
+    expect(JSON.stringify(f.events)).not.toMatch(/private|PrivateError|secret/u);
+  });
+
+  it.each(['cancelled', 'stale'] as const)('keeps failed delivery separate from a later %s gate', async (outcome) => {
+    const f = fixture();
+    const delivered = queryDeferred<boolean>();
+    let current = summary();
+    f.session.getSummary = () => current;
+    f.channel.postMessage = async (message) => { f.messages.push(message); return delivered.promise; };
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    await vi.waitFor(() => expect(f.messages).toHaveLength(1));
+    if (outcome === 'cancelled') await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    else current = { ...current, snapshot: { ...current.snapshot, generation: 'private-new' } };
+    delivered.reject(new Error('private failed delivery'));
+    await handling;
+    expect(f.events).toHaveLength(2);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome, delivery: 'failed', abort_observed: outcome === 'cancelled' });
+    if (outcome === 'stale') expect(f.events[1]?.attributes.stale_reason).toBe('generation');
+    expect(f.messages.map((message) => message.type)).toEqual(['ROWS']);
+  });
+
+  it.each(['document', 'generation', 'epoch'] as const)('records the original %s stale gate without raw identity', async (field) => {
+    const f = fixture();
+    const page = await f.session.getRows({ limit: 10 }, new AbortController().signal);
+    const pending = queryDeferred<RowPage>();
+    let current = summary();
+    f.session.getSummary = () => current;
+    f.session.getRows = () => pending.promise;
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    current = { ...current, snapshot: { ...current.snapshot,
+      ...(field === 'document' ? { documentId: 'private-new-document' }
+        : field === 'generation' ? { generation: 'private-new-generation' } : { epoch: 2 }) } };
+    pending.resolve(page);
+    await handling;
+    expect(f.messages).toEqual([]);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'stale', delivery: 'skipped', stale_reason: field });
+    expect(JSON.stringify(f.events)).not.toContain('private-new');
+  });
+
+  it('records staleness at the second identity gate instead of mislabelling delivery rejection', async () => {
+    const f = fixture();
+    const current = summary();
+    let reads = 0;
+    f.session.getSummary = () => ++reads <= 2 ? current
+      : { ...current, snapshot: { ...current.snapshot, generation: 'new' } };
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(reads).toBe(3);
+    expect(f.messages).toEqual([]);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'stale', delivery: 'skipped', stale_reason: 'generation' });
+  });
+
+  it('observes cooperative cancellation only when the existing handler settles', async () => {
+    const f = fixture();
+    const pending = queryDeferred<RowPage>();
+    f.session.getRows = () => pending.promise;
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    expect(f.events).toHaveLength(1);
+    pending.reject(new Error('private abort reason'));
+    await handling;
+    expect(f.events).toHaveLength(2);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'cancelled', delivery: 'skipped', abort_observed: true });
+    expect(f.events[1]?.attributes).not.toHaveProperty('error_name');
+    expect(f.messages).toEqual([]);
+  });
+
+  it.each(['cancel', 'supersede', 'dispose'] as const)('preserves non-cooperative late delivery after %s', async (action) => {
+    const f = fixture();
+    const page = await f.session.getRows({ limit: 10 }, new AbortController().signal);
+    const pending = queryDeferred<RowPage>();
+    let calls = 0;
+    f.session.getRows = () => ++calls === 1 ? pending.promise : Promise.resolve(page);
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    if (action === 'cancel') await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    else if (action === 'supersede') await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'new'));
+    else f.controller.dispose();
+    pending.resolve(page);
+    await handling;
+    expect(f.messages.some((message) => message.type === 'ROWS' && message.requestId === 'old')).toBe(true);
+    const terminals = f.events.filter((event) => event.name === 'jsonlview.query.settled' && event.attributes.request_seq === 1);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.attributes).toMatchObject({ outcome: 'completed', delivery: 'accepted', abort_observed: true });
+  });
+
+  it('does not rewrite a successful post when cancellation arrives during its acknowledgement', async () => {
+    const f = fixture();
+    const delivered = queryDeferred<boolean>();
+    f.channel.postMessage = async (message) => { f.messages.push(message); return delivered.promise; };
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    await vi.waitFor(() => expect(f.messages).toHaveLength(1));
+    await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    delivered.resolve(true);
+    await handling;
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'completed', delivery: 'accepted', abort_observed: true });
+    expect(f.events).toHaveLength(2);
+  });
+
+  it('contains observer failures at both start and terminal without changing messages', async () => {
+    const session = fakeSession();
+    const messages: ExtensionMessage[] = [];
+    let calls = 0;
+    const controller = new DocumentController(session, { postMessage: async (message) => { messages.push(message); return true; } }, {
+      onQueryOperation: () => { calls += 1; throw new Error('observer failed'); },
+    });
+    await expect(controller.handleMessage(request('GET_ROWS', { limit: 10 }))).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+    expect(messages.map((message) => message.type)).toEqual(['ROWS']);
+  });
+
+  it('preserves the failed-operation response when both observations throw', async () => {
+    const session = fakeSession();
+    const error = new Error('original query failure');
+    session.getRows = async () => { throw error; };
+    const messages: ExtensionMessage[] = [];
+    let observations = 0;
+    const controller = new DocumentController(session, { postMessage: async (message) => { messages.push(message); return true; } }, {
+      onQueryOperation: () => { observations += 1; throw new Error('observer failed'); },
+    });
+    await expect(controller.handleMessage(request('GET_ROWS', { limit: 10 }))).resolves.toBeUndefined();
+    expect(observations).toBe(2);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'REQUEST_FAILED', message: error.message } });
+  });
+});
 
 describe('document controller', () => {
   it('responds to READY with the current document summary', async () => {

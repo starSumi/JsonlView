@@ -17,6 +17,9 @@ import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transpor
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
 import { summaryIdentityMatches } from './summary-identity';
+import { classifyErrorMetadata } from './error-metadata';
+import { createObservabilityEvent, type ObservabilityEvent, type ObservabilityScalar,
+  type QueryOperationOutcome, type QueryOperationDelivery, type QueryStaleReason } from './observability-contract';
 
 type ExtensionMessageByType = {
   [TType in ExtensionMessage['type']]: Extract<ExtensionMessage, { type: TType }>;
@@ -25,6 +28,16 @@ type ExtensionMessageByType = {
 type ExtensionPayload<TType extends ExtensionMessage['type']> = ExtensionMessageByType[TType]['payload'];
 type RequestAddress = Pick<WebviewRequest, 'requestId'>;
 type AcceptedRequestIdentity = Readonly<Pick<SnapshotIdentity, 'documentId' | 'generation' | 'epoch'>>;
+
+interface QueryObservation {
+  readonly sequence: number;
+  readonly startedAt: number;
+  outcome: QueryOperationOutcome;
+  delivery: QueryOperationDelivery;
+  rows?: number;
+  staleReason?: QueryStaleReason;
+  errorName?: string;
+}
 
 /** @deprecated Import RecordPageRequest from application ports for new code. */
 export type RowsRequest = RecordPageRequest;
@@ -66,6 +79,8 @@ export interface DocumentControllerHooks {
   onOpenedDelivery?: (delivered: boolean) => void;
   onFirstRowsRequest?: () => void;
   onFirstRowsResult?: (result: { status: 'posted' | 'rejected' | 'stale' | 'failed' | 'cancelled'; rows?: number; indexedRecords?: string }) => void;
+  /** Local metadata only; observer failures cannot change request behavior. */
+  onQueryOperation?: (event: ObservabilityEvent) => void;
   /** Focus the opt-in Session Navigator without changing the document. */
   onOpenSessionNavigator?: () => Promise<void> | void;
   /** Hand off a bounded Webview error to the host-owned diagnostic flow. */
@@ -82,6 +97,7 @@ export class DocumentController {
   private rebuildRequestSequence = 0;
   private firstRowsRequested = false;
   private firstRowsPosted = false;
+  private queryRequestSequence = 0;
 
   public constructor(
     private readonly session: JsonlSessionPort,
@@ -144,6 +160,7 @@ export class DocumentController {
 
     let signal: AbortSignal | undefined;
     let firstRowsRequest = false;
+    let queryObservation: QueryObservation | undefined;
     try {
       switch (request.type) {
         case 'READY':
@@ -159,6 +176,7 @@ export class DocumentController {
           await this.hooks.onOpenSessionNavigator?.();
           return;
         case 'GET_ROWS': {
+          queryObservation = this.beginQueryObservation();
           firstRowsRequest = !this.firstRowsPosted;
           if (firstRowsRequest) {
             if (!this.firstRowsRequested) {
@@ -168,13 +186,19 @@ export class DocumentController {
           }
           signal = this.requests.startLatest('viewport', request.requestId);
           const page = await this.loadRecordPage.execute(request.payload, signal);
-          const current = this.isCurrentIdentity(acceptedIdentity);
+          if (queryObservation !== undefined) queryObservation.rows = page.rows.length;
+          const current = this.isCurrentIdentity(acceptedIdentity, queryObservation);
           const posted = current && await this.postIfCurrent(
             request,
             acceptedIdentity,
             'ROWS',
             page,
+            queryObservation,
           );
+          if (queryObservation !== undefined && queryObservation.outcome !== 'stale') {
+            queryObservation.outcome = 'completed';
+            queryObservation.delivery = posted ? 'accepted' : 'rejected';
+          }
           if (firstRowsRequest) this.hooks.onFirstRowsResult?.({
             status: !current ? 'stale' : posted ? 'posted' : 'rejected',
             rows: page.rows.length,
@@ -281,14 +305,18 @@ export class DocumentController {
           await this.postError(request, acceptedIdentity, 'UNSUPPORTED_MESSAGE', 'Unsupported request.', false);
       }
     } catch (error) {
+      if (queryObservation !== undefined && queryObservation.outcome !== 'completed') {
+        queryObservation.outcome = signal?.aborted ? 'cancelled' : 'failed';
+        if (queryObservation.outcome === 'failed') queryObservation.errorName = classifyErrorMetadata(error).errorName;
+      }
       if (firstRowsRequest) this.hooks.onFirstRowsResult?.({ status: signal?.aborted ? 'cancelled' : 'failed' });
       if (signal?.aborted) {
         return;
       }
-      if (!this.isCurrentIdentity(acceptedIdentity)) return;
+      if (!this.isCurrentIdentity(acceptedIdentity, queryObservation)) return;
       if (isTransientSourceChange(error)) {
         const handled = await this.hooks.onTransientSourceChange?.();
-        if (!this.isCurrentIdentity(acceptedIdentity)) return;
+        if (!this.isCurrentIdentity(acceptedIdentity, queryObservation)) return;
         if (handled === true) {
           await this.postError(
             request,
@@ -300,11 +328,12 @@ export class DocumentController {
           return;
         }
       }
-      if (!this.isCurrentIdentity(acceptedIdentity)) return;
+      if (!this.isCurrentIdentity(acceptedIdentity, queryObservation)) return;
       const message = error instanceof Error ? error.message : String(error);
       await this.postError(request, acceptedIdentity, 'REQUEST_FAILED', message, true);
     } finally {
       this.requests.finish(request.requestId);
+      if (queryObservation !== undefined) this.finishQueryObservation(queryObservation, signal);
     }
   }
 
@@ -348,16 +377,59 @@ export class DocumentController {
     expectedIdentity: AcceptedRequestIdentity,
     type: TType,
     payload: ExtensionPayload<TType>,
+    queryObservation?: QueryObservation,
   ): Promise<boolean> {
-    if (!this.isCurrentIdentity(expectedIdentity)) return false;
+    if (!this.isCurrentIdentity(expectedIdentity, queryObservation)) return false;
+    // This remains failed only if the existing ROWS post throws/rejects.
+    if (queryObservation !== undefined) queryObservation.delivery = 'failed';
     return this.postEnvelope<TType>(request, expectedIdentity, type, payload);
   }
 
-  private isCurrentIdentity(expectedIdentity: AcceptedRequestIdentity): boolean {
+  private isCurrentIdentity(expectedIdentity: AcceptedRequestIdentity, queryObservation?: QueryObservation): boolean {
     const current = this.session.getSummary().snapshot;
-    return current.documentId === expectedIdentity.documentId
-      && current.generation === expectedIdentity.generation
-      && current.epoch === expectedIdentity.epoch;
+    const mismatch: QueryStaleReason | undefined = current.documentId !== expectedIdentity.documentId ? 'document'
+      : current.generation !== expectedIdentity.generation ? 'generation'
+        : current.epoch !== expectedIdentity.epoch ? 'epoch' : undefined;
+    if (mismatch !== undefined && queryObservation !== undefined && queryObservation.outcome !== 'completed') {
+      queryObservation.outcome = 'stale';
+      queryObservation.staleReason = mismatch;
+    }
+    return mismatch === undefined;
+  }
+
+  private beginQueryObservation(): QueryObservation | undefined {
+    if (this.hooks.onQueryOperation === undefined || this.queryRequestSequence === Number.MAX_SAFE_INTEGER) return undefined;
+    const observation: QueryObservation = {
+      sequence: ++this.queryRequestSequence, startedAt: performance.now(), outcome: 'failed', delivery: 'skipped',
+    };
+    this.recordQueryObservation('jsonlview.query.started', { stage: 'get_rows', request_seq: observation.sequence });
+    return observation;
+  }
+
+  private finishQueryObservation(observation: QueryObservation, signal: AbortSignal | undefined): void {
+    this.recordQueryObservation('jsonlview.query.settled', {
+      stage: 'get_rows',
+      request_seq: observation.sequence,
+      outcome: observation.outcome,
+      delivery: observation.delivery,
+      abort_observed: signal?.aborted ?? false,
+      duration_ms: Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(performance.now() - observation.startedAt))),
+      ...(observation.rows === undefined ? {} : { rows: observation.rows }),
+      ...(observation.outcome === 'stale' ? { stale_reason: observation.staleReason! } : {}),
+      ...(observation.outcome === 'failed' ? { error_name: observation.errorName ?? 'UnknownError' } : {}),
+    });
+  }
+
+  private recordQueryObservation(
+    name: 'jsonlview.query.started' | 'jsonlview.query.settled',
+    attributes: Readonly<Record<string, ObservabilityScalar>>,
+  ): void {
+    try {
+      const event = createObservabilityEvent(name, attributes);
+      if (event !== undefined) this.hooks.onQueryOperation?.(event);
+    } catch {
+      // Logging is synchronous, bounded and best-effort; never affect a request.
+    }
   }
 
   private matchesAnalysisIntent(intent: AnalysisIntentV1): boolean {

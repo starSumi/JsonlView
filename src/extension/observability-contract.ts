@@ -1,8 +1,12 @@
+import { isSafeErrorName } from './error-metadata';
+
 export type ObservabilityScalar = string | number | boolean;
 
 export type ObservabilityEventName =
   | 'jsonlview.index.completed'
   | 'jsonlview.query.completed'
+  | 'jsonlview.query.started'
+  | 'jsonlview.query.settled'
   | 'jsonlview.webview.error'
   | 'jsonlview.lifecycle.source_classified'
   | 'jsonlview.lifecycle.recovery_decided'
@@ -18,6 +22,10 @@ export interface ObservabilityEvent {
 export interface ObservabilitySink {
   record(event: ObservabilityEvent): void;
 }
+
+export type QueryOperationOutcome = 'completed' | 'stale' | 'cancelled' | 'failed';
+export type QueryOperationDelivery = 'accepted' | 'rejected' | 'skipped' | 'failed';
+export type QueryStaleReason = 'document' | 'generation' | 'epoch';
 
 const MAX_ATTRIBUTES = 16;
 const MAX_KEY_LENGTH = 64;
@@ -79,9 +87,16 @@ const ALLOWED_KEYS = new Set([
   'causation',
 ]);
 const BLOCKED_KEY = /(body|content|prompt|response|path|uri|workspace|token|secret|header|user|account|credential)/iu;
+const QUERY_KEYS = new Set(['stage', 'request_seq', 'outcome', 'delivery', 'abort_observed',
+  'duration_ms', 'rows', 'stale_reason', 'error_name']);
+const QUERY_OUTCOMES = new Set(['completed', 'stale', 'cancelled', 'failed']);
+const QUERY_DELIVERIES = new Set(['accepted', 'rejected', 'skipped', 'failed']);
+const QUERY_STALE_REASONS = new Set(['document', 'generation', 'epoch']);
 const EVENT_NAMES = new Set<ObservabilityEventName>([
   'jsonlview.index.completed',
   'jsonlview.query.completed',
+  'jsonlview.query.started',
+  'jsonlview.query.settled',
   'jsonlview.webview.error',
   ...Object.values(LIFECYCLE_EVENT_NAMES),
 ]);
@@ -148,9 +163,12 @@ export function createObservabilityEvent(
   if (!Number.isFinite(Date.parse(timestamp))) return undefined;
   const entries = Object.entries(attributes);
   if (entries.length > MAX_ATTRIBUTES) return undefined;
+  const queryEvent = name === 'jsonlview.query.started' || name === 'jsonlview.query.settled';
+  const allowedKeys = queryEvent ? QUERY_KEYS : ALLOWED_KEYS;
+  if (queryEvent && !validQueryAttributes(name, attributes)) return undefined;
   const normalized: Record<string, ObservabilityScalar> = {};
   for (const [key, value] of entries) {
-    if (!ALLOWED_KEYS.has(key) || BLOCKED_KEY.test(key) || key.length === 0 || key.length > MAX_KEY_LENGTH) return undefined;
+    if (!allowedKeys.has(key) || BLOCKED_KEY.test(key) || key.length === 0 || key.length > MAX_KEY_LENGTH) return undefined;
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
     if (typeof value === 'number' && !Number.isFinite(value)) return undefined;
     if (typeof value === 'string' && (value.length === 0 || value.length > MAX_VALUE_LENGTH || /[\u0000-\u001f\u007f]/u.test(value))) return undefined;
@@ -159,4 +177,27 @@ export function createObservabilityEvent(
     normalized[key] = value;
   }
   return Object.freeze({ name, timestamp, attributes: Object.freeze(normalized) });
+}
+
+function nonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function validQueryAttributes(name: ObservabilityEventName, value: Readonly<Record<string, unknown>>): boolean {
+  if (value.stage !== 'get_rows' || !nonnegativeSafeInteger(value.request_seq) || value.request_seq === 0) return false;
+  if (name === 'jsonlview.query.started') return Object.keys(value).length === 2;
+  if (typeof value.outcome !== 'string' || !QUERY_OUTCOMES.has(value.outcome)
+    || typeof value.delivery !== 'string' || !QUERY_DELIVERIES.has(value.delivery)
+    || typeof value.abort_observed !== 'boolean' || !nonnegativeSafeInteger(value.duration_ms)) return false;
+  if (value.rows !== undefined && !nonnegativeSafeInteger(value.rows)) return false;
+  if (value.outcome === 'stale') {
+    if (typeof value.stale_reason !== 'string' || !QUERY_STALE_REASONS.has(value.stale_reason)) return false;
+  } else if (value.stale_reason !== undefined) return false;
+  if (value.outcome === 'failed') {
+    return isSafeErrorName(value.error_name) && (value.delivery === 'skipped' || value.delivery === 'failed');
+  }
+  if (value.error_name !== undefined) return false;
+  return value.outcome === 'completed'
+    ? value.delivery === 'accepted' || value.delivery === 'rejected'
+    : value.delivery === 'skipped' || value.delivery === 'failed';
 }
