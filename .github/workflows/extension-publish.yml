@@ -150,7 +150,7 @@ jobs:
 
       - name: Retain non-secret release evidence and exact artifacts
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jsonlview-extension-release-${{ github.run_number }}
           path: ${{ runner.temp }}/jsonlview-extension-release/
@@ -254,7 +254,7 @@ jobs:
           NODE
       - name: Retain Marketplace publication evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jsonlview-marketplace-publication-${{ github.run_number }}
           path: jsonlview-extension-release/
