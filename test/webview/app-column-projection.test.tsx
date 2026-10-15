@@ -208,6 +208,34 @@ describe('App column presentation and projection boundary', () => {
     expect(last('GET_ROWS').payload.columns?.map((column) => column.id)).toEqual([prompt.id]);
   });
 
+  it('restores a column hidden when an in-flight page projection was requested', () => {
+    boot();
+    props(ColumnChooser).onVisibilityChange(prompt, false);
+    commit();
+    props(RecordPager).onNext();
+    commit();
+    const next = last('GET_ROWS');
+    expect(next.payload.columns?.map((column) => column.id)).toEqual([status.id]);
+    const before = rowRequests().length;
+    props(ColumnChooser).onVisibilityChange(prompt, true);
+    commit();
+    expect(rowRequests()).toHaveLength(before);
+    deliver('ROWS', page([status], 20), next);
+    const refresh = last('GET_ROWS');
+    expect(refresh.requestId).not.toBe(next.requestId);
+    expect(rowRequests()).toHaveLength(before + 1);
+    expect(refresh.payload).toMatchObject({ anchorOrdinal: '19', direction: 'forward' });
+    expect(refresh.payload.columns?.map((column) => column.id)).toEqual([status.id, prompt.id]);
+    expect(props(RecordPager).pageInput).toBe('2');
+    deliver('ROWS', page([status], 20), next);
+    expect(rowRequests()).toHaveLength(before + 1);
+    expect(props(RecordPager).pageInput).toBe('2');
+    deliver('ROWS', page([status, prompt], 20), refresh);
+    expect(visibleValues()).toEqual(['20', '$.status 20', '$.prompt 20']);
+    expect(props(RecordPager).pageInput).toBe('2');
+    expect(props(RecordTable).loading).toBe(false);
+  });
+
   it('refreshes a missing field and preserves the active query and viewport', () => {
     boot();
     deliver('SCHEMA', { fields: [{ path: extra.path!, displayPath: '$.extra', seenRecords: '80',

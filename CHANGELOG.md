@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve a selected dataset record's prompt, output, title, and tags when an ordinary nested payload contains similarly named fields.
+- Keep column visibility changes local when the current page already contains the required values; fetch missing fields through the existing bounded query.
+- Record bounded query start and settlement metadata in the local Output channel, distinguishing empty results, cancellation, stale work, and failed delivery without logging query text or source content.
 - Bound optional dataset detection with explicit failed, timeout, cancelled, and disabled outcomes. Preserve Generic JSONL loading, discard late results, and report the terminal stage and recovery action.
 - Show QA fields and classification labels in Generic detail previews, preserve zero and empty label values, and disclose message groups longer than the 32-entry preview.
 - Keep lifecycle failure logs to fixed stages and allowed error metadata, without copying exception messages, paths, or source content into Output or console.

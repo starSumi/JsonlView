@@ -106,6 +106,17 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Treat filesystem notifications as invalidation hints and re-check source
   state before incremental work.
 - Keep messages bounded and reject stale generations.
+- Generic dataset previews use fields from the selected physical record. An
+  ordinary nested payload must not replace its top-level fields; recognized
+  event and tool envelopes retain their profile semantics.
+- Display columns are independent of query predicates. Visibility changes stay
+  local when the current row projection covers every required column; missing
+  fields and projection overflow still require a bounded page refresh.
+- Accepted GET_ROWS operations may emit one local metadata start and one
+  settlement event when the existing handler settles. Keep operation outcome
+  separate from ROWS delivery, preserve cancellation and identity gates, and
+  contain observer failures. Host counters are local correlators, not OTel
+  trace context; src/extension/error-metadata.ts owns fixed error classification.
 - Optional dataset detection settles with bounded terminal metadata for failure,
   deadline, cancellation, or disabled detection. It must not block Generic
   loading indefinitely or publish into a retired source/profile generation.
