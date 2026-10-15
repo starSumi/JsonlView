@@ -857,7 +857,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
     }
     case 'SET_FOLLOW_MODE':
-      return { ...state, followMode: action.enabled, detailFollow: false };
+      if (!action.enabled) return { ...state, followMode: false, detailFollow: false };
+      // Enabling Follow immediately returns the viewport to the accepted tail.
+      // Treat the current indexed watermark as seen so the transition itself
+      // cannot surface a stale activity banner before the first tail paint.
+      return { ...state, followMode: true, detailFollow: false, seenSeq: state.latestSeq, unseenActivity: false };
     case 'SET_VIEWPORT_MODE':
       return { ...state, viewportMode: action.mode };
     case 'RESET_VIEWPORT':

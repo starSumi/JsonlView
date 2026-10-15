@@ -798,6 +798,21 @@ describe('record table selection visibility', () => {
     expect(virtualizer.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, { align: 'auto' });
   });
 
+  it('activates a row from its background and keeps grid focus on that row', () => {
+    const { element, onSelect, rows } = render({ selectedOrdinal: undefined });
+    type GridElement = React.ReactElement<React.HTMLAttributes<HTMLDivElement> & {
+      children: GridElement[]; ref: { current: HTMLDivElement | null };
+    }>;
+    const root = element as GridElement;
+    const grid = { contains: () => false, focus: vi.fn() } as unknown as HTMLDivElement;
+    root.props.ref.current = grid;
+    const virtualSpace = root.props.children[1]!;
+    const secondRow = virtualSpace.props.children[1]!;
+    secondRow.props.onClick?.({ target: secondRow, currentTarget: secondRow } as unknown as React.MouseEvent<HTMLDivElement>);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(rows[1]!.ref);
+    expect(grid.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
   it('opens a record only on explicit Enter or Space, while arrows move focus', () => {
     const { press, onSelect } = render();
     press('Enter');

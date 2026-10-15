@@ -229,6 +229,19 @@ describe('workspace reducer', () => {
     expect(state.unseenActivity).toBe(false);
   });
 
+  it('seeds the Follow seen watermark from the accepted latest index', () => {
+    let state = workspaceReducer(createInitialState(), {
+      type: 'MESSAGE_RECEIVED', message: envelope('OPENED', { ...summary, indexedRecords: '2' }),
+    });
+    state = workspaceReducer(state, {
+      type: 'MESSAGE_RECEIVED', message: envelope('INDEX_PROGRESS', { ...summary, indexedRecords: '3' }),
+    });
+    expect(state.unseenActivity).toBe(true);
+    state = workspaceReducer(state, { type: 'SET_FOLLOW_MODE', enabled: true });
+    expect(state.seenSeq).toBe('3');
+    expect(state.unseenActivity).toBe(false);
+  });
+
   it('keeps append activity through recovery but resets it across destructive snapshot replacement', () => {
     let state = workspaceReducer(createInitialState({ followMode: true }), {
       type: 'MESSAGE_RECEIVED', message: envelope('OPENED', summary),

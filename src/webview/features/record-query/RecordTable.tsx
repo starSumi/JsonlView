@@ -333,6 +333,17 @@ export function RecordTable({
     pointerInteractionRef.current = false;
   };
 
+  const activateRow = (row: RowProjection, columnId = columns[0]?.id): void => {
+    if (loading) return;
+    pauseForInteraction();
+    if (columnId !== undefined) {
+      focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
+        ordinal: row.ref.ordinal, columnId });
+    }
+    scrollRef.current?.focus({ preventScroll: true });
+    onSelect(row.ref);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (loading || event.target !== event.currentTarget || event.altKey || event.metaKey) return;
     if (event.key === 'PageDown' || event.key === 'PageUp') {
@@ -565,6 +576,7 @@ export function RecordTable({
           const selected = row.ref.ordinal === selectedOrdinal;
           return (
             // biome-ignore lint/a11y/useSemanticElements: virtualized absolute-positioned CSS grid row cannot be a native table row
+            // biome-ignore lint/a11y/useKeyWithClickEvents: grid keyboard activation is owned by the parent active-descendant model
             <div
               className={`data-grid-row${selected ? ' is-selected' : ''}${row.problems?.length ? ' has-problem' : ''}`}
               role="row"
@@ -574,6 +586,12 @@ export function RecordTable({
               key={`${sessionId}:${physicalRowKey(row.ref)}`}
               data-row-ordinal={row.ref.ordinal}
               data-row-generation={row.ref.generation}
+              onClick={(event) => {
+                // Cell clicks own their active-cell semantics; the row handler
+                // covers the virtual row background/gutter only.
+                if (event.target !== event.currentTarget) return;
+                activateRow(row);
+              }}
               style={{ gridTemplateColumns: template, height: item.size, transform: `translateY(${item.start - GRID_HEADER_HEIGHT}px)` }}
             >
               {columns.map((column, columnIndex) => {
@@ -590,22 +608,11 @@ export function RecordTable({
                     tabIndex={-1}
                     key={column.id}
                     title={text}
-                    onClick={() => {
-                      if (loading) return;
-                      pauseForInteraction();
-                      focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
-                        ordinal: row.ref.ordinal, columnId: column.id });
-                      scrollRef.current?.focus({ preventScroll: true });
-                      onSelect(row.ref);
-                    }}
+                    onClick={() => { activateRow(row, column.id); }}
                     onKeyDown={(event) => {
                       if (loading || (event.key !== 'Enter' && event.key !== ' ')) return;
                       event.preventDefault();
-                      pauseForInteraction();
-                      focus.setActiveCell({ kind: 'data', sessionId, generation: row.ref.generation,
-                        ordinal: row.ref.ordinal, columnId: column.id });
-                      scrollRef.current?.focus({ preventScroll: true });
-                      onSelect(row.ref);
+                      activateRow(row, column.id);
                     }}
                   >
                     {column.id === '__ordinal' && row.ref.parseState !== 'valid'
