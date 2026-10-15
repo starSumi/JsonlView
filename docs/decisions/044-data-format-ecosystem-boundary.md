@@ -195,6 +195,62 @@ acceptance run observes this slice. Revisit when another adapter needs lifecycle
 dispatch or a measured workload requires broader sampling. Rollback removes the
 additive metadata and status rendering while preserving Generic JSONL viewing.
 
+## Addendum: bounded detection completion (2026-10-15)
+
+This C2 lifecycle change extends the existing detection operation and its single
+profile-publication path. It adds no dataset scan, adapter recognition, source
+mutation, dependency, or background service. The pressure is a rejected or
+never-settling head read leaving the Generic first page with permanent `pending`
+metadata. The owner is the Extension Host; profiles own metadata constructors,
+shared transport owns validation, and the Webview owns status explanation.
+
+`DatasetRuntimeProvenanceV1` gains metadata-only terminal states `failed`,
+`timeout`, `cancelled`, and `disabled`. They carry `samplePlan` and a closed
+`terminal` object, never invented adapter, shape, confidence, or coverage:
+
+- `stage`: `not-started`, `head-hydration`, `head-inspection`,
+  `profile-sampling`, or `profile-classification`.
+- `code`: respectively `detection_failed`, `deadline_exceeded`,
+  `operation_cancelled`, or `auto_detection_disabled`.
+- `retryable` and `action`: failed/timeout use `true`/`reload`; cancelled uses
+  `false`/`none`; disabled uses `false`/`enable-auto-detection` at `not-started`.
+
+The existing bounded head inspection still returns `fallback` when inspection
+completes with unknown/invalid content or a caught inspector exception. A failed
+I/O operation is not evidence of unknown content. Disabling detection performs
+no sampling reads and publishes `disabled`, rather than `pending`.
+
+Each detection invocation has a 5,000 ms default deadline (internally bounded to
+1..30,000 ms), an owned abort controller, and a once-only metadata receipt.
+The deadline races completion even if the callee ignores cancellation. Success,
+failure, timeout, and cancellation all remove the timer and abort listener.
+Callbacks cannot fail the data path; receipts contain only operation sequence,
+generation/epochs, stage, status, elapsed milliseconds, and a closed error code.
+They never contain paths, values, free-form errors, or source fingerprints.
+Failed/timeout detection does not automatically retry; existing Reload performs
+a new attempt. Existing source/profile invalidation may retry current work.
+
+Publication still rechecks engine, document, generation, snapshot epoch, prefix
+fingerprint, profile id/version, and profile epoch. Cancelled/retired work can
+produce a local receipt but cannot overwrite current metadata. Rebuild detection
+remains staged until adoption; caller cancellation prevents adoption. Generic
+rows and Raw remain usable when optional detection fails. No source or Webview
+reset is triggered by this deadline.
+
+The rejected alternatives are a second dataset scanner and timer-only observation
+that leaves an unresolved operation occupying the single-flight slot. Node 24
+[timers](https://nodejs.org/docs/latest-v24.x/api/timers.html) provide
+`clearTimeout` cleanup and `unref` so an idle timer does not keep Node alive.
+The timer is cooperative: it cannot preempt synchronous parsing/inspection or
+guarantee exact wall-clock delivery while the event loop is blocked. A completion
+check also rejects results that exceed the measured deadline.
+
+L2 validation covers rejected and never-settling head reads, late resolve/reject,
+cancel/dispose, disabled reads, profile ABA, exact-once receipts, timer cleanup,
+transport allowlists, and an unaffected Generic first page. Real VS Code fault
+injection remains an L3 gate. Rollback reverts this additive lifecycle slice; the
+existing Generic, head inspection, and startup watchdog remain independent.
+
 ## Evidence
 
 - [JSON Lines](https://jsonlines.org/) defines UTF-8, one JSON value per line,

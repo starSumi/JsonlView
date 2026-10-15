@@ -71,6 +71,11 @@ import {
 
 function datasetProvenanceTooltip(provenance: DatasetRuntimeProvenanceV1): string {
   if (provenance.status === 'pending') return 'Dataset head sample pending';
+  if ('terminal' in provenance) {
+    const action = provenance.terminal.action === 'reload' ? 'Reload to retry.'
+      : provenance.terminal.action === 'enable-auto-detection' ? 'Enable profile auto detection to sample.' : 'No action required.';
+    return `Dataset detection ${provenance.status} at ${provenance.terminal.stage}: ${provenance.terminal.code}. ${action}`;
+  }
   const coverage = provenance.coverage;
   return `Dataset head sample: ${provenance.adapterId} ${provenance.adapterVersion}; ${coverage.sampledRecords} records / ${coverage.examinedBytes} bytes; confidence ${provenance.confidence}`;
 }

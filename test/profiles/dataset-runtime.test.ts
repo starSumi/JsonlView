@@ -64,4 +64,13 @@ describe('dataset head runtime provenance', () => {
     const result = inspection.finish(page(false), true);
     expect(result).toMatchObject({ status: 'fallback', fallback: { code: 'unknown_shape' }, adapterId: 'generic-jsonl', shape: 'unknown' });
   });
+
+  it('retains completed inspection fallback separately from an I/O failure terminal', () => {
+    const inspection = new DatasetHeadInspection(() => { throw new Error('private inspector error'); });
+    inspection.accept({ value: { messages: [{ role: 'user', content: 'private' }] }, ref: ref('0', '32'), parseState: 'valid' });
+    const result = inspection.finish(page(false), true);
+    expect(result).toMatchObject({ status: 'fallback', fallback: { code: 'inspection_failed' }, coverage: { sampledRecords: 1 } });
+    expect(isDatasetRuntimeProvenance(result)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
 });

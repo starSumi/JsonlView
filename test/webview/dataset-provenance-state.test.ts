@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DocumentSummary, ExtensionMessage } from '../../src/shared/types';
 import { PROTOCOL_VERSION } from '../../src/shared/types';
 import { createInitialState, workspaceReducer } from '../../src/webview/state';
+import { terminalDatasetProvenance } from '../../src/profiles/dataset-runtime';
 
 const summary = (profileEpoch?: number): DocumentSummary => ({
   snapshot: { documentId: 'd', generation: 'g', epoch: 1, uri: 'file:///x', scheme: 'file', sizeBytes: '1', mtimeMs: 0, prefixFingerprint: 'fp', observedAt: '2026-01-01T00:00:00Z' },
@@ -14,6 +15,13 @@ function receive(payload: DocumentSummary, type: 'OPENED' | 'INDEX_PROGRESS' = '
 }
 
 describe('dataset provenance epoch admission', () => {
+  it('accepts a current timeout but rejects a retired failure terminal', () => {
+    const current = { ...summary(4), datasetProvenance: terminalDatasetProvenance('timeout', 'head-hydration') };
+    const state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: receive(current, 'OPENED') });
+    expect(state.summary?.datasetProvenance?.status).toBe('timeout');
+    const stale = { ...summary(3), datasetProvenance: terminalDatasetProvenance('failed', 'head-hydration') };
+    expect(workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: receive(stale) })).toBe(state);
+  });
   it('does not downgrade a live state with a missing or older profile epoch', () => {
     let state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: receive(summary(4), 'OPENED') });
     const before = state;

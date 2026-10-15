@@ -295,9 +295,20 @@ export interface DatasetResultV1 {
   coverage: DatasetHeadCoverageV1;
 }
 
+export type DatasetDetectionStageV1 = 'not-started' | 'head-hydration' | 'head-inspection'
+  | 'profile-sampling' | 'profile-classification';
+export type DatasetDetectionTerminalStatusV1 = 'failed' | 'timeout' | 'cancelled' | 'disabled';
+export interface DatasetDetectionTerminalV1 {
+  stage: DatasetDetectionStageV1;
+  code: 'detection_failed' | 'deadline_exceeded' | 'operation_cancelled' | 'auto_detection_disabled';
+  retryable: boolean;
+  action: 'reload' | 'none' | 'enable-auto-detection';
+}
+
 /** Metadata only. Inspector records, values, reasons, and source hints never cross IPC. */
 export type DatasetRuntimeProvenanceV1 =
   | { version: 1; status: 'pending'; samplePlan: DatasetHeadPlanV1 }
+  | { version: 1; status: DatasetDetectionTerminalStatusV1; samplePlan: DatasetHeadPlanV1; terminal: DatasetDetectionTerminalV1 }
   | (DatasetResultV1 & { status: 'ready' | 'partial'; fallback?: never })
   | (DatasetResultV1 & { status: 'fallback'; fallback: {
     code: 'unknown_shape' | 'conflicting_shapes' | 'invalid_sample' | 'sample_unavailable' | 'inspection_failed';

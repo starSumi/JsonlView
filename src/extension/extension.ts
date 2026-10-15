@@ -5,7 +5,7 @@ import { findExtensionContributionConflict } from './extension-conflicts';
 import { PROTOCOL_VERSION, type DocumentSummary, type ExtensionMessage } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
 import { DocumentController } from './document-controller';
-import { IntegratedJsonlSession } from './integrated-session';
+import { IntegratedJsonlSession, type DatasetDetectionReceipt } from './integrated-session';
 import type { NativeNewlineScannerSetting, SourceRefreshResult } from '../engine';
 import { shouldAutoFollow } from './follow-policy';
 import {
@@ -127,6 +127,7 @@ export class JsonlViewDocument implements vscode.CustomDocument {
     uri: vscode.Uri,
     token: vscode.CancellationToken,
     onBackgroundIndexError?: (error: unknown) => void,
+    onDatasetDetection?: (receipt: DatasetDetectionReceipt) => void,
   ): Promise<JsonlViewDocument> {
     if (uri.scheme !== 'file') {
       throw new Error('JsonlView currently requires a file-backed JSONL or NDJSON resource.');
@@ -141,6 +142,7 @@ export class JsonlViewDocument implements vscode.CustomDocument {
       pageHydrationMaxBytes: configuration.get<number>('hydration.pageMaxBytes', 8 * 1024 * 1024),
       newlineScanner: configuration.get<NativeNewlineScannerSetting>('native.newlineScanner', 'off'),
       ...(onBackgroundIndexError === undefined ? {} : { onBackgroundIndexError }),
+      ...(onDatasetDetection === undefined ? {} : { onDatasetDetection }),
     }, cancellationSignal(token));
     if (token.isCancellationRequested) {
       await session.dispose();
@@ -529,6 +531,11 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
       const document = await JsonlViewDocument.create(uri, token, (error) => {
         const reason = error instanceof Error ? error.name.replace(/[^A-Za-z0-9_]/gu, '').slice(0, 48) : 'unknown';
         appendOutputLog(this.output, 'index-failed', 'trace=' + traceId + ' reason=' + reason);
+      }, (receipt) => {
+        appendOutputLog(this.output, 'dataset-detection', 'trace=' + traceId
+          + ' operation=' + String(receipt.operationId) + ' status=' + receipt.status + ' stage=' + receipt.stage
+          + ' sourceEpoch=' + String(receipt.sourceEpoch) + ' profileEpoch=' + String(receipt.profileEpoch)
+          + ' elapsedMs=' + String(receipt.elapsedMs) + (receipt.code === undefined ? '' : ' code=' + receipt.code));
       });
       this.traceIds.set(document, traceId);
       const summary = document.session.getSummary();

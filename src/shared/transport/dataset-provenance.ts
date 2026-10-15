@@ -3,6 +3,13 @@ import type { DatasetRuntimeProvenanceV1 } from '../types';
 const SHAPES = new Set(['sft', 'preference', 'tool-use', 'multimodal', 'unknown']);
 const STOPS = new Set(['record_limit', 'byte_limit', 'time_limit', 'hydration_limit', 'uninspectable_record']);
 const FALLBACKS = new Set(['unknown_shape', 'conflicting_shapes', 'invalid_sample', 'sample_unavailable', 'inspection_failed']);
+const STAGES = new Set(['not-started', 'head-hydration', 'head-inspection', 'profile-sampling', 'profile-classification']);
+const TERMINALS = {
+  failed: { code: 'detection_failed', retryable: true, action: 'reload' },
+  timeout: { code: 'deadline_exceeded', retryable: true, action: 'reload' },
+  cancelled: { code: 'operation_cancelled', retryable: false, action: 'none' },
+  disabled: { code: 'auto_detection_disabled', retryable: false, action: 'enable-auto-detection' },
+} as const;
 
 /** Deliberately closed: metadata must never grow a raw/value/source payload by accident. */
 export function isDatasetRuntimeProvenance(value: unknown): value is DatasetRuntimeProvenanceV1 {
@@ -10,6 +17,15 @@ export function isDatasetRuntimeProvenance(value: unknown): value is DatasetRunt
     || !keys(value.samplePlan, ['strategy', 'maxRecords', 'maxBytes'])
     || value.samplePlan.strategy !== 'head' || value.samplePlan.maxRecords !== 32 || value.samplePlan.maxBytes !== 262144) return false;
   if (value.status === 'pending') return keys(value, ['version', 'status', 'samplePlan']);
+  if (typeof value.status === 'string' && Object.hasOwn(TERMINALS, value.status)) {
+    const expected = TERMINALS[value.status as keyof typeof TERMINALS];
+    return keys(value, ['version', 'status', 'samplePlan', 'terminal'])
+      && object(value.terminal) && keys(value.terminal, ['stage', 'code', 'retryable', 'action'])
+      && typeof value.terminal.stage === 'string' && STAGES.has(value.terminal.stage)
+      && (value.status !== 'disabled' || value.terminal.stage === 'not-started')
+      && value.terminal.code === expected.code && value.terminal.retryable === expected.retryable
+      && value.terminal.action === expected.action;
+  }
   if (!keys(value, ['version', 'status', 'samplePlan', 'framing', 'adapterId', 'adapterVersion', 'shape', 'confidence', 'clockBasis', 'coverage', 'fallback'])
     || value.framing !== 'jsonl' || value.adapterVersion !== '1.0.0'
     || typeof value.shape !== 'string' || !SHAPES.has(value.shape)

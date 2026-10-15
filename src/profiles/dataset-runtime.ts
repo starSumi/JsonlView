@@ -2,6 +2,9 @@ import type {
   DatasetHeadCoverageV1,
   DatasetHeadPlanV1,
   DatasetRuntimeProvenanceV1,
+  DatasetDetectionStageV1,
+  DatasetDetectionTerminalStatusV1,
+  DatasetDetectionTerminalV1,
   ParseState,
   RecordRef,
   RowPage,
@@ -14,6 +17,22 @@ export const DATASET_HEAD_PLAN: Readonly<DatasetHeadPlanV1> = Object.freeze({
 
 export function pendingDatasetProvenance(): DatasetRuntimeProvenanceV1 {
   return { version: 1, status: 'pending', samplePlan: { ...DATASET_HEAD_PLAN } };
+}
+
+const TERMINALS: Readonly<Record<DatasetDetectionTerminalStatusV1, Omit<DatasetDetectionTerminalV1, 'stage'>>> = {
+  failed: { code: 'detection_failed', retryable: true, action: 'reload' },
+  timeout: { code: 'deadline_exceeded', retryable: true, action: 'reload' },
+  cancelled: { code: 'operation_cancelled', retryable: false, action: 'none' },
+  disabled: { code: 'auto_detection_disabled', retryable: false, action: 'enable-auto-detection' },
+};
+
+export function terminalDatasetProvenance(
+  status: DatasetDetectionTerminalStatusV1, stage: DatasetDetectionStageV1,
+): DatasetRuntimeProvenanceV1 {
+  return {
+    version: 1, status, samplePlan: { ...DATASET_HEAD_PLAN },
+    terminal: { ...TERMINALS[status], stage: status === 'disabled' ? 'not-started' : stage },
+  };
 }
 
 /** Reuses an existing hydration stream. Limits describe inspection, never I/O or RSS. */

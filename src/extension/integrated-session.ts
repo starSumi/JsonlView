@@ -12,6 +12,9 @@ import type {
   RowPage,
   RowScanBudget,
   DatasetRuntimeProvenanceV1,
+  DatasetDetectionStageV1,
+  DatasetDetectionTerminalStatusV1,
+  DatasetDetectionTerminalV1,
 } from '../shared/types';
 import {
   JsonlEngineError,
@@ -34,13 +37,26 @@ import {
   profileColumns,
   profilePredicateFields,
 } from './integrated-session-profile';
-import { DatasetHeadInspection, pendingDatasetProvenance } from '../profiles/dataset-runtime';
+import { DatasetHeadInspection, pendingDatasetProvenance, terminalDatasetProvenance } from '../profiles/dataset-runtime';
 
 const DETECTION_HEAD_SAMPLE_LIMIT = 32;
 const DETECTION_TAIL_SAMPLE_LIMIT = 32;
 const DETECTION_STRATUM_SAMPLE_LIMIT = 8;
 const DETECTION_STRATUM_PERCENTAGES = [25n, 50n, 75n] as const;
 const PROGRESS_THROTTLE_MS = 100;
+const DETECTION_MAX_MILLISECONDS = 5_000;
+
+/** Local metadata only; never carries values, paths, fingerprints or free-form errors. */
+export interface DatasetDetectionReceipt {
+  operationId: number;
+  generation: string;
+  sourceEpoch: number;
+  profileEpoch: number;
+  stage: DatasetDetectionStageV1;
+  status: Exclude<DatasetRuntimeProvenanceV1['status'], 'pending'>;
+  elapsedMs: number;
+  code?: DatasetDetectionTerminalV1['code'];
+}
 
 export interface IntegratedSessionOptions {
   documentId?: string;
@@ -56,6 +72,9 @@ export interface IntegratedSessionOptions {
   backgroundIndexing?: boolean;
   /** Report a non-cancellation background indexing failure without source data. */
   onBackgroundIndexError?: (error: unknown) => void;
+  /** Internal operation deadline, clamped to 1..30,000 ms; does not preempt synchronous CPU. */
+  profileDetectionMaxMilliseconds?: number;
+  onDatasetDetection?: (receipt: DatasetDetectionReceipt) => void;
   insightsMaxExaminedRecords?: number;
   insightsMaxExaminedBytes?: number;
   insightsMaxMilliseconds?: number;
@@ -88,6 +107,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
   private profileDetectionAbort: AbortController | undefined;
   private profileDetectionInFlight: Promise<void> | undefined;
   private profileDetectionScheduled = false;
+  private nextDetectionOperationId = 0;
   private tailDetectionGeneration: string | undefined;
   private tailDetectionRequested = false;
   private lastProgressAt = 0;
@@ -130,6 +150,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       const detected = await session.detectProfile(engine, signal, {
         includeTail: engine.getSummary().indexingComplete,
       });
+      throwIfAborted(signal);
       session.publishProfileState(detected);
       session.startBackgroundIndexing();
       return session;
@@ -474,20 +495,76 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     signal?: AbortSignal,
     options: { includeTail?: boolean } = {},
   ): Promise<DetectedProfileState> {
+    const startedAt = performance.now();
+    const operationId = Math.min(Number.MAX_SAFE_INTEGER, this.nextDetectionOperationId + 1);
+    this.nextDetectionOperationId = operationId;
+    const profileEpoch = this.profileEpoch;
+    let stage: DatasetDetectionStageV1 = 'not-started';
+    const terminalState = (status: DatasetDetectionTerminalStatusV1): DetectedProfileState => ({
+      profileId: 'generic', suggestions: this.zeroScoreSuggestions(),
+      datasetProvenance: terminalDatasetProvenance(status, stage),
+    });
+    let result: DetectedProfileState;
     if (this.options.autoDetectProfiles === false) {
-      return {
-        profileId: 'generic',
-        suggestions: this.registry.list()
-        .filter((profile) => profile.id !== 'generic')
-        .map((profile) => ({
-          id: profile.id,
-          displayName: profile.displayName,
-          score: 0,
-          reasons: [],
-        })),
-        datasetProvenance: pendingDatasetProvenance(),
+      result = terminalState('disabled');
+    } else {
+      const requested = this.options.profileDetectionMaxMilliseconds ?? DETECTION_MAX_MILLISECONDS;
+      const maxMilliseconds = Number.isFinite(requested)
+        ? Math.max(1, Math.min(30_000, Math.floor(requested))) : DETECTION_MAX_MILLISECONDS;
+      const controller = new AbortController();
+      let interruptedState: DetectedProfileState | undefined;
+      let interrupt!: (state: DetectedProfileState) => void;
+      const interrupted = new Promise<DetectedProfileState>((resolve) => { interrupt = resolve; });
+      const stop = (status: 'timeout' | 'cancelled'): void => {
+        if (interruptedState !== undefined) return;
+        interruptedState = terminalState(status);
+        interrupt(interruptedState);
+        controller.abort();
       };
+      const cancel = (): void => stop('cancelled');
+      signal?.addEventListener('abort', cancel, { once: true });
+      const timer = setTimeout(() => stop('timeout'), maxMilliseconds);
+      timer.unref();
+      try {
+        if (signal?.aborted) cancel();
+        result = controller.signal.aborted ? interruptedState! : await Promise.race([
+          this.inspectProfile(engine, controller.signal, options, (next) => { stage = next; }),
+          interrupted,
+        ]);
+        if (interruptedState !== undefined) result = interruptedState;
+        else if (performance.now() - startedAt >= maxMilliseconds) {
+          stop('timeout');
+          result = interruptedState!;
+        }
+      } catch {
+        result = interruptedState ?? terminalState('failed');
+        controller.abort();
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+      }
     }
+    const provenance = result.datasetProvenance;
+    if (provenance.status !== 'pending') {
+      try {
+        this.options.onDatasetDetection?.({
+          operationId, generation: engine.snapshot.generation, sourceEpoch: engine.snapshot.epoch ?? 0,
+          profileEpoch, stage, status: provenance.status,
+          elapsedMs: Math.min(2_147_483_647, Math.max(0, Math.round(performance.now() - startedAt))),
+          ...('terminal' in provenance ? { code: provenance.terminal.code } : {}),
+        });
+      } catch {
+        // Observability cannot turn optional detection into a document failure.
+      }
+    }
+    return result;
+  }
+
+  private async inspectProfile(
+    engine: JsonlFileEngine, signal: AbortSignal, options: { includeTail?: boolean },
+    setStage: (stage: DatasetDetectionStageV1) => void,
+  ): Promise<DetectedProfileState> {
+    setStage('head-hydration');
     const samples: GenericRecordSample[] = [];
     const datasetHead = new DatasetHeadInspection();
     const sampledOrdinals = new Set<string>();
@@ -496,6 +573,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       columns: [],
       generation: engine.snapshot.generation,
       onHydrated: (record) => {
+        if (signal.aborted) return;
         datasetHead.accept(record);
         appendDetectionSample(
           samples,
@@ -507,12 +585,15 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       },
       ...(signal === undefined ? {} : { signal }),
     });
+    throwIfAborted(signal);
+    setStage('head-inspection');
     const datasetProvenance = datasetHead.finish(headPage, engine.getSummary().indexingComplete);
     // Once the physical index is complete, add a bounded newest suffix. This
     // catches files whose producer changes shape over time without forcing an
     // O(n) tail scan on the first paint. The registry still applies its own
     // sample cap and confidence rules.
     if (options.includeTail === true && engine.getSummary().indexingComplete) {
+      setStage('profile-sampling');
       await engine.getRows({
         direction: 'backward',
         limit: DETECTION_TAIL_SAMPLE_LIMIT,
@@ -524,6 +605,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
         columns: [],
         generation: engine.snapshot.generation,
         onHydrated: (record) => {
+          if (signal.aborted) return;
           appendDetectionSample(
             samples,
             sampledOrdinals,
@@ -534,6 +616,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
         },
         ...(signal === undefined ? {} : { signal }),
       });
+      throwIfAborted(signal);
       // A head/tail-only probe can miss a producer schema transition in the
       // middle of a long file. Three small ordinal windows add coverage while
       // keeping random reads and hydration strictly bounded.
@@ -554,6 +637,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           columns: [],
           generation: engine.snapshot.generation,
           onHydrated: (record) => {
+            if (signal.aborted) return;
             appendDetectionSample(
               samples,
               sampledOrdinals,
@@ -564,8 +648,11 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           },
           ...(signal === undefined ? {} : { signal }),
         });
+        throwIfAborted(signal);
       }
     }
+    throwIfAborted(signal);
+    setStage('profile-classification');
     const decision = this.registry.detect(samples);
     const suggested = new Map(decision.suggestions.map((item) => [item.id, item]));
     const detected = new Map(decision.detections.map((item) => [item.profileId, item]));
@@ -673,6 +760,11 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           return;
         }
         const nextProfileId = this.profileExplicitlySelected ? this.profileId : detected.profileId;
+        if ('terminal' in detected.datasetProvenance) {
+          // A failed optional detector must not restart on every visible page.
+          this.tailDetectionGeneration = generation;
+          this.tailDetectionRequested = false;
+        }
         if (!this.publishProfileState({ ...detected, profileId: nextProfileId })) return;
         const summary = this.getSummary();
         for (const listener of this.listeners) listener(summary);
