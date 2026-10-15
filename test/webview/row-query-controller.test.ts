@@ -838,6 +838,33 @@ describe('row query controller with real client and reducer', () => {
     expect(test.state.unseenActivity).toBe(true);
   });
 
+  it('keeps an underfilled ascending page and its selected detail stable across append', () => {
+    const test = harness({ followMode: true });
+    test.boot();
+    const partialPage = page(['900', '950', '999'], 'g1', {
+      hasBefore: true, hasAfter: false, indexedRecords: '1000', totalRecords: '1000',
+    });
+    test.rows(test.last('GET_ROWS'), partialPage);
+    test.dispatch({ type: 'SELECT_ROW', ref: partialPage.rows[1]!.ref, ordinal: '950' });
+    test.delayCommits();
+    test.controller.pauseFollowing(partialPage.rows[1]!.ref);
+    test.opened('g2', 2, true, '1001');
+
+    const recovery = test.last('GET_ROWS');
+    expect(recovery.payload).toEqual({ limit: 100, anchorOrdinal: '949', direction: 'forward' });
+    const refreshed = page(['900', '950', '999'], 'g2', {
+      hasBefore: true, hasAfter: true, indexedRecords: '1001', totalRecords: '1001',
+    });
+    expect(test.rows(recovery, refreshed)).toBe(true);
+    test.commit();
+
+    expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['900', '950', '999']);
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.followMode).toBe(true);
+    expect(test.state.selectedOrdinal).toBe('950');
+    expect(test.state.selectedRef?.ordinal).toBe('950');
+  });
+
   it('cancels a late automatic tail page synchronously when reading begins', () => {
     const test = harness({ followMode: true });
     test.boot();
