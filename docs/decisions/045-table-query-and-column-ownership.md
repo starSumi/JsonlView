@@ -62,8 +62,12 @@ after a path search. Already selected fields remain visible in the chooser and
 retain their projection regardless of classification. Configured canonical
 record paths restore independently of schema samples and profile switches.
 The request column cap bounds projection; overflow selections remain visible
-and removable in the chooser. Sampling describes
-observed shapes, not a guaranteed whole-file schema.
+and removable in the chooser. Visibility changes remain local without issuing a
+row query when the current page projection contains every required field.
+Missing fields, including configured overflow promoted into the projection,
+retain the existing bounded viewport refresh. This retains only the current
+page projection and does not cache the file or predicate results. Sampling
+describes observed shapes, not a guaranteed whole-file schema.
 
 The controls use native checkboxes, labels, fieldsets and details disclosures,
 following the established [checkbox](https://www.w3.org/WAI/ARIA/apg/patterns/checkbox/)

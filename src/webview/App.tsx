@@ -1083,6 +1083,10 @@ export function App(): React.JSX.Element {
               if (column.source !== 'record') return;
               const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
               const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
+              // Retain the current page's bounded projection for display-only
+              // changes. Missing fields (including promoted overflow) still
+              // require hydration through the existing viewport query.
+              if (columns.every((selected) => state.columns.some((current) => current.id === selected.id))) return;
               requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
             }}
           />
