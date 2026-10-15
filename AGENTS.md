@@ -24,8 +24,9 @@ summaries, timelines, and session catalog rows are disposable projections.
   Code APIs, Webview code, or provider-private storage.
 - src/engine/ owns bounded reads, byte/record indexes, parsing, schema, and
   query execution. It never writes the source file.
-- src/profiles/ owns additive Agent semantics. Profiles preserve unknown
-  records and expose evidence paths for derived fields.
+- src/profiles/ owns additive Agent and dataset semantics. Profiles preserve
+  unknown records and expose evidence paths for derived fields; bounded dataset
+  adapters keep JSONL physical rows and raw values authoritative.
 - src/webview/ owns bounded UI state and rendering. It never receives or
   retains the complete source file.
 - src/shared/ owns versioned contracts and typed transport messages.

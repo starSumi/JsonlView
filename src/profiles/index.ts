@@ -1,5 +1,35 @@
 export { ClaudeCodeProfile } from './claude-profile';
 export {
+  GENERIC_DATASET_ADAPTER_ID,
+  GENERIC_DATASET_ADAPTER_VERSION,
+  LLAMA_FACTORY_V1_ADAPTER_ID,
+  LLAMA_FACTORY_V1_ADAPTER_VERSION,
+  LlamaFactoryV1DatasetAdapter,
+  inspectLlamaFactoryDataset,
+} from './dataset-adapter';
+export type {
+  DatasetAdapter,
+  DatasetCandidate,
+  DatasetClockBasis,
+  DatasetConfidence,
+  DatasetDetection,
+  DatasetDetectionReason,
+  DatasetFallbackCode,
+  DatasetFallbackDiagnostic,
+  DatasetFieldProjection,
+  DatasetFraming,
+  DatasetInspection,
+  DatasetInspectionOptions,
+  DatasetProvenance,
+  DatasetRecordProjection,
+  DatasetRecordSample,
+  DatasetSampleCoverage,
+  DatasetSamplePlan,
+  DatasetShape,
+  DatasetSourceIdentity,
+  DatasetTruncationReason,
+} from './dataset-adapter';
+export {
   CodexHistoryProfile,
   CodexSessionIndexProfile,
   isHistoryEntry,
