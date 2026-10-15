@@ -346,7 +346,9 @@ function isEventEnvelope(value: EventObject, profile?: AgentRowProjection): bool
       || Array.isArray(value.chosen_messages)
       || Array.isArray(value.rejected_messages)
       || textOf(own(value, 'instruction')) !== undefined
+      || textOf(own(value, 'prompt')) !== undefined
       || textOf(own(value, 'output')) !== undefined
+      || textOf(own(value, 'completion')) !== undefined
       || (textOf(own(value, 'chosen')) !== undefined && textOf(own(value, 'rejected')) !== undefined)
     );
 }
@@ -862,7 +864,7 @@ function roleLabel(value: unknown, fallback: string): string {
   return role;
 }
 
-function genericDatasetSections(payload: EventObject): EventPresentationSection[] {
+function genericDatasetSections(payload: EventObject, toolEvent: boolean): EventPresentationSection[] {
   const sections: EventPresentationSection[] = [];
   const addMessageGroup = (label: string, messages: unknown[]): void => {
     messages.slice(0, 32).forEach((rawMessage, index) => {
@@ -883,14 +885,28 @@ function genericDatasetSections(payload: EventObject): EventPresentationSection[
   if (Array.isArray(payload.chosen_messages)) addMessageGroup('Chosen', payload.chosen_messages);
   if (Array.isArray(payload.rejected_messages)) addMessageGroup('Rejected', payload.rejected_messages);
 
-  // Alpaca and ranking datasets use named columns instead of a messages array.
+  // Named-column datasets keep scalar text readable and structured metadata
+  // in bounded JSON sections. Raw remains authoritative for fields outside
+  // this semantic projection.
   addTextCandidate(sections, 'System', own(payload, 'system'));
-  addTextCandidate(sections, 'Prompt', own(payload, 'instruction'));
-  addTextCandidate(sections, 'Input', own(payload, 'input'));
-  addTextCandidate(sections, 'Response', own(payload, 'output'), true);
+  const prompt = own(payload, 'prompt');
+  const hasPrompt = textOf(prompt) !== undefined;
+  if (hasPrompt) addTextCandidate(sections, 'Instruction', own(payload, 'instruction'));
+  addTextCandidate(sections, 'Prompt', hasPrompt ? prompt : own(payload, 'instruction'));
+  if (!toolEvent) {
+    addTextCandidate(sections, 'Input', own(payload, 'input'));
+    addTextCandidate(sections, 'Response', own(payload, 'output'), true);
+  }
+  addTextCandidate(sections, 'Completion', own(payload, 'completion'), true);
   addTextCandidate(sections, 'History', own(payload, 'history'));
   addTextCandidate(sections, 'Chosen', own(payload, 'chosen'), true);
   addTextCandidate(sections, 'Rejected', own(payload, 'rejected'), true);
+  addTextCandidate(sections, 'Title', own(payload, 'title'));
+  addTextCandidate(sections, 'Category', own(payload, 'category'));
+  addCodeCandidate(sections, 'Tags', own(payload, 'tags'), 'json');
+  addTextCandidate(sections, 'Token count', own(payload, 'token_count'));
+  addCodeCandidate(sections, 'Tokens', own(payload, 'tokens'), 'json');
+  addCodeCandidate(sections, 'Metadata', own(payload, 'metadata'), 'json');
   if (own(payload, 'tools') !== undefined) addCodeCandidate(sections, 'Tools', own(payload, 'tools'), 'json');
   return sections;
 }
@@ -903,9 +919,11 @@ function genericDatasetKind(
   if (Array.isArray(payload.conversations)) return 'conversations';
   if (Array.isArray(payload.chosen_messages) || Array.isArray(payload.rejected_messages)) return 'preference';
   if (genericTextKey) return genericTextKey;
-  if (textOf(own(payload, 'instruction')) !== undefined) return 'instruction';
-  if (textOf(own(payload, 'output')) !== undefined) return 'output';
   if (textOf(own(payload, 'chosen')) !== undefined && textOf(own(payload, 'rejected')) !== undefined) return 'preference';
+  if (textOf(own(payload, 'instruction')) !== undefined) return 'instruction';
+  if (textOf(own(payload, 'prompt')) !== undefined) return 'prompt';
+  if (textOf(own(payload, 'output')) !== undefined) return 'output';
+  if (textOf(own(payload, 'completion')) !== undefined) return 'completion';
   return undefined;
 }
 
@@ -972,10 +990,14 @@ export function buildAgentEventPresentation(
   const genericTextKey = profile?.profileId === 'generic'
     ? ['text', 'content', 'message'].find((key) => textOf(own(payload, key)) !== undefined)
     : undefined;
-  const genericDatasetKey = profile?.profileId === 'generic'
+  const itemType = firstString(completedItem ? [completedItem, payload] : [payload], ['type', 'event_type', 'kind', 'item_type']);
+  const genericToolEvent = profile?.profileId === 'generic' && (
+    profile.eventKind === 'tool_call' || profile.eventKind === 'tool_result'
+    || /tool|function[._-]?call|command[._-]?execution/i.test(itemType ?? envelopeType ?? '')
+  );
+  const genericDatasetKey = profile?.profileId === 'generic' && !genericToolEvent
     ? genericDatasetKind(payload, genericTextKey)
     : undefined;
-  const itemType = firstString(completedItem ? [completedItem, payload] : [payload], ['type', 'event_type', 'kind', 'item_type']);
   const lifecycleType = payloadType?.startsWith('item.')
     ? payloadType.replace('.', '_')
     : (envelopeType?.startsWith('item.') ? envelopeType.replace('.', '_') : payloadType);
@@ -1074,7 +1096,7 @@ export function buildAgentEventPresentation(
     || isPrompt
     || isObservation
     || genericTextKey !== undefined
-  )) {
+  ) && !(profile?.profileId === 'generic' && isPrompt)) {
     sections.push({
       title: genericTextKey
         ? genericTextKey[0]?.toUpperCase() + genericTextKey.slice(1)
@@ -1084,7 +1106,7 @@ export function buildAgentEventPresentation(
         || isAgentMarkdownText(payload, payload, content, profile),
     });
   }
-  if (profile?.profileId === 'generic') sections.push(...genericDatasetSections(payload));
+  if (profile?.profileId === 'generic') sections.push(...genericDatasetSections(payload, genericToolEvent));
   if (isCodexProfile) {
     if (profile?.profileId === 'codex-rollout') sections.push(...codexContextSections(semanticType, payload));
     sections.push(...codexItemSections(codexItemSource, normalizedItemType));
@@ -1099,18 +1121,26 @@ export function buildAgentEventPresentation(
     ?? payload.input
     ?? payload.command;
   if (toolInput !== undefined
-    && (lowerKind.includes('call') || lowerKind.includes('tool') || payload.command !== undefined)
+    && (genericToolEvent || lowerKind.includes('call') || lowerKind.includes('tool') || payload.command !== undefined)
     && normalizedItemType !== 'custom_tool_call'
     && !sections.some((section) => section.title === 'Command' || section.title === 'Arguments' || section.title === 'Tool call')) {
     addCodeCandidate(sections, 'Tool call', toolInput);
   }
-  const toolOutput = completedItem?.output
+  const itemToolOutput = completedItem?.output
     ?? completedItem?.result
     ?? completedItem?.aggregated_output
+    ?? undefined;
+  const toolOutput = itemToolOutput
     ?? payload.output
     ?? payload.result;
-  if (toolOutput !== undefined
-    && (lowerKind.includes('output') || lowerKind.includes('result') || lowerKind.includes('tool'))
+  // The top-level dataset output already owns the Response section. Do not
+  // classify it again merely because the derived dataset kind is 'output'.
+  const datasetOutputPresented = profile?.profileId === 'generic'
+    && itemToolOutput === undefined
+    && payload.output !== undefined && payload.output !== null
+    && sections.some((section) => section.title === 'Response');
+  if (!datasetOutputPresented && toolOutput !== undefined
+    && (genericToolEvent || lowerKind.includes('output') || lowerKind.includes('result') || lowerKind.includes('tool'))
     && normalizedItemType !== 'custom_tool_call_output'
     && normalizedItemType !== 'function_call_output'
     && !sections.some((section) => section.title === 'Result' || section.title === 'Output' || section.title === 'Tool result' || section.title === 'aggregated output')) {

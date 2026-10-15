@@ -726,6 +726,119 @@ describe('structured agent event presentation', () => {
     ]));
   });
 
+  it('does not repeat a generic batch output as both response and tool result', () => {
+    const model = buildAgentEventPresentation({
+      input: 'Write a bounded answer',
+      output: 'Processed answer',
+      status: 'success',
+      processed_at: 1_719_982_542.91395,
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'output', evidence: [], confidence: 'source',
+    });
+
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Input', text: 'Write a bounded answer' }),
+      expect.objectContaining({ title: 'Response', text: 'Processed answer' }),
+    ]));
+    expect(model?.sections.filter((section) => section.title === 'Tool result')).toHaveLength(0);
+  });
+
+  it('renders prompt/completion and knowledge metadata in generic dataset details', () => {
+    const instruction = buildAgentEventPresentation({
+      prompt: 'Write a bounded answer',
+      completion: 'The answer is bounded.',
+      metadata: { type: 'instruction', source_id: 1 },
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'instruction', evidence: [], confidence: 'source',
+    });
+    expect(instruction?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Prompt', text: 'Write a bounded answer' }),
+      expect.objectContaining({ title: 'Completion', text: 'The answer is bounded.' }),
+      expect.objectContaining({ title: 'Metadata', language: 'json' }),
+    ]));
+
+    const knowledge = buildAgentEventPresentation({
+      id: 1, title: 'Knowledge title', content: 'Knowledge body', category: 'docs', tags: ['jsonl', 'dataset'],
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'content', evidence: [], confidence: 'source',
+    });
+    expect(knowledge?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Title', text: 'Knowledge title' }),
+      expect.objectContaining({ title: 'Content', text: 'Knowledge body' }),
+      expect.objectContaining({ title: 'Category', text: 'docs' }),
+      expect.objectContaining({ title: 'Tags', language: 'json' }),
+    ]));
+    expect(knowledge?.sections.filter((section) => section.title === 'Content')).toHaveLength(1);
+  });
+
+  it('keeps pretraining text, token ids and declared token count visible', () => {
+    const model = buildAgentEventPresentation({
+      id: 1, text: 'Training text', tokens: [12, 34, 56], token_count: 3,
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'text', evidence: [], confidence: 'source',
+    });
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Text', text: 'Training text' }),
+      expect.objectContaining({ title: 'Tokens', language: 'json' }),
+      expect.objectContaining({ title: 'Token count', text: '3' }),
+    ]));
+    expect(model?.sections.filter((section) => section.title === 'Text')).toHaveLength(1);
+    expect(model?.sections.some((section) => section.title === 'Prompt')).toBe(false);
+  });
+
+  it('keeps prompt in preference data and distinct instruction/prompt columns', () => {
+    const profile = {
+      profileId: 'generic' as const, eventKind: 'other' as const, summary: 'dataset', evidence: [], confidence: 'source' as const,
+    };
+    const preference = buildAgentEventPresentation({
+      prompt: 'Compare answers', chosen: 'good', rejected: 'bad', metadata: { type: 'preference' },
+    }, profile);
+    expect(preference?.kind).toBe('preference');
+    expect(preference?.sections.map((section) => section.title)).toEqual(['Prompt', 'Chosen', 'Rejected', 'Metadata']);
+
+    const combined = buildAgentEventPresentation({ instruction: 'Instruction column', prompt: 'Prompt column' }, profile);
+    expect(combined?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Instruction', text: 'Instruction column' }),
+      expect.objectContaining({ title: 'Prompt', text: 'Prompt column' }),
+    ]));
+    const nullPrompt = buildAgentEventPresentation({ instruction: 'Instruction column', prompt: null }, profile);
+    expect(nullPrompt?.sections.map((section) => section.title)).toEqual(['Prompt']);
+  });
+
+  it('preserves explicit tool result fallback under a Generic profile', () => {
+    const model = buildAgentEventPresentation({ type: 'tool_result', result: 'Tool result body' }, {
+      profileId: 'generic', eventKind: 'other', summary: 'tool result', evidence: [], confidence: 'source',
+    });
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Tool result', text: 'Tool result body' }),
+    ]));
+  });
+
+  it('keeps explicitly typed Generic tool output distinct from dataset output', () => {
+    const model = buildAgentEventPresentation({ type: 'tool_result', output: 'Tool result body' }, {
+      profileId: 'generic', eventKind: 'other', summary: 'tool result', evidence: [], confidence: 'source',
+    });
+    expect(model?.kind).toBe('tool_result');
+    expect(model?.sections).toEqual([expect.objectContaining({ title: 'Tool result', text: 'Tool result body' })]);
+    const call = buildAgentEventPresentation({ type: 'tool_call', input: { path: 'synthetic.txt' } }, {
+      profileId: 'generic', eventKind: 'tool_call', summary: 'tool call', evidence: [], confidence: 'source',
+    });
+    expect(call?.sections.map((section) => section.title)).toEqual(['Tool call']);
+  });
+
+  it.each(['command_execution', 'function_call'])('preserves output on generic %s events', (type) => {
+    const model = buildAgentEventPresentation({ type, input: 'arguments', output: 'result' }, {
+      profileId: 'generic', eventKind: 'other', summary: 'tool event', evidence: [], confidence: 'source',
+    });
+    expect(model?.sections.filter((section) => section.title === 'Tool call')).toEqual([
+      expect.objectContaining({ code: 'arguments' }),
+    ]);
+    expect(model?.sections.filter((section) => section.title === 'Tool result')).toEqual([
+      expect.objectContaining({ text: 'result' }),
+    ]);
+    expect(model?.sections.some((section) => section.title === 'Response')).toBe(false);
+  });
+
   it('treats thread and turn items as structured containers', () => {
     const thread = buildAgentEventPresentation({
       type: 'thread_item',
@@ -1213,6 +1326,19 @@ describe('structured agent event presentation', () => {
     expect(claude?.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ title: 'Additional content blocks', previewOnly: true }),
     ]));
+    const dataset = buildAgentEventPresentation({
+      text: 'Bounded dataset record',
+      tags: guarded(514, 'tag', 512),
+      tokens: guarded(514, 'token', 512),
+      metadata: { values: guarded(514, 'value', 512) },
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'dataset', evidence: [], confidence: 'source',
+    });
+    for (const title of ['Tags', 'Tokens', 'Metadata']) {
+      expect(dataset?.sections.find((section) => section.title === title)).toEqual(
+        expect.objectContaining({ language: 'json', previewOnly: true }),
+      );
+    }
     expect(outOfBudgetReads).toBe(0);
   });
 });

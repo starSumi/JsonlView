@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Show prompt/completion, preference prompts, token data, and knowledge metadata in Generic JSONL detail previews. Render batch output once while preserving explicit tool results and the source record in Raw.
 - Add metadata-only dataset head provenance for bounded LLaMA-Factory shape inspection, with profile-epoch-safe publication, Generic JSONL fallback, and a Profile status indicator.
 - Observe stalled document creation before editor resolve, and clean up its watchdog on completion, failure, or cancellation while preserving late results and existing startup outcomes.
 - Make every indexed Session Navigator root and nested child reachable through bounded continuation branches. Discard invalidated page reads and preserve non-ASCII title order across catalog pages.
