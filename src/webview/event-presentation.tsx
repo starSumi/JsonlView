@@ -331,10 +331,21 @@ function presentationProduct(profile?: AgentRowProjection): string {
   return 'Agent';
 }
 
+function hasEventEnvelopeType(value: EventObject): boolean {
+  const type = valueLabel(value.type);
+  return type !== undefined && /(?:response_item|event_msg|session_meta|turn_context|thread_item|turn_item|tool|message|span|trace)/i.test(type);
+}
+
+function isGenericToolEvent(profile: AgentRowProjection | undefined, type: string | undefined): boolean {
+  return profile?.profileId === 'generic' && (
+    profile.eventKind === 'tool_call' || profile.eventKind === 'tool_result'
+    || /tool|function[._-]?call|command[._-]?execution/i.test(type ?? '')
+  );
+}
+
 function isEventEnvelope(value: EventObject, profile?: AgentRowProjection): boolean {
   if (profile?.profileId && profile.profileId !== 'generic') return true;
-  const type = valueLabel(value.type);
-  if (type && /(?:response_item|event_msg|session_meta|turn_context|thread_item|turn_item|tool|message|span|trace)/i.test(type)) return true;
+  if (hasEventEnvelopeType(value)) return true;
   // Generic datasets often carry their human-readable payload in a top-level
   // text/content/message field without an event discriminator. The additional
   // training-data shapes are likewise explicit; arbitrary scalar columns do
@@ -1001,19 +1012,20 @@ export function buildAgentEventPresentation(
 ): AgentEventPresentationModel | undefined {
   const envelope = objectOf(value);
   if (!envelope || !isEventEnvelope(envelope, profile)) return undefined;
-  const payload = objectOf(envelope.payload) ?? envelope;
-  const completedItem = objectOf(payload.item);
   const envelopeType = valueLabel(envelope.type);
+  // A dataset's ordinary payload column cannot replace its top-level fields.
+  // Only an explicit event/tool envelope or a semantic profile owns unwrapping.
+  const datasetRoot = profile?.profileId === 'generic'
+    && !hasEventEnvelopeType(envelope) && !isGenericToolEvent(profile, envelopeType);
+  const payload = datasetRoot ? envelope : (objectOf(envelope.payload) ?? envelope);
+  const completedItem = objectOf(payload.item);
   const payloadType = valueLabel(payload.type);
   const semanticType = envelopeType === 'event_msg' ? payloadType : envelopeType;
   const genericTextKey = profile?.profileId === 'generic'
     ? ['text', 'content', 'message'].find((key) => textOf(own(payload, key)) !== undefined)
     : undefined;
   const itemType = firstString(completedItem ? [completedItem, payload] : [payload], ['type', 'event_type', 'kind', 'item_type']);
-  const genericToolEvent = profile?.profileId === 'generic' && (
-    profile.eventKind === 'tool_call' || profile.eventKind === 'tool_result'
-    || /tool|function[._-]?call|command[._-]?execution/i.test(itemType ?? envelopeType ?? '')
-  );
+  const genericToolEvent = isGenericToolEvent(profile, itemType ?? envelopeType);
   const genericDatasetKey = profile?.profileId === 'generic' && !genericToolEvent
     ? genericDatasetKind(payload, genericTextKey)
     : undefined;

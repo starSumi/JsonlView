@@ -873,6 +873,72 @@ describe('structured agent event presentation', () => {
     expect(model?.sections.some((section) => section.title === 'Prompt')).toBe(false);
   });
 
+  it.each([undefined, 'training_record'])('keeps Generic dataset fields at the row root with type %s', (type) => {
+    const model = buildAgentEventPresentation({
+      ...(type === undefined ? {} : { type }),
+      prompt: 'Row prompt', output: 'Row output', title: 'Row title', tags: ['row'],
+      payload: { prompt: 'Nested prompt', output: 'Nested output', title: 'Nested title', tags: ['nested'] },
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'dataset', evidence: [], confidence: 'source',
+    });
+
+    expect(model?.sections).toEqual([
+      expect.objectContaining({ title: 'Prompt', text: 'Row prompt' }),
+      expect.objectContaining({ title: 'Response', text: 'Row output' }),
+      expect.objectContaining({ title: 'Title', text: 'Row title' }),
+      expect.objectContaining({ title: 'Tags', code: '[\n  "row"\n]' }),
+    ]);
+  });
+
+  it.each([undefined, null, [], [{ prompt: 'Nested prompt' }]])('keeps Generic row fields with a non-object payload %j', (payload) => {
+    const model = buildAgentEventPresentation({
+      prompt: 'Row prompt', output: 'Row output',
+      ...(payload === undefined ? {} : { payload }),
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'dataset', evidence: [], confidence: 'source',
+    });
+
+    expect(model?.sections.map(({ title, text }) => ({ title, text }))).toEqual([
+      { title: 'Prompt', text: 'Row prompt' }, { title: 'Response', text: 'Row output' },
+    ]);
+  });
+
+  it('keeps explicitly typed Generic event envelopes bound to their payload', () => {
+    const model = buildAgentEventPresentation({
+      type: 'thread_item', prompt: 'Envelope metadata',
+      payload: { type: 'message', prompt: 'Event prompt', output: 'Event output' },
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'event', evidence: [], confidence: 'source',
+    });
+
+    expect(model?.sections).toEqual([
+      expect.objectContaining({ title: 'Prompt', text: 'Event prompt' }),
+      expect.objectContaining({ title: 'Response', text: 'Event output' }),
+    ]);
+  });
+
+  it.each(['tool_result', 'function_call', 'command_execution'])('keeps Generic %s envelopes bound to tool payloads', (type) => {
+    const model = buildAgentEventPresentation({
+      type, output: 'Envelope metadata',
+      payload: { type, output: 'Tool output' },
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'tool', evidence: [], confidence: 'source',
+    });
+
+    expect(model?.sections).toEqual([expect.objectContaining({ title: 'Tool result', text: 'Tool output' })]);
+  });
+
+  it('preserves non-Generic payload selection without a top-level discriminator', () => {
+    const model = buildAgentEventPresentation({
+      prompt: 'Envelope metadata',
+      payload: { type: 'message', role: 'assistant', content: 'Event message' },
+    }, {
+      profileId: 'codex-rollout', eventKind: 'message', summary: 'event', evidence: [], confidence: 'source',
+    });
+
+    expect(model?.sections).toEqual([expect.objectContaining({ title: 'Message', text: 'Event message' })]);
+  });
+
   it('keeps prompt in preference data and distinct instruction/prompt columns', () => {
     const profile = {
       profileId: 'generic' as const, eventKind: 'other' as const, summary: 'dataset', evidence: [], confidence: 'source' as const,
