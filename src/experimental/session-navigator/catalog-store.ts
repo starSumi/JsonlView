@@ -479,7 +479,11 @@ function sortValueFor(row: EntityRow, sortKey: SessionNavigatorSortKey): string 
     case 'created':
       return row.started_at ?? row.updated_at ?? '';
     case 'title':
-      return (row.product_title ?? row.vendor_title ?? row.label).toLocaleLowerCase();
+      // Keep the original title. SQLite applies its NOCASE collation to both
+      // the ORDER BY expression and the keyset predicate; applying JavaScript
+      // locale folding here can disagree for non-ASCII titles (for example Ä/Ö)
+      // and skip or repeat a row at a page boundary.
+      return row.product_title ?? row.vendor_title ?? row.label;
     case 'activity':
     default:
       return row.activity_at ?? row.updated_at ?? row.started_at ?? '';

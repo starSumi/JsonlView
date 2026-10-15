@@ -106,6 +106,11 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Treat filesystem notifications as invalidation hints and re-check source
   state before incremental work.
 - Keep messages bounded and reject stale generations.
+- Session Navigator catalog children use bounded query pages and explicit tree
+  continuation branches, separate from provider scan continuations. Bind each
+  branch to its source, generation, parent, sort, and lifecycle epoch; discard
+  late reads after invalidation and keep title cursor comparison in SQLite's
+  selected collation.
 - Insights results commit only against the current AnalysisIntent v1, including
   normalized query conditions, scope, monotonic intent revision, source identity,
   and the selected profile revision. Display columns remain independent.

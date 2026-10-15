@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { lstat, realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { CatalogStore, type CatalogAppendGuard } from './catalog-store';
+import { CatalogStore, DEFAULT_CATALOG_PAGE_LIMIT, type CatalogAppendGuard } from './catalog-store';
 import { createSessionNavigatorProvider } from './provider-factory';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import { RevealIntentRegistry } from './reveal-intents';
@@ -26,9 +26,26 @@ interface EntityTreeNode {
   readonly entity: NavigatorEntity;
 }
 
+interface CatalogPageTreeNode {
+  readonly nodeKind: 'catalog-page';
+  readonly sourceId: string;
+  readonly generation: string;
+  readonly parentNativeId: string | undefined;
+  readonly sortKey: SessionNavigatorSortKey;
+  readonly cursor: string;
+  readonly epoch: number;
+}
+
+interface CatalogErrorTreeNode {
+  readonly nodeKind: 'catalog-error';
+  readonly sourceId: string;
+  readonly pageId: string;
+  readonly detail: string;
+}
+
 interface SourceStatus { phase: 'loading' | 'error'; detail?: string }
 
-export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode;
+export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode | CatalogPageTreeNode | CatalogErrorTreeNode;
 
 export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<SessionNavigatorTreeNode>, vscode.Disposable {
   readonly #context: vscode.ExtensionContext;
@@ -44,6 +61,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #refreshAgain = false;
   readonly #pageFlights = new Map<string, Promise<void>>();
   readonly #pageControllers = new Map<string, AbortController>();
+  readonly #childrenFlights = new Map<string, Promise<SessionNavigatorTreeNode[]>>();
   readonly #sourceEpochs = new Map<string, number>();
   /**
    * A Claude directory can be visible before its first metadata records are
@@ -105,9 +123,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       this.#treeView.onDidChangeVisibility((event) => this.handleVisibility(event.visible)),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('jsonlView.sessionNavigator')) {
+          this.invalidateAllSources();
           if (event.affectsConfiguration('jsonlView.' + SOURCES_SETTING) || event.affectsConfiguration('jsonlView.' + ENABLED_SETTING)) {
             this.#scanController?.abort();
-            this.invalidateAllSources();
             this.#refreshAgain = true;
             this.#initialized = false;
             this.handleVisibility(this.#treeView?.visible ?? false);
@@ -121,6 +139,24 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   }
 
   public getTreeItem(node: SessionNavigatorTreeNode): vscode.TreeItem {
+    if (node.nodeKind === 'catalog-page') {
+      const item = new vscode.TreeItem('More indexed sessions…', vscode.TreeItemCollapsibleState.Collapsed);
+      item.id = 'catalog-page:' + childrenFlightKey(node);
+      item.contextValue = 'jsonlView.sessionNavigator.catalogPage';
+      item.description = 'Next ' + String(DEFAULT_CATALOG_PAGE_LIMIT);
+      item.iconPath = new vscode.ThemeIcon('ellipsis');
+      item.tooltip = 'Expand to read the next bounded page of indexed sessions. Use the source Load More action to scan additional provider metadata.';
+      return item;
+    }
+    if (node.nodeKind === 'catalog-error') {
+      const item = new vscode.TreeItem('Session page unavailable · Refresh', vscode.TreeItemCollapsibleState.None);
+      item.id = 'catalog-error:' + node.pageId;
+      item.contextValue = 'jsonlView.sessionNavigator.catalogError';
+      item.iconPath = new vscode.ThemeIcon('warning');
+      item.tooltip = node.detail;
+      item.command = { command: 'jsonlView.sessionNavigator.refresh', title: 'Reload session pages' };
+      return item;
+    }
     if (node.nodeKind === 'source') {
       const status = this.#sourceStatus.get(node.source.sourceId);
       const item = new vscode.TreeItem(node.source.label, node.source.entityCount > 0
@@ -181,14 +217,64 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       return store.listSources().map((source) => ({ nodeKind: 'source', source } satisfies SourceTreeNode));
     }
     if (node.nodeKind === 'source') {
-      return store.getChildren(node.source.sourceId, undefined, this.sortKey()).map((entity) => ({ nodeKind: 'entity', entity } satisfies EntityTreeNode));
+      if (store.getSourcePageState(node.source.sourceId)?.generation !== node.source.generation) {
+        return this.catalogPageError(node.source.sourceId, 'Catalog source generation is stale. Refresh to reload session pages.');
+      }
+      return this.catalogChildren(store, node.source.sourceId);
     }
-    return store.getChildren(node.entity.sourceId, node.entity.nativeId, this.sortKey()).map((entity) => ({ nodeKind: 'entity', entity } satisfies EntityTreeNode));
+    if (node.nodeKind === 'catalog-page') return this.catalogChildren(store, node.sourceId, node.parentNativeId, node);
+    if (node.nodeKind === 'catalog-error') return [];
+    if (store.getSourcePageState(node.entity.sourceId)?.generation !== node.entity.generation) return this.catalogPageError(node.entity.sourceId, 'Catalog children generation is stale. Refresh to reload session pages.', 'entity:' + node.entity.sourceId + ':' + node.entity.nativeId);
+    return this.catalogChildren(store, node.entity.sourceId, node.entity.nativeId);
+  }
+
+  private catalogPageError(sourceId: string, detail: string, pageId = sourceId): SessionNavigatorTreeNode[] {
+    return [{ nodeKind: 'catalog-error', sourceId, pageId, detail }];
+  }
+
+  private catalogChildren(store: CatalogStore, sourceId: string, parentNativeId?: string, continuation?: CatalogPageTreeNode): Promise<SessionNavigatorTreeNode[]> {
+    const generation = store.getSourcePageState(sourceId)?.generation;
+    if (generation === undefined) return Promise.resolve([]);
+    const epoch = this.sourceEpoch(sourceId);
+    this.#sourceEpochs.set(sourceId, epoch);
+    const sortKey = this.sortKey();
+    if (continuation !== undefined && (continuation.generation !== generation || continuation.epoch !== epoch || continuation.sortKey !== sortKey)) {
+      return Promise.resolve(this.catalogPageError(sourceId, 'Catalog children cursor is stale. Refresh to reload session pages.', childrenFlightKey(continuation)));
+    }
+    const identity = { sourceId, generation, parentNativeId, sortKey, cursor: continuation?.cursor ?? '', epoch };
+    const key = childrenFlightKey(identity);
+    const existing = this.#childrenFlights.get(key);
+    if (existing !== undefined) return existing;
+    const controller = new AbortController();
+    this.#pageControllers.set(key, controller);
+    const current = () => !controller.signal.aborted && !this.#disposed && this.isEnabled() && this.sourceEpoch(sourceId) === epoch
+      && this.sortKey() === sortKey && this.settings().some((setting) => sourceIdFor(setting) === sourceId);
+    // Keep only active reads. Expanded branches belong to VS Code; the provider
+    // never retains or concatenates earlier entity pages.
+    const flight = Promise.resolve().then(async (): Promise<SessionNavigatorTreeNode[]> => {
+      if (!current()) return [];
+      const pageOptions = continuation === undefined ? { signal: controller.signal } : { cursor: continuation.cursor, signal: controller.signal };
+      const page = await store.getChildrenPage(sourceId, parentNativeId, sortKey, pageOptions);
+      if (!current()) return [];
+      if (store.getSourcePageState(sourceId)?.generation !== generation || page.generation !== generation) {
+        return this.catalogPageError(sourceId, 'Catalog children generation is stale. Refresh to reload session pages.', key);
+      }
+      const nodes: SessionNavigatorTreeNode[] = page.entities.map((entity) => ({ nodeKind: 'entity', entity }));
+      if (page.nextCursor !== undefined) nodes.push({ nodeKind: 'catalog-page', ...identity, cursor: page.nextCursor });
+      return nodes;
+    }).catch((error: unknown) => current() ? this.catalogPageError(sourceId, error instanceof Error ? error.message : 'Catalog children page could not load.', key) : [])
+      .finally(() => {
+        if (this.#pageControllers.get(key) === controller) this.#pageControllers.delete(key);
+        if (this.#childrenFlights.get(key) === flight) this.#childrenFlights.delete(key);
+      });
+    this.#childrenFlights.set(key, flight);
+    return flight;
   }
 
   public async refresh(): Promise<void> {
     if (this.#disposed || !this.isEnabled()) return;
     if (this.#refreshing !== undefined) return this.#refreshing;
+    this.invalidateAllSources();
     if (this.#treeView) this.#treeView.message = 'Loading sessions…';
     this.#changed.fire(undefined);
     this.#refreshing = Promise.resolve(vscode.window.withProgress({ location: { viewId: 'jsonlView.sessionNavigator' } }, () => this.runRefreshes()));
@@ -472,6 +558,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   /** Resolve a safe local filesystem URI for either a source or an entity. */
   private async nodeUri(node: SessionNavigatorTreeNode): Promise<vscode.Uri | undefined> {
     if (this.#disposed || !this.isEnabled()) return undefined;
+    if (node.nodeKind !== 'source' && node.nodeKind !== 'entity') return undefined;
     const store = await this.ensureStore();
     if (node.nodeKind === 'source') {
       const rootUriString = store.getSourceRoot(node.source.sourceId);
@@ -804,6 +891,10 @@ async function isRegularFile(path: string): Promise<boolean> {
 }
 function pageFlightKey(sourceId: string, generation: string, cursor: string): string {
   return sourceId + '\u0000' + generation + '\u0000' + cursor;
+}
+
+function childrenFlightKey(value: { readonly sourceId: string; readonly generation: string; readonly parentNativeId: string | undefined; readonly sortKey: SessionNavigatorSortKey; readonly cursor: string; readonly epoch: number }): string {
+  return value.sourceId + '\u0000children\u0000' + JSON.stringify([value.generation, value.parentNativeId ?? null, value.sortKey, value.cursor, value.epoch]);
 }
 
 function relativeTime(value: string): string {

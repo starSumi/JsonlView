@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as vscode from 'vscode';
 import type { AuthorizedSourceSetting, SessionNavigatorScanResult } from '../../src/experimental/session-navigator/types';
+import type { SessionNavigatorTreeNode } from '../../src/experimental/session-navigator/tree-provider';
 
 const host = vi.hoisted(() => ({
   config: new Map<string, unknown>(), state: new Map<string, unknown>(),
@@ -50,6 +51,7 @@ vi.mock('../../src/experimental/session-navigator/provider-factory', () => ({ cr
 vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class { show() { host.intake(); } async dispose() {} } }));
 import { SessionNavigatorTreeProvider } from '../../src/experimental/session-navigator/tree-provider';
 import { RevealIntentRegistry } from '../../src/experimental/session-navigator/reveal-intents';
+import { CatalogStore, type CatalogChildrenPage } from '../../src/experimental/session-navigator/catalog-store';
 
 let root: string;
 let tree: SessionNavigatorTreeProvider;
@@ -82,7 +84,7 @@ beforeEach(async () => {
   tree = createTree();
   tree.register();
 });
-afterEach(async () => { tree.dispose(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); tree.dispose(); await rm(root, { recursive: true, force: true }); });
 
 describe('Session Navigator host lifecycle', () => {
   async function loadedEntity() {
@@ -305,6 +307,136 @@ describe('Session Navigator host lifecycle', () => {
     const [source] = await tree.getChildren();
     expect(tree.getTreeItem(source!).description).toBe('1 session · partial index');
     expect(host.progress).toHaveBeenCalledWith({ location: { viewId: 'jsonlView.sessionNavigator' } }, expect.any(Function));
+  });
+
+  it('exposes every root and nested child through bounded catalog page tree nodes', async () => {
+    const rootEntities = Array.from({ length: 204 }, (_, index) => ({
+      sourceId: 'fixture', nativeId: 'root-' + String(index), kind: 'session' as const, label: 'Root ' + String(index),
+      activityAt: '2026-10-08T00:' + String(index % 60).padStart(2, '0') + ':00.000Z', confidence: 'source' as const,
+    }));
+    const parent = { sourceId: 'fixture', nativeId: 'parent', kind: 'session' as const, label: 'Parent', activityAt: '2026-10-08T23:59:00.000Z', confidence: 'source' as const };
+    const nested = Array.from({ length: 205 }, (_, index) => ({
+      sourceId: 'fixture', nativeId: 'child-' + String(index), kind: 'subagent' as const, label: 'Child ' + String(index),
+      parentNativeId: 'parent', confidence: 'source' as const,
+    }));
+    host.scan.mockResolvedValueOnce({
+      fingerprint: 'many',
+      snapshot: { ...snapshot.snapshot, entities: [parent, ...rootEntities, ...nested],
+        relations: nested.map((child) => ({ sourceId: 'fixture', fromNativeId: child.nativeId, toNativeId: 'parent', kind: 'parent' as const })),
+        locations: [], },
+    });
+
+    await tree.refresh();
+    const [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected a source node');
+    const roots: SessionNavigatorTreeNode[] = [];
+    let page = await tree.getChildren(source);
+    while (true) {
+      expect(page.length).toBeLessThanOrEqual(201);
+      roots.push(...page.filter((node) => node.nodeKind === 'entity'));
+      const next = page.find((node) => node.nodeKind === 'catalog-page');
+      if (next === undefined) break;
+      expect(tree.getTreeItem(next).collapsibleState).toBe(1);
+      expect(tree.getTreeItem(next).contextValue).toBe('jsonlView.sessionNavigator.catalogPage');
+      await tree.loadMore(next);
+      expect(host.scanPage).not.toHaveBeenCalled();
+      page = await tree.getChildren(next);
+    }
+    expect(roots.filter((node) => node.nodeKind === 'entity').map((node) => node.entity.nativeId)).toHaveLength(205);
+    expect(new Set(roots.filter((node) => node.nodeKind === 'entity').map((node) => node.entity.nativeId)).size).toBe(205);
+    const parentNode = roots.find((node) => node.nodeKind === 'entity' && node.entity.nativeId === 'parent');
+    if (parentNode === undefined || parentNode.nodeKind !== 'entity') throw new Error('Expected parent node');
+    const children: SessionNavigatorTreeNode[] = [];
+    page = await tree.getChildren(parentNode);
+    while (true) {
+      expect(page.length).toBeLessThanOrEqual(201);
+      children.push(...page.filter((node) => node.nodeKind === 'entity'));
+      const next = page.find((node) => node.nodeKind === 'catalog-page');
+      if (next === undefined) break;
+      page = await tree.getChildren(next);
+    }
+    expect(children.filter((node) => node.nodeKind === 'entity').map((node) => node.entity.nativeId)).toHaveLength(205);
+    expect(new Set(children.filter((node) => node.nodeKind === 'entity').map((node) => node.entity.nativeId)).size).toBe(205);
+  });
+
+  async function loadedContinuation() {
+    host.scan.mockResolvedValueOnce({ ...snapshot, snapshot: { ...snapshot.snapshot,
+      entities: Array.from({ length: 205 }, (_, index) => ({ ...snapshot.snapshot.entities[0]!, nativeId: 'root-' + String(index) })), locations: [],
+    } });
+    await tree.refresh();
+    const [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected source');
+    const next = (await tree.getChildren(source)).find((node) => node.nodeKind === 'catalog-page');
+    if (next?.nodeKind !== 'catalog-page') throw new Error('Expected child continuation');
+    return { source, next };
+  }
+
+  it('coalesces repeated expansion of the same catalog page without retaining completed pages', async () => {
+    const { next } = await loadedContinuation();
+    const read = vi.spyOn(CatalogStore.prototype, 'getChildrenPage');
+    const pages = await Promise.all([tree.getChildren(next), tree.getChildren(next)]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(pages[0]).toEqual(pages[1]);
+    expect(pages[0]).toHaveLength(5);
+    await tree.getChildren(next);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['disable', 'dispose', 'refresh', 'remove', 'sort'] as const)('discards a late catalog page after %s', async (action) => {
+    const { source, next } = await loadedContinuation();
+    const original = CatalogStore.prototype.getChildrenPage;
+    let complete!: () => void;
+    let pageSignal!: AbortSignal;
+    vi.spyOn(CatalogStore.prototype, 'getChildrenPage').mockImplementationOnce(function (this: CatalogStore, ...args) {
+      const page = original.apply(this, args);
+      pageSignal = args[3]!.signal!;
+      return new Promise<CatalogChildrenPage>((resolve) => { complete = () => resolve(page); }) as unknown as CatalogChildrenPage;
+    });
+    const pending = tree.getChildren(next);
+    await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
+    if (action === 'dispose') tree.dispose();
+    else if (action === 'refresh') await tree.refresh();
+    else if (action === 'remove') await host.commands.get('jsonlView.sessionNavigator.removeSource')!(source);
+    else if (action === 'sort') await host.commands.get('jsonlView.sessionNavigator.sortTitle')!();
+    else await host.commands.get('jsonlView.sessionNavigator.disable')!();
+    expect(pageSignal.aborted).toBe(true);
+    complete();
+    expect(await pending).toEqual([]);
+  });
+
+  it('diagnoses expired, malformed and cross-parent child cursors with a reload action', async () => {
+    const { source, next } = await loadedContinuation();
+    for (const invalid of [{ ...next, parentNativeId: 'other-parent' }, { ...next, cursor: 'invalid' }]) {
+      const [error] = await tree.getChildren(invalid);
+      expect(error?.nodeKind).toBe('catalog-error');
+      expect(tree.getTreeItem(error!).command?.command).toBe('jsonlView.sessionNavigator.refresh');
+    }
+    host.probe.mockResolvedValueOnce('changed');
+    await tree.refresh();
+    expect((await tree.getChildren(next))[0]?.nodeKind).toBe('catalog-error');
+    expect((await tree.getChildren(source))[0]?.nodeKind).toBe('catalog-error');
+    const [current] = await tree.getChildren();
+    expect((await tree.getChildren(current))[0]?.nodeKind).toBe('entity');
+  });
+
+  it('rejects a catalog page completed after a new generation commits', async () => {
+    const { next } = await loadedContinuation();
+    const original = CatalogStore.prototype.getChildrenPage;
+    let complete!: () => void;
+    let catalog!: CatalogStore;
+    vi.spyOn(CatalogStore.prototype, 'getChildrenPage').mockImplementationOnce(function (this: CatalogStore, ...args) {
+      catalog = this;
+      const page = original.apply(this, args);
+      return new Promise<CatalogChildrenPage>((resolve) => { complete = () => resolve(page); }) as unknown as CatalogChildrenPage;
+    });
+    const pending = tree.getChildren(next);
+    await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
+    catalog.replaceSnapshot(next.sourceId, { ...snapshot.snapshot, entities: [], locations: [] }, 'new-generation');
+    complete();
+    const result = await pending;
+    expect(result).toHaveLength(1);
+    expect(result[0]?.nodeKind).toBe('catalog-error');
+    expect(result.some((node) => node.nodeKind === 'entity')).toBe(false);
   });
 
   it('keeps a removed default home excluded when it had an explicit SQLite override', async () => {

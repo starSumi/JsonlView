@@ -217,6 +217,30 @@ describe('session navigator source boundary', () => {
     store.close();
   });
 
+  it('keeps title cursors in SQLite NOCASE form for non-ASCII titles', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-title-pages-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    const entity = (nativeId: string, label: string) => ({ sourceId, nativeId, kind: 'session' as const, label, confidence: 'source' as const });
+    store.replaceSnapshot(sourceId, {
+      schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-1', snapshotId: 'scan-1', capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: false,
+      entities: [entity('a', 'a'), entity('o', 'o')], relations: [], locations: [],
+    }, 'fingerprint-title');
+    store.setProductTitle(sourceId, 'a', 'Älpha');
+    store.setProductTitle(sourceId, 'o', 'Ömega');
+    const first = store.getChildrenPage(sourceId, undefined, 'title', { limit: 1 });
+    expect(first.entities.map((item) => item.nativeId)).toEqual(['a']);
+    const cursor = first.nextCursor;
+    if (cursor === undefined) throw new Error('expected a title continuation cursor');
+    const second = store.getChildrenPage(sourceId, undefined, 'title', { limit: 1, cursor });
+    expect(second.entities.map((item) => item.nativeId)).toEqual(['o']);
+    store.close();
+  });
+
   it('rejects an aborted or stale continuation before catalog publication', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-guard-'));
     cleanup.push(root);

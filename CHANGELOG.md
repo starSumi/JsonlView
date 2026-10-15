@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make every indexed Session Navigator root and nested child reachable through bounded continuation branches. Discard invalidated page reads and preserve non-ASCII title order across catalog pages.
 - Use exclusive physical cursors for adjacent ordinal pages in either order. Preserve partial windows and bounded scan identity through append recovery and column refresh; keep direct page jumps at their logical matching rank.
 - Give Insights an explicit Current view or Whole file scope, share Table query conditions, label bounded scan coverage, and discard results from superseded query or profile intents.
 - Report one verifiable, path-free execution identity from the Extension Host, Webview startup receipts and packaged build manifest. Verify the complete runtime binding and completed bundle bytes, reject stale dist or changed build inputs, and discard late requests or recovery publications when document generation or epoch has advanced. Report build optimization separately from the actual host extension mode.
