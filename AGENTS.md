@@ -106,6 +106,11 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Treat filesystem notifications as invalidation hints and re-check source
   state before incremental work.
 - Keep messages bounded and reject stale generations.
+- Optional dataset detection settles with bounded terminal metadata for failure,
+  deadline, cancellation, or disabled detection. It must not block Generic
+  loading indefinitely or publish into a retired source/profile generation.
+  Lifecycle failure logs accept fixed stages and allowed error metadata; raw
+  exception messages and source content are excluded from Output and console.
 - Session Navigator catalog children use bounded query pages and explicit tree
   continuation branches, separate from provider scan continuations. Bind each
   branch to its source, generation, parent, sort, and lifecycle epoch; discard

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bound optional dataset detection with explicit failed, timeout, cancelled, and disabled outcomes. Preserve Generic JSONL loading, discard late results, and report the terminal stage and recovery action.
+- Show QA fields and classification labels in Generic detail previews, preserve zero and empty label values, and disclose message groups longer than the 32-entry preview.
+- Keep lifecycle failure logs to fixed stages and allowed error metadata, without copying exception messages, paths, or source content into Output or console.
 - Show prompt/completion, preference prompts, token data, and knowledge metadata in Generic JSONL detail previews. Render batch output once while preserving explicit tool results and the source record in Raw.
 - Add metadata-only dataset head provenance for bounded LLaMA-Factory shape inspection, with profile-epoch-safe publication, Generic JSONL fallback, and a Profile status indicator.
 - Observe stalled document creation before editor resolve, and clean up its watchdog on completion, failure, or cancellation while preserving late results and existing startup outcomes.
