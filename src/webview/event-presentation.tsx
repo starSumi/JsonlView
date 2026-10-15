@@ -34,6 +34,7 @@ const MAX_EXPANDED_TEXT_ITEMS = 10_000;
 const MAX_TEXT_DEPTH = 4;
 const MAX_DIFF_FILES = 128;
 const MAX_METADATA = 8;
+const MAX_DATASET_MESSAGES = 32;
 
 interface EventObject {
   [key: string]: unknown;
@@ -349,6 +350,8 @@ function isEventEnvelope(value: EventObject, profile?: AgentRowProjection): bool
       || textOf(own(value, 'prompt')) !== undefined
       || textOf(own(value, 'output')) !== undefined
       || textOf(own(value, 'completion')) !== undefined
+      || textOf(own(value, 'question')) !== undefined
+      || textOf(own(value, 'answer')) !== undefined
       || (textOf(own(value, 'chosen')) !== undefined && textOf(own(value, 'rejected')) !== undefined)
     );
 }
@@ -867,7 +870,7 @@ function roleLabel(value: unknown, fallback: string): string {
 function genericDatasetSections(payload: EventObject, toolEvent: boolean): EventPresentationSection[] {
   const sections: EventPresentationSection[] = [];
   const addMessageGroup = (label: string, messages: unknown[]): void => {
-    messages.slice(0, 32).forEach((rawMessage, index) => {
+    messages.slice(0, MAX_DATASET_MESSAGES).forEach((rawMessage, index) => {
       const message = objectOf(rawMessage);
       const role = roleLabel(message?.role ?? message?.from ?? message?.speaker, `message ${index + 1}`);
       const content = message
@@ -879,6 +882,13 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
       const richText = role === 'assistant' || role === 'function' || role === 'tool';
       sections.push({ title, ...text, richText });
     });
+    const remaining = messages.length - MAX_DATASET_MESSAGES;
+    if (remaining > 0) {
+      sections.push({
+        title: `${label} preview`,
+        text: `Preview covers the first ${MAX_DATASET_MESSAGES} of ${messages.length} entries. ${remaining} additional ${remaining === 1 ? 'entry is' : 'entries are'} available in Raw.`,
+      });
+    }
   };
   if (Array.isArray(payload.messages)) addMessageGroup('Message', payload.messages);
   if (Array.isArray(payload.conversations)) addMessageGroup('Conversation', payload.conversations);
@@ -888,6 +898,11 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
   // Named-column datasets keep scalar text readable and structured metadata
   // in bounded JSON sections. Raw remains authoritative for fields outside
   // this semantic projection.
+  for (const [key, title] of [['question', 'Question'], ['context', 'Context']] as const) {
+    const content = textSection(own(payload, key));
+    if (content.text !== undefined) sections.push({ title, ...content, richText: false, contentMode: 'text' });
+  }
+  addTextCandidate(sections, 'Answer', own(payload, 'answer'), true);
   addTextCandidate(sections, 'System', own(payload, 'system'));
   const prompt = own(payload, 'prompt');
   const hasPrompt = textOf(prompt) !== undefined;
@@ -903,6 +918,9 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
   addTextCandidate(sections, 'Rejected', own(payload, 'rejected'), true);
   addTextCandidate(sections, 'Title', own(payload, 'title'));
   addTextCandidate(sections, 'Category', own(payload, 'category'));
+  const label = own(payload, 'label');
+  if (typeof label === 'string' && label.length > 0) addTextCandidate(sections, 'Label', label);
+  else addCodeCandidate(sections, 'Label', label === '' ? '""' : label, 'json');
   addCodeCandidate(sections, 'Tags', own(payload, 'tags'), 'json');
   addTextCandidate(sections, 'Token count', own(payload, 'token_count'));
   addCodeCandidate(sections, 'Tokens', own(payload, 'tokens'), 'json');
@@ -922,6 +940,7 @@ function genericDatasetKind(
   if (textOf(own(payload, 'chosen')) !== undefined && textOf(own(payload, 'rejected')) !== undefined) return 'preference';
   if (textOf(own(payload, 'instruction')) !== undefined) return 'instruction';
   if (textOf(own(payload, 'prompt')) !== undefined) return 'prompt';
+  if (textOf(own(payload, 'question')) !== undefined || textOf(own(payload, 'answer')) !== undefined) return 'qa';
   if (textOf(own(payload, 'output')) !== undefined) return 'output';
   if (textOf(own(payload, 'completion')) !== undefined) return 'completion';
   return undefined;

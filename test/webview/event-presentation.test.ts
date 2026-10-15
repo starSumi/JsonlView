@@ -726,6 +726,93 @@ describe('structured agent event presentation', () => {
     ]));
   });
 
+  it('presents QA columns without changing source values or rendering questions as Markdown', () => {
+    const value = { question: '## Question', context: '## Source context', answer: '## Answer', unknown: { retained: true } };
+    const before = JSON.stringify(value);
+    const profile = {
+      profileId: 'generic' as const, eventKind: 'other' as const, summary: 'QA', evidence: [], confidence: 'source' as const,
+    };
+    const model = buildAgentEventPresentation(value, profile);
+    expect(model?.kind).toBe('qa');
+    expect(model?.sections).toEqual([
+      expect.objectContaining({ title: 'Question', text: '## Question', richText: false }),
+      expect.objectContaining({ title: 'Context', text: '## Source context', richText: false }),
+      expect.objectContaining({ title: 'Answer', text: '## Answer', richText: true }),
+    ]);
+    const markup = renderToStaticMarkup(React.createElement(AgentEventPresentation, { value, profile }));
+    expect(markup).toContain('<h2>Answer</h2>');
+    expect(markup).not.toContain('<h2>Question</h2>');
+    expect(markup).not.toContain('<h2>Source context</h2>');
+    expect(JSON.stringify(value)).toBe(before);
+  });
+
+  it.each(['question', 'answer'])('presents a partial QA row with only %s', (key) => {
+    const model = buildAgentEventPresentation({ [key]: 'Available QA text' }, {
+      profileId: 'generic', eventKind: 'other', summary: 'QA', evidence: [], confidence: 'source',
+    });
+    expect(model?.kind).toBe('qa');
+    expect(model?.sections).toEqual([expect.objectContaining({
+      title: key === 'question' ? 'Question' : 'Answer', text: 'Available QA text', richText: key === 'answer',
+    })]);
+  });
+
+  it.each([0, false, '', 'positive', ['sports', 'news'], { score: 0 }, null].map((label) => ({ label })))('keeps classification label $label visible', ({ label }) => {
+    const value = { text: 'Classification sample', label };
+    const before = JSON.stringify(value);
+    const model = buildAgentEventPresentation(value, {
+      profileId: 'generic', eventKind: 'other', summary: 'classification', evidence: [], confidence: 'source',
+    });
+    const section = model?.sections.find((candidate) => candidate.title === 'Label');
+    expect(section).toBeDefined();
+    if (label === '') expect(section?.code).toBe('""');
+    else if (typeof label === 'string') expect(section?.text).toBe(label);
+    else expect(JSON.parse(section?.code ?? 'missing')).toEqual(label);
+    expect(model?.sections.filter((candidate) => candidate.title === 'Text')).toHaveLength(1);
+    expect(JSON.stringify(value)).toBe(before);
+  });
+
+  it('keeps unrelated scalar rows on the ordinary tree and bounds long QA text', () => {
+    const profile = {
+      profileId: 'generic' as const, eventKind: 'other' as const, summary: 'dataset', evidence: [], confidence: 'source' as const,
+    };
+    expect(buildAgentEventPresentation({ context: 'Unrelated metadata', label: 0 }, profile)).toBeUndefined();
+    const model = buildAgentEventPresentation({ question: 'Question', answer: 'a'.repeat(270_000) }, profile);
+    const answer = model?.sections.find((section) => section.title === 'Answer');
+    expect(answer).toMatchObject({ truncated: true, previewOnly: true });
+    expect(answer?.text).toHaveLength(8_000);
+    expect(answer?.fullText).toBeUndefined();
+  });
+
+  it.each([
+    ['messages', 'Message'], ['conversations', 'Conversation'], ['chosen_messages', 'Chosen'], ['rejected_messages', 'Rejected'],
+  ])('discloses the bounded %s preview without reading later entries', (key, label) => {
+    const messages = Array.from({ length: 33 }, (_, index) => ({
+      role: index % 2 === 0 ? 'human' : 'gpt', content: `Message ${index + 1}`,
+    }));
+    Object.defineProperty(messages, 32, { get: () => { throw new Error('Read outside the message preview'); } });
+    const model = buildAgentEventPresentation({ [key]: messages }, {
+      profileId: 'generic', eventKind: 'other', summary: 'messages', evidence: [], confidence: 'source',
+    });
+    expect(model?.sections).toHaveLength(33);
+    expect(model?.sections[0]).toMatchObject({ title: `${label} 1 · user`, richText: false });
+    expect(model?.sections[31]).toMatchObject({ title: `${label} 32 · assistant`, richText: true });
+    expect(model?.sections[32]).toMatchObject({
+      title: `${label} preview`, text: 'Preview covers the first 32 of 33 entries. 1 additional entry is available in Raw.',
+    });
+  });
+
+  it('only adds message preview disclosure when entries remain', () => {
+    const profile = {
+      profileId: 'generic' as const, eventKind: 'other' as const, summary: 'messages', evidence: [], confidence: 'source' as const,
+    };
+    const message = { role: 'user', content: 'Source message' };
+    const atLimit = buildAgentEventPresentation({ messages: Array.from({ length: 32 }, () => message) }, profile);
+    expect(atLimit?.sections).toHaveLength(32);
+    expect(atLimit?.sections.some((section) => section.title === 'Message preview')).toBe(false);
+    const overLimit = buildAgentEventPresentation({ messages: Array.from({ length: 35 }, () => message) }, profile);
+    expect(overLimit?.sections[32]?.text).toBe('Preview covers the first 32 of 35 entries. 3 additional entries are available in Raw.');
+  });
+
   it('does not repeat a generic batch output as both response and tool result', () => {
     const model = buildAgentEventPresentation({
       input: 'Write a bounded answer',
