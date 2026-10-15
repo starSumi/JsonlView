@@ -23,6 +23,7 @@ import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPromp
 import { appendExecutionIdentityLog, appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
 import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
 import { parseStartupStageReceipt } from './startup-stage';
+import { logLifecycleFailure } from './lifecycle-failure';
 import { summaryIdentityMatches } from './summary-identity';
 import { EXECUTION_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
 import { captureRuntimeExecutionIdentity } from './execution-runtime';
@@ -303,7 +304,7 @@ export class JsonlViewDocument implements vscode.CustomDocument {
       const delivered = await this.broadcast(identity, 'SOURCE_INVALIDATED', { reason: refresh.kind });
       trace.record('webview_delivery', delivered ? 'delivered' : 'failed');
     } catch (error) {
-      appendOutputLog(outputChannel, 'source-reconcile-failed', error instanceof Error ? error.message : String(error));
+      logLifecycleFailure(outputChannel, 'source_reconcile', error);
       await this.broadcast(identity, 'ERROR', {
         code: 'SOURCE_RECONCILE_FAILED',
         message: error instanceof Error ? error.message : String(error),
@@ -432,13 +433,11 @@ export class JsonlViewDocument implements vscode.CustomDocument {
         return panel.webview.postMessage(value);
       } })),
       message,
-      (error, index) => {
-        const detail = error instanceof Error ? error.message : String(error);
+      (error) => {
         // A panel can disappear between snapshot adoption and delivery. Keep
         // the successful generation authoritative while retaining a bounded
         // diagnostic for the disposed/failed recipient.
-        appendOutputLog(outputChannel, 'webview-delivery-failed', `type=${type} panel=${String(index)} error=${detail}`);
-        console.warn(`[JsonlView] ${type} delivery failed for panel ${String(index)}: ${detail}`);
+        logLifecycleFailure(outputChannel, 'webview_delivery', error, (line) => console.warn(line));
       },
     );
   }
@@ -742,7 +741,7 @@ async function offerDiagnostic(input: { stage: string; name: string; message: st
     extensionId: 'Sumi-Sophia.jsonl-view',
   });
   lastDiagnostic = envelope;
-  appendOutputLog(outputChannel, 'diagnostic', `stage=${envelope.stage} name=${envelope.error.name} message=${envelope.error.message}`);
+  logLifecycleFailure(outputChannel, 'webview_diagnostic', envelope.error);
   if (preferredAction === 'copy') {
     await handleDiagnosticAction('Copy diagnostic context', envelope);
     return;
