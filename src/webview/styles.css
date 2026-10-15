@@ -136,6 +136,16 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.dataset-head-status {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.dataset-head-status-ready { color: var(--vscode-testing-iconPassed, var(--vscode-descriptionForeground)); }
+.dataset-head-status-partial { color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground)); }
+.dataset-head-status-fallback { color: var(--vscode-editorError-foreground, var(--vscode-descriptionForeground)); }
+
 .compact-field select {
   width: 150px;
   height: 26px;

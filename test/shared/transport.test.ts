@@ -10,6 +10,27 @@ import {
 } from '../../src/shared/transport';
 
 describe('shared transport boundary', () => {
+  it('accepts metadata-only dataset provenance and rejects raw fields', async () => {
+    const { isDatasetRuntimeProvenance } = await import('../../src/shared/transport/dataset-provenance');
+    const metadata = {
+      version: 1, status: 'partial', framing: 'jsonl', adapterId: 'llamafactory-v1', adapterVersion: '1.0.0',
+      shape: 'sft', confidence: 'medium', clockBasis: 'record-order',
+      samplePlan: { strategy: 'head', maxRecords: 32, maxBytes: 262144 },
+      coverage: { sampledRecords: 1, validRecords: 1, invalidRecords: 0, examinedBytes: '12', partial: true, stoppedBy: 'record_limit' },
+    };
+    expect(isDatasetRuntimeProvenance(metadata)).toBe(true);
+    expect(isExtensionMessage(createProtocolEnvelope({
+      type: 'OPENED', documentId: 'd', generation: 'g', requestId: '', epoch: 1,
+      payload: {
+        snapshot: { documentId: 'd', generation: 'g', epoch: 1, uri: 'file:///x', scheme: 'file', sizeBytes: '12', mtimeMs: 0, prefixFingerprint: 'fp', observedAt: '2026-01-01T00:00:00Z' },
+        profileId: 'generic', profileVersion: '1.0.0', profileEpoch: 1, profileSuggestions: [],
+        indexedBytes: '12', indexedRecords: '1', indexingComplete: true, validRecords: '1', problemRecords: '0',
+        datasetProvenance: metadata,
+      },
+    }))).toBe(true);
+    expect(isDatasetRuntimeProvenance({ ...metadata, raw: { secret: true } })).toBe(false);
+  });
+
   it('stamps the protocol version and preserves optional lifecycle ordering', () => {
     expect(createProtocolEnvelope({
       type: 'OPENED',

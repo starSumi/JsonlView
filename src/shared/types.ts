@@ -266,11 +266,52 @@ export interface RecordDetail {
   problems: ProblemRef[];
 }
 
+export type DatasetShapeV1 = 'sft' | 'preference' | 'tool-use' | 'multimodal' | 'unknown';
+
+export interface DatasetHeadPlanV1 {
+  strategy: 'head';
+  maxRecords: 32;
+  maxBytes: 262144;
+}
+
+export interface DatasetHeadCoverageV1 {
+  sampledRecords: number;
+  validRecords: number;
+  invalidRecords: number;
+  examinedBytes: string;
+  partial: boolean;
+  stoppedBy?: 'record_limit' | 'byte_limit' | 'time_limit' | 'hydration_limit' | 'uninspectable_record';
+}
+
+export interface DatasetResultV1 {
+  version: 1;
+  framing: 'jsonl';
+  samplePlan: DatasetHeadPlanV1;
+  adapterId: 'llamafactory-v1' | 'generic-jsonl';
+  adapterVersion: '1.0.0';
+  shape: DatasetShapeV1;
+  confidence: 'high' | 'medium' | 'none';
+  clockBasis: 'none' | 'record-order';
+  coverage: DatasetHeadCoverageV1;
+}
+
+/** Metadata only. Inspector records, values, reasons, and source hints never cross IPC. */
+export type DatasetRuntimeProvenanceV1 =
+  | { version: 1; status: 'pending'; samplePlan: DatasetHeadPlanV1 }
+  | (DatasetResultV1 & { status: 'ready' | 'partial'; fallback?: never })
+  | (DatasetResultV1 & { status: 'fallback'; fallback: {
+    code: 'unknown_shape' | 'conflicting_shapes' | 'invalid_sample' | 'sample_unavailable' | 'inspection_failed';
+    candidateShapes: readonly DatasetShapeV1[];
+  } });
+
 export interface DocumentSummary {
   snapshot: SnapshotIdentity;
   profileId: string;
   /** Selected semantic adapter revision. Older protocol fixtures may omit it. */
   profileVersion?: string | undefined;
+  /** Monotonic profile publication identity; older protocol fixtures may omit it. */
+  profileEpoch?: number | undefined;
+  datasetProvenance?: DatasetRuntimeProvenanceV1 | undefined;
   profileSuggestions: ProfileSuggestion[];
   indexedBytes: string;
   indexedRecords: string;
@@ -390,7 +431,7 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'SCHEMA', { fields: FieldStats[]; totalFields: number; complete: boolean }>
   | ProtocolEnvelope<'INSIGHTS', InsightSummary>
   | ProtocolEnvelope<'INDEX_PROGRESS', DocumentSummary>
-  | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; profileVersion?: string; columns: ColumnSpec[] }>
+  | ProtocolEnvelope<'PROFILE_CHANGED', { profileId: string; profileVersion?: string; profileEpoch?: number; columns: ColumnSpec[] }>
   | ProtocolEnvelope<'ROW_ORDER_CHANGED', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'REVEAL', { sourceId: string; generation: string; nativeId: string; anchorOrdinal: string }>
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>

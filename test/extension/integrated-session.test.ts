@@ -1,9 +1,12 @@
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JsonlFileEngine } from '../../src/engine';
+import { isDatasetRuntimeProvenance } from '../../src/shared/transport/dataset-provenance';
 import {
   IntegratedJsonlSession,
+  nextProfileEpoch,
   type IntegratedSessionOptions,
 } from '../../src/extension/integrated-session';
 import type { FollowRecoveryIdentity } from '../../src/extension/follow-recovery';
@@ -21,6 +24,7 @@ const directories: string[] = [];
 const sessions: IntegratedJsonlSession[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(sessions.splice(0).map(async (session) => session.dispose()));
   await Promise.all(directories.splice(0).map(async (directory) => rm(directory, {
     recursive: true,
@@ -166,6 +170,114 @@ describe('IntegratedJsonlSession', () => {
     expect(session.getProfileColumns().map((column) => column.id)).toEqual([
       'eventKind', 'timestamp', 'actor', 'summary', 'status', 'model',
     ]);
+  });
+
+  it('publishes metadata-only dataset provenance from the first head hydration', async () => {
+    const { session } = await openFixture([
+      { messages: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'world' }] },
+    ]);
+    const provenance = session.getSummary().datasetProvenance;
+    expect(provenance?.status).toBe('ready');
+    expect(provenance).toMatchObject({ adapterId: 'llamafactory-v1', shape: 'sft', coverage: { sampledRecords: 1, partial: false } });
+    expect(JSON.stringify(provenance)).not.toContain('hello');
+  });
+
+  it('saturates profile epochs instead of wrapping through zero', () => {
+    expect(nextProfileEpoch(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(nextProfileEpoch(Number.MAX_SAFE_INTEGER - 1)).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('fails closed at the epoch limit until a new snapshot is adopted', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    Reflect.set(session, 'profileEpoch', Number.MAX_SAFE_INTEGER);
+    const before = session.getSummary();
+    const updates: number[] = [];
+    session.onProgress((summary) => updates.push(summary.profileEpoch!));
+
+    await expect(session.setProfile('generic-agent-events', new AbortController().signal)).rejects.toThrow(/epoch limit/);
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(session.getSummary()).toMatchObject({ profileId: before.profileId, profileEpoch: Number.MAX_SAFE_INTEGER, datasetProvenance: { status: 'pending' } });
+    expect(updates).toEqual([]);
+
+    const rebuilt = await session.rebuild(new AbortController().signal);
+    expect(rebuilt.snapshot.epoch).toBe((before.snapshot.epoch ?? 0) + 1);
+    expect(rebuilt.profileEpoch).toBe(1);
+    expect(rebuilt.profileId).toBe('codex-rollout');
+  });
+
+  it('drops an in-flight deferred result after epoch saturation, then resets on rebuild', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    const getRows = JsonlFileEngine.prototype.getRows;
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let heads = 0;
+    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(async function (this: JsonlFileEngine, request) {
+      const result = await getRows.call(this, request);
+      if (request?.onHydrated !== undefined && request.direction !== 'backward' && request.anchorOrdinal === undefined) {
+        heads += 1;
+        if (heads === 1) { entered(); await held; }
+      }
+      return result;
+    });
+
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    await started;
+    Reflect.set(session, 'profileEpoch', Number.MAX_SAFE_INTEGER);
+    const before = session.getSummary();
+    const updates: number[] = [];
+    session.onProgress((summary) => updates.push(summary.profileEpoch!));
+    release();
+    await waitFor(() => session.getSummary().profileEpoch === Number.MAX_SAFE_INTEGER);
+    expect(session.getSummary()).toMatchObject({ profileId: before.profileId, profileEpoch: Number.MAX_SAFE_INTEGER });
+    expect(updates).toEqual([]);
+
+    const rebuilt = await session.rebuild(new AbortController().signal);
+    expect(rebuilt.snapshot.epoch).toBe((before.snapshot.epoch ?? 0) + 1);
+    expect(rebuilt.profileEpoch).toBe(1);
+  });
+
+  it('drops a deferred A-to-B-to-A result and retries the current publication epoch', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    const getRows = JsonlFileEngine.prototype.getRows;
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let heads = 0;
+    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(async function (this: JsonlFileEngine, request) {
+      const result = await getRows.call(this, request);
+      if (request?.onHydrated !== undefined && request.direction !== 'backward' && request.anchorOrdinal === undefined) {
+        heads += 1;
+        if (heads === 1) { entered(); await held; }
+      }
+      return result;
+    });
+    const updates: number[] = [];
+    session.onProgress((summary) => updates.push(summary.profileEpoch!));
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    await started;
+    await session.setProfile('generic-agent-events', new AbortController().signal);
+    await session.setProfile('generic', new AbortController().signal);
+    release();
+    await waitFor(() => session.getSummary().datasetProvenance?.status !== 'pending');
+
+    expect(heads).toBe(2);
+    expect(session.getSummary()).toMatchObject({ profileId: 'generic', profileEpoch: 4, datasetProvenance: { status: 'fallback' } });
+    expect(updates).toEqual([4]);
+  });
+
+  it('publishes transport-valid Generic fallback after a later oversized record', async () => {
+    const { session } = await openFixture([
+      { messages: [{ role: 'user', content: 'ok' }] },
+      { messages: [{ role: 'user', content: 'x'.repeat(2048) }] },
+      { messages: [{ role: 'user', content: 'later' }] },
+    ], { maxRecordBytes: 128 });
+    const provenance = session.getSummary().datasetProvenance;
+    expect(provenance).toMatchObject({ status: 'fallback', adapterId: 'generic-jsonl', fallback: { code: 'invalid_sample' }, coverage: { sampledRecords: 1, validRecords: 1, invalidRecords: 0, partial: true, stoppedBy: 'uninspectable_record' } });
+    expect(isDatasetRuntimeProvenance(provenance)).toBe(true);
   });
 
   it('does not let deferred detection override an explicit profile selection', async () => {

@@ -240,6 +240,7 @@ export class DocumentController {
           await this.postIfCurrent(request, acceptedIdentity, 'PROFILE_CHANGED', {
             profileId: updated.profileId,
             profileVersion: updated.profileVersion,
+            ...(updated.profileEpoch === undefined ? {} : { profileEpoch: updated.profileEpoch }),
             columns: [...this.session.getProfileColumns()],
           });
           if (signal.aborted || !summaryIdentityMatches(updated, this.session.getSummary())) return;

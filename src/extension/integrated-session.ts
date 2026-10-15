@@ -11,6 +11,7 @@ import type {
   RecordRef,
   RowPage,
   RowScanBudget,
+  DatasetRuntimeProvenanceV1,
 } from '../shared/types';
 import {
   JsonlEngineError,
@@ -33,6 +34,7 @@ import {
   profileColumns,
   profilePredicateFields,
 } from './integrated-session-profile';
+import { DatasetHeadInspection, pendingDatasetProvenance } from '../profiles/dataset-runtime';
 
 const DETECTION_HEAD_SAMPLE_LIMIT = 32;
 const DETECTION_TAIL_SAMPLE_LIMIT = 32;
@@ -65,6 +67,7 @@ export type FollowModeListener = (enabled: boolean) => void;
 interface DetectedProfileState {
   profileId: string;
   suggestions: ProfileSuggestion[];
+  datasetProvenance: DatasetRuntimeProvenanceV1;
 }
 
 export class IntegratedJsonlSession implements JsonlSessionPort {
@@ -73,6 +76,8 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
   private readonly followListeners = new Set<FollowModeListener>();
   private engine: JsonlFileEngine;
   private profileId = 'generic';
+  private profileEpoch = 0;
+  private datasetProvenance: DatasetRuntimeProvenanceV1 = pendingDatasetProvenance();
   private suggestions: ProfileSuggestion[] = [];
   private profileExplicitlySelected = false;
   private background: BackgroundIndexHandle | undefined;
@@ -116,14 +121,16 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     const session = new IntegratedJsonlSession(filePath, options, engine);
     try {
       if (options.deferProfileDetection === true && options.autoDetectProfiles !== false) {
-        session.suggestions = session.zeroScoreSuggestions();
+        session.publishProfileState({
+          profileId: 'generic', suggestions: session.zeroScoreSuggestions(),
+          datasetProvenance: pendingDatasetProvenance(),
+        });
         return session;
       }
       const detected = await session.detectProfile(engine, signal, {
         includeTail: engine.getSummary().indexingComplete,
       });
-      session.profileId = detected.profileId;
-      session.suggestions = detected.suggestions;
+      session.publishProfileState(detected);
       session.startBackgroundIndexing();
       return session;
     } catch (error) {
@@ -141,6 +148,8 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     return {
       ...summary,
       profileVersion: this.registry.version(this.profileId),
+      profileEpoch: this.profileEpoch,
+      datasetProvenance: this.datasetProvenance,
       profileSuggestions: this.suggestions.map((suggestion) => ({
         ...suggestion,
         reasons: [...suggestion.reasons],
@@ -240,7 +249,11 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     if (!this.registry.list().some((profile) => profile.id === profileId)) {
       throw new Error(`Unknown Agent profile: ${profileId}`);
     }
-    this.profileId = profileId;
+    if (!this.publishProfileState({
+      profileId, suggestions: this.suggestions, datasetProvenance: this.datasetProvenance,
+    })) {
+      throw new Error('Profile publication epoch limit reached; rebuild the document before changing its profile.');
+    }
     this.profileExplicitlySelected = true;
     return this.getSummary();
   }
@@ -407,14 +420,9 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           throw new FollowRecoveryTerminalError('truncate');
         }
       }
-      const previousProfile = this.profileId;
       const detected = await this.detectProfile(next, signal, {
         includeTail: next.getSummary().indexingComplete,
       });
-      const nextProfileId = (
-        this.profileExplicitlySelected
-        && this.registry.list().some((profile) => profile.id === previousProfile)
-      ) ? previousProfile : detected.profileId;
       throwIfAborted(signal);
       if (options.requireStable === true) {
         if (options.expected !== undefined && previous.canValidateOriginalSnapshot) {
@@ -448,9 +456,9 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       if (options.expected !== undefined && !sameExpectedSnapshot(this.engine.getSummary().snapshot, options.expected)) {
         throw new FollowRecoveryTerminalError('replace');
       }
+      const nextProfileId = this.profileExplicitlySelected ? this.profileId : detected.profileId;
       this.engine = next;
-      this.profileId = nextProfileId;
-      this.suggestions = detected.suggestions;
+      this.publishProfileState({ ...detected, profileId: nextProfileId }, true);
       adopted = true;
       this.startBackgroundIndexing();
       void previous.dispose().catch(() => undefined);
@@ -477,15 +485,18 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           score: 0,
           reasons: [],
         })),
+        datasetProvenance: pendingDatasetProvenance(),
       };
     }
     const samples: GenericRecordSample[] = [];
+    const datasetHead = new DatasetHeadInspection();
     const sampledOrdinals = new Set<string>();
-    await engine.getRows({
+    const headPage = await engine.getRows({
       limit: DETECTION_HEAD_SAMPLE_LIMIT,
       columns: [],
       generation: engine.snapshot.generation,
       onHydrated: (record) => {
+        datasetHead.accept(record);
         appendDetectionSample(
           samples,
           sampledOrdinals,
@@ -496,6 +507,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       },
       ...(signal === undefined ? {} : { signal }),
     });
+    const datasetProvenance = datasetHead.finish(headPage, engine.getSummary().indexingComplete);
     // Once the physical index is complete, add a bounded newest suffix. This
     // catches files whose producer changes shape over time without forcing an
     // O(n) tail scan on the first paint. The registry still applies its own
@@ -570,7 +582,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
         };
       })
       .sort((left, right) => right.score - left.score || left.displayName.localeCompare(right.displayName));
-    return { profileId: decision.selectedProfileId, suggestions };
+    return { profileId: decision.selectedProfileId, suggestions, datasetProvenance };
   }
 
   private zeroScoreSuggestions(): ProfileSuggestion[] {
@@ -582,6 +594,17 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
         score: 0,
         reasons: [],
       }));
+  }
+
+  /** One publication path binds selection, metadata and its ordering epoch. */
+  private publishProfileState(state: DetectedProfileState, newSnapshot = false): boolean {
+    if (this.profileEpoch >= Number.MAX_SAFE_INTEGER && !newSnapshot) return false;
+    this.profileId = state.profileId;
+    this.suggestions = state.suggestions;
+    this.datasetProvenance = state.datasetProvenance;
+    this.profileEpoch = newSnapshot && this.profileEpoch >= Number.MAX_SAFE_INTEGER
+      ? 1 : nextProfileEpoch(this.profileEpoch);
+    return true;
   }
 
   private scheduleDeferredProfileDetection(): void {
@@ -600,10 +623,11 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     });
   }
 
-  private startDeferredProfileDetection(): void {
+  private startDeferredProfileDetection(forceRetry = false): void {
     if (
       this.options.autoDetectProfiles === false
       || this.disposed
+      || this.profileEpoch >= Number.MAX_SAFE_INTEGER
     ) return;
     if (this.profileDetectionInFlight !== undefined) {
       if (
@@ -613,10 +637,16 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       return;
     }
     const engine = this.engine;
+    const capturedDocumentId = engine.snapshot.documentId;
     const generation = engine.snapshot.generation;
+    const capturedSnapshotEpoch = engine.snapshot.epoch;
+    const capturedProfileId = this.profileId;
+    const capturedProfileVersion = this.registry.version(capturedProfileId);
+    const capturedProfileEpoch = this.profileEpoch;
+    const capturedFingerprint = engine.snapshot.prefixFingerprint;
     const complete = engine.getSummary().indexingComplete;
     const includeTail = complete && this.tailDetectionGeneration !== generation;
-    if (!includeTail && this.tailDetectionGeneration === generation && !this.tailDetectionRequested) return;
+    if (!forceRetry && !includeTail && this.tailDetectionGeneration === generation && !this.tailDetectionRequested) return;
     if (!includeTail && this.options.deferProfileDetection !== true) return;
     if (includeTail) {
       this.tailDetectionGeneration = generation;
@@ -626,14 +656,24 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     this.profileDetectionAbort = controller;
     const operation = this.detectProfile(engine, controller.signal, { includeTail })
       .then((detected) => {
+        if (this.profileEpoch >= Number.MAX_SAFE_INTEGER) return;
         if (
           controller.signal.aborted
           || this.disposed
           || this.engine !== engine
+          || this.engine.snapshot.documentId !== capturedDocumentId
           || this.engine.snapshot.generation !== generation
-        ) return;
-        if (!this.profileExplicitlySelected) this.profileId = detected.profileId;
-        this.suggestions = detected.suggestions;
+          || this.engine.snapshot.epoch !== capturedSnapshotEpoch
+          || this.engine.snapshot.prefixFingerprint !== capturedFingerprint
+          || this.profileId !== capturedProfileId
+          || this.registry.version(this.profileId) !== capturedProfileVersion
+          || this.profileEpoch !== capturedProfileEpoch
+        ) {
+          this.tailDetectionRequested = true;
+          return;
+        }
+        const nextProfileId = this.profileExplicitlySelected ? this.profileId : detected.profileId;
+        if (!this.publishProfileState({ ...detected, profileId: nextProfileId })) return;
         const summary = this.getSummary();
         for (const listener of this.listeners) listener(summary);
       })
@@ -644,7 +684,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           this.profileDetectionAbort = undefined;
           if (this.tailDetectionRequested && !this.disposed) {
             this.tailDetectionRequested = false;
-            setImmediate(() => this.startDeferredProfileDetection());
+            setImmediate(() => this.startDeferredProfileDetection(true));
           }
         }
       });
@@ -707,6 +747,10 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted === true) {
     throw new Error('Operation cancelled.');
   }
+}
+
+export function nextProfileEpoch(current: number): number {
+  return current >= Number.MAX_SAFE_INTEGER ? Number.MAX_SAFE_INTEGER : current + 1;
 }
 
 function identityKey(identity: FollowRecoveryIdentity): string {

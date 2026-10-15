@@ -12,6 +12,7 @@ import {
 import type {
   InsightDimension,
   InsightScope,
+  DatasetRuntimeProvenanceV1,
   RecordRef,
   RowFilterOperator,
   SortDirection,
@@ -67,6 +68,12 @@ import {
   type WorkspaceTab,
   type WorkspaceState,
 } from './state';
+
+function datasetProvenanceTooltip(provenance: DatasetRuntimeProvenanceV1): string {
+  if (provenance.status === 'pending') return 'Dataset head sample pending';
+  const coverage = provenance.coverage;
+  return `Dataset head sample: ${provenance.adapterId} ${provenance.adapterVersion}; ${coverage.sampledRecords} records / ${coverage.examinedBytes} bytes; confidence ${provenance.confidence}`;
+}
 import {
   fallbackColumns,
   ProblemsView,
@@ -909,6 +916,16 @@ export function App(): React.JSX.Element {
                 aria-label={`Suggested profile: ${profileOptions.suggested.displayName}`}
               >
                 Suggested
+              </span>
+            ) : null}
+            {summary?.datasetProvenance ? (
+              <span
+                className={`dataset-head-status dataset-head-status-${summary.datasetProvenance.status}`}
+                role="status"
+                title={datasetProvenanceTooltip(summary.datasetProvenance)}
+                aria-label={datasetProvenanceTooltip(summary.datasetProvenance)}
+              >
+                head sample: {summary.datasetProvenance.status}
               </span>
             ) : null}
           </span>

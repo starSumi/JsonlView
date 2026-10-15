@@ -1,5 +1,6 @@
 export { CancellationRegistry } from './cancellation';
 export { isExtensionMessage } from './extension-message';
+export { isDatasetRuntimeProvenance } from './dataset-provenance';
 export {
   createProtocolEnvelope,
   isProtocolEnvelope,

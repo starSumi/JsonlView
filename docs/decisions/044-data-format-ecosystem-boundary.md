@@ -105,6 +105,96 @@ No adapter is implied by this ADR. In particular, model-serving integration,
 remote server connections, permission escalation, and DOM-specific rendering
 remain outside scope until separately contracted and reviewed.
 
+### Accepted E3 runtime provenance slice
+
+This C2 slice connects the reviewed LLaMA-Factory v1 inspector to the existing
+profile detection lifecycle. It does not add a new profile or alter selected
+profiles, columns, physical rows, schema, timeline, or Insights aggregation. The
+extension owns task identity and publication; the profiles layer owns inspection;
+the shared contract owns metadata; the Webview renders a small Profile-adjacent
+head-sample status and tooltip.
+
+The inspector receives only the prefix from the first existing detection head
+`getRows` hydration: at most 32 physical records and 262144 source content bytes.
+Use `RecordRef.contentByteLength` with BigInt before safely converting the admitted
+size for the adapter. Never stringify a record to measure it. Stop before the
+first record that exceeds either limit; do not skip it to inspect later rows.
+Tail and stratum hydration remain profile evidence only. No additional dataset
+scan is permitted, and disabling profile auto detection adds no reads. These are
+inspection limits, not underlying I/O, hydration, allocation, or RSS limits.
+
+The additive internal wire contract is:
+
+```typescript
+type DatasetShapeV1 = 'sft' | 'preference' | 'tool-use' | 'multimodal' | 'unknown';
+type DatasetHeadPlanV1 = { strategy: 'head'; maxRecords: 32; maxBytes: 262144 };
+type DatasetHeadCoverageV1 = {
+  sampledRecords: number; validRecords: number; invalidRecords: number;
+  examinedBytes: string; partial: boolean;
+  stoppedBy?: 'record_limit' | 'byte_limit' | 'time_limit' |
+    'hydration_limit' | 'uninspectable_record';
+};
+type DatasetResultV1 = {
+  version: 1; framing: 'jsonl'; samplePlan: DatasetHeadPlanV1;
+  adapterId: 'llamafactory-v1' | 'generic-jsonl'; adapterVersion: '1.0.0';
+  shape: DatasetShapeV1; confidence: 'high' | 'medium' | 'none';
+  clockBasis: 'none' | 'record-order'; coverage: DatasetHeadCoverageV1;
+};
+type DatasetRuntimeProvenanceV1 =
+  | { version: 1; status: 'pending'; samplePlan: DatasetHeadPlanV1 }
+  | (DatasetResultV1 & { status: 'ready' | 'partial'; fallback?: never })
+  | (DatasetResultV1 & { status: 'fallback'; fallback: {
+      code: 'unknown_shape' | 'conflicting_shapes' | 'invalid_sample' |
+        'sample_unavailable' | 'inspection_failed';
+      candidateShapes: readonly DatasetShapeV1[];
+    } });
+```
+
+`DocumentSummary` adds optional `datasetProvenance` and `profileEpoch`;
+`PROFILE_CHANGED` adds optional `profileEpoch`. Optionality preserves older
+fixtures, while every live session summary carries a monotonic safe-integer
+profile epoch from one profile-publication path. Once a Webview state has seen
+an epoch, a missing or older epoch cannot downgrade it. The runtime sends an
+explicit allowlist of metadata: never inspector records, raw/value fields,
+free-form reasons, source paths, fingerprints, or private source metadata.
+At `Number.MAX_SAFE_INTEGER`, the epoch saturates and profile publication fails
+closed: explicit selection returns a controlled error without changing state,
+and deferred results are not published. A successfully adopted new snapshot may
+restart the profile epoch at 1 because its snapshot epoch distinguishes prior
+publications. An unchanged snapshot never reuses a saturated epoch for a new
+profile state.
+
+Each asynchronous task captures engine object, document id, generation, snapshot
+epoch, prefix fingerprint, profile id/version, and profile epoch. Recheck all
+before publication. Profile A-to-B-to-A, cancellation, disposal, and source
+replacement invalidate old work. A stale single-flight result is discarded and
+current-epoch work retried; it must not leave a permanent pending state. Completed
+metadata is cached only for the same source identity and synchronously rebound
+by the existing profile-publication path. Rebuild candidate metadata is staged
+until adoption; failed rebuilds retain the previous source and metadata.
+
+`ready` requires a confirmed complete prefix at EOF with no truncation. Otherwise
+a recognized sample is `partial`; unknown, blank, malformed, oversized, unsupported
+content, and message/block-limit cases retain coverage with explicit Generic
+JSONL `fallback`. An uninspectable boundary record is not admitted or counted as
+an invalid admitted record; it stops the prefix and yields `invalid_sample`,
+preserving `sampledRecords = validRecords + invalidRecords` and prior byte
+coverage even when the first row is uninspectable. If no record can be admitted
+for another reason, use `sample_unavailable`; an
+inspector exception uses `inspection_failed`. Neither condition blocks viewing.
+Plain `instruction/input/output`, `question/context/answer`, and `text/label`
+rows are deliberately outside the reviewed LLaMA-Factory v1 shapes and therefore
+use the same visible `unknown_shape` Generic JSONL fallback.
+
+The rejected alternative is a separate dataset scan or profile-selection state
+machine: it adds I/O and competing authority. Validation covers head/tail
+conflict, exact record/byte boundaries, unsafe large byte counts, invalid rows,
+inspection limits, deferred cancellation/rebuild/profile ABA, wire privacy,
+epoch ordering, and old fixtures. Evidence is L2 until a real VS Code/Webview
+acceptance run observes this slice. Revisit when another adapter needs lifecycle
+dispatch or a measured workload requires broader sampling. Rollback removes the
+additive metadata and status rendering while preserving Generic JSONL viewing.
+
 ## Evidence
 
 - [JSON Lines](https://jsonlines.org/) defines UTF-8, one JSON value per line,

@@ -7,6 +7,7 @@ export {
   LlamaFactoryV1DatasetAdapter,
   inspectLlamaFactoryDataset,
 } from './dataset-adapter';
+export { DATASET_HEAD_PLAN, DatasetHeadInspection, pendingDatasetProvenance } from './dataset-runtime';
 export type {
   DatasetAdapter,
   DatasetCandidate,

@@ -5,6 +5,8 @@ export function summaryIdentityMatches(captured: DocumentSummary, current: Docum
   return captured.snapshot.documentId === current.snapshot.documentId
     && captured.snapshot.generation === current.snapshot.generation
     && captured.snapshot.epoch === current.snapshot.epoch
+    && captured.snapshot.prefixFingerprint === current.snapshot.prefixFingerprint
     && captured.profileId === current.profileId
-    && captured.profileVersion === current.profileVersion;
+    && captured.profileVersion === current.profileVersion
+    && captured.profileEpoch === current.profileEpoch;
 }

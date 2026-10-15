@@ -368,10 +368,14 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
   const pending = completeRequest(state.pending, message.requestId);
   switch (message.type) {
     case 'OPENED': {
+      if (state.summary !== undefined
+        && !snapshotIdentityChanged(state.summary.snapshot, message.payload.snapshot)
+        && !profileEpochAccepted(state.summary.profileEpoch, message.payload.profileEpoch)) return state;
       const snapshotChanged = snapshotIdentityChanged(state.summary?.snapshot, message.payload.snapshot);
       const analysisChanged = snapshotChanged || state.summary?.snapshot.epoch !== message.payload.snapshot.epoch
         || state.summary?.profileId !== message.payload.profileId
-        || state.summary?.profileVersion !== message.payload.profileVersion;
+        || state.summary?.profileVersion !== message.payload.profileVersion
+        || state.summary?.profileEpoch !== message.payload.profileEpoch;
       // Only an accepted new snapshot can clear the stale-source barrier.
       // Repeated OPENED broadcasts must not hide destructive invalidation.
       if (state.invalidationReason !== undefined && !snapshotChanged) return { ...state, pending };
@@ -631,11 +635,15 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     case 'INDEX_PROGRESS': {
       if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (state.summary !== undefined
+        && !snapshotIdentityChanged(state.summary.snapshot, message.payload.snapshot)
+        && !profileEpochAccepted(state.summary.profileEpoch, message.payload.profileEpoch)) return state;
       const analysisChanged = state.summary !== undefined
         && (snapshotIdentityChanged(state.summary.snapshot, message.payload.snapshot)
           || state.summary.snapshot.epoch !== message.payload.snapshot.epoch
           || state.summary.profileId !== message.payload.profileId
-          || state.summary.profileVersion !== message.payload.profileVersion);
+          || state.summary.profileVersion !== message.payload.profileVersion
+          || state.summary.profileEpoch !== message.payload.profileEpoch);
       return {
         ...state,
         phase: message.payload.indexingComplete ? 'ready' : 'loading',
@@ -652,6 +660,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
     }
     case 'PROFILE_CHANGED': {
       if (state.invalidationReason !== undefined) return { ...state, pending };
+      if (!profileEpochAccepted(state.summary?.profileEpoch, message.payload.profileEpoch)) return state;
       const columns = columnsAfterProfileChange(state.columns, message.payload.columns, state.columnVisibility);
       const profileQuery = reconcileProfileQueryState(
         state.sort,
@@ -672,6 +681,7 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           ...state.summary,
           profileId: message.payload.profileId,
           profileVersion: message.payload.profileVersion,
+          profileEpoch: message.payload.profileEpoch,
         } : state.summary,
         sort: profileQuery.sort,
         filter: filters[0],
@@ -750,6 +760,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       };
     }
   }
+}
+
+function profileEpochAccepted(previous: number | undefined, next: number | undefined): boolean {
+  return previous === undefined || (next !== undefined && next >= previous);
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {

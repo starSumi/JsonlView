@@ -17,6 +17,7 @@ import type {
   SnapshotIdentity,
 } from '../types';
 import { validateProtocolEnvelope } from './protocol';
+import { isDatasetRuntimeProvenance } from './dataset-provenance';
 
 const AGENT_EVENT_KINDS: ReadonlySet<string> = new Set([
   'session', 'turn', 'message', 'log', 'span', 'task', 'action', 'observation',
@@ -53,6 +54,8 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
         && isString(envelope.envelope.payload.profileId)
         && (envelope.envelope.payload.profileVersion === undefined
           || isString(envelope.envelope.payload.profileVersion))
+        && (envelope.envelope.payload.profileEpoch === undefined
+          || isSafeNonNegativeInteger(envelope.envelope.payload.profileEpoch))
         && isColumns(envelope.envelope.payload.columns);
     case 'ROW_ORDER_CHANGED':
       return isObject(envelope.envelope.payload)
@@ -81,6 +84,8 @@ function isDocumentSummary(value: unknown): value is DocumentSummary {
   return isSnapshot(value.snapshot)
     && isString(value.profileId)
     && (value.profileVersion === undefined || isString(value.profileVersion))
+    && (value.profileEpoch === undefined || isSafeNonNegativeInteger(value.profileEpoch))
+    && (value.datasetProvenance === undefined || isDatasetRuntimeProvenance(value.datasetProvenance))
     && isArray(value.profileSuggestions, isProfileSuggestion)
     && isDecimal(value.indexedBytes)
     && isDecimal(value.indexedRecords)
