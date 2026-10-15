@@ -497,6 +497,35 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
   ): Promise<JsonlViewDocument> {
     const traceId = String(++this.nextTraceId);
     appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=begin');
+    const startedAt = performance.now();
+    let stalled = false;
+    let cancelled = false;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancellationRegistration: vscode.Disposable | undefined;
+    const clearObservation = (): void => {
+      if (stallTimer !== undefined) clearTimeout(stallTimer);
+      stallTimer = undefined;
+      cancellationRegistration?.dispose();
+      cancellationRegistration = undefined;
+    };
+    const cancelObservation = (): void => {
+      if (cancelled) return;
+      cancelled = true;
+      clearObservation();
+      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=cancelled phase=create lastStage=create-begin'
+        + ' elapsedMs=' + String(Math.round(performance.now() - startedAt)));
+    };
+    stallTimer = setTimeout(() => {
+      stallTimer = undefined;
+      stalled = true;
+      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=stalled phase=create lastStage=create-begin'
+        + ' elapsedMs=' + String(Math.round(performance.now() - startedAt)));
+    }, STARTUP_STALL_MS);
+    cancellationRegistration = token.onCancellationRequested(cancelObservation);
+    // Registration may observe cancellation synchronously; also cover tokens
+    // cancelled before registration without changing the creation result.
+    if (token.isCancellationRequested) cancelObservation();
+    if (cancelled) clearObservation();
     try {
       const document = await JsonlViewDocument.create(uri, token, (error) => {
         const reason = error instanceof Error ? error.name.replace(/[^A-Za-z0-9_]/gu, '').slice(0, 48) : 'unknown';
@@ -506,12 +535,19 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
       const summary = document.session.getSummary();
       appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=complete'
         + ' indexedBytes=' + summary.indexedBytes + ' indexedRecords=' + summary.indexedRecords
-        + ' indexingComplete=' + String(summary.indexingComplete));
+        + ' indexingComplete=' + String(summary.indexingComplete)
+        + ' elapsedMs=' + String(Math.round(performance.now() - startedAt))
+        + (stalled ? ' afterStall=true' : '')
+        + (cancelled ? ' cancelled=true' : ''));
       return document;
     } catch (error) {
       const reason = error instanceof Error ? error.name.replace(/[^A-Za-z0-9_]/gu, '').slice(0, 48) : 'unknown';
-      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=failed reason=' + reason + ' cancelled=' + String(token.isCancellationRequested));
+      appendOutputLog(this.output, 'open-document', 'trace=' + traceId + ' stage=failed reason=' + reason + ' cancelled=' + String(token.isCancellationRequested)
+        + ' elapsedMs=' + String(Math.round(performance.now() - startedAt))
+        + (stalled ? ' afterStall=true' : ''));
       throw error;
+    } finally {
+      clearObservation();
     }
   }
 

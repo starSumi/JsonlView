@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Observe stalled document creation before editor resolve, and clean up its watchdog on completion, failure, or cancellation while preserving late results and existing startup outcomes.
 - Make every indexed Session Navigator root and nested child reachable through bounded continuation branches. Discard invalidated page reads and preserve non-ASCII title order across catalog pages.
 - Use exclusive physical cursors for adjacent ordinal pages in either order. Preserve partial windows and bounded scan identity through append recovery and column refresh; keep direct page jumps at their logical matching rank.
 - Give Insights an explicit Current view or Whole file scope, share Table query conditions, label bounded scan coverage, and discard results from superseded query or profile intents.

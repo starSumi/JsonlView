@@ -49,6 +49,25 @@ retry window. The Webview also reports the bounded READY timeout as a startup
 error when its script is running. The watchdog permits late recovery; it does not
 automatically recreate the Webview or infer the underlying renderer cause.
 
+The create phase has a separate 10-second, single-shot observation starting
+before awaiting document creation. It uses the same open trace ID that is
+retained when the created document reaches editor resolve. While creation is
+pending, the last observable stage is `create-begin`; a timeout logs
+`open-document stage=stalled phase=create` with elapsed time. This observation
+is distinct from the per-resolve `startup-outcome`: it does not settle, cancel,
+retry, or rebuild the creation operation, and does not introduce a new editor
+startup terminal state.
+
+Creation success or failure clears the timer and cancellation listener. Token
+cancellation also clears both immediately and logs one create cancellation,
+even if creation has not settled. An already cancelled token has the same
+cleanup behavior. The original creation promise still owns its result or
+error. A late completion or failure keeps that result and records
+`afterStall=true` or `cancelled=true` as applicable; a late successful creation
+may still proceed to the existing resolve lifecycle. Each opening owns its
+own timer and trace, so a cancelled or stalled opening cannot clear another
+opening's observation. No source path, body, or error message is added.
+
 ## Alternatives and deferred work
 
 - Registering a service worker to suppress the host error was rejected: the
@@ -58,6 +77,9 @@ automatically recreate the Webview or infer the underlying renderer cause.
   commands are provider-owned and are not a stable VS Code extension contract.
 - An MCP diagnostic tool is deferred until the read-only local MCP transport
   has its own trust, cancellation, output, and audit gate.
+- Racing creation against a rejecting timeout was rejected: a diagnostic
+  deadline must not replace the existing creation result or leave a hidden
+  operation running after a new product-owned failure.
 
 ## Evidence
 
@@ -82,9 +104,18 @@ extension bundle to the tested candidate before interpreting its output log.
 Fault injection must also verify stale epoch and startup ID receipts are ignored,
 and a late page commit after a startup error or watchdog stall is logged as
 recovery.
+Controlled-clock provider tests must hold creation pending, expire the create
+timer exactly once, and then complete or fail it late. They must also verify
+timer and token-listener cleanup on success, failure, and cancellation,
+independent concurrent openings, the same trace at resolve, rejected OPENED
+posts followed by a READY retry, and stale document, generation, epoch, startup,
+build, and runtime identities. These tests establish product lifecycle behavior
+only; they do not inject or validate a VS Code host or renderer failure.
 
 ## Boundary and rollback
 
 This decision adds no network request, worker, source mutation, or automatic
 AI invocation. Remove the command and diagnostic module to roll back; the
 editor and navigator remain usable.
+The create observation can be removed independently from `openCustomDocument`
+without changing creation, cancellation, or the existing resolve watchdog.
