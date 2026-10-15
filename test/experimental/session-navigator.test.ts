@@ -188,6 +188,53 @@ describe('session navigator source boundary', () => {
     reopened.close();
   });
 
+  it('reads bounded catalog child pages with a generation-bound keyset cursor', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-pages-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    const entity = (nativeId: string, activityAt: string) => ({ sourceId, nativeId, kind: 'session' as const, label: nativeId, activityAt, confidence: 'source' as const });
+    store.replaceSnapshot(sourceId, {
+      schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-1', snapshotId: 'scan-1', capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: false,
+      entities: [entity('a', '2026-10-08T00:04:00.000Z'), entity('b', '2026-10-08T00:03:00.000Z'), entity('c', '2026-10-08T00:02:00.000Z'), entity('d', '2026-10-08T00:01:00.000Z')], relations: [], locations: [],
+    }, 'fingerprint-1');
+    const first = store.getChildrenPage(sourceId, undefined, 'activity', { limit: 2 });
+    expect(first.entities.map((item) => item.nativeId)).toEqual(['a', 'b']);
+    expect(first.nextCursor).toBeDefined();
+    const cursor = first.nextCursor;
+    if (cursor === undefined) throw new Error('expected a continuation cursor');
+    const second = store.getChildrenPage(sourceId, undefined, 'activity', { limit: 2, cursor });
+    expect(second.entities.map((item) => item.nativeId)).toEqual(['c', 'd']);
+    expect(second.nextCursor).toBeUndefined();
+    const cancelled = new AbortController();
+    cancelled.abort();
+    expect(() => store.getChildrenPage(sourceId, undefined, 'activity', { signal: cancelled.signal })).toThrow('cancelled');
+    store.replaceSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-2', snapshotId: 'scan-2', capturedAt: '2026-10-08T00:05:00.000Z', redaction: 'metadata-only', truncated: false, entities: [], relations: [], locations: [] }, 'fingerprint-2');
+    expect(() => store.getChildrenPage(sourceId, undefined, 'activity', { limit: 2, cursor })).toThrow('stale');
+    store.close();
+  });
+
+  it('rejects an aborted or stale continuation before catalog publication', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-guard-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    const base = { sourceId, nativeId: 'base', kind: 'session' as const, label: 'base', confidence: 'source' as const };
+    store.replaceSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-1', snapshotId: 'scan-1', capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: true, nextCursor: 'cursor-1', entities: [base], relations: [], locations: [] }, 'fingerprint-1');
+    const cancelled = new AbortController();
+    cancelled.abort();
+    expect(() => store.appendSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-2', snapshotId: 'scan-2', capturedAt: '2026-10-08T00:01:00.000Z', redaction: 'metadata-only', truncated: false, entities: [], relations: [], locations: [] }, 'fingerprint-1', { expectedGeneration: 'g-1', expectedCursor: 'cursor-1', expectedFingerprint: 'fingerprint-1', signal: cancelled.signal })).toThrow('cancelled');
+    expect(() => store.appendSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-2', snapshotId: 'scan-2', capturedAt: '2026-10-08T00:01:00.000Z', redaction: 'metadata-only', truncated: false, entities: [], relations: [], locations: [] }, 'fingerprint-1', { expectedGeneration: 'g-0', expectedCursor: 'cursor-1', expectedFingerprint: 'fingerprint-1' })).toThrow('stale');
+    expect(store.getSourcePageState(sourceId)).toMatchObject({ generation: 'g-1', nextCursor: 'cursor-1' });
+    store.close();
+  });
+
   it('orders by provider activity by default and keeps product titles separate', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-order-'));
     cleanup.push(root);

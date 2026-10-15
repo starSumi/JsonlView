@@ -1,11 +1,33 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { NavigationRelation } from '../navigation-contract';
 import type { NavigatorEntity, NavigatorLocation, NavigatorSnapshot, NavigatorSourceSummary, SessionNavigatorProviderId, SessionNavigatorSortKey } from './types';
 import type { AuthorizedSourceSetting } from './types';
 import { sourceIdFor, sourceLabelFor } from './source-config';
+
+export const DEFAULT_CATALOG_PAGE_LIMIT = 200 as const;
+export const MAX_CATALOG_PAGE_LIMIT = 500 as const;
+
+export interface CatalogChildrenPage {
+  readonly entities: readonly NavigatorEntity[];
+  readonly generation: string;
+  readonly nextCursor?: string;
+}
+
+export interface CatalogChildrenPageOptions {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface CatalogAppendGuard {
+  readonly expectedGeneration: string;
+  readonly expectedCursor: string;
+  readonly expectedFingerprint?: string;
+  readonly signal?: AbortSignal;
+}
 
 
 interface SourceRow {
@@ -200,18 +222,58 @@ export class CatalogStore {
     return row?.fingerprint ?? undefined;
   }
 
-  public getChildren(sourceId: string, parentNativeId?: string, sortKey: SessionNavigatorSortKey = 'activity'): readonly NavigatorEntity[] {
+  public getSourcePageState(sourceId: string): { readonly generation: string; readonly nextCursor?: string; readonly fingerprint?: string } | undefined {
     const source = this.#sourceRow(sourceId);
-    if (source === undefined || source.generation < 1) return [];
+    if (source === undefined) return undefined;
+    return {
+      generation: generationText(source.generation),
+      ...(source.next_cursor === null ? {} : { nextCursor: source.next_cursor }),
+      ...(source.fingerprint === null ? {} : { fingerprint: source.fingerprint }),
+    };
+  }
+
+  public getChildren(sourceId: string, parentNativeId?: string, sortKey: SessionNavigatorSortKey = 'activity'): readonly NavigatorEntity[] {
+    return this.getChildrenPage(sourceId, parentNativeId, sortKey).entities;
+  }
+
+  public getChildrenPage(sourceId: string, parentNativeId?: string, sortKey: SessionNavigatorSortKey = 'activity', options: CatalogChildrenPageOptions = {}): CatalogChildrenPage {
+    const source = this.#sourceRow(sourceId);
+    if (source === undefined || source.generation < 1) return { entities: [], generation: source === undefined ? generationText(0) : generationText(source.generation) };
+    throwIfAborted(options.signal);
     const generation = generationText(source.generation);
+    const limit = boundedLimit(options.limit);
+    const cursor = options.cursor === undefined ? undefined : decodeChildrenCursor(options.cursor);
+    if (cursor !== undefined && (cursor.sourceId !== sourceId || cursor.generation !== generation || cursor.parentNativeId !== (parentNativeId ?? null) || cursor.sortKey !== sortKey)) {
+      throw new Error('Catalog children cursor is stale.');
+    }
     const orderBy = orderByFor(sortKey);
-    const query = parentNativeId === undefined
-      ? `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id IS NULL ORDER BY ${orderBy}`
-      : `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE e.source_id = ? AND e.generation = ? AND e.parent_native_id = ? ORDER BY ${orderBy}`;
-    const rows = parentNativeId === undefined
-      ? this.#db.prepare(query).all(sourceId, generation)
-      : this.#db.prepare(query).all(sourceId, generation, parentNativeId);
-    return (rows as unknown as EntityRow[]).map((row) => toEntity(row, source.provider as SessionNavigatorProviderId));
+    const sortExpression = sortExpressionFor(sortKey);
+    const where = ['e.source_id = ?', 'e.generation = ?'];
+    const parameters: SQLInputValue[] = [sourceId, generation];
+    if (parentNativeId === undefined) {
+      where.push('e.parent_native_id IS NULL');
+    } else {
+      where.push('e.parent_native_id = ?');
+      parameters.push(parentNativeId);
+    }
+    if (cursor !== undefined) {
+      const comparator = sortKey === 'title' ? '>' : '<';
+      where.push(`(${sortExpression} ${comparator} ? OR (${sortExpression} = ? AND e.native_id > ?))`);
+      parameters.push(cursor.lastValue, cursor.lastValue, cursor.nativeId);
+    }
+    const query = `SELECT e.*, l.product_title FROM entities e LEFT JOIN entity_labels l ON l.source_id = e.source_id AND l.native_id = e.native_id WHERE ${where.join(' AND ')} ORDER BY ${orderBy} LIMIT ?`;
+    parameters.push(limit + 1);
+    const rows = this.#db.prepare(query).all(...parameters) as unknown as EntityRow[];
+    throwIfAborted(options.signal);
+    const pageRows = rows.slice(0, limit);
+    const entities = pageRows.map((row) => toEntity(row, source.provider as SessionNavigatorProviderId));
+    const last = pageRows.at(-1);
+    const hasMore = rows.length > limit && last !== undefined;
+    return {
+      entities,
+      generation,
+      ...(hasMore && last !== undefined ? { nextCursor: encodeChildrenCursor({ sourceId, generation, parentNativeId: parentNativeId ?? null, sortKey, lastValue: sortValueFor(last, sortKey), nativeId: last.native_id }) } : {}),
+    };
   }
 
   public hasChildren(sourceId: string, nativeId: string): boolean {
@@ -251,9 +313,10 @@ export class CatalogStore {
     return { schemaVersion: 1, provider: source.provider as SessionNavigatorProviderId, sourceId, sourceGeneration: generation, snapshotId: 'catalog-' + sourceId + '-' + generation, capturedAt: source.captured_at ?? new Date(0).toISOString(), redaction: 'metadata-only', entities, relations: relations.map((row) => ({ sourceId: row.source_id, fromNativeId: row.from_native_id, toNativeId: row.to_native_id, kind: row.kind as NavigationRelation['kind'] })), locations: locations.map((row) => ({ nativeId: row.native_id, relativePath: row.relative_path, rowOrdinal: row.row_ordinal })), truncated: source.truncated === 1, ...(source.next_cursor === null ? {} : { nextCursor: source.next_cursor }) };
   }
 
-  public appendSnapshot(sourceId: string, page: NavigatorSnapshot, fingerprint: string): NavigatorSnapshot {
+  public appendSnapshot(sourceId: string, page: NavigatorSnapshot, fingerprint: string, guard?: CatalogAppendGuard): NavigatorSnapshot {
     const source = this.#sourceRow(sourceId);
     if (source === undefined) throw new Error('Navigation source is not configured.');
+    assertAppendGuard(source, fingerprint, guard);
     if (source.generation < 1) return this.replaceSnapshot(sourceId, page, fingerprint);
 
     const previousGeneration = generationText(source.generation);
@@ -266,6 +329,7 @@ export class CatalogStore {
     const deleteEntity = this.#db.prepare('DELETE FROM entities WHERE source_id = ? AND generation = ? AND native_id = ?');
     this.#db.exec('BEGIN IMMEDIATE');
     try {
+      assertAppendGuard(this.#sourceRow(sourceId), fingerprint, guard);
       // Copy the prior generation inside SQLite. This avoids materializing the
       // entire catalog in JS for every continuation page.
       this.#db.prepare(`INSERT INTO entities(
@@ -383,6 +447,70 @@ export class CatalogStore {
 }
 
 function generationText(value: number | string): string { return `g-${String(value)}`; }
+
+interface ChildrenCursor {
+  readonly sourceId: string;
+  readonly generation: string;
+  readonly parentNativeId: string | null;
+  readonly sortKey: SessionNavigatorSortKey;
+  readonly lastValue: string;
+  readonly nativeId: string;
+}
+
+function boundedLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_CATALOG_PAGE_LIMIT;
+  return Math.max(1, Math.min(MAX_CATALOG_PAGE_LIMIT, Math.floor(value)));
+}
+
+function sortExpressionFor(sortKey: SessionNavigatorSortKey): string {
+  switch (sortKey) {
+    case 'created':
+      return "COALESCE(e.started_at, e.updated_at, '')";
+    case 'title':
+      return "COALESCE(l.product_title, e.vendor_title, e.label) COLLATE NOCASE";
+    case 'activity':
+    default:
+      return "COALESCE(e.activity_at, e.updated_at, e.started_at, '')";
+  }
+}
+
+function sortValueFor(row: EntityRow, sortKey: SessionNavigatorSortKey): string {
+  switch (sortKey) {
+    case 'created':
+      return row.started_at ?? row.updated_at ?? '';
+    case 'title':
+      return (row.product_title ?? row.vendor_title ?? row.label).toLocaleLowerCase();
+    case 'activity':
+    default:
+      return row.activity_at ?? row.updated_at ?? row.started_at ?? '';
+  }
+}
+
+function encodeChildrenCursor(cursor: ChildrenCursor): string {
+  return Buffer.from(JSON.stringify({ v: 1, ...cursor }), 'utf8').toString('base64url');
+}
+
+function decodeChildrenCursor(value: string): ChildrenCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<ChildrenCursor> & { v?: number };
+    if (parsed.v !== 1 || typeof parsed.sourceId !== 'string' || typeof parsed.generation !== 'string' || (typeof parsed.parentNativeId !== 'string' && parsed.parentNativeId !== null) || (parsed.sortKey !== 'activity' && parsed.sortKey !== 'created' && parsed.sortKey !== 'title') || typeof parsed.lastValue !== 'string' || typeof parsed.nativeId !== 'string') throw new Error('invalid');
+    return parsed as ChildrenCursor;
+  } catch {
+    throw new Error('Catalog children cursor is invalid.');
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('Catalog page read cancelled.');
+}
+
+function assertAppendGuard(source: SourceRow | undefined, fingerprint: string, guard: CatalogAppendGuard | undefined): void {
+  if (guard?.signal?.aborted) throw new Error('Catalog page commit cancelled.');
+  if (guard === undefined) return;
+  if (source === undefined || generationText(source.generation) !== guard.expectedGeneration || source.next_cursor !== guard.expectedCursor || (guard.expectedFingerprint !== undefined && source.fingerprint !== guard.expectedFingerprint) || source.fingerprint !== fingerprint) {
+    throw new Error('Catalog page is stale.');
+  }
+}
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;

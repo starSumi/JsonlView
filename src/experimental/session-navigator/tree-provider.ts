@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { lstat, realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
-import { CatalogStore } from './catalog-store';
+import { CatalogStore, type CatalogAppendGuard } from './catalog-store';
 import { createSessionNavigatorProvider } from './provider-factory';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import { RevealIntentRegistry } from './reveal-intents';
@@ -42,6 +42,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #refreshing: Promise<void> | undefined;
   #scanController: AbortController | undefined;
   #refreshAgain = false;
+  readonly #pageFlights = new Map<string, Promise<void>>();
+  readonly #pageControllers = new Map<string, AbortController>();
+  readonly #sourceEpochs = new Map<string, number>();
   /**
    * A Claude directory can be visible before its first metadata records are
    * readable (for example while a transcript is still being appended). Keep
@@ -104,6 +107,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         if (event.affectsConfiguration('jsonlView.sessionNavigator')) {
           if (event.affectsConfiguration('jsonlView.' + SOURCES_SETTING) || event.affectsConfiguration('jsonlView.' + ENABLED_SETTING)) {
             this.#scanController?.abort();
+            this.invalidateAllSources();
             this.#refreshAgain = true;
             this.#initialized = false;
             this.handleVisibility(this.#treeView?.visible ?? false);
@@ -205,22 +209,78 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     const store = await this.ensureStore();
     const cursor = node.source.nextCursor;
     if (cursor === undefined) return;
-    const setting = this.settings().find((candidate) => sourceIdFor(candidate) === node.source.sourceId);
+    const sourceId = node.source.sourceId;
+    const state = store.getSourcePageState(sourceId);
+    if (state?.generation !== node.source.generation || state.nextCursor !== cursor || state.fingerprint === undefined) return;
+    const setting = this.settings().find((candidate) => sourceIdFor(candidate) === sourceId);
     if (setting === undefined) return;
+    const key = pageFlightKey(sourceId, state.generation, cursor);
+    const existing = this.#pageFlights.get(key);
+    if (existing !== undefined) return existing;
+    const epoch = this.sourceEpoch(sourceId);
     const controller = new AbortController();
-    this.#sourceStatus.set(node.source.sourceId, { phase: 'loading' });
+    this.#pageControllers.set(key, controller);
+    const flight = this.runLoadMorePage(store, setting, sourceId, state.generation, state.fingerprint, cursor, epoch, controller, key);
+    this.#pageFlights.set(key, flight);
+    return flight;
+  }
+
+  private async runLoadMorePage(store: CatalogStore, setting: AuthorizedSourceSetting, sourceId: string, generation: string, fingerprint: string, cursor: string, epoch: number, controller: AbortController, key: string): Promise<void> {
+    this.#sourceStatus.set(sourceId, { phase: 'loading' });
     this.#changed.fire(undefined);
     try {
       const provider = this.providerFor(setting);
       const page = provider.scanPage === undefined ? await provider.scan(controller.signal, DEFAULT_SESSION_NAVIGATOR_BUDGET) : await provider.scanPage(controller.signal, DEFAULT_SESSION_NAVIGATOR_BUDGET, cursor);
-      if (this.#disposed || !this.isEnabled()) return;
-      store.appendSnapshot(node.source.sourceId, { ...page.snapshot, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }, page.fingerprint);
+      if (!this.canCommitPage(store, sourceId, generation, fingerprint, cursor, epoch, controller.signal)) return;
+      const returnedCursor = page.nextCursor ?? page.snapshot.nextCursor;
+      const nextCursor = returnedCursor === cursor ? undefined : returnedCursor;
+      const snapshot = {
+        ...page.snapshot,
+        truncated: nextCursor !== undefined,
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      };
+      const guard: CatalogAppendGuard = {
+        expectedGeneration: generation,
+        expectedCursor: cursor,
+        expectedFingerprint: fingerprint,
+        signal: controller.signal,
+      };
+      store.appendSnapshot(sourceId, snapshot, page.fingerprint, guard);
     } catch (error) {
-      if (!this.#disposed) this.#sourceStatus.set(node.source.sourceId, { phase: 'error', detail: error instanceof Error ? error.message : String(error) });
+      if (!this.#disposed && !controller.signal.aborted && this.sourceEpoch(sourceId) === epoch) {
+        this.#sourceStatus.set(sourceId, { phase: 'error', detail: error instanceof Error ? error.message : String(error) });
+      }
     } finally {
-      this.#sourceStatus.delete(node.source.sourceId);
+      if (this.#pageControllers.get(key) === controller) this.#pageControllers.delete(key);
+      if (this.#pageFlights.get(key) !== undefined) this.#pageFlights.delete(key);
+      this.#sourceStatus.delete(sourceId);
       this.#changed.fire(undefined);
     }
+  }
+
+  private sourceEpoch(sourceId: string): number {
+    return this.#sourceEpochs.get(sourceId) ?? 0;
+  }
+
+  private canCommitPage(store: CatalogStore, sourceId: string, generation: string, fingerprint: string, cursor: string, epoch: number, signal: AbortSignal): boolean {
+    if (signal.aborted || this.#disposed || !this.isEnabled() || this.sourceEpoch(sourceId) !== epoch) return false;
+    if (!this.settings().some((setting) => sourceIdFor(setting) === sourceId)) return false;
+    const state = store.getSourcePageState(sourceId);
+    return state?.generation === generation && state.nextCursor === cursor && state.fingerprint === fingerprint;
+  }
+
+  private invalidateSource(sourceId: string): void {
+    this.#sourceEpochs.set(sourceId, this.sourceEpoch(sourceId) + 1);
+    const prefix = sourceId + '\u0000';
+    for (const [key, controller] of this.#pageControllers) if (key.startsWith(prefix)) controller.abort();
+  }
+
+  private invalidateAllSources(): void {
+    const sourceIds = new Set<string>([
+      ...this.#sourceEpochs.keys(),
+      ...[...this.#pageControllers.keys()].map((key) => key.split('\u0000', 1)[0] ?? ''),
+    ]);
+    for (const sourceId of sourceIds) if (sourceId.length > 0) this.invalidateSource(sourceId);
   }
 
   private async runRefreshes(): Promise<void> {
@@ -484,6 +544,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   public dispose(): void {
     this.#disposed = true;
     this.#scanController?.abort();
+    this.invalidateAllSources();
     if (this.#probeTimer !== undefined) clearInterval(this.#probeTimer);
     this.#probeTimer = undefined;
     this.#store?.close();
@@ -647,6 +708,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       sourceIdFor({ provider: setting.provider, rootUri: setting.rootUri }) === sourceIdFor({ provider: removed.provider, rootUri: removed.rootUri }),
     );
     this.#scanController?.abort();
+    this.invalidateSource(sourceId);
     const excluded = this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []);
     await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, [...new Set([...excluded, sourceId, ...(sameDefault === undefined ? [] : [sourceIdFor(sameDefault)])])]);
     const next = current.filter((setting) => sourceIdFor(setting) !== sourceId);
@@ -668,6 +730,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     } else {
       if (this.#scanController !== undefined || [...this.#sourceStatus.values()].some((status) => status.phase === 'error')) this.#initialized = false;
       this.#scanController?.abort();
+      this.invalidateAllSources();
       if (this.#probeTimer !== undefined) clearInterval(this.#probeTimer);
       this.#probeTimer = undefined;
     }
@@ -739,6 +802,10 @@ function isContainedFile(rootPath: string, targetPath: string): boolean {
 async function isRegularFile(path: string): Promise<boolean> {
   try { return (await lstat(path)).isFile(); } catch { return false; }
 }
+function pageFlightKey(sourceId: string, generation: string, cursor: string): string {
+  return sourceId + '\u0000' + generation + '\u0000' + cursor;
+}
+
 function relativeTime(value: string): string {
   const time = Date.parse(value);
   if (!Number.isFinite(time)) return '';

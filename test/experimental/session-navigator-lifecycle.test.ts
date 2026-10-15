@@ -383,4 +383,30 @@ describe('Session Navigator host lifecycle', () => {
     await Promise.resolve();
     expect(host.scan).toHaveBeenCalledTimes(2);
   });
+
+  it('coalesces same-cursor loadMore and aborts it before a revoked source can append', async () => {
+    host.scan.mockResolvedValueOnce({
+      ...snapshot,
+      nextCursor: 'cursor-1',
+      snapshot: { ...snapshot.snapshot, truncated: true, nextCursor: 'cursor-1' },
+    });
+    await tree.refresh();
+    const [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected a source node');
+    let complete!: (value: SessionNavigatorScanResult) => void;
+    let pageSignal!: AbortSignal;
+    host.scanPage.mockImplementationOnce((signal: AbortSignal) => {
+      pageSignal = signal;
+      return new Promise<SessionNavigatorScanResult>((resolve) => { complete = resolve; });
+    });
+    const first = tree.loadMore(source);
+    const second = tree.loadMore(source);
+    await vi.waitFor(() => expect(host.scanPage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(pageSignal).toBeInstanceOf(AbortSignal));
+    await host.commands.get('jsonlView.sessionNavigator.removeSource')!(source);
+    expect(pageSignal.aborted).toBe(true);
+    complete({ ...snapshot, snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, nativeId: 'late' }] } });
+    await Promise.all([first, second]);
+    expect(await tree.getChildren()).toEqual([]);
+  });
 });
