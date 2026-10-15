@@ -58,6 +58,12 @@ function samples(values: readonly unknown[]): DatasetRecordSample[] {
   return values.map((value, index) => ({ value, ordinal: String(index + 1), parseState: 'valid' }));
 }
 
+const messageContainers = ['messages', 'chosen_messages', 'rejected_messages'] as const;
+
+function rowWithMessages(container: (typeof messageContainers)[number], messages: readonly unknown[]): Record<string, unknown> {
+  return container === 'messages' ? { messages } : { ...preference, [container]: messages };
+}
+
 describe('LLaMA-Factory v1 dataset adapter', () => {
   it('selects SFT/messages with bounded provenance and preserves the physical row', () => {
     const result = inspectLlamaFactoryDataset(samples([sft]), {
@@ -124,13 +130,104 @@ describe('LLaMA-Factory v1 dataset adapter', () => {
     expect(result.records[0]).toMatchObject({ shape: 'unknown', rawPreserved: true, raw: unknown });
   });
 
-  it('keeps unknown content blocks visible through Generic fallback', () => {
-    const result = inspectLlamaFactoryDataset(samples([{
-      messages: [{ role: 'user', content: [{ type: 'future_block', value: 'redacted' }] }],
-    }]));
+  it.each(messageContainers)('keeps unknown content blocks in %s visible through Generic fallback', (container) => {
+    const row = rowWithMessages(container, [{ role: 'user', content: [{ type: 'future_block', value: 'redacted' }] }]);
+    const result = inspectLlamaFactoryDataset(samples([row]));
 
     expect(result.detection.fallback).toMatchObject({ visible: true, code: 'unknown_shape' });
-    expect(result.detection.reasons).toContainEqual(expect.objectContaining({ code: 'unknown' }));
+    expect(result.detection.reasons).toContainEqual(expect.objectContaining({
+      path: { tokens: [{ kind: 'key', value: container }] },
+      code: 'unknown',
+    }));
+    expect(result.detection.confidence).toBe('none');
+    expect(result.records[0]?.raw).toBe(row);
+  });
+
+  it.each(messageContainers)('falls back when %s has a 33rd content block beyond the inspection limit', (container) => {
+    const content = [
+      ...Array.from({ length: 32 }, () => ({ type: 'text', text: 'synthetic block' })),
+      { type: 'future_block', value: 'redacted' },
+    ];
+    const row = rowWithMessages(container, [{ role: 'user', content }]);
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({
+      selectedAdapterId: GENERIC_DATASET_ADAPTER_ID,
+      confidence: 'none',
+      fallback: { visible: true, code: 'unknown_shape' },
+    });
+    expect(result.detection.reasons).toContainEqual(expect.objectContaining({ observation: expect.stringContaining('32-block inspection limit') }));
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]).toMatchObject({ physicalOrdinal: '1', shape: 'unknown', rawPreserved: true, fields: [] });
+    expect(result.records[0]?.raw).toBe(row);
+  });
+
+  it.each(messageContainers)('falls back when %s has a 65th message beyond the inspection limit', (container) => {
+    const messages = [
+      ...Array.from({ length: 64 }, () => ({ role: 'user', content: 'synthetic message' })),
+      { role: 'user', content: [{ type: 'future_block', value: 'redacted' }] },
+    ];
+    const row = rowWithMessages(container, messages);
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({
+      selectedAdapterId: GENERIC_DATASET_ADAPTER_ID,
+      confidence: 'none',
+      fallback: { visible: true, code: 'unknown_shape' },
+    });
+    expect(result.detection.reasons).toContainEqual(expect.objectContaining({ observation: expect.stringContaining('64-message inspection limit') }));
+    expect(result.records[0]?.raw).toBe(row);
+  });
+
+  it.each(messageContainers)('accepts %s at the nested inspection limits', (container) => {
+    const row = rowWithMessages(container, [
+      { role: 'user', content: Array.from({ length: 32 }, () => ({ type: 'text', text: 'synthetic block' })) },
+      ...Array.from({ length: 63 }, () => ({ role: 'assistant', content: 'synthetic message' })),
+    ]);
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({
+      selectedAdapterId: LLAMA_FACTORY_V1_ADAPTER_ID,
+      shape: container === 'messages' ? 'sft' : 'preference',
+      confidence: 'high',
+    });
+    expect(result.detection.fallback).toBeUndefined();
+  });
+
+  it('checks all message containers before choosing preference semantics', () => {
+    const row = {
+      ...preference,
+      messages: [{ role: 'user', content: [{ type: 'future_block', value: 'redacted' }] }],
+    };
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection.fallback).toMatchObject({ visible: true, code: 'unknown_shape' });
+    expect(result.records[0]?.raw).toBe(row);
+  });
+
+  it('keeps mixed known and unknown preference records in physical order through Generic fallback', () => {
+    const unknown = rowWithMessages('rejected_messages', [{ role: 'assistant', content: [{ type: 'future_block' }] }]);
+    const result = inspectLlamaFactoryDataset(samples([sft, unknown]));
+
+    expect(result.detection.fallback).toMatchObject({ visible: true, code: 'unknown_shape' });
+    expect(result.records.map((record) => [record.physicalOrdinal, record.shape])).toEqual([['1', 'unknown'], ['2', 'unknown']]);
+    expect(result.records[0]?.raw).toBe(sft);
+    expect(result.records[1]?.raw).toBe(unknown);
+  });
+
+  it('stops nested inspection without accessing messages or content blocks beyond the limits', () => {
+    for (const container of messageContainers) {
+      for (const limit of ['messages', 'blocks']) {
+        const entries: unknown[] = Array.from({ length: limit === 'messages' ? 65 : 33 });
+        Object.defineProperty(entries, entries.length - 1, { get: () => { throw new Error('Nested inspection exceeded its limit.'); } });
+        const row = rowWithMessages(container, limit === 'messages' ? entries : [{ role: 'user', content: entries }]);
+        const result = inspectLlamaFactoryDataset([{ value: row, byteLength: 1, ordinal: '7' }]);
+
+        expect(result.detection.fallback).toMatchObject({ visible: true, code: 'unknown_shape' });
+        expect(result.records[0]?.physicalOrdinal).toBe('7');
+        expect(result.records[0]?.raw).toBe(row);
+      }
+    }
   });
 
   it('reports a missing preference branch as a bounded diagnostic', () => {
@@ -176,6 +273,28 @@ describe('LLaMA-Factory v1 dataset adapter', () => {
 
     expect(result.provenance.coverage).toMatchObject({ sampledRecords: 0, examinedBytes: '0', truncated: true, truncatedReason: 'byte_limit' });
     expect(result.detection.fallback).toMatchObject({ visible: true, code: 'unknown_shape' });
+  });
+
+  it.each(['record_limit', 'byte_limit'] as const)('does not inspect rows excluded by the %s budget', (truncatedReason) => {
+    const excluded: DatasetRecordSample = {
+      byteLength: 2,
+      get value() { throw new Error('An excluded row was inspected.'); },
+    };
+    const result = inspectLlamaFactoryDataset([
+      { value: sft, byteLength: 1, ordinal: '4' },
+      excluded,
+    ], { samplePlan: truncatedReason === 'record_limit' ? { maxRecords: 1 } : { maxBytes: 1 } });
+
+    expect(result.provenance.coverage).toMatchObject({
+      sampledRecords: 1,
+      examinedBytes: '1',
+      truncated: true,
+      truncatedReason,
+    });
+    expect(result.detection).toMatchObject({ shape: 'sft', confidence: 'medium' });
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.physicalOrdinal).toBe('4');
+    expect(result.records[0]?.raw).toBe(sft);
   });
 
   it('does not treat a tools declaration alone as tool-use evidence', () => {

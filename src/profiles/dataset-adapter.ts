@@ -347,6 +347,15 @@ function detectLlamaFactory(
 
 function classifyRecord(value: unknown): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } {
   if (!isObject(value)) return { shapes: [], reasons: [] };
+  const messageContainerReasons: DatasetDetectionReason[] = [];
+  for (const key of ['messages', 'chosen_messages', 'rejected_messages']) {
+    const reason = inspectMessageContainer(value, key);
+    if (reason) messageContainerReasons.push(reason);
+  }
+  if (messageContainerReasons.length > 0) {
+    return { shapes: [], reasons: messageContainerReasons };
+  }
+
   const chosen = own(value, 'chosen_messages');
   const rejected = own(value, 'rejected_messages');
   if (Array.isArray(chosen) || Array.isArray(rejected)) {
@@ -361,12 +370,6 @@ function classifyRecord(value: unknown): { shapes: DatasetShape[]; reasons: Data
   const messages = own(value, 'messages');
   if (!Array.isArray(messages) || messages.length === 0) return { shapes: [], reasons: [] };
   const boundedMessages = messages.slice(0, MAX_MESSAGES_PER_RECORD);
-  if (boundedMessages.some(messageHasUnknownContentBlock)) {
-    return {
-      shapes: [],
-      reasons: [{ path: { tokens: [{ kind: 'key', value: 'messages' }] }, code: 'unknown', observation: 'Messages contain an unknown content block type.' }],
-    };
-  }
   const hasTool = boundedMessages.some(messageHasToolSignal);
   const hasMedia = boundedMessages.some(messageHasMediaSignal);
   if (hasTool && hasMedia) {
@@ -394,6 +397,52 @@ function classifyRecord(value: unknown): { shapes: DatasetShape[]; reasons: Data
     };
   }
   return { shapes: [], reasons: [] };
+}
+
+function inspectMessageContainer(value: Record<string, unknown>, key: string): DatasetDetectionReason | undefined {
+  const candidate = own(value, key);
+  if (!Array.isArray(candidate)) return undefined;
+  const path = { tokens: [{ kind: 'key' as const, value: key }] };
+  if (candidate.length > MAX_MESSAGES_PER_RECORD) {
+    return {
+      path,
+      code: 'unknown',
+      observation: `${key} exceeds the ${MAX_MESSAGES_PER_RECORD}-message inspection limit; using visible Generic JSONL fallback.`,
+    };
+  }
+  for (const message of candidate) {
+    if (!isObject(message)) {
+      return { path, code: 'unknown', observation: `${key} contains a non-object message; using visible Generic JSONL fallback.` };
+    }
+    const content = own(message, 'content');
+    if (!Array.isArray(content)) continue;
+    if (content.length > MAX_BLOCKS_PER_MESSAGE) {
+      return {
+        path,
+        code: 'unknown',
+        observation: `${key} contains a message exceeding the ${MAX_BLOCKS_PER_MESSAGE}-block inspection limit; using visible Generic JSONL fallback.`,
+      };
+    }
+    if (content.some((block) => !isKnownContentBlock(block))) {
+      return {
+        path,
+        code: 'unknown',
+        observation: `${key} contains an unknown content block type; using visible Generic JSONL fallback.`,
+      };
+    }
+  }
+  return undefined;
+}
+
+function isKnownContentBlock(block: unknown): boolean {
+  if (!isObject(block)) return false;
+  const type = own(block, 'type');
+  if (typeof type !== 'string') return false;
+  return [
+    'text', 'input_text', 'output_text', 'thinking', 'reasoning',
+    'tool_call', 'tool_use', 'tool_result', 'function_call', 'function',
+    'image', 'image_url', 'input_image', 'audio', 'audio_url', 'video', 'video_url',
+  ].includes(type.toLowerCase());
 }
 
 function isMessageShape(value: unknown): boolean {
@@ -427,22 +476,6 @@ function contentBlocks(value: Record<string, unknown>): Record<string, unknown>[
   const content = own(value, 'content');
   if (!Array.isArray(content)) return [];
   return content.slice(0, MAX_BLOCKS_PER_MESSAGE).filter(isObject);
-}
-
-function messageHasUnknownContentBlock(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  const content = own(value, 'content');
-  if (!Array.isArray(content)) return false;
-  return content.slice(0, MAX_BLOCKS_PER_MESSAGE).some((block) => {
-    if (!isObject(block)) return true;
-    const type = own(block, 'type');
-    if (typeof type !== 'string') return true;
-    return ![
-      'text', 'input_text', 'output_text', 'thinking', 'reasoning',
-      'tool_call', 'tool_use', 'tool_result', 'function_call', 'function',
-      'image', 'image_url', 'input_image', 'audio', 'audio_url', 'video', 'video_url',
-    ].includes(type.toLowerCase());
-  });
 }
 
 function projectFields(value: unknown, shape: DatasetShape): DatasetFieldProjection[] {
