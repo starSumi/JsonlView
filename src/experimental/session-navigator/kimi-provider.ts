@@ -98,7 +98,7 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
     const preview = main ? boundedText(state.lastPrompt, 240) : undefined;
     const startedAt = timestamp(state.createdAt);
     const activityAt = timestamp(state.updatedAt);
-    const status = ['completed', 'cancelled', 'failed'].includes(String(state.lastTurnReason)) ? String(state.lastTurnReason) : undefined;
+    const status = typeof state.lastTurnReason === 'string' && ['completed', 'cancelled', 'failed'].includes(state.lastTurnReason) ? state.lastTurnReason : undefined;
     return {
       sourceId: this.sourceId, nativeId: nativeId(entry.sessionKey, entry.agentId), kind: main ? 'session' : 'subagent',
       label: title ?? preview ?? (main ? 'Kimi session ' + digest(entry.sessionKey).slice(0, 12) : 'Kimi agent ' + entry.agentId),

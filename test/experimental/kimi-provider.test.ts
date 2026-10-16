@@ -75,6 +75,17 @@ describe('Kimi metadata-only Navigator provider', () => {
     expect(result.snapshot.truncated).toBe(false);
   });
 
+  it('keeps malformed status metadata from aborting discovery of a healthy sibling', async () => {
+    await session('a-malformed-status', { title: 'Malformed status', lastTurnReason: { toString: 0 } });
+    await session('b-healthy', { title: 'Healthy sibling', lastTurnReason: 'completed' });
+    const result = await provider.scan(signal(), defaults);
+    expect(result.snapshot.entities).toHaveLength(2);
+    expect(result.snapshot.entities[0]).toMatchObject({ label: 'Malformed status' });
+    expect(result.snapshot.entities[0]).not.toHaveProperty('status');
+    expect(result.snapshot.entities[1]).toMatchObject({ label: 'Healthy sibling', status: 'completed' });
+    expect(result.snapshot.truncated).toBe(false);
+  });
+
   it('keeps unknown parent agents orphaned and relation bounds explicit', async () => {
     await session('unknown-parent', { title: 'Orphans', agents: { main: {}, 'agent-0': { parentAgentId: '../outside' }, 'agent-1': { parentAgentId: 'main' } } }, ['main', 'agent-0', 'agent-1']);
     const result = await provider.scan(signal(), { ...defaults, maxRelations: 0 });
