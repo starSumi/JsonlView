@@ -174,7 +174,7 @@ function isConversationProjection(value: unknown): value is ConversationProjecti
       || !isFieldPath(part.path) || Object.keys(part.path).length !== 1
       || part.path.tokens.length > MAX_CONVERSATION_DEPTH
       || !part.path.tokens.every((token) => Object.keys(token).length === 2
-        && (token.kind !== 'key' || token.value.length <= 80))) return false;
+        && (token.kind !== 'key' || (typeof token.value === 'string' && token.value.length <= 80)))) return false;
     characters += part.text.length;
     return characters <= MAX_CONVERSATION_CHARACTERS;
   });

@@ -577,6 +577,7 @@ describe('IntegratedJsonlSession', () => {
       'codex-session-index',
       'claude-code-session',
       'pi-coding-agent',
+      'kimi-code-session',
       'generic-agent-events',
       'opentelemetry',
       'software-engineering-agent',
