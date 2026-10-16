@@ -9,7 +9,17 @@ describe('Session Navigator layout contract', () => {
       'jsonlView.sessionNavigator.refresh', 'jsonlView.sessionNavigator.addSource', 'jsonlView.sessionNavigator.sort',
     ]);
     for (const item of primary) expect(manifest.contributes.commands.find((command: { command: string }) => command.command === item.command).icon).toMatch(/^\$\(/u);
-    expect(manifest.contributes.viewsWelcome).toBeUndefined();
+    expect(manifest.contributes.viewsWelcome).toEqual([
+      expect.objectContaining({
+        view: 'jsonlView.sessionNavigator',
+        when: '!config.jsonlView.sessionNavigator.enabled',
+        contents: expect.stringContaining('[Enable Session Navigator](command:jsonlView.sessionNavigator.enable)'),
+      }),
+      expect.objectContaining({
+        view: 'jsonlView.recentPreviews',
+        contents: expect.stringContaining('[Paste JSONL](command:jsonlView.sessionNavigator.addSourceFromClipboard)'),
+      }),
+    ]);
     expect(manifest.contributes.views.jsonlViewSessionNavigator[0]).toMatchObject({ type: 'webview', id: 'jsonlView.sourceDrop' });
     expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.sessionNavigator')).toBeTruthy();
   });
@@ -24,7 +34,7 @@ describe('Session Navigator layout contract', () => {
     const listTreeIcons = manifest.contributes.commands.filter((command: { icon?: string }) => command.icon === '$(list-tree)');
     expect(listTreeIcons).toHaveLength(0);
     expect(manifest.contributes.views.jsonlViewSessionNavigator.map((view: { id: string }) => view.id)).toEqual([
-      'jsonlView.sourceDrop', 'jsonlView.sessionNavigator',
+      'jsonlView.sourceDrop', 'jsonlView.sessionNavigator', 'jsonlView.recentPreviews',
     ]);
   });
 

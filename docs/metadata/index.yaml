@@ -41,6 +41,16 @@ documents:
     evidence: []
     revisit: when a source format or profile contract changes
     rollback: restore the prior contract and supersede this guide
+  - id: dataset-observations
+    path: docs/dataset-observations.md
+    title: Dataset observations
+    kind: guide
+    status: active
+    owner: product
+    tags: [datasets, bounded-scan, projection, insights]
+    evidence: []
+    revisit: when dataset observation fields, budgets or scope change
+    rollback: remove optional dataset observations while retaining Generic inspection
   - id: marketplace-publishing
     path: docs/marketplace-publishing.md
     title: Visual Studio Marketplace publication
@@ -581,6 +591,16 @@ documents:
     evidence: []
     revisit: when runtime bundles, build inputs or epoch semantics change
     rollback: revert identity distribution while retaining request correlation
+  - id: adr-048-bounded-conversation-and-dataset-scenes
+    path: docs/decisions/048-bounded-conversation-and-dataset-scenes.md
+    title: Bounded Conversation And Dataset Scenes
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [conversation, datasets, projection, bounded-scan]
+    evidence: []
+    revisit: when projection budgets or dataset observation semantics change
+    rollback: disable the optional projections and retain the physical record table
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

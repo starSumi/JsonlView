@@ -38,6 +38,7 @@
     "jsonlView.profile.autoDetect",
     "jsonlView.native.newlineScanner",
     "jsonlView.sessionNavigator.enable",
+    "jsonlView.sessionNavigator.settings",
     "jsonlView.sessionNavigator.disable",
     "jsonlView.sessionNavigator.addSource",
     "jsonlView.sessionNavigator.authorizeAgent",
@@ -57,6 +58,9 @@
     "jsonlView.sessionNavigator.copyRelativePath",
     "jsonlView.sessionNavigator.openTimeline",
     "jsonlView.sessionNavigator.copySessionId",
+    "jsonlView.previews.open",
+    "jsonlView.previews.saveAs",
+    "jsonlView.previews.openSavedCopy",
     "jsonlView.sessionNavigator.enabled",
     "jsonlView.sessionNavigator.sources",
     "jsonlView.sessionNavigator.sort"
