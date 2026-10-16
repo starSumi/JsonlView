@@ -10,6 +10,7 @@ import type {
   RecordRef,
   RowSort,
   SnapshotIdentity,
+  TemporaryPreviewStatus,
   WebviewRequest,
 } from '../shared/types';
 import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
@@ -83,6 +84,9 @@ export interface DocumentControllerHooks {
   onQueryOperation?: (event: ObservabilityEvent) => void;
   /** Focus the opt-in Session Navigator without changing the document. */
   onOpenSessionNavigator?: () => Promise<void> | void;
+  getPreviewStatus?: () => TemporaryPreviewStatus | undefined;
+  /** Native Save As uses the current document, never a Webview-supplied path. */
+  onSavePreviewAs?: (isCurrent: () => boolean) => Promise<unknown>;
   /** Hand off a bounded Webview error to the host-owned diagnostic flow. */
   onDiagnosticError?: (diagnostic: { code: string; message: string; action?: 'explain' | 'copy' }) => Promise<void> | void;
   /** Schedule bounded source recovery without replacing the current snapshot. */
@@ -167,6 +171,7 @@ export class DocumentController {
           this.hooks.onReadyReceived?.();
           if (await this.postIfCurrent(request, acceptedIdentity, 'OPENED', summary)) {
             this.hooks.onOpenedDelivery?.(true);
+            await this.publishPreviewStatus(request.requestId);
             await this.hooks.onReady?.();
           } else {
             this.hooks.onOpenedDelivery?.(false);
@@ -174,6 +179,9 @@ export class DocumentController {
           return;
         case 'OPEN_SESSION_NAVIGATOR':
           await this.hooks.onOpenSessionNavigator?.();
+          return;
+        case 'SAVE_PREVIEW_AS':
+          await this.hooks.onSavePreviewAs?.(() => !this.disposed && this.isCurrentIdentity(acceptedIdentity));
           return;
         case 'GET_ROWS': {
           queryObservation = this.beginQueryObservation();
@@ -335,6 +343,14 @@ export class DocumentController {
       this.requests.finish(request.requestId);
       if (queryObservation !== undefined) this.finishQueryObservation(queryObservation, signal);
     }
+  }
+
+  public async publishPreviewStatus(requestId = 'preview-status'): Promise<void> {
+    if (this.disposed) return;
+    const status = this.hooks.getPreviewStatus?.();
+    if (status === undefined) return;
+    const identity = captureSnapshotIdentity(this.session.getSummary().snapshot);
+    await this.postIfCurrent({ requestId }, identity, 'PREVIEW_STATUS', status);
   }
 
   public dispose(): void {

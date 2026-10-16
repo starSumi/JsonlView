@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Mark pasted files as temporary previews, recover them from Recent Previews during the current VS Code session, and offer exact-byte Save As without overwriting existing files. Remember explicit Session Navigator enablement and keep source authorization separate.
+- Populate default columns and cell values when a fresh file opens with last-line-first row order already selected.
 - Preserve a selected dataset record's prompt, output, title, and tags when an ordinary nested payload contains similarly named fields.
 - Keep column visibility changes local when the current page already contains the required values; fetch missing fields through the existing bounded query.
 - Record bounded query start and settlement metadata in the local Output channel, distinguishing empty results, cancellation, stale work, and failed delivery without logging query text or source content.

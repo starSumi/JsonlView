@@ -33,7 +33,9 @@ did not provide a visible place to drop files or paste JSONL content.
   A refresh rebuilds malformed locations left by an older catalog projection.
 - File inputs stay file inputs. Pasted content is explicitly submitted into an
   owned temporary preview, never appended to a provider log or saved in the
-  navigation catalog. The original pasted bytes are not silently normalized.
+  navigation catalog. The submitted Unicode string is encoded as UTF-8 without
+  changing CRLF, whitespace, record order, or a trailing delimiter. Clipboard
+  strings do not carry an original filename or filesystem provenance.
 
 ## Owner and decision
 
@@ -72,8 +74,80 @@ existing files use the existing bounded reader without copying file bodies
 through the Webview. Temporary previews are separately owned, capped, and
 cleaned by their controller. Cancellation discards pending intake work. The form
 uses no remote content, source-code execution, or automatic clipboard reads. The
-persistent source-drop view is the single always-visible intake entry point; the
-native tree does not repeat this copy through `viewsWelcome`.
+persistent source-drop view is the single intake guidance surface while the
+Navigator is enabled; the enabled Sessions tree does not repeat this copy
+through `viewsWelcome`. The Sessions view remains visible while disabled and
+uses an empty native tree with welcome Enable and Settings actions. Its message
+must be empty so VS Code can display welcome content.
+
+### Current-session preview lifecycle
+
+`SessionPreviews` owns temporary files and an in-memory index containing only
+an opaque ID, creation time, record count, UTF-8 byte count, source URI, typed
+status, and optional saved-copy URI. Neither this index nor clipboard contents
+are written to the catalog, memento, Output, or console. Recent Previews is a
+separate native TreeView in the same container, available without Navigator
+enablement or provider discovery. Its entries represent scratch files, never
+agent sessions. Open revalidates the owned file identity; Save As uses the same
+owner as the Viewer action. A saved copy can be opened separately.
+
+The finite state machine is `temporary -> saving -> saved`. Cancellation or
+failure restores the prior stable state; another Save As is allowed from
+`saved`. Concurrent and reentrant saves share one operation. `saved` means a
+separate permanent copy exists: the original URI remains temporary and the
+Viewer continues to say Temporary preview. Cold READY delivers metadata through
+the validated document/generation/epoch envelope before normal interaction.
+The Viewer supplies no destination path; only the native save dialog does.
+
+Save As accepts a new local destination outside the owned temporary directory.
+It revalidates source identity, reads at most the bounded preview size, creates
+the destination exclusively, writes the exact bytes, flushes, and verifies the
+result. Existing files, including the source, cannot be overwritten. A failed
+write removes only a destination still matching its empty creation identity.
+Partial writes and external changes cannot be distinguished reliably, so any
+changed destination is retained and the failure notification explains that an
+incomplete file may remain. Failure-time attributes are never adopted as new
+cleanup ownership. Cancellation or a stale owner
+before dispatch writes nothing. A dispatched write finishes even if its tab
+closes, and normal controller disposal drains it before temporary cleanup.
+Save success survives a failure to open the permanent copy and is reported as
+saved with an open failure, rather than deleting the user's copy.
+
+Closing a tab or intake panel leaves owned previews available through Recent
+Previews during the current Extension Host session. The cap is 20 previews,
+including previews with a saved copy. Reaching the cap refuses the next import
+with an explicit message; no unsaved preview is evicted. Normal controller
+disposal attempts non-recursive cleanup only for identity-unchanged owned files.
+Missing, externally edited, replaced, or locked files are retained or reported
+unavailable. Saved destinations are outside cleanup ownership. There is no TTL,
+LRU, persistent preview index, reload recovery, or crash recovery guarantee.
+
+The editor remains a `CustomReadonlyEditorProvider`. VS Code offers no close
+veto or save hook on that provider; a dispose callback runs after close. The
+product therefore uses an explicit temporary marker, manual Save As, and
+current-session Recent recovery, without pretending that the document is dirty
+or intercepting normal close commands.
+
+### Remembered Navigator enablement
+
+Opening Sessions while disabled asks through a native Enable / Settings /
+Cancel prompt. Enable writes the existing global
+`jsonlView.sessionNavigator.enabled` setting, then re-reads its effective value
+to respect workspace overrides. Future opens skip this prompt while enabled.
+Settings and Cancel do not change settings, discover sources, scan, or open a
+catalog. Enabling the built-in Navigator grants no source permission: the
+source-drop surface continues to guide source authorization separately, without
+a repeated empty-source modal on every open.
+Only sources explicitly recorded in the existing sources setting are scanned.
+Detected provider homes remain candidates until selected for authorization;
+granting one source records that source without enabling the Navigator or
+granting other detected homes. Previously enabled installations with no
+explicit sources now use the same source-drop authorization guidance.
+
+Table query controls still operate on the current file through bounded scans;
+column selection changes projection. The production Table query is not wired
+to the Navigator catalog. Enablement is not a claim of cross-session search or
+measured performance improvement.
 
 ## Alternatives and deferred work
 
@@ -100,6 +174,13 @@ native tree does not repeat this copy through `viewsWelcome`.
   defines primary/secondary view actions, welcome content, and view progress.
 - [VS Code Webviews UX](https://code.visualstudio.com/api/ux-guidelines/webviews)
   reserves custom surfaces for needs beyond the native APIs.
+- [Custom readonly editor API](https://code.visualstudio.com/api/references/vscode-api#CustomReadonlyEditorProvider)
+  defines only open and resolve operations; editable save hooks belong to a
+  different provider contract.
+- [Save dialog API](https://code.visualstudio.com/api/references/vscode-api#window.showSaveDialog)
+  selects a destination URI or returns undefined; the extension owns the write.
+- [Node.js file open flags](https://nodejs.org/api/fs.html#file-system-flags)
+  defines exclusive creation with `wx` / `wx+`.
 - [Webview Views](https://code.visualstudio.com/api/extension-guides/webview#webview-views)
   documents the persistent Webview View provider lifecycle used for the compact
   source drop target.
@@ -126,12 +207,17 @@ The isolated host must load both provider layouts without a manual refresh,
 render child nesting, show three compact actions at a narrow width, and open
 the source form with keyboard-accessible paste input. Real-store probes report
 only aggregates and never copy private conversations into fixtures or reports.
+Focused regressions also cover cold preview metadata, validated Save As
+requests, exact Unicode/CRLF bytes, cancellation, existing targets, partial
+write rollback and target replacement, concurrent/reentrant saves, late native
+dialogs, disposal during a dispatched write, current-session reopen, the cap,
+and disabled Navigator choices without catalog or provider IO.
 
 ## Boundary and rollback
 
 The feature remains opt-in. No MCP transport, provider mutation, automatic
 network request, or release promotion is added. Disable the Navigator to stop
-scans, close the intake controller to clean owned previews, or revert the
+scans, dispose the session controller to clean owned previews, or revert the
 scoped implementation. Provider logs and databases are never deleted. A failed
 cleanup retains unknown or locked files rather than deleting unrelated data.
 An abrupt Extension Host exit can leave an owned temporary preview behind;

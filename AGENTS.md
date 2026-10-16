@@ -112,6 +112,9 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Display columns are independent of query predicates. Visibility changes stay
   local when the current row projection covers every required column; missing
   fields and projection overflow still require a bounded page refresh.
+- Resolve inferred columns after bounded page hydration in either physical row
+  order, including the first request on a fresh engine. Preserve explicit empty
+  columns, profile defaults, and table-column limits.
 - Accepted GET_ROWS operations may emit one local metadata start and one
   settlement event when the existing handler settles. Keep operation outcome
   separate from ROWS delivery, preserve cancellation and identity gates, and
@@ -127,6 +130,16 @@ maintenance, and rollback trade-offs in docs/decisions/.
   branch to its source, generation, parent, sort, and lifecycle epoch; discard
   late reads after invalidation and keep title cursor comparison in SQLite's
   selected collation.
+- Pasted previews have a session-owned metadata-only index, a 20-preview cap,
+  and temporary/saving/saved-copy states. Closing a tab preserves recovery in
+  Recent Previews for this session; no restart recovery is promised. Save As
+  copies exact UTF-8 bytes to a new local file with exclusive creation, never
+  moves the temporary source, and never cleans the saved destination. Cleanup
+  drains writes and removes only identity-unchanged owned temporary files.
+  Native Navigator enablement is remembered separately from source permission;
+  cancelling or opening Settings while disabled must not scan or create a catalog.
+  Scan only explicitly configured sources; detected homes are candidates until
+  separately authorized, and authorizing a source does not enable the Navigator.
 - Insights results commit only against the current AnalysisIntent v1, including
   normalized query conditions, scope, monotonic intent revision, source identity,
   and the selected profile revision. Display columns remain independent.

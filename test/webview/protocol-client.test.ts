@@ -41,6 +41,16 @@ function message<T extends ExtensionMessage['type']>(
 }
 
 describe('VS Code message client', () => {
+  it('accepts cold and unsolicited preview metadata only for the current document generation and epoch', () => {
+    const client = new VsCodeMessageClient({ postMessage() {} }, { documentId: 'doc', generation: 'g2', epoch: 3 });
+    const status = { ...message('PREVIEW_STATUS', 'preview-status', 'g2', { status: 'temporary', recordCount: 2, sizeBytes: 32, savedCopy: false }), epoch: 3 };
+    expect(client.accept(status)).toEqual(status);
+    expect(client.accept({ ...status, documentId: 'other' })).toBeUndefined();
+    expect(client.accept({ ...status, generation: 'g1' })).toBeUndefined();
+    expect(client.accept({ ...status, epoch: 2 })).toBeUndefined();
+    expect(client.accept({ ...status, payload: { ...status.payload, raw: 'untrusted' } })).toBeUndefined();
+  });
+
   it('accepts the correlated OPENED message and advances the session', () => {
     const sent: WebviewRequest[] = [];
     const client = new VsCodeMessageClient({ postMessage: (value) => sent.push(value) }, {

@@ -156,6 +156,8 @@ export function validateWebviewRequest(rawValue: unknown): ValidationResult {
       }
       break;
     case 'OPEN_SESSION_NAVIGATOR':
+    case 'SAVE_PREVIEW_AS':
+      if (Object.keys(value.payload).length !== 0) return failure('This action requires an empty payload.');
       break;
     case 'DIAGNOSE_ERROR':
       if (!isBoundedString(value.payload.code, MAX_DIAGNOSTIC_CODE_LENGTH)) {

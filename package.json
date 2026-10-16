@@ -115,6 +115,25 @@
         "icon": "$(circle-slash)"
       },
       {
+        "command": "jsonlView.sessionNavigator.settings",
+        "title": "JsonlView: Session Navigator Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "jsonlView.previews.open",
+        "title": "Open Temporary Preview",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "jsonlView.previews.saveAs",
+        "title": "Save Preview As…",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "jsonlView.previews.openSavedCopy",
+        "title": "Open Saved Preview Copy"
+      },
+      {
         "command": "jsonlView.sessionNavigator.addSource",
         "title": "JsonlView: Add Source",
         "icon": "$(add)"
@@ -215,21 +234,35 @@
         },
         {
           "id": "jsonlView.sessionNavigator",
-          "name": "Sessions",
-          "when": "config.jsonlView.sessionNavigator.enabled"
+          "name": "Sessions"
+        },
+        {
+          "id": "jsonlView.recentPreviews",
+          "name": "Recent Previews"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "jsonlView.sessionNavigator",
+        "when": "!config.jsonlView.sessionNavigator.enabled",
+        "contents": "Session Navigator is built in. Enable it to browse local Agent sources. Source authorization is separate.\n[Enable Session Navigator](command:jsonlView.sessionNavigator.enable)\n[Open Settings](command:jsonlView.sessionNavigator.settings)"
+      },
+      {
+        "view": "jsonlView.recentPreviews",
+        "contents": "Pasted previews can be reopened during this VS Code session. Use Save As to keep a permanent copy.\n[Paste JSONL](command:jsonlView.sessionNavigator.addSourceFromClipboard)"
+      }
+    ],
     "menus": {
       "view/title": [
         {
           "command": "jsonlView.sessionNavigator.refresh",
-          "when": "view == jsonlView.sessionNavigator",
+          "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
           "group": "navigation@1"
         },
         {
           "command": "jsonlView.sessionNavigator.addSource",
-          "when": "view == jsonlView.sessionNavigator",
+          "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
           "group": "navigation@2"
         },
         {
@@ -281,6 +314,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "jsonlView.previews.saveAs",
+          "when": "view == jsonlView.recentPreviews && viewItem =~ /^jsonlView\\.preview\\./",
+          "group": "inline@1"
+        },
+        {
+          "command": "jsonlView.previews.openSavedCopy",
+          "when": "view == jsonlView.recentPreviews && viewItem == jsonlView.preview.savedCopy",
+          "group": "open@1"
+        },
         {
           "command": "jsonlView.sessionNavigator.loadMore",
           "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source.partial",

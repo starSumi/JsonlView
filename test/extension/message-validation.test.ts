@@ -21,6 +21,8 @@ describe('webview message validation', () => {
 
   it('accepts the explicit Navigator focus action without a data payload', () => {
     expect(validateWebviewRequest(envelope('OPEN_SESSION_NAVIGATOR', {})).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('SAVE_PREVIEW_AS', {})).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('SAVE_PREVIEW_AS', { path: 'untrusted' })).ok).toBe(false);
   });
 
   it('accepts bounded diagnostic handoff actions and rejects oversized context', () => {

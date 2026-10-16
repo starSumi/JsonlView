@@ -1,15 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdtemp, open, realpath, rmdir, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import * as vscode from 'vscode';
 import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
 import type { SessionNavigatorProviderId } from './types';
+import { SessionPreviews } from './session-previews';
 
 export const SOURCE_INTAKE_MAX_BYTES = 1_048_576;
 export const SOURCE_INTAKE_MAX_RECORDS = 10_000;
 const MAX_SOURCES = 32;
-const MAX_PREVIEWS = 20;
 
 type IntakeMessage =
   | { readonly type: 'pick-files' | 'pick-folder' }
@@ -86,17 +84,14 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   readonly #onSource: SourceIntakeHandler;
   readonly #onDetectedAgent: DetectedAgentHandler | undefined;
   readonly #lifetime = new AbortController();
-  readonly #previews = new Map<string, { readonly dev: number; readonly ino: number; readonly size?: number; readonly mtimeMs?: number }>();
   #panel: vscode.WebviewPanel | undefined;
   #view: vscode.WebviewView | undefined;
   #panelLifetime: AbortController | undefined;
   #viewLifetime: AbortController | undefined;
   #pending: Promise<void> | undefined;
-  #directory: string | undefined;
-  #directoryIdentity: { readonly dev: number; readonly ino: number } | undefined;
   #disposal: Promise<void> | undefined;
 
-  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler) {
+  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, public readonly previews = new SessionPreviews()) {
     this.#onSource = onSource;
     this.#onDetectedAgent = onDetectedAgent;
   }
@@ -175,7 +170,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       }
       if (message.type === 'import-jsonl') {
         const records = validatePastedJsonl(message.text);
-        await this.openPreview(message.text, signal);
+        await this.openPreview(message.text, records, signal);
         await this.post(webview, signal, 'success', `Opened a temporary preview with ${String(records)} records.`, true);
         return;
       }
@@ -228,62 +223,16 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
     catch { /* The panel may close between the signal check and delivery. */ }
   }
 
-  private async openPreview(text: string, signal: AbortSignal): Promise<void> {
-    if (this.#previews.size >= MAX_PREVIEWS) throw new Error('This session has 20 temporary previews. Save your work and reload VS Code to start a new session.');
-    if (this.#directory === undefined) {
-      this.#directory = await mkdtemp(join(tmpdir(), 'jsonlview-intake-'));
-      const stat = await lstat(this.#directory);
-      this.#directoryIdentity = { dev: stat.dev, ino: stat.ino };
-    }
-    if (signal.aborted) return;
-    const path = join(this.#directory, `preview-${randomUUID()}.jsonl`);
-    try {
-      const handle = await open(path, 'wx', 0o600);
-      try {
-        const stat = await handle.stat();
-        this.#previews.set(path, { dev: stat.dev, ino: stat.ino });
-        await handle.writeFile(text, { encoding: 'utf8' });
-        const written = await handle.stat();
-        this.#previews.set(path, { dev: written.dev, ino: written.ino, size: written.size, mtimeMs: written.mtimeMs });
-      }
-      finally { await handle.close(); }
-      if (signal.aborted) { await this.removePreview(path); return; }
-      await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(path), 'jsonlView.editor');
-    } catch (error) {
-      await this.removePreview(path);
-      throw error;
-    }
-  }
-
-  private async ownsDirectory(): Promise<boolean> {
-    if (this.#directory === undefined || this.#directoryIdentity === undefined) return false;
-    try {
-      const stat = await lstat(this.#directory);
-      return stat.isDirectory() && !stat.isSymbolicLink() && stat.dev === this.#directoryIdentity.dev
-        && stat.ino === this.#directoryIdentity.ino && resolve(await realpath(this.#directory)) === resolve(this.#directory);
-    } catch { return false; }
-  }
-
-  private async removePreview(path: string): Promise<void> {
-    const owned = this.#previews.get(path);
-    if (owned === undefined || !await this.ownsDirectory()) return;
-    try {
-      const current = await lstat(path);
-      if (!current.isFile() || current.isSymbolicLink() || current.dev !== owned.dev || current.ino !== owned.ino
-        || (owned.size !== undefined && current.size !== owned.size)
-        || (owned.mtimeMs !== undefined && current.mtimeMs !== owned.mtimeMs)) return;
-      await unlink(path); this.#previews.delete(path);
-    }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') this.#previews.delete(path); }
+  private async openPreview(text: string, records: number, signal: AbortSignal): Promise<void> {
+    const preview = await this.previews.create(text, records, signal);
+    if (preview === undefined) return;
+    try { await vscode.commands.executeCommand('vscode.openWith', preview.sourceUri, 'jsonlView.editor'); }
+    catch { await this.previews.remove(preview.id); throw new Error('Could not open the temporary preview.'); }
   }
 
   private async cleanup(): Promise<void> {
     await this.#pending;
-    for (const path of this.#previews.keys()) await this.removePreview(path);
-    if (await this.ownsDirectory()) {
-      // Deliberately non-recursive: files not created by this controller are never removed.
-      try { await rmdir(this.#directory!); } catch { /* Retain an occupied or locked directory. */ }
-    }
+    await this.previews.dispose();
   }
 }
 

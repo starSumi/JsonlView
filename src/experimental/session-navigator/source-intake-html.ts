@@ -94,7 +94,7 @@ export function getSourceIntakeHtml(): string {
         <span class="hint" id="paste-hint">One JSON value per line · up to 1 MiB / 10,000 records</span>
         <button class="primary" id="preview" type="button">Open preview</button>
       </div>
-      <p class="hint">Pasted text opens as a temporary local file for this VS Code session.</p>
+    <p class="hint">Pasted text opens as a temporary local file. Reopen it from Recent Previews during this VS Code session; use Save As to keep a permanent copy.</p>
     </section>
     <p id="status" role="status" aria-live="polite"></p>
     <section id="diagnostic" hidden role="alert" aria-live="assertive">

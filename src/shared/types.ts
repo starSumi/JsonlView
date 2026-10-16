@@ -391,6 +391,14 @@ export interface InsightSummary {
   bucketWidthMs: number;
 }
 
+/** Metadata about an owned temporary source; saved denotes a separate copy. */
+export interface TemporaryPreviewStatus {
+  status: 'temporary' | 'saving' | 'saved';
+  recordCount: number;
+  sizeBytes: number;
+  savedCopy: boolean;
+}
+
 export interface ProtocolEnvelope<TType extends string, TPayload> {
   protocolVersion: typeof PROTOCOL_VERSION;
   type: TType;
@@ -430,12 +438,14 @@ export type WebviewRequest =
   | ProtocolEnvelope<'SET_FOLLOW_MODE', { enabled: boolean }>
   | ProtocolEnvelope<'SET_ROW_ORDER', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'OPEN_SESSION_NAVIGATOR', Record<string, never>>
+  | ProtocolEnvelope<'SAVE_PREVIEW_AS', Record<string, never>>
   | ProtocolEnvelope<'DIAGNOSE_ERROR', { code: string; message: string; action?: 'explain' | 'copy' }>
   | ProtocolEnvelope<'CANCEL', { targetRequestId: string }>
   | ProtocolEnvelope<'REBUILD_INDEX', Record<string, never>>;
 
 export type ExtensionMessage =
   | ProtocolEnvelope<'OPENED', DocumentSummary>
+  | ProtocolEnvelope<'PREVIEW_STATUS', TemporaryPreviewStatus>
   | ProtocolEnvelope<'ROWS', RowPage>
   | ProtocolEnvelope<'PROBLEMS', ProblemPage>
   | ProtocolEnvelope<'DETAIL', RecordDetail>

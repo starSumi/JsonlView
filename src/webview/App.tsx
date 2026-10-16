@@ -16,6 +16,7 @@ import type {
   RecordRef,
   RowFilterOperator,
   SortDirection,
+  TemporaryPreviewStatus,
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
@@ -52,6 +53,7 @@ import { snapshotIdentityChanged } from './snapshot-identity';
 import { createStartupStageReceipt, startStartupHandshake, type StartupStage } from './startup-handshake';
 import { profileOptionList } from './profile-options';
 import { WorkspaceHeader } from './workspace-header';
+import { TemporaryPreviewActions } from './temporary-preview-actions';
 import { useManualTabs } from './use-manual-tabs';
 import { useNarrowViewport } from './use-modal-focus';
 import {
@@ -166,6 +168,7 @@ export function App(): React.JSX.Element {
     (persisted) => createInitialState(persisted, PAGE_SIZE),
   );
   const [pageInput, setPageInputState] = React.useState('1');
+  const [previewStatus, setPreviewStatus] = React.useState<TemporaryPreviewStatus>();
   const stateRef = useRef(state);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
@@ -217,6 +220,15 @@ export function App(): React.JSX.Element {
       generation: session.generation,
       requestId,
       payload: {},
+    }));
+  }, []);
+
+  const savePreviewAs = useCallback((): void => {
+    const session = clientRef.current.session;
+    vscode.postMessage(createProtocolEnvelope({
+      type: 'SAVE_PREVIEW_AS', documentId: session.documentId, generation: session.generation,
+      ...(session.epoch === undefined ? {} : { epoch: session.epoch }),
+      requestId: crypto.randomUUID(), payload: {},
     }));
   }, []);
 
@@ -443,6 +455,7 @@ export function App(): React.JSX.Element {
     const onMessage = (event: MessageEvent<unknown>): void => {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
+      if (message.type === 'PREVIEW_STATUS') { setPreviewStatus(message.payload); return; }
       if (message.type === 'ERROR' && acceptedSessionRef.current === undefined
         && startupReadyIdsRef.current.has(message.requestId)) {
         startupErrorRef.current = true;
@@ -899,6 +912,7 @@ export function App(): React.JSX.Element {
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
+          {previewStatus ? <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} /> : null}
         </div>
         <label className="compact-field profile-field">
           <span className="profile-label">Profile</span>

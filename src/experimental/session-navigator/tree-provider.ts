@@ -6,6 +6,7 @@ import { createSessionNavigatorProvider } from './provider-factory';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import { RevealIntentRegistry } from './reveal-intents';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
+import { SessionPreviews } from './session-previews';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorSortKey } from './types';
 
 const SOURCES_SETTING = 'sessionNavigator.sources';
@@ -74,15 +75,17 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #treeView: vscode.TreeView<SessionNavigatorTreeNode> | undefined;
   #probeTimer: NodeJS.Timeout | undefined;
   #disposed = false;
+  #opening: Promise<void> | undefined;
 
   public readonly onDidChangeTreeData = this.#changed.event;
 
-  public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry) {
+  public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry, public readonly previews = new SessionPreviews()) {
     this.#context = context;
     this.#revealRegistry = revealRegistry;
     this.#intake = new SourceIntakePanel(
       (uri, signal) => this.confirmCustomSource(uri, () => signal.aborted),
       (provider, signal) => this.authorizeDetectedAgent(provider, signal),
+      previews,
     );
   }
 
@@ -103,7 +106,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.sessionNavigator.authorizeAgent', () => this.authorizeAgent()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.removeSource', (node?: SessionNavigatorTreeNode) => this.removeSource(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.loadMore', (node?: SessionNavigatorTreeNode) => this.loadMore(node)),
-      vscode.commands.registerCommand('jsonlView.sessionNavigator.enable', () => this.setEnabled(true)),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.enable', () => this.open()),
+      vscode.commands.registerCommand('jsonlView.sessionNavigator.settings', () => this.openSettings()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.disable', () => this.setEnabled(false)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.open', () => this.open()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sortActivity', () => this.setSort('activity')),
@@ -128,6 +132,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
             this.#scanController?.abort();
             this.#refreshAgain = true;
             this.#initialized = false;
+            if (!this.isEnabled() && this.#treeView !== undefined) this.#treeView.message = '';
             this.handleVisibility(this.#treeView?.visible ?? false);
           }
           this.#changed.fire(undefined);
@@ -282,7 +287,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     finally {
       this.#refreshing = undefined;
       if (!this.#disposed && this.#treeView) {
-        this.#treeView.message = [...this.#sourceStatus.values()].some((status) => status.phase === 'error')
+        this.#treeView.message = this.isEnabled() && [...this.#sourceStatus.values()].some((status) => status.phase === 'error')
           ? 'Some sources could not load. Select a warning to retry.'
           : '';
       }
@@ -638,6 +643,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     this.#store = undefined;
     this.#providers.clear();
     void this.#intake.dispose().catch(() => { /* Preserve any preview whose cleanup could not be verified. */ });
+    void this.previews.dispose().catch(() => {});
     this.#changed.dispose();
   }
 
@@ -663,7 +669,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (!this.isEnabled()) return [];
     const configured = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
     const excluded = new Set(this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []));
-    return mergeSourceSettings(configured).filter((setting) => !excluded.has(sourceIdFor(setting)));
+    return mergeSourceSettings(configured, []).filter((setting) => !excluded.has(sourceIdFor(setting)));
   }
 
   private isEnabled(): boolean {
@@ -734,14 +740,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded.filter((id) => id !== sourceId));
     if (this.#disposed || cancelled()) return;
     const current = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
-    const isDefault = discoverDefaultSources().some((candidate) => sourceIdFor(candidate) === sourceId);
-    const next = parseAuthorizedSources(isDefault ? current : [...current, setting]);
+    const next = parseAuthorizedSources([...current, setting]);
     await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
     if (this.#disposed || cancelled()) return;
-    await this.setEnabled(true);
-    if (this.#disposed || cancelled()) return;
     this.#changed.fire(undefined);
-    await this.refresh();
+    if (this.isEnabled()) await this.refresh();
   }
 
   private async handleDrop(target: SessionNavigatorTreeNode | undefined, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken): Promise<void> {
@@ -843,12 +846,31 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (selected !== undefined) await this.setSort(selected.value);
   }
 
-  public async open(): Promise<void> {
-    if (!this.isEnabled()) await this.setEnabled(true);
-    if (this.settings().length === 0) {
-      const action = await vscode.window.showInformationMessage('Session Navigator is ready. Authorize a local Agent source to populate it.', 'Authorize source');
-      if (action === 'Authorize source') await this.addSource();
+  public open(): Promise<void> {
+    if (this.#opening !== undefined) return this.#opening;
+    const operation = this.openNavigator().finally(() => { this.#opening = undefined; });
+    this.#opening = operation;
+    return operation;
+  }
+
+  private async openSettings(): Promise<void> {
+    await vscode.commands.executeCommand('workbench.action.openSettings', 'jsonlView.sessionNavigator.enabled');
+  }
+
+  private async openNavigator(): Promise<void> {
+    if (this.#disposed) return;
+    if (!this.isEnabled()) {
+      const action = await vscode.window.showInformationMessage('Enable the built-in Session Navigator? This choice is remembered. Agent source authorization is separate.', 'Enable', 'Settings', 'Cancel');
+      if (this.#disposed) return;
+      if (action === 'Settings') { await this.openSettings(); return; }
+      if (action !== 'Enable') return;
+      await this.setEnabled(true);
+      if (!this.isEnabled()) {
+        void vscode.window.showInformationMessage('Session Navigator is disabled by an effective workspace setting. Enable it in Settings.', 'Settings').then((choice) => { if (choice === 'Settings') void this.openSettings(); });
+        return;
+      }
     }
+    if (this.#disposed) return;
     try {
       await vscode.commands.executeCommand('workbench.view.extension.jsonlViewSessionNavigator');
     } catch {

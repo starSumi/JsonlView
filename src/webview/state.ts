@@ -367,6 +367,7 @@ export function reconcileProfileQueryState(
 function receiveMessage(state: WorkspaceState, message: ExtensionMessage): WorkspaceState {
   const pending = completeRequest(state.pending, message.requestId);
   switch (message.type) {
+    case 'PREVIEW_STATUS': return state;
     case 'OPENED': {
       if (state.summary !== undefined
         && !snapshotIdentityChanged(state.summary.snapshot, message.payload.snapshot)

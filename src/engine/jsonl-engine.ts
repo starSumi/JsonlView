@@ -691,9 +691,6 @@ export class JsonlFileEngine {
     const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
     await this.index.finish(guard);
     const total = this.index.totalRecords ?? this.index.indexedRecords;
-    const columns = options.columns === undefined
-      ? this.defaultColumns(options.enricher?.columns)
-      : options.columns.slice(0, MAX_TABLE_COLUMNS);
     const selected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
     let retainedBytes = 0n;
     let examinedRecords = 0n;
@@ -786,6 +783,10 @@ export class JsonlFileEngine {
       }
     }
 
+    // Hydration observes schema fields needed by a cold page's default columns.
+    const columns = options.columns === undefined
+      ? this.defaultColumns(options.enricher?.columns)
+      : options.columns.slice(0, MAX_TABLE_COLUMNS);
     const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
     const lastOrdinal = selected.at(-1)?.hydrated.internal.ordinal;

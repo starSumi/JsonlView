@@ -296,6 +296,24 @@ describe('GET_ROWS local operation observations', () => {
 });
 
 describe('document controller', () => {
+  it('publishes temporary metadata on the cold handshake and gates native Save As by envelope identity', async () => {
+    const messages: ExtensionMessage[] = [];
+    const saves: Array<() => boolean> = [];
+    const controller = new DocumentController(fakeSession(), { postMessage: async (message) => { messages.push(message); return true; } }, {
+      getPreviewStatus: () => ({ status: 'temporary', recordCount: 2, sizeBytes: 24, savedCopy: false }),
+      onSavePreviewAs: async (current) => { saves.push(current); },
+    });
+    await controller.handleMessage(request('READY'));
+    expect(messages.map((message) => message.type)).toEqual(['OPENED', 'PREVIEW_STATUS']);
+    await controller.handleMessage({ ...request('SAVE_PREVIEW_AS'), documentId: 'other' });
+    await controller.handleMessage({ ...request('SAVE_PREVIEW_AS'), generation: 'old' });
+    await controller.handleMessage(request('SAVE_PREVIEW_AS', { path: 'untrusted' }));
+    expect(saves).toHaveLength(0);
+    await controller.handleMessage(request('SAVE_PREVIEW_AS'));
+    expect(saves).toHaveLength(1); expect(saves[0]!()).toBe(true);
+    controller.dispose(); expect(saves[0]!()).toBe(false);
+  });
+
   it('responds to READY with the current document summary', async () => {
     const messages: ExtensionMessage[] = [];
     const channel: MessageChannel = {

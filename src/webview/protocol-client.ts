@@ -40,6 +40,7 @@ const REQUEST_KIND_BY_TYPE: Record<WebviewRequest['type'], RequestKind> = {
   SET_FOLLOW_MODE: 'follow',
   SET_ROW_ORDER: 'order',
   OPEN_SESSION_NAVIGATOR: 'ready',
+  SAVE_PREVIEW_AS: 'ready',
   DIAGNOSE_ERROR: 'ready',
   CANCEL: 'rows',
   REBUILD_INDEX: 'rebuild',
@@ -87,6 +88,7 @@ export function shouldAcceptMessage(
   if (message.type === 'ERROR') {
     return message.requestId.length === 0 || request?.generation === session.generation;
   }
+  if (message.type === 'PREVIEW_STATUS') return true;
   if (message.type === 'ROWS') {
     return request?.kind === 'rows' && request.generation === session.generation;
   }

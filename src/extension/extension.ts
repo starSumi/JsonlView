@@ -19,6 +19,8 @@ import {
 import { getWebviewHtml } from './webview-html';
 import { RevealIntentRegistry, type RevealIntent } from '../experimental';
 import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
+import { RecentPreviewsTreeProvider } from '../experimental/session-navigator/recent-previews';
+import type { SessionPreviews } from '../experimental/session-navigator/session-previews';
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
 import { appendExecutionIdentityLog, appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
 import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
@@ -489,6 +491,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     private readonly openSessionNavigator: () => Promise<void>,
     private readonly output: JsonlViewOutputChannel | undefined,
     private readonly runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
+    private readonly previews?: SessionPreviews,
   ) {}
 
   public async openCustomDocument(
@@ -624,12 +627,17 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
           + (indexedRecords === undefined ? '' : ' indexedRecords=' + indexedRecords));
       },
       onOpenSessionNavigator: () => this.openSessionNavigator(),
+      getPreviewStatus: () => this.previews?.status(document.uri),
+      onSavePreviewAs: async (isCurrent) => this.previews?.saveAs(document.uri, isCurrent),
       onTransientSourceChange: () => document.notifyTransientSourceChange(),
       onDiagnosticError: ({ code, message, action }) => offerDiagnostic({
         stage: 'editor-error-banner',
         name: code,
         message,
       }, action),
+    });
+    const previewRegistration = this.previews?.onDidChange(() => {
+      void controller.publishPreviewStatus().catch(() => { /* A closed Webview cannot receive status. */ });
     });
     const panelRegistration = document.addPanel(panel);
     const messageRegistration = panel.webview.onDidReceiveMessage((message) => {
@@ -684,6 +692,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     const disposePanel = () => {
       finishStartup('disposed');
       controller.dispose();
+      previewRegistration?.dispose();
       messageRegistration.dispose();
       viewStateRegistration.dispose();
       panelRegistration.dispose();
@@ -737,6 +746,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
 
 let lastDiagnostic: JsonlViewDiagnosticEnvelope | undefined;
 let outputChannel: vscode.LogOutputChannel | undefined;
+let activeNavigator: SessionNavigatorTreeProvider | undefined;
 
 function currentDiagnostic(): JsonlViewDiagnosticEnvelope {
   return lastDiagnostic ?? buildDiagnosticEnvelope({
@@ -806,10 +816,14 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   const revealRegistry = new RevealIntentRegistry();
   const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
-  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open(), outputChannel, runtimeIdentity);
+  activeNavigator = navigator;
+  const recentPreviews = new RecentPreviewsTreeProvider(navigator.previews);
+  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open(), outputChannel, runtimeIdentity, navigator.previews);
   context.subscriptions.push(
     ...navigator.register(),
     navigator,
+    ...recentPreviews.register(),
+    recentPreviews,
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {
       supportsMultipleEditorsPerDocument: false,
       webviewOptions: { retainContextWhenHidden: false },
@@ -842,7 +856,11 @@ export function activate(context: vscode.ExtensionContext): void {
   appendOutputLog(outputChannel, 'activated', 'commands-and-views=registered');
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
+  const navigator = activeNavigator;
+  activeNavigator = undefined;
+  navigator?.dispose();
+  await navigator?.previews.dispose();
   appendOutputLog(outputChannel, 'deactivated');
   outputChannel = undefined;
 }

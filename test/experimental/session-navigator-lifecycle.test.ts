@@ -14,7 +14,7 @@ const host = vi.hoisted(() => ({
   configuration: undefined as undefined | ((event: { affectsConfiguration: (key: string) => boolean }) => void),
   visibility: undefined as undefined | ((event: { visible: boolean }) => void),
   view: { visible: false, message: undefined as string | undefined, dispose() {}, onDidChangeVisibility: vi.fn() },
-  progress: vi.fn(), intake: vi.fn(), probe: vi.fn(), execute: vi.fn(), persist: vi.fn(),
+  progress: vi.fn(), intake: vi.fn(), probe: vi.fn(), execute: vi.fn(), persist: vi.fn(), info: vi.fn(), updates: vi.fn(), overridden: false,
 }));
 vi.mock('vscode', () => ({
   EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} },
@@ -27,13 +27,14 @@ vi.mock('vscode', () => ({
     parse: (value: string) => ({ scheme: new URL(value).protocol.replace(':', ''), fsPath: fileURLToPath(value), toString: () => value }),
   },
   ConfigurationTarget: { Global: 1 },
-  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
+  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showInformationMessage: host.info, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
   workspace: {
     fs: { createDirectory: async ({ fsPath }: { fsPath: string }) => { const { mkdir } = await import('node:fs/promises'); await mkdir(fsPath, { recursive: true }); } },
     getConfiguration: () => ({
       get: (key: string, fallback: unknown) => host.config.get(key) ?? fallback,
       update: async (key: string, value: unknown) => {
-        host.config.set(key, value);
+        host.updates(key, value);
+        if (!host.overridden) host.config.set(key, value);
         host.configuration?.({ affectsConfiguration: (query) => query === 'jsonlView.sessionNavigator' || query === 'jsonlView.' + key });
       },
     }),
@@ -45,7 +46,7 @@ vi.mock('vscode', () => ({
 }));
 vi.mock('../../src/experimental/session-navigator/source-config', async (original) => {
   const actual = await original<typeof import('../../src/experimental/session-navigator/source-config')>();
-  return { ...actual, discoverDefaultSources: () => host.roots, mergeSourceSettings: (configured: AuthorizedSourceSetting[]) => actual.mergeSourceSettings(configured, host.roots) };
+  return { ...actual, discoverDefaultSources: () => host.roots, mergeSourceSettings: (configured: AuthorizedSourceSetting[], discovered: AuthorizedSourceSetting[] = host.roots) => actual.mergeSourceSettings(configured, discovered) };
 });
 vi.mock('../../src/experimental/session-navigator/provider-factory', () => ({ createSessionNavigatorProvider: () => ({ scan: host.scan, scanPage: host.scanPage, probe: host.probe }) }));
 vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class { show() { host.intake(); } async dispose() {} } }));
@@ -74,9 +75,11 @@ beforeEach(async () => {
   host.config.clear(); host.state.clear(); host.commands.clear();
   host.config.set('sessionNavigator.enabled', true);
   host.roots = [{ provider: 'codex', rootUri: pathToFileURL(join(root, 'provider')).toString() }];
+  host.config.set('sessionNavigator.sources', host.roots);
   host.scan.mockReset().mockResolvedValue(snapshot); host.scanPage.mockReset(); host.dialog.mockReset(); host.picker.mockReset(); host.intake.mockReset();
   host.probe.mockReset().mockResolvedValue('stable'); host.execute.mockReset().mockResolvedValue(undefined);
   host.persist.mockReset().mockResolvedValue(undefined);
+  host.info.mockReset().mockResolvedValue(undefined); host.updates.mockReset(); host.overridden = false;
   host.view.visible = false;
   host.view.message = undefined;
   host.progress.mockReset().mockImplementation(async (_options: unknown, callback: () => Promise<void>) => callback());
@@ -87,6 +90,54 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); tree.dispose(); await rm(root, { recursive: true, force: true }); });
 
 describe('Session Navigator host lifecycle', () => {
+  it.each(['Cancel', undefined, 'Settings'])('does no scan, persistence, or catalog IO when disabled and choosing %s', async (choice) => {
+    host.config.set('sessionNavigator.enabled', false); host.info.mockResolvedValue(choice);
+    const opening = vi.spyOn(CatalogStore, 'open');
+    await tree.open();
+    expect(host.updates).not.toHaveBeenCalled(); expect(host.scan).not.toHaveBeenCalled();
+    expect(host.probe).not.toHaveBeenCalled(); expect(opening).not.toHaveBeenCalled();
+    expect(await tree.getChildren()).toEqual([]);
+    if (choice === 'Settings') expect(host.execute).toHaveBeenCalledWith('workbench.action.openSettings', 'jsonlView.sessionNavigator.enabled');
+    else expect(host.execute).not.toHaveBeenCalled();
+  });
+
+  it('remembers explicit Enable and opens later without repeating the authorization prompt', async () => {
+    host.config.set('sessionNavigator.enabled', false); host.info.mockResolvedValue('Enable');
+    await tree.open(); await tree.open();
+    expect(host.updates).toHaveBeenCalledExactlyOnceWith('sessionNavigator.enabled', true);
+    expect(host.info).toHaveBeenCalledTimes(1);
+    expect(host.execute).toHaveBeenCalledTimes(2);
+    expect(host.intake).not.toHaveBeenCalled();
+  });
+
+  it('does not turn detected homes into authorized sources when enabling a visible Navigator', async () => {
+    host.config.set('sessionNavigator.enabled', false); host.config.set('sessionNavigator.sources', []);
+    host.info.mockResolvedValue('Enable'); host.view.visible = true;
+    await tree.open(); await tree.refresh();
+    expect(await tree.getChildren()).toEqual([]);
+    expect(host.config.get('sessionNavigator.sources')).toEqual([]);
+    expect(host.scan).not.toHaveBeenCalled(); expect(host.probe).not.toHaveBeenCalled();
+  });
+
+  it('records only the explicitly selected source without enabling a disabled Navigator', async () => {
+    host.config.set('sessionNavigator.enabled', false); host.config.set('sessionNavigator.sources', []);
+    host.roots = [...host.roots, { provider: 'claude', rootUri: pathToFileURL(join(root, 'other-home')).toString() }];
+    host.picker.mockResolvedValue({ value: 'codex' });
+    await host.commands.get('jsonlView.sessionNavigator.authorizeAgent')!();
+    expect(host.config.get('sessionNavigator.sources')).toEqual([host.roots[0]]);
+    expect(host.config.get('sessionNavigator.enabled')).toBe(false);
+    expect(host.scan).not.toHaveBeenCalled(); expect(host.probe).not.toHaveBeenCalled();
+  });
+
+  it('reads effective enablement after a workspace override and settles late dialog disposal', async () => {
+    host.config.set('sessionNavigator.enabled', false); host.overridden = true; host.info.mockResolvedValueOnce('Enable');
+    await tree.open(); expect(host.execute).not.toHaveBeenCalled(); expect(host.scan).not.toHaveBeenCalled();
+    let choose!: (choice: string) => void;
+    host.info.mockImplementationOnce(() => new Promise<string>((resolve) => { choose = resolve; }));
+    const opening = tree.open(); tree.dispose(); choose('Enable'); await opening;
+    expect(host.updates).toHaveBeenCalledTimes(1);
+  });
+
   async function loadedEntity() {
     await tree.refresh();
     const [source] = await tree.getChildren();
@@ -110,6 +161,7 @@ describe('Session Navigator host lifecycle', () => {
 
   it.each(['codex', 'claude'] as const)('opens a current %s transcript despite unrelated provider activity', async (provider) => {
     host.roots = [{ ...host.roots[0]!, provider }];
+    host.config.set('sessionNavigator.sources', host.roots);
     await mkdir(join(root, 'provider', 'sessions'), { recursive: true });
     await writeFile(join(root, 'provider', 'sessions', 'thread.jsonl'), '{}\n');
     const entity = await loadedEntity();
@@ -122,6 +174,7 @@ describe('Session Navigator host lifecycle', () => {
 
   it('retains fingerprint protection for generic record anchors', async () => {
     host.roots = [{ ...host.roots[0]!, provider: 'generic' }];
+    host.config.set('sessionNavigator.sources', host.roots);
     await mkdir(join(root, 'provider', 'sessions'), { recursive: true });
     await writeFile(join(root, 'provider', 'sessions', 'thread.jsonl'), '{}\n{}\n');
     host.scan.mockResolvedValueOnce({ ...snapshot, snapshot: { ...snapshot.snapshot, locations: [{ nativeId: 'thread-1', relativePath: 'sessions/thread.jsonl', rowOrdinal: '1' }] } });
@@ -141,6 +194,7 @@ describe('Session Navigator host lifecycle', () => {
 
   it('still opens a stable generic nested record after location validation', async () => {
     host.roots = [{ ...host.roots[0]!, provider: 'generic' }];
+    host.config.set('sessionNavigator.sources', host.roots);
     await mkdir(join(root, 'provider', 'sessions'), { recursive: true });
     await writeFile(join(root, 'provider', 'sessions', 'thread.jsonl'), '{}\n{}\n');
     host.scan.mockResolvedValueOnce({ ...snapshot, snapshot: { ...snapshot.snapshot, locations: [{ nativeId: 'thread-1', relativePath: 'sessions/thread.jsonl', rowOrdinal: '1' }] } });
@@ -170,6 +224,7 @@ describe('Session Navigator host lifecycle', () => {
   });
 
   it('stops late authorization persistence after disposal', async () => {
+    host.config.delete('sessionNavigator.sources');
     host.picker.mockResolvedValue({ value: 'codex' });
     let complete!: () => void;
     host.persist.mockImplementation(() => new Promise<void>((resolve) => { complete = resolve; }));
@@ -257,6 +312,7 @@ describe('Session Navigator host lifecycle', () => {
 
   it('retries a transient empty Claude page before committing a zero-session partial index', async () => {
     host.roots = [{ ...host.roots[0]!, provider: 'claude' }];
+    host.config.set('sessionNavigator.sources', host.roots);
     host.view.visible = true;
     host.visibility!({ visible: true });
     host.scan
@@ -278,6 +334,7 @@ describe('Session Navigator host lifecycle', () => {
 
   it('eagerly reconciles a Claude child whose parent arrives on the first continuation page', async () => {
     host.roots = [{ ...host.roots[0]!, provider: 'claude' }];
+    host.config.set('sessionNavigator.sources', host.roots);
     host.view.visible = true;
     host.visibility!({ visible: true });
     const child = { sourceId: 'fixture', nativeId: 'child', kind: 'subagent' as const, label: 'Child worker', relationship: 'orphan' as const, confidence: 'source' as const };
@@ -475,6 +532,7 @@ describe('Session Navigator host lifecycle', () => {
     await tree.refresh();
     expect(host.view.message).toContain('could not load');
     host.roots = [];
+    host.config.set('sessionNavigator.sources', []);
     await tree.refresh();
     expect(await tree.getChildren()).toEqual([]);
     expect(host.view.message).toBe('');

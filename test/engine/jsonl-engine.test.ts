@@ -456,6 +456,39 @@ describe('JsonlFileEngine querying and pagination', () => {
     expect(descending.rows.map((row) => row.ref.ordinal)).toEqual(['3', '0', '2', '1']);
   });
 
+  it.each([
+    { name: 'ascending', direction: 'asc', filtered: false, ids: [1, 2] },
+    { name: 'descending', direction: 'desc', filtered: false, ids: [3, 2] },
+    { name: 'filtered descending', direction: 'desc', filtered: true, ids: [3, 1] },
+  ] as const)('projects default columns and cells on a cold $name ordinal page', async ({ direction, filtered, ids }) => {
+    const source = [1, 2, 3].map((id) => JSON.stringify({ id, value: `row-${String(id)}` })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 4 });
+
+    const page = await engine.getRows({
+      limit: 2,
+      sort: { columnId: '__ordinal', direction },
+      ...(filtered ? { predicate: { op: 'compare', path: keyPath('id'), cmp: 'ne', value: 2 } as const } : {}),
+    });
+
+    expect(page.rows.map((row) => row.ref.ordinal)).toEqual(ids.map((id) => String(id - 1)));
+    expect(page.columns.map((column) => column.path)).toEqual([keyPath('id'), keyPath('value')]);
+    expect(page.rows.map((row) => row.cells.map((cell) => cell.value ?? cell.preview))).toEqual(
+      ids.map((id) => [id, `row-${String(id)}`]),
+    );
+    expect(page.rows.every((row) => row.cells.map((cell) => cell.columnId).join()
+      === page.columns.map((column) => column.id).join())).toBe(true);
+  });
+
+  it.each(['asc', 'desc'] as const)('preserves explicit empty columns on a cold %s ordinal page', async (direction) => {
+    const { engine } = await fixture('{"id":1}\n{"id":2}');
+
+    const page = await engine.getRows({ limit: 2, sort: { columnId: '__ordinal', direction }, columns: [] });
+
+    expect(page.rows.map((row) => row.ref.ordinal)).toEqual(direction === 'asc' ? ['0', '1'] : ['1', '0']);
+    expect(page.columns).toEqual([]);
+    expect(page.rows.map((row) => row.cells)).toEqual([[], []]);
+  });
+
   it('pages physical ordinal descending from EOF without the bounded field-sort window', async () => {
     const source = ['zero', 'one', 'two', 'three'].map((value) => JSON.stringify({ value })).join('\n');
     const { engine } = await fixture(source, { readChunkBytes: 4 });

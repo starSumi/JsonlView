@@ -39,6 +39,14 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
     case 'OPENED':
     case 'INDEX_PROGRESS':
       return isDocumentSummary(envelope.envelope.payload);
+    case 'PREVIEW_STATUS': {
+      const payload = envelope.envelope.payload;
+      return isObject(payload) && Object.keys(payload).length === 4
+        && (payload.status === 'temporary' || payload.status === 'saving' || payload.status === 'saved')
+        && isSafeNonNegativeInteger(payload.recordCount) && payload.recordCount >= 1 && payload.recordCount <= 10_000
+        && isSafeNonNegativeInteger(payload.sizeBytes) && payload.sizeBytes <= 1_048_576
+        && typeof payload.savedCopy === 'boolean';
+    }
     case 'ROWS':
       return isRowPage(envelope.envelope.payload);
     case 'PROBLEMS':
