@@ -1,5 +1,7 @@
 import type { FieldPath } from './types';
 
+export const DATASET_ANALYSIS_LIMITS = Object.freeze({ records: 256, messages: 64, blocks: 32, tokenValues: 512, evidence: 8, categories: 32, categoryLength: 80 });
+
 /** Bounded observations without body text; never trainer configuration or tokenizer output. */
 export type DatasetScene = 'pretraining' | 'instruction' | 'qa' | 'preference' | 'conversation' | 'classification' | 'tokenized' | 'unknown';
 export type DatasetTargetState = 'present' | 'empty' | 'missing' | 'not-applicable' | 'unknown';

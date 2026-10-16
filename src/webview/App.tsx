@@ -27,6 +27,8 @@ import {
 } from './full-record-intent';
 import { deferIdle } from './idle';
 import { InsightsView } from './insights-view';
+import { DatasetInsights } from './dataset-insights';
+import { summarizeVisibleDatasetRows } from './dataset-page-analysis';
 import { InsightsToolbar } from './insights-toolbar';
 import { shouldIssueInsightRequest } from './insight-request';
 import { visibleColumns } from './format';
@@ -34,7 +36,6 @@ import {
   buildStructuredFilter,
   ColumnChooser,
   canRequestSortedPage,
-  formatScanLimit,
   RecordPager,
   recordColumnOptions,
   RecordQueryBanner,
@@ -807,6 +808,10 @@ export function App(): React.JSX.Element {
     ? `Rows #${state.rows[0]?.ref.ordinal}-#${state.rows.at(-1)?.ref.ordinal}`
     : `${state.rows.length} rows`;
   const partialScan = state.page?.scan?.truncatedReason !== undefined;
+  const datasetSummary = useMemo(
+    () => summarizeVisibleDatasetRows(state.rows, partialScan),
+    [state.rows, partialScan],
+  );
   const hasPartialContinuation = partialScan
     && (state.sort !== undefined || state.page?.scan?.cursorOrdinal !== undefined);
   const partialBannerIdentity = state.page === undefined
@@ -1186,6 +1191,8 @@ export function App(): React.JSX.Element {
                 }}
                 onRefresh={() => requestInsights()}
               />
+              {datasetSummary !== undefined && !state.pending.rows
+                ? <DatasetInsights summary={datasetSummary} /> : null}
               <InsightsView
                 categories={state.insights?.categories ?? []}
                 timeBuckets={state.insights?.timeBuckets ?? []}

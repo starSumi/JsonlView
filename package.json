@@ -481,13 +481,13 @@
         "jsonlView.sessionNavigator.sources": {
           "type": "array",
           "default": [],
-          "description": "Additional local Agent source roots. Standard Codex, Claude, and pi roots are detected automatically; all paths are read-only.",
+          "description": "Additional local Agent source roots. Standard Codex, Claude, pi, and Kimi Code roots may be detected as candidates; scanning requires separate source authorization. All paths are read-only.",
           "items": {
             "type": "object",
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["codex", "claude", "pi", "generic"]
+                "enum": ["codex", "claude", "pi", "kimi", "generic"]
               },
               "rootUri": {
                 "type": "string",

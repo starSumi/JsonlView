@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import { open, stat, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { summarizeDatasetRecord } from '../profiles/dataset-analysis';
 import { pathToFileURL } from 'node:url';
 import { projectConversation } from '../profiles/conversation-projection';
 import type {
@@ -625,7 +626,7 @@ export class JsonlFileEngine {
       const columns = options.columns === undefined
         ? this.defaultColumns(options.enricher?.columns)
         : options.columns.slice(0, MAX_TABLE_COLUMNS);
-      const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+      const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId));
       const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
       const lastOrdinal = selected[selected.length - 1]?.hydrated.internal.ordinal;
       // When the bounded probe collected one extra matching row, keep the
@@ -788,7 +789,7 @@ export class JsonlFileEngine {
     const columns = options.columns === undefined
       ? this.defaultColumns(options.enricher?.columns)
       : options.columns.slice(0, MAX_TABLE_COLUMNS);
-    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId));
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
     const lastOrdinal = selected.at(-1)?.hydrated.internal.ordinal;
     const hasMoreMatches = options.predicate === undefined
@@ -930,7 +931,7 @@ export class JsonlFileEngine {
       selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
       retainedBytes += candidate.internal.contentByteLength;
     }
-    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId));
     const hasMoreRetainedMatches = candidates.length > Number(windowEnd);
     const hasAfter = hydrationTruncated || hasMoreRetainedMatches;
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
@@ -1604,6 +1605,7 @@ export class JsonlFileEngine {
     hydrated: HydratedRecord,
     columns: ColumnSpec[],
     profile?: AgentRowProjection,
+    selectedProfileId?: string,
   ): RowProjection {
     const genericSummary = summaryForRecord(hydrated, this.options.rowPreviewCharacters);
     const cells = columns.flatMap((column): CellProjection[] => {
@@ -1642,6 +1644,8 @@ export class JsonlFileEngine {
       cells,
       genericSummary,
       conversation: projectConversation(hydrated.value, profile),
+      ...(selectedProfileId === undefined || selectedProfileId === 'generic'
+        ? { dataset: summarizeDatasetRecord(hydrated.value, hydrated.ref.parseState) } : {}),
       ...(profile === undefined ? {} : { profile }),
       ...(hydrated.problems.length === 0 ? {} : { problems: hydrated.problems }),
     };

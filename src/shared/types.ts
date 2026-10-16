@@ -1,6 +1,15 @@
+import type { DatasetRecordSummary } from './dataset-analysis';
+
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_DIAGNOSTIC_CODE_LENGTH = 128;
 export const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 512;
+/** Shared producer/receiver limits, measured in UTF-16 code units. */
+export const MAX_CONVERSATION_CHARACTERS = 2048;
+export const MAX_CONVERSATION_PARTS = 8;
+export const MAX_CONVERSATION_DEPTH = 12;
+export const MAX_CONVERSATION_VISITS = 96;
+export const MAX_CONVERSATION_ROLE_CHARACTERS = 32;
+export const MAX_CONVERSATION_LABEL_CHARACTERS = 40;
 
 export type JsonScalar = string | number | boolean | null;
 export type JsonKind =
@@ -134,6 +143,8 @@ export interface RowProjection {
   cells: CellProjection[];
   genericSummary: string;
   conversation?: ConversationProjection;
+  /** Generic record observations; never attached to provider session profiles. */
+  dataset?: DatasetRecordSummary;
   profile?: AgentRowProjection;
   problems?: ProblemRef[];
 }

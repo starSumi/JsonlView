@@ -5,6 +5,10 @@ import { MAX_TABLE_COLUMNS, PROTOCOL_VERSION, keyPath, type ColumnSpec, type Doc
 import { ColumnChooser, RecordPager, RecordQueryControls, RecordTable } from '../../src/webview/features/record-query';
 import { getColumnText, recordColumnForPath } from '../../src/webview/format';
 import type { PersistedWorkspaceState } from '../../src/webview/state';
+import { WorkspaceHeader } from '../../src/webview/workspace-header';
+import { DatasetInsights } from '../../src/webview/dataset-insights';
+import { InsightsToolbar } from '../../src/webview/insights-toolbar';
+import { summarizeDatasetRecord } from '../../src/profiles/dataset-analysis';
 
 type Effect = { deps?: readonly unknown[] | undefined; cleanup?: (() => void) | undefined };
 const hooks = vi.hoisted(() => ({
@@ -150,6 +154,18 @@ function boot(columns: ColumnSpec[] = [status, prompt]): void {
   deliver('ROWS', page(columns), last('GET_ROWS'));
 }
 const rowRequests = (): WebviewRequest[] => sent.filter((request) => request.type === 'GET_ROWS');
+function chooseWorkspaceTab(label: string): void {
+  const visit = (node: ReactNode): boolean => {
+    if (Array.isArray(node)) return node.some(visit);
+    if (!React.isValidElement<{ children?: ReactNode; onClick?: () => void; role?: string }>(node)) return false;
+    if (node.type === 'button' && node.props.role === 'tab' && React.Children.toArray(node.props.children).includes(label)) {
+      node.props.onClick?.(); return true;
+    }
+    return visit(node.props.children);
+  };
+  expect(visit(props(WorkspaceHeader).navigation)).toBe(true);
+  commit();
+}
 function chooseDisplay(label: string): void {
   const visit = (node: ReactNode): boolean => {
     if (Array.isArray(node)) return node.some(visit);
@@ -168,6 +184,27 @@ const visibleValues = (): string[] => {
 };
 
 describe('App column presentation and projection boundary', () => {
+  it('shows only current-page dataset observations and hides them during a new page request', () => {
+    commit();
+    deliver('OPENED', { ...summary, profileVersion: '1' }, last('READY'));
+    const first = page([prompt]);
+    first.rows.forEach((row) => { row.dataset = summarizeDatasetRecord({ question: 'q', answer: 'a' }); });
+    deliver('ROWS', first, last('GET_ROWS'));
+    chooseWorkspaceTab('Insights');
+    expect(props(DatasetInsights).summary).toMatchObject({ scope: 'visible-page', scenes: { qa: 20 } });
+    props(InsightsToolbar).onRefresh(); commit();
+    deliver('ERROR', { code: 'REQUEST_FAILED', message: 'Synthetic aggregate failure', recoverable: true }, last('GET_INSIGHTS'));
+    expect(props(DatasetInsights).summary.scenes).toEqual({ qa: 20 });
+    chooseWorkspaceTab('Table');
+    props(RecordPager).onNext(); commit();
+    chooseWorkspaceTab('Insights');
+    expect(() => props(DatasetInsights)).toThrow('App child missing');
+    const next = page([prompt], 20);
+    next.rows.forEach((row) => { row.dataset = summarizeDatasetRecord({ text: 'Training text' }); });
+    deliver('ROWS', next, last('GET_ROWS'));
+    expect(props(DatasetInsights).summary.scenes).toEqual({ pretraining: 20 });
+  });
+
   it('switches conversation display locally without requerying or fetching details, retaining selection and query', () => {
     boot();
     props(RecordQueryControls).onSearchChange('keep');

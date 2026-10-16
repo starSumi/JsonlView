@@ -159,7 +159,7 @@ describe('Session Navigator host lifecycle', () => {
     expect(host.commands.has('jsonlView.sessionNavigator.copySessionId')).toBe(true);
   });
 
-  it.each(['codex', 'claude'] as const)('opens a current %s transcript despite unrelated provider activity', async (provider) => {
+  it.each(['codex', 'claude', 'pi', 'kimi'] as const)('opens a current %s transcript despite unrelated provider activity', async (provider) => {
     host.roots = [{ ...host.roots[0]!, provider }];
     host.config.set('sessionNavigator.sources', host.roots);
     await mkdir(join(root, 'provider', 'sessions'), { recursive: true });

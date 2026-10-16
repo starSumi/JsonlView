@@ -4,6 +4,20 @@ import { MAX_CONVERSATION_CHARACTERS, MAX_CONVERSATION_DEPTH, MAX_CONVERSATION_P
   projectConversation } from '../../src/profiles/conversation-projection';
 
 describe('bounded conversation source projection', () => {
+  it.each([{ hidden: true }, { encrypted: 'ciphertext' }, { encrypted: '' }, { encrypted: null }])('keeps opaque Kimi thinking out of compact rows: %j', (privacy) => {
+    const result = projectConversation({ type: 'context.append_message', message: { role: 'assistant', content: [
+      { type: 'think', think: 'PRIVATE_THINK', ...privacy }, { type: 'text', text: 'Visible answer' },
+    ] } });
+    expect(result.parts.map((part) => part.text)).toEqual(['Visible answer']);
+    expect(result.truncated).toBe(true);
+  });
+
+  it.each(['response', 'completion'])('retains a dataset %s with its source path', (field) => {
+    expect(projectConversation({ prompt: 'Question', [field]: 'Answer' })).toMatchObject({
+      parts: [{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Answer', path: { tokens: [{ kind: 'key', value: field }] } }],
+      truncated: false,
+    });
+  });
   it.each([
     ['codex-rollout', { type: 'response_item', payload: { role: 'assistant', content: [{ type: 'output_text', text: 'Actual answer' }] } }],
     ['codex-exec-jsonl', { type: 'item.completed', item: { type: 'agent_message', text: 'Actual answer' } }],
@@ -53,6 +67,23 @@ describe('bounded conversation source projection', () => {
     }
     expect(projectConversation({ content: [{ type: 'thinking', thinking: 'Consider this' }] }).parts)
       .toMatchObject([{ role: 'reasoning', text: 'Consider this' }]);
+  });
+
+  it('keeps V1 preference branches and applies one shared text budget', () => {
+    const source = { chosen_messages: [{ role: 'user', content: 'Question' }, { role: 'assistant', content: 'Chosen answer' }],
+      rejected_messages: [{ role: 'user', content: 'Question' }, { role: 'assistant', content: 'Rejected answer' }] };
+    const result = projectConversation(source);
+    expect(result.parts.map(({ role, label, text }) => ({ role, label, text }))).toEqual([
+      { role: 'user', label: 'Chosen', text: 'Question' }, { role: 'assistant', label: 'Chosen', text: 'Chosen answer' },
+      { role: 'user', label: 'Rejected', text: 'Question' }, { role: 'assistant', label: 'Rejected', text: 'Rejected answer' },
+    ]);
+    expect(result.parts[2]?.path.tokens[0]).toEqual({ kind: 'key', value: 'rejected_messages' });
+    source.chosen_messages[1]!.content = 'x'.repeat(1600);
+    source.rejected_messages[1]!.content = 'y'.repeat(1600);
+    const capped = projectConversation(source);
+    expect(capped.parts.reduce((total, part) => total + part.text.length, 0)).toBe(MAX_CONVERSATION_CHARACTERS);
+    expect(capped.truncated).toBe(true);
+    expect(projectConversation({ role: '', content: 'Visible' }).parts[0]?.role).toBe('unknown');
   });
 
   it('caps aggregate text, leaves valid surrogate pairs intact and replaces malformed Unicode', () => {

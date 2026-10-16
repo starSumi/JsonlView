@@ -2,6 +2,7 @@ import type {
   AgentEventKind,
   AgentRowProjection,
   ColumnSpec,
+  ConversationProjection,
   DocumentSummary,
   ExtensionMessage,
   FieldPath,
@@ -16,8 +17,16 @@ import type {
   RowScanStats,
   SnapshotIdentity,
 } from '../types';
+import {
+  MAX_CONVERSATION_CHARACTERS,
+  MAX_CONVERSATION_PARTS,
+  MAX_CONVERSATION_DEPTH,
+  MAX_CONVERSATION_ROLE_CHARACTERS,
+  MAX_CONVERSATION_LABEL_CHARACTERS,
+} from '../types';
 import { validateProtocolEnvelope } from './protocol';
 import { isDatasetRuntimeProvenance } from './dataset-provenance';
+import { isDatasetRecordSummary } from './dataset-summary';
 
 const AGENT_EVENT_KINDS: ReadonlySet<string> = new Set([
   'session', 'turn', 'message', 'log', 'span', 'task', 'action', 'observation',
@@ -147,8 +156,33 @@ function isRowProjection(value: unknown): value is RowProjection {
     && (value.kind === undefined || JSON_KINDS.has(String(value.kind)))
     && isArray(value.cells, isCell)
     && isString(value.genericSummary)
+    && (value.conversation === undefined || isConversationProjection(value.conversation))
+    && (value.dataset === undefined || isDatasetRecordSummary(value.dataset))
     && (value.profile === undefined || isAgentRowProjection(value.profile))
     && (value.problems === undefined || isArray(value.problems, isProblemRef));
+}
+
+function isConversationProjection(value: unknown): value is ConversationProjection {
+  if (!isObject(value) || Object.keys(value).length !== 2 || typeof value.truncated !== 'boolean'
+    || !Array.isArray(value.parts) || value.parts.length > MAX_CONVERSATION_PARTS) return false;
+  let characters = 0;
+  return value.parts.every((part) => {
+    if (!isObject(part) || Object.keys(part).length !== 4
+      || !isBoundedConversationString(part.role, MAX_CONVERSATION_ROLE_CHARACTERS)
+      || !isBoundedConversationString(part.label, MAX_CONVERSATION_LABEL_CHARACTERS)
+      || !isBoundedConversationString(part.text, MAX_CONVERSATION_CHARACTERS)
+      || !isFieldPath(part.path) || Object.keys(part.path).length !== 1
+      || part.path.tokens.length > MAX_CONVERSATION_DEPTH
+      || !part.path.tokens.every((token) => Object.keys(token).length === 2
+        && (token.kind !== 'key' || token.value.length <= 80))) return false;
+    characters += part.text.length;
+    return characters <= MAX_CONVERSATION_CHARACTERS;
+  });
+}
+
+function isBoundedConversationString(value: unknown, limit: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= limit
+    && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value);
 }
 
 function isCell(value: unknown): boolean {

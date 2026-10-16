@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a bounded Conversation display for existing profiles, preserving physical record selection, query state and raw details. Compact the workspace controls into two rows while retaining temporary-preview Save As.
+- Adapt persisted Kimi Code messages and loop events, with hidden and encrypted content kept opaque. Discover Kimi sessions through a separately authorized, metadata-only Navigator source.
 - Add bounded dataset observations for targets, message roles, explicit loss weights, sequence lengths, declared counts, categories, and inert media references. Keep loaded-page samples distinct from whole-file analysis.
 - Mark pasted files as temporary previews, recover them from Recent Previews during the current VS Code session, and offer exact-byte Save As without overwriting existing files. Remember explicit Session Navigator enablement and keep source authorization separate.
 - Populate default columns and cell values when a fresh file opens with last-line-first row order already selected.

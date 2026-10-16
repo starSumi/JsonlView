@@ -1,9 +1,8 @@
 import type { AgentRowProjection, ConversationProjection, FieldPath, PathToken } from '../shared/types';
 
-export const MAX_CONVERSATION_CHARACTERS = 2048;
-export const MAX_CONVERSATION_PARTS = 8;
-export const MAX_CONVERSATION_DEPTH = 12;
-export const MAX_CONVERSATION_VISITS = 96;
+import { MAX_CONVERSATION_CHARACTERS, MAX_CONVERSATION_PARTS, MAX_CONVERSATION_DEPTH,
+  MAX_CONVERSATION_VISITS, MAX_CONVERSATION_ROLE_CHARACTERS, MAX_CONVERSATION_LABEL_CHARACTERS } from '../shared/types';
+export { MAX_CONVERSATION_CHARACTERS, MAX_CONVERSATION_PARTS, MAX_CONVERSATION_DEPTH, MAX_CONVERSATION_VISITS } from '../shared/types';
 
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): ObjectValue | undefined =>
@@ -31,7 +30,8 @@ export function projectConversation(value: unknown, profile?: AgentRowProjection
     const text = boundedText(value, remaining);
     result.truncated ||= text.length < value.length;
     remaining -= text.length;
-    if (text) result.parts.push({ role: boundedText(role, 32), label: boundedText(label, 40), text, path });
+    if (text) result.parts.push({ role: boundedText(role || 'unknown', MAX_CONVERSATION_ROLE_CHARACTERS),
+      label: boundedText(label || 'Record', MAX_CONVERSATION_LABEL_CHARACTERS), text, path });
   };
   const visit = (value: unknown, path: FieldPath, role: string, label: string): void => {
     if (++visits > MAX_CONVERSATION_VISITS || path.tokens.length > MAX_CONVERSATION_DEPTH) { result.truncated = true; return; }
@@ -46,6 +46,8 @@ export function projectConversation(value: unknown, profile?: AgentRowProjection
     }
     const item = object(value);
     if (!item) return;
+    // Persisted hidden or encrypted parts are opaque, including empty/malformed ciphertext.
+    if (item.hidden === true || item.encrypted !== undefined) { result.truncated = true; return; }
     const explicit = typeof item.role === 'string' ? item.role : typeof item.from === 'string' ? item.from : role;
     const nextRole = (Object.hasOwn(roles, explicit) ? roles[explicit] : undefined) ?? explicit;
     // Image, audio, binary and externalized outputs stay opaque even when they contain a text-like URL.
@@ -66,7 +68,9 @@ export function projectConversation(value: unknown, profile?: AgentRowProjection
     const datasetSlots = [
       ['instruction', 'user', 'Instruction'], ['prompt', 'user', 'Prompt'], ['question', 'user', 'Question'],
       ['context', 'context', 'Context'], ['input', 'user', 'Input'], ['output', 'assistant', 'Response'],
+      ['response', 'assistant', 'Response'], ['completion', 'assistant', 'Completion'],
       ['answer', 'assistant', 'Answer'], ['chosen', 'assistant', 'Chosen'], ['rejected', 'assistant', 'Rejected'],
+      ['chosen_messages', 'assistant', 'Chosen'], ['rejected_messages', 'assistant', 'Rejected'],
     ] as const;
     let found = false;
     for (const [key, slotRole, slotLabel] of datasetSlots) {

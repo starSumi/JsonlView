@@ -115,6 +115,8 @@ describe('Kimi physical projections', () => {
     const record = { type: 'context.append_message', message: { role: 'assistant', toolCalls: [], content: [
       { type: 'think', think: 'PRIVATE_HIDDEN', hidden: true },
       { type: 'think', think: 'PRIVATE_ENCRYPTED', encrypted: 'ciphertext' },
+      { type: 'think', think: 'PRIVATE_EMPTY_CIPHER', encrypted: '' },
+      { type: 'think', think: 'PRIVATE_MALFORMED_CIPHER', encrypted: null },
       { type: 'image_url', imageUrl: { url: 'file:///never-read.png' } },
       { type: 'audio_url', audioUrl: { url: 'https://example.invalid/never-fetch' } },
       { type: 'video_url', videoUrl: { url: 'data:video;base64,NEVER_DECODE' } },

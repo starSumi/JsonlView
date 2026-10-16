@@ -66,7 +66,7 @@ export function kimiContentPreview(value: unknown): string {
     let fragment: string | undefined;
     if (type === 'text') fragment = stringAt(part, 'text');
     else if (type === 'think') {
-      fragment = isObject(part) && (own(part, 'hidden') === true || stringAt(part, 'encrypted'))
+      fragment = isObject(part) && (own(part, 'hidden') === true || own(part, 'encrypted') !== undefined)
         ? '[hidden reasoning]' : stringAt(part, 'think');
     } else if (type === 'image_url' || type === 'audio_url' || type === 'video_url') {
       fragment = `[${type.slice(0, -4)} reference]`;

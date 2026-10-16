@@ -1,8 +1,9 @@
 import type { ParseState, FieldPath } from '../shared/types';
 import type { DatasetIssue, DatasetNumericSummary, DatasetRecordSummary, DatasetRole, DatasetSampleSummary, DatasetScene, DatasetTargetState } from '../shared/dataset-analysis';
 import { isObject, own } from './utils';
+import { DATASET_ANALYSIS_LIMITS } from '../shared/dataset-analysis';
+export { DATASET_ANALYSIS_LIMITS } from '../shared/dataset-analysis';
 
-export const DATASET_ANALYSIS_LIMITS = Object.freeze({ records: 256, messages: 64, blocks: 32, tokenValues: 512, evidence: 8, categories: 32, categoryLength: 80 });
 const MESSAGE_FIELDS = ['messages', 'conversations', 'chosen_messages', 'rejected_messages'] as const;
 const TOKEN_FIELDS = ['tokens', 'input_ids', 'labels', 'attention_mask'] as const;
 const CATEGORY_FIELDS = ['label', 'category', 'split', 'language'] as const;

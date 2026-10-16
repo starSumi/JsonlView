@@ -50,6 +50,11 @@ actual text and source paths, with explicit truncation. The selected row still
 opens the existing semantic, Tree, Raw, Derived and Bytes detail workflow.
 Tool, reasoning and bookkeeping rows may use compact strips; they remain
 physical records rather than invented conversation turns.
+Conversation projections carry at most eight parts and 2,048 UTF-16 code units
+of text in total. Hidden or encrypted blocks remain opaque. The receiver
+validates fixed projection keys, role and label lengths, twelve path tokens
+and eighty code units per path key; malformed optional projections cannot
+enter presentation state. These limits are not a whole-message byte budget.
 
 Dataset summaries contain fixed observations and bounded category values,
 not copies of prompts or responses. Analysis distinguishes observed token
@@ -60,6 +65,11 @@ or a model-specific training convention. Each aggregate declares its scope,
 sample size and partial coverage. A visible-page aggregate cannot claim
 whole-file completeness and does not inherit an unrelated aggregate toolbar
 scope. JSONL framing and generic fallback remain unchanged.
+Dataset summaries are optional on Generic row pages and are validated at the
+transport boundary. The visible-page panel inspects at most 256 loaded rows,
+stays hidden while a replacement page is pending and remains separate from
+the independently requested file or filtered-view aggregate. Missing summaries
+reduce coverage; they do not count as observations of an empty dataset.
 
 The compact workspace uses a primary row for tabs, status and profile controls
 and a second row for query and projection controls. Temporary provenance and
