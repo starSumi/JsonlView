@@ -666,7 +666,7 @@ describe('structured agent event presentation', () => {
     const model = buildAgentEventPresentation(value, {
       profileId: 'generic', eventKind: 'other', summary: 'c4 sample', evidence: [], confidence: 'source',
     });
-    expect(model?.title).toBe('Agent · text');
+    expect(model?.title).toBe('Dataset · text');
     expect(model?.sections[0]).toMatchObject({
       title: 'Text',
       text: expect.stringContaining('McKinley Heating'),
@@ -690,7 +690,7 @@ describe('structured agent event presentation', () => {
     const model = buildAgentEventPresentation(value, {
       profileId: 'generic', eventKind: 'other', summary: 'messages', evidence: [], confidence: 'source',
     });
-    expect(model?.title).toBe('Agent · messages');
+    expect(model?.title).toBe('Dataset · messages');
     expect(model?.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({ title: 'Message 1 · user', text: 'Explain OPFS.', richText: false }),
       expect.objectContaining({ title: 'Message 2 · assistant', text: '## OPFS\n\nIt is browser storage.', richText: true }),

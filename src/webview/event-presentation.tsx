@@ -328,6 +328,7 @@ function presentationProduct(profile?: AgentRowProjection): string {
   if (profile?.profileId === 'codex-rollout' || profile?.profileId === 'codex-exec-jsonl' || profile?.profileId === 'codex-trace') return 'Codex';
   if (profile?.profileId === 'claude-code-session') return 'Claude';
   if (profile?.profileId === 'pi-coding-agent') return 'Pi';
+  if (profile?.profileId === 'kimi-code-session') return 'Kimi';
   return 'Agent';
 }
 
@@ -361,6 +362,9 @@ function isEventEnvelope(value: EventObject, profile?: AgentRowProjection): bool
       || textOf(own(value, 'prompt')) !== undefined
       || textOf(own(value, 'output')) !== undefined
       || textOf(own(value, 'completion')) !== undefined
+      || textOf(own(value, 'response')) !== undefined
+      || Array.isArray(value.tokens)
+      || Array.isArray(value.input_ids)
       || textOf(own(value, 'question')) !== undefined
       || textOf(own(value, 'answer')) !== undefined
       || (textOf(own(value, 'chosen')) !== undefined && textOf(own(value, 'rejected')) !== undefined)
@@ -888,10 +892,13 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
         ? (own(message, 'content') ?? own(message, 'text') ?? own(message, 'value'))
         : rawMessage;
       const text = textSection(content);
-      if (text.text === undefined) return;
       const title = `${label} ${index + 1} · ${role}`;
       const richText = role === 'assistant' || role === 'function' || role === 'tool';
-      sections.push({ title, ...text, richText });
+      if (text.text !== undefined) sections.push({ title, ...text, richText });
+      else addCodeCandidate(sections, `${title} · structured content`, content, 'json');
+      if (message && own(message, 'loss_weight') !== undefined) {
+        addCodeCandidate(sections, `${title} · declared loss weight`, own(message, 'loss_weight'), 'json');
+      }
     });
     const remaining = messages.length - MAX_DATASET_MESSAGES;
     if (remaining > 0) {
@@ -924,6 +931,7 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
     addTextCandidate(sections, 'Response', own(payload, 'output'), true);
   }
   addTextCandidate(sections, 'Completion', own(payload, 'completion'), true);
+  addTextCandidate(sections, own(payload, 'output') === undefined ? 'Response' : 'Response column', own(payload, 'response'), true);
   addTextCandidate(sections, 'History', own(payload, 'history'));
   addTextCandidate(sections, 'Chosen', own(payload, 'chosen'), true);
   addTextCandidate(sections, 'Rejected', own(payload, 'rejected'), true);
@@ -934,7 +942,14 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
   else addCodeCandidate(sections, 'Label', label === '' ? '""' : label, 'json');
   addCodeCandidate(sections, 'Tags', own(payload, 'tags'), 'json');
   addTextCandidate(sections, 'Token count', own(payload, 'token_count'));
+  addTextCandidate(sections, 'Declared num tokens', own(payload, 'num_tokens'));
   addCodeCandidate(sections, 'Tokens', own(payload, 'tokens'), 'json');
+  addCodeCandidate(sections, 'Input IDs', own(payload, 'input_ids'), 'json');
+  addCodeCandidate(sections, 'Labels', own(payload, 'labels'), 'json');
+  addCodeCandidate(sections, 'Attention mask', own(payload, 'attention_mask'), 'json');
+  for (const field of ['images', 'audios', 'videos'] as const) {
+    addCodeCandidate(sections, `${field[0]!.toUpperCase()}${field.slice(1)} · references only`, own(payload, field), 'json');
+  }
   addCodeCandidate(sections, 'Metadata', own(payload, 'metadata'), 'json');
   if (own(payload, 'tools') !== undefined) addCodeCandidate(sections, 'Tools', own(payload, 'tools'), 'json');
   return sections;
@@ -947,6 +962,7 @@ function genericDatasetKind(
   if (Array.isArray(payload.messages)) return 'messages';
   if (Array.isArray(payload.conversations)) return 'conversations';
   if (Array.isArray(payload.chosen_messages) || Array.isArray(payload.rejected_messages)) return 'preference';
+  if (Array.isArray(payload.input_ids) || Array.isArray(payload.tokens)) return 'tokenized';
   if (genericTextKey) return genericTextKey;
   if (textOf(own(payload, 'chosen')) !== undefined && textOf(own(payload, 'rejected')) !== undefined) return 'preference';
   if (textOf(own(payload, 'instruction')) !== undefined) return 'instruction';
@@ -954,6 +970,7 @@ function genericDatasetKind(
   if (textOf(own(payload, 'question')) !== undefined || textOf(own(payload, 'answer')) !== undefined) return 'qa';
   if (textOf(own(payload, 'output')) !== undefined) return 'output';
   if (textOf(own(payload, 'completion')) !== undefined) return 'completion';
+  if (textOf(own(payload, 'response')) !== undefined) return 'response';
   return undefined;
 }
 
@@ -1006,6 +1023,70 @@ const piEventBuilderContext: PiEventBuilderContext = {
   appendAgentContentBlock,
 };
 
+function appendKimiPart(sections: EventPresentationSection[], value: unknown, title: string, role?: string): void {
+  const part = objectOf(value);
+  if (!part) { addTextCandidate(sections, title, value, role === 'assistant'); return; }
+  const type = own(part, 'type');
+  if (type === 'text') addTextCandidate(sections, title, own(part, 'text'), role === 'assistant');
+  else if (type === 'think') {
+    if (own(part, 'hidden') === true || own(part, 'encrypted') !== undefined) addCodeCandidate(sections, 'Opaque reasoning · source flag', { type: 'think', opaque: true }, 'json');
+    else addTextCandidate(sections, 'Reasoning', own(part, 'think'));
+  } else addCodeCandidate(sections, `${title} · reference or structured content`, part, 'json');
+}
+
+function appendKimiContent(sections: EventPresentationSection[], content: unknown, title: string, role?: string): void {
+  if (!Array.isArray(content)) { appendKimiPart(sections, content, title, role); return; }
+  const visible = Math.min(content.length, MAX_DATASET_MESSAGES);
+  for (let index = 0; index < visible; index += 1) appendKimiPart(sections, content[index], `${title} ${index + 1}`, role);
+  if (visible < content.length) sections.push({
+    title: 'Additional content · available in Raw', code: JSON.stringify({ omittedBlocks: content.length - visible }),
+    language: 'json', truncated: true, previewOnly: true,
+  });
+}
+
+/** Persisted Kimi context records are read independently; no context replay or media fetch. */
+function kimiEventSections(payload: EventObject, profile?: AgentRowProjection): EventPresentationSection[] {
+  if (profile?.profileId !== 'kimi-code-session') return [];
+  const sections: EventPresentationSection[] = [];
+  if (payload.type === 'context.append_message') {
+    const message = objectOf(own(payload, 'message'));
+    if (!message) return sections;
+    const role = valueLabel(own(message, 'role'));
+    appendKimiContent(sections, own(message, 'content'), 'Message', role);
+    const calls = own(message, 'toolCalls');
+    if (Array.isArray(calls)) {
+      const visible = Math.min(calls.length, MAX_DATASET_MESSAGES);
+      for (let index = 0; index < visible; index += 1) {
+        const call = objectOf(calls[index]);
+        if (!call) continue;
+        const source = objectOf(own(call, 'function')) ?? call;
+        const name = valueLabel(own(source, 'name'));
+        const title = calls.length > 1 ? `Tool call ${index + 1}` : 'Tool call';
+        addCodeCandidate(sections, name ? `${title} · ${name}` : title, own(source, 'arguments'), 'json');
+      }
+      if (visible < calls.length) sections.push({
+        title: 'Additional tool calls · available in Raw', code: JSON.stringify({ omittedCalls: calls.length - visible }),
+        language: 'json', truncated: true, previewOnly: true,
+      });
+    }
+  } else if (payload.type === 'context.append_loop_event') {
+    const event = objectOf(own(payload, 'event'));
+    if (!event) return sections;
+    if (event.type === 'content.part') appendKimiPart(sections, own(event, 'part'), 'Content', 'assistant');
+    else if (event.type === 'tool.call') {
+      const name = valueLabel(own(event, 'name'));
+      addCodeCandidate(sections, name ? `Tool call · ${name}` : 'Tool call', own(event, 'args'), 'json');
+    } else if (event.type === 'tool.result') {
+      const result = objectOf(own(event, 'result'));
+      if (result) {
+        appendKimiContent(sections, own(result, 'output'), 'Tool result', 'tool');
+        addTextCandidate(sections, 'Result note', own(result, 'note'));
+      }
+    }
+  }
+  return sections;
+}
+
 export function buildAgentEventPresentation(
   value: unknown,
   profile?: AgentRowProjection,
@@ -1045,7 +1126,8 @@ export function buildAgentEventPresentation(
     : undefined;
   const normalizedItemType = codexItem?.normalizedType
     ?? normalizeCodexItemType(typeof codexItemSource?.type === 'string' ? codexItemSource.type : undefined);
-  const kind = genericDatasetKey ?? itemType ?? envelopeType ?? profile?.eventKind ?? 'event';
+  const kimiEvent = profile?.profileId === 'kimi-code-session' ? objectOf(own(payload, 'event')) : undefined;
+  const kind = genericDatasetKey ?? valueLabel(kimiEvent?.type) ?? itemType ?? envelopeType ?? profile?.eventKind ?? 'event';
   const customToolName = normalizedItemType === 'custom_tool_call' ? valueLabel(own(codexItemSource ?? payload, 'name')) : undefined;
   const displayKind = customToolName === 'exec'
     ? 'Code Mode · exec'
@@ -1054,7 +1136,7 @@ export function buildAgentEventPresentation(
       : normalizedItemType === 'extension' && typeof own(codexItemSource ?? payload, 'kind') === 'string'
       ? `Extension · ${String(own(codexItemSource ?? payload, 'kind'))}`
       : kind.replaceAll('_', ' ');
-  const title = `${presentationProduct(profile)} · ${displayKind}`;
+  const title = `${datasetRoot && genericDatasetKey ? 'Dataset' : presentationProduct(profile)} · ${displayKind}`;
   const metadata: Array<{ label: string; value: string }> = [];
   const addMetadata = (label: string, value: string | undefined): void => {
     if (value && metadata.length < MAX_METADATA && !metadata.some((item) => item.label === label)) {
@@ -1062,6 +1144,9 @@ export function buildAgentEventPresentation(
     }
   };
   const sources = completedItem ? [completedItem, payload, envelope] : [payload, envelope];
+  if (datasetRoot && (own(payload, 'token_count') !== undefined || own(payload, 'num_tokens') !== undefined)) {
+    addMetadata('token count basis', 'declared by source');
+  }
   addMetadata('role', profile?.actor ?? firstString(sources, ['role', 'actor']));
   addMetadata('status', profile?.status ?? firstString(sources, ['status', 'state', 'kind']));
   addMetadata('session', profile?.sessionId ?? firstString(sources, ['session_id', 'sessionId']));
@@ -1071,6 +1156,14 @@ export function buildAgentEventPresentation(
   addMetadata('tool', firstString(sources, ['name', 'tool_name', 'tool', 'server']));
   addMetadata('severity', profile?.severity ?? firstString(sources, ['severity', 'level']));
   addMetadata('project', firstString(sources, ['project']));
+  if (profile?.profileId === 'kimi-code-session') {
+    const message = objectOf(own(payload, 'message'));
+    const result = objectOf(kimiEvent?.result);
+    addMetadata('message role', valueLabel(message?.role));
+    addMetadata('tool call id', profile.toolCallId ?? valueLabel(kimiEvent?.toolCallId ?? message?.toolCallId));
+    if (typeof result?.isError === 'boolean') addMetadata('error', String(result.isError));
+    else if (typeof message?.isError === 'boolean') addMetadata('error', String(message.isError));
+  }
   const claudeMessage = profile?.profileId === 'claude-code-session' ? objectOf(payload.message) : undefined;
   const claudeBlocks = Array.isArray(claudeMessage?.content) ? claudeMessage.content : [];
   const claudeBlock = objectOf(claudeBlocks[0]);
@@ -1111,7 +1204,8 @@ export function buildAgentEventPresentation(
     ?? payload.prompt;
   const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
   const piSections = buildPiEventSections(payload, profile, piEventBuilderContext);
-  const specializedSections = claudeSections.length > 0 ? claudeSections : piSections;
+  const kimiSections = kimiEventSections(payload, profile);
+  const specializedSections = claudeSections.length > 0 ? claudeSections : piSections.length > 0 ? piSections : kimiSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
   const isPrompt = lowerKind === 'last-prompt' || lowerKind === 'prompt';
