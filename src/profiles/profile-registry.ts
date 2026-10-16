@@ -7,6 +7,7 @@ import { CodexTraceProfile } from './codex-trace-profile';
 import { correlateBatch } from './correlation';
 import { GenericAgentEventsProfile } from './generic-agent-profile';
 import { GENERIC_PROFILE_ID, GenericProfile } from './generic-profile';
+import { KimiCodeProfile } from './kimi-profile';
 import { OpenTelemetryProfile } from './opentelemetry-profile';
 import { PiCodingAgentProfile } from './pi-profile';
 import { SoftwareEngineeringAgentProfile } from './software-engineering-agent-profile';
@@ -50,6 +51,7 @@ export class AgentProfileRegistry {
       this.register(new CodexSessionIndexProfile());
       this.register(new ClaudeCodeProfile());
       this.register(new PiCodingAgentProfile());
+      this.register(new KimiCodeProfile());
       this.register(new GenericAgentEventsProfile());
       this.register(new OpenTelemetryProfile());
       this.register(new SoftwareEngineeringAgentProfile());

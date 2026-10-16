@@ -1,6 +1,16 @@
 schema: jsonlview.documentation-metadata
 version: 1
 documents:
+  - id: kimi-format-profile
+    path: docs/kimi-format-profile.md
+    title: Kimi persisted session profile
+    kind: guide
+    status: active
+    owner: product
+    tags: [kimi, profiles, jsonl, read-only]
+    evidence: []
+    revisit: when the upstream Kimi wire storage contract changes
+    rollback: remove the Kimi registration and retain Generic access
   - id: docs-index
     path: docs/README.md
     title: Product Documentation
