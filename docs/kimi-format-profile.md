@@ -96,14 +96,56 @@ Undo, clear, branch switches and compaction can affect Kimi's replayed active
 context. This viewer does not replay those mutations or erase earlier rows. It
 does not synthesize successful results for an interrupted or unmatched tool.
 
+## Authorized Session Navigator source
+
+The optional Navigator accepts provider `kimi` through the existing explicit
+source authorization flow. Detection only offers an existing `KIMI_CODE_HOME`,
+or the default `~/.kimi-code`, as a candidate; it does not authorize or scan it.
+Navigator enablement remains a separate user choice. The Add Source panel's
+Connect Kimi Code action follows the same native source consent flow.
+
+The pinned upstream [data locations](https://github.com/MoonshotAI/kimi-code/blob/ef727e517923cb312cb48d42825c49dfacd528e7/docs/en/configuration/data-locations.md)
+define `sessions/<workDirKey>/<sessionId>/state.json` and
+`agents/<agentId>/wire.jsonl`. Upstream's
+[session metadata contract](https://github.com/MoonshotAI/kimi-code/blob/ef727e517923cb312cb48d42825c49dfacd528e7/packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts)
+provides title, bounded last-prompt preview, clocks and declared agent parent IDs.
+The [index source](https://github.com/MoonshotAI/kimi-code/blob/ef727e517923cb312cb48d42825c49dfacd528e7/packages/agent-core-v2/src/app/sessionIndex/sessionIndexSource.ts)
+also recognizes legacy `session-meta/state.json`; this fallback is supported.
+
+Catalog scans read only those state files and stat the corresponding wire files.
+They do not open wire bodies, login credentials, logs, user history, task output,
+or `session_index.jsonl`; arbitrary `sessionDir`, agent `homedir`, media and tool
+references are never followed. Provider-home and child directory links are
+excluded. Only relative wire locations enter the location table. Entity IDs use
+a session-relative hash plus the bounded agent ID, so metadata cannot redirect
+filesystem traversal. Declared safe parent IDs remain reconcilable across pages;
+missing or unsupported parent relationships remain orphaned. Fork replay and
+cross-session fork lineage are not inferred.
+
+Discovery examines at most 16,384 directory entries and retains at most 4,096
+wire entries per inventory, under the caller's deadline. State files are limited
+to 64 KiB each and share the existing byte and record budgets. Oversized, missing
+or malformed metadata keeps a discoverable wire entry with an ID label and marks
+the result partial. Metadata reads check file identity and change indicators.
+Page size obeys file/entity bounds; continuation binds the offset to the source
+and stat inventory fingerprint. Stale cursors fail rather than silently shifting
+pages. A discovery cap or deadline reports partial results without claiming a
+complete inventory or an invented continuation beyond that inventory. No catalog
+database migration or provider-source write is required.
+
 ## Validation and rollback
 
 Synthetic profile tests cover detection, mixed/malformed input, physical history,
 tool pairing across batches, old nested tool calls, error/interruption status,
 cache accounting, inert media and reference handling, oversized identities and
 bounded content scanning. The existing profile registry tests cover retained
-built-ins. These checks prove projection behavior, not live Kimi execution or
-Session Navigator provider onboarding.
+built-ins. Navigator tests cover current/legacy metadata, exact authorized-source
+routing, bounded reads, malformed and oversized state, inert external paths,
+directory links, parent relations, stable continuation, cancellation and deadline.
+These checks prove bounded adapter behavior; live Kimi execution and VS Code host
+acceptance remain separate checks.
 
-Rollback removes the Kimi registry entry and the profile exports. Generic JSONL
-access remains available; no source files require migration or restoration.
+Rollback removes the Kimi profile registry entry and exports, plus its optional
+Navigator provider dispatch and connect choice. Existing authorized Kimi entries
+can be removed from JsonlView settings. Generic JSONL access remains available;
+no source files require migration or restoration.

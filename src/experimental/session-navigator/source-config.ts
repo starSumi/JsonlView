@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AuthorizedSourceSetting, SessionNavigatorProviderId } from './types';
 
-const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'generic']);
+const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'kimi', 'generic']);
 const MAX_ROOT_URI_LENGTH = 2_048;
 
 export interface DefaultSourceDiscoveryOptions {
@@ -51,6 +51,7 @@ export function discoverDefaultSources(options: DefaultSourceDiscoveryOptions = 
     { provider: 'codex', path: codexRoot, statePath: codexStateRoot },
     { provider: 'claude', path: env.CLAUDE_CONFIG_DIR?.trim() || join(homeDirectory, '.claude') },
     { provider: 'pi', path: piSessionRoot },
+    { provider: 'kimi', path: env.KIMI_CODE_HOME?.trim() || join(homeDirectory, '.kimi-code') },
   ];
   return parseAuthorizedSources(candidates.flatMap(({ provider, path, statePath }) => {
     if (path === undefined || !isProviderRoot(provider, path)) return [];
@@ -114,6 +115,7 @@ function isFileUri(value: string): boolean {
 function isProviderRoot(provider: SessionNavigatorProviderId, path: string): boolean {
   try {
     if (!statSync(path).isDirectory()) return false;
+    if (provider === 'kimi') return statSync(join(path, 'sessions')).isDirectory();
     const names = new Set(readdirSync(path, { encoding: 'utf8' }));
     if (provider === 'codex') {
       return [...names].some((name) => /^state(?:_\d+)?\.sqlite$/iu.test(name)) || names.has('sessions') || names.has('archived_sessions');

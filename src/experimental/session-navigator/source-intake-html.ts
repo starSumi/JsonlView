@@ -67,6 +67,7 @@ export function getSourceIntakeHtml(): string {
         <button id="connect-codex" type="button">Connect Codex</button>
         <button id="connect-claude" type="button">Connect Claude</button>
         <button id="connect-pi" type="button">Connect pi</button>
+        <button id="connect-kimi" type="button">Connect Kimi Code</button>
       </div>
     </section>
     <div class="choices" aria-label="Source options">
@@ -136,6 +137,7 @@ export function getSourceIntakeHtml(): string {
       document.getElementById('connect-codex').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'codex' }));
       document.getElementById('connect-claude').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'claude' }));
       document.getElementById('connect-pi').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'pi' }));
+      document.getElementById('connect-kimi').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'kimi' }));
       pasteChoice.addEventListener('click', () => {
         document.getElementById('paste-section').hidden = false;
         pasteChoice.setAttribute('aria-expanded', 'true'); text.focus();

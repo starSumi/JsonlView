@@ -98,6 +98,8 @@ describe('bounded source intake validation', () => {
       expect(() => parseSourceIntakeMessage(message)).toThrow();
     }
     expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'pi' })).toEqual({ type: 'authorize-agent', provider: 'pi' });
+    expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi' })).toEqual({ type: 'authorize-agent', provider: 'kimi' });
+    expect(() => parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi', root: '/unapproved' })).toThrow();
   });
 
   it('checks local file and folder reality while rejecting remote, command, missing and linked paths', async () => {
@@ -117,6 +119,17 @@ describe('bounded source intake validation', () => {
 });
 
 describe('Add Source panel host lifecycle', () => {
+  it('routes Kimi connect through existing explicit authorization rather than direct source reads', async () => {
+    const authorize = vi.fn().mockResolvedValue(undefined);
+    const panel = new SourceIntakePanel(onSource, authorize);
+    panel.show();
+    await send({ type: 'authorize-agent', provider: 'kimi' });
+    expect(authorize).toHaveBeenCalledWith('kimi', expect.any(AbortSignal));
+    expect(onSource).not.toHaveBeenCalled();
+    expect(host.open).not.toHaveBeenCalled();
+    await panel.dispose();
+  });
+
   it('creates its themed panel lazily and reuses it without granting local resource access', () => {
     expect(host.create).not.toHaveBeenCalled();
     intake.show(); intake.show();
@@ -292,5 +305,6 @@ it('ships a nonce-only static document without HTML injection or automatic clipb
   expect(html).toContain('webview-diagnostic');
   expect(html).toContain('Source files are read-only');
   expect(html).toContain('Connect pi');
+  expect(html).toContain('Connect Kimi Code');
   expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
 });
