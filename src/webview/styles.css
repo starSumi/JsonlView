@@ -883,6 +883,10 @@ select:focus-visible,
   flex: 0 1 auto;
 }
 
+.conversation-record[data-expanded='false'] .conversation-record-heading strong {
+  max-width: none;
+}
+
 .conversation-record[data-expanded='false'] .conversation-record-hint[data-limited='false'],
 .conversation-record[data-expanded='false'] time {
   display: none;
