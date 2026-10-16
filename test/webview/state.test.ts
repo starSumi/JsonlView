@@ -11,6 +11,14 @@ import {
 } from '../../src/webview/state';
 
 describe('persisted table query migration', () => {
+  it('persists the display choice without changing query, page, follow or selection intent', () => {
+    const initial = createInitialState({ query: 'answer', followMode: true, sortDirection: 'desc' });
+    const next = workspaceReducer(initial, { type: 'SET_DISPLAY_MODE', mode: 'conversation' });
+    expect(next).toEqual({ ...initial, displayMode: 'conversation' });
+    expect(createInitialState(toPersistedState(next)).displayMode).toBe('conversation');
+    expect(createInitialState().displayMode).toBe('table');
+  });
+
   const filter = { columnId: 'actor', source: 'profile' as const, operator: 'eq' as const, value: 'assistant' };
   it('restores a legacy single filter as the first condition and round-trips multiple conditions and types', () => {
     const initial = createInitialState({ filter });

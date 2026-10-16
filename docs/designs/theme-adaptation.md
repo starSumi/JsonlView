@@ -211,14 +211,35 @@ private transcripts at runtime.
 
 ## Validation and rollback
 
-Table Search, Row types, Field filters and Columns live inside the left Table
-pane. The file header retains status, Profile and Follow, and the right drawer
-retains selected-record controls. The Table toolbar wraps at narrow widths;
+Workspace tabs, status, Profile and Follow share the top bar. The second bar
+belongs to the left Table workspace: display mode, Search, Row types, Field
+filters and Columns. The right drawer retains selected-record controls.
+The temporary-source badge and Save As action stay visible in this workspace
+at every width; other views retain them in the top bar. Responsive rules may
+hide secondary metrics and decorative labels, but never these lifecycle actions
+or the Navigator entry. Tabs scroll horizontally when necessary. The Table toolbar wraps at narrow widths;
 its native disclosure popups stay inside the Table pane with a scrollable body.
 Labels, focus rings, input borders and selected checkboxes use existing VS Code
 tokens in light, dark and high-contrast themes. Column groups distinguish common
 profile columns, selected record fields, short scalars and searchable Advanced
 fields. ADR-045 owns their query and projection semantics.
+
+Conversation is a persisted display choice inside the Table workspace. It uses
+the same physical records, query, ordering, pagination, selection and reading
+anchors. User and assistant cards have a bounded four-line source-text preview;
+tool, system and reasoning records remain compact strips. Unknown records use
+neutral labels and source summaries rather than an invented agent role.
+Opening a card requests details only for that selected record. Source truncation
+is stated as Preview limited; visual line clamping always offers Open record.
+No image, tool path, link or embedded HTML is resolved by the compact preview.
+
+Role accents use existing host text-link, chart and border tokens; role words
+provide the same distinction without color. Selected rows and keyboard focus
+continue using the grid's host selection/focus tokens. Cards have deterministic
+132-pixel or 42-pixel geometry, independent of theme or width, so reflow does not
+change physical reading anchors. Changing display mode clamps only the saved
+intra-record pixel offset to the new card height. A maximum 500-row page remains
+virtualized; no transcript-wide DOM or per-row detail request is introduced.
 
 For a documentation-only update, run:
 

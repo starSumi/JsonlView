@@ -3,6 +3,7 @@ import type { BigIntStats } from 'node:fs';
 import { open, stat, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { projectConversation } from '../profiles/conversation-projection';
 import type {
   AgentRowProjection,
   CellProjection,
@@ -1640,6 +1641,7 @@ export class JsonlFileEngine {
       ...(hydrated.value === undefined ? {} : { kind: jsonKindOf(hydrated.value) }),
       cells,
       genericSummary,
+      conversation: projectConversation(hydrated.value, profile),
       ...(profile === undefined ? {} : { profile }),
       ...(hydrated.problems.length === 0 ? {} : { problems: hydrated.problems }),
     };

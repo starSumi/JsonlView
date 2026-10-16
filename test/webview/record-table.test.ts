@@ -110,6 +110,28 @@ describe('record table selection visibility', () => {
     }
   });
 
+  it('renders bounded actual conversation text and compact events with exact physical selection', () => {
+    const source = render().rows;
+    const rows = source.map((row, index) => ({ ...row, conversation: { truncated: false,
+      parts: [{ role: index === 0 ? 'assistant' : 'tool', label: 'Message', text: 'Actual source text ' + index,
+        path: { tokens: [] } }] } }));
+    const { element, onSelect } = render({ displayMode: 'conversation', rows, selectedOrdinal: undefined });
+    const options = vi.mocked(useVirtualizer).mock.calls.at(-1)![0];
+    expect(options.estimateSize(0)).toBe(132);
+    expect(options.estimateSize(1)).toBe(42);
+    expect(options.getItemKey?.(1)).toBe('synthetic-document:conversation:42:["1","0","3","2",1]');
+    const markup = renderToStaticMarkup(element);
+    expect(markup).toContain('Actual source text 0');
+    expect(markup).toContain('Actual source text 1');
+    expect(markup).toContain('aria-rowcount="3" aria-colcount="2"');
+    expect(markup).not.toContain('role="separator"');
+    expect(onSelect).not.toHaveBeenCalled();
+    type GridElement = React.ReactElement<React.HTMLAttributes<HTMLDivElement> & { children: GridElement[] }>;
+    const second = (element as GridElement).props.children[1]!.props.children[1]!;
+    second.props.children[1]!.props.onClick?.({} as React.MouseEvent<HTMLDivElement>);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(rows[1]!.ref);
+  });
+
   it('reveals a different physical record at the same page-local index', () => {
     const { rows } = render();
     const nextRows = rows.map((row, index) => ({
@@ -397,6 +419,28 @@ describe('record table selection visibility', () => {
       resize: () => { for (const observer of observers) observer([], {} as ResizeObserver); },
       selection: (value: boolean) => { collapsed = value; }, edit: (value: boolean) => { editable = value; } };
   }
+
+  it('preserves the physical reading anchor when display modes change cumulative page geometry', () => {
+    const fixture = manualTailFixture({ followMode: false, latestSeq: '20' });
+    const rows = fixture.page(20).map((row) => ({ ...row, conversation: { truncated: false,
+      parts: [{ role: 'assistant', label: 'Message', text: 'Actual source', path: { tokens: [] } }] } }));
+    fixture.rerender({ rows });
+    fixture.layout();
+    fixture.wheel(-1);
+    fixture.scroll(157);
+    fixture.rerender({ displayMode: 'conversation' });
+    Object.assign(fixture.grid, { scrollHeight: 2670 });
+    fixture.layout();
+    expect(fixture.grid.scrollTop).toBe(667);
+    expect(fixture.onViewportAnchor.mock.calls.at(-1)?.[0]).toEqual(rows[5]!.ref);
+    fixture.scroll(740);
+    fixture.rerender({ displayMode: 'table' });
+    fixture.layout();
+    expect(fixture.grid.scrollTop).toBe(179);
+    expect(fixture.onViewportAnchor.mock.calls.at(-1)?.[0]).toEqual(rows[5]!.ref);
+    expect(fixture.onManualTailVisible).not.toHaveBeenCalled();
+    expect(fixture.onTailVisible).not.toHaveBeenCalled();
+  });
 
   it('resumes Reading on a real user scroll to the current tail and follows the next append immediately', () => {
     const fixture = manualTailFixture();

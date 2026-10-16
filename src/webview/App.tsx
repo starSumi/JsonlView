@@ -909,10 +909,27 @@ export function App(): React.JSX.Element {
         rebuildBusy={Boolean(state.pending.rebuild)}
         onRebuild={rebuild}
         onOpenNavigator={openNavigator}
+        navigation={
+          <nav {...workspaceTabs.tabListProps} className="workspace-tabs" aria-label="Workspace views">
+            {tabs.map(({ id, label, icon: Icon }) => {
+              const count = id === 'timeline' ? timelineRows.length : id === 'problems' ? problemEntries.length : undefined;
+              return (
+                <button type="button" className={state.activeTab === id ? 'is-active' : ''}
+                  {...workspaceTabs.getTabProps(id)} key={id}>
+                  <Icon size={14} aria-hidden />{label}
+                  {count !== undefined ? <span className="tab-count"
+                    title={id === 'problems' ? 'Problem entries in the current scan page; the status strip counts distinct problem records observed so far' : undefined}>
+                    {count}{id === 'problems' ? <span className="tab-count-unit">entries</span> : null}
+                  </span> : null}
+                </button>
+              );
+            })}
+          </nav>
+        }
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
-          {previewStatus ? <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} /> : null}
+          {previewStatus && state.activeTab !== 'table' ? <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} /> : null}
         </div>
         <label className="compact-field profile-field">
           <span className="profile-label">Profile</span>
@@ -995,32 +1012,6 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
 
-      <nav {...workspaceTabs.tabListProps} className="workspace-tabs" aria-label="Workspace views">
-        {tabs.map(({ id, label, icon: Icon }) => {
-          const count = id === 'timeline' ? timelineRows.length : id === 'problems' ? problemEntries.length : undefined;
-          return (
-            <button
-              type="button"
-              className={state.activeTab === id ? 'is-active' : ''}
-              {...workspaceTabs.getTabProps(id)}
-              key={id}
-            >
-              <Icon size={14} aria-hidden />
-              {label}
-              {count !== undefined ? (
-                <span
-                  className="tab-count"
-                  title={id === 'problems' ? 'Problem entries in the current scan page; the status strip counts distinct problem records observed so far' : undefined}
-                >
-                  {count}
-                  {id === 'problems' ? <span className="tab-count-unit">entries</span> : null}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </nav>
-
       <div
         ref={workspaceRef}
         className={`workspace${drawerOpen ? ' has-drawer' : ''}`}
@@ -1030,6 +1021,16 @@ export function App(): React.JSX.Element {
           <div {...workspaceTabs.getPanelProps('table')} className="workspace-tab-panel">
           {state.activeTab === 'table' ? <>
         <fieldset className="table-query-toolbar" aria-label="Table search and display">
+          {previewStatus ? <div className="preview-lifecycle-actions">
+            <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} />
+          </div> : null}
+          <fieldset className="display-mode-switch" aria-label="Record display">
+            <button type="button" aria-pressed={state.displayMode === 'table'}
+              onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', mode: 'table' })}>Table</button>
+            <button type="button" aria-pressed={state.displayMode === 'conversation'}
+              title="Compact conversation previews; all physical records remain available"
+              onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', mode: 'conversation' })}>Conversation</button>
+          </fieldset>
         <RecordQueryControls
           query={state.query}
           searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
@@ -1083,7 +1084,7 @@ export function App(): React.JSX.Element {
             disabled={!summary || !canReadSnapshot(state.invalidationReason)}
             onChange={(selection) => queryController.applyRowTypes(selection)}
           />
-          <ColumnChooser
+          {state.displayMode === 'table' ? <ColumnChooser
             columns={availableColumns}
             schema={state.schema}
             selectedRecordIds={selectedRecordIds}
@@ -1103,8 +1104,8 @@ export function App(): React.JSX.Element {
               if (columns.every((selected) => state.columns.some((current) => current.id === selected.id))) return;
               requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
             }}
-          />
-          <small className="table-query-scope">Search and filters query this file together in bounded scans. Results appear in this table.</small>
+          /> : null}
+          <small className="table-query-scope">Search and filters query this file together in bounded scans. Results appear in this view.</small>
         </fieldset>
         <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
           </> : null}
@@ -1113,6 +1114,7 @@ export function App(): React.JSX.Element {
               sessionId={clientRef.current.session.documentId}
               rows={state.rows}
               columns={tableColumns}
+              displayMode={state.displayMode}
               selectedOrdinal={state.selectedOrdinal}
               loading={Boolean(state.pending.rows) || (state.summary === undefined && state.error === undefined)}
               emptyTitle={state.summary === undefined && state.error !== undefined ? 'Unable to open records' : undefined}

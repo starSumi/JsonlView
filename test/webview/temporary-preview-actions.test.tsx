@@ -6,10 +6,11 @@ import { TemporaryPreviewActions } from '../../src/webview/temporary-preview-act
 it('discloses current-session recovery, offers Save As and keeps the original temporary after saving a copy', () => {
   const props = { status: { status: 'temporary' as const, recordCount: 2, sizeBytes: 32, savedCopy: false }, onSaveAs: () => {} };
   const temporary = renderToStaticMarkup(<TemporaryPreviewActions {...props} />);
-  expect(temporary).toContain('Temporary preview'); expect(temporary).toContain('Save As…');
+  expect(temporary).toContain('Temporary'); expect(temporary).toContain('Save As…');
+  expect(temporary).toContain('temporary-preview-badge');
   expect(temporary).toContain('Recent Previews during this VS Code session');
   const saving = renderToStaticMarkup(<TemporaryPreviewActions {...props} status={{ ...props.status, status: 'saving' }} />);
   expect(saving).toContain('disabled'); expect(saving).toContain('Saving…');
   const saved = renderToStaticMarkup(<TemporaryPreviewActions {...props} status={{ ...props.status, status: 'saved', savedCopy: true }} />);
-  expect(saved).toContain('Temporary preview · copy saved'); expect(saved).not.toContain('disabled');
+  expect(saved).toContain('Temporary · copy saved'); expect(saved).not.toContain('disabled');
 });

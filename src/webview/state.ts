@@ -74,6 +74,7 @@ export interface WorkspaceState {
   /** Stops automatic retries of these conditions; explicit Refresh may retry. */
   failedAnalysisIntent?: AnalysisIntentV1 | undefined;
   activeTab: WorkspaceTab;
+  displayMode: 'table' | 'conversation';
   detailTab: DetailTab;
   detailWidth: number;
   query: string;
@@ -129,6 +130,7 @@ export function shouldCloseDetailOnEscape(
 
 export interface PersistedWorkspaceState {
   activeTab?: WorkspaceTab;
+  displayMode?: 'table' | 'conversation';
   detailTab?: DetailTab;
   detailWidth?: number;
   query?: string;
@@ -154,6 +156,7 @@ export type WorkspaceAction =
   | { type: 'REQUEST_FINISHED'; kind: RequestKind; requestId: string }
   | { type: 'MESSAGE_RECEIVED'; message: ExtensionMessage }
   | { type: 'SET_ACTIVE_TAB'; tab: WorkspaceTab }
+  | { type: 'SET_DISPLAY_MODE'; mode: 'table' | 'conversation' }
   | { type: 'SET_INSIGHT_DIMENSION'; dimension: InsightDimension }
   | { type: 'SET_INSIGHT_SCOPE'; scope: InsightScope }
   | { type: 'SET_ANALYSIS_INTENT'; intent: AnalysisIntentV1 }
@@ -198,6 +201,7 @@ export function createInitialState(restored?: PersistedWorkspaceState, pageSize 
     insightScope: restored?.insightScope ?? 'current-view',
     analysisIntentRevision: 0,
     activeTab: restored?.activeTab ?? 'table',
+    displayMode: restored?.displayMode === 'conversation' ? 'conversation' : 'table',
     detailTab: restored?.detailTab ?? 'tree',
     detailWidth: restored?.detailWidth ?? DEFAULT_DETAIL_WIDTH,
     query: restored?.query ?? '',
@@ -831,6 +835,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return receiveMessage(state, action.message);
     case 'SET_ACTIVE_TAB':
       return { ...state, activeTab: action.tab };
+    case 'SET_DISPLAY_MODE':
+      return { ...state, displayMode: action.mode };
     case 'SET_INSIGHT_DIMENSION':
       return { ...state, insightDimension: action.dimension, insights: undefined, analysisIntent: undefined,
         analysisIntentRevision: state.analysisIntentRevision + 1 };
@@ -989,6 +995,7 @@ export function selectTimelineRows(state: WorkspaceState): RowProjection[] {
 export function toPersistedState(state: WorkspaceState): PersistedWorkspaceState {
   return {
     activeTab: state.activeTab,
+    displayMode: state.displayMode,
     detailTab: state.detailTab,
     detailWidth: state.detailWidth,
     query: state.query,

@@ -24,6 +24,12 @@ function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
 }
 
 describe('workspace header status', () => {
+  it('places workspace tabs in the same header while preserving the Navigator action', () => {
+    const markup = render({ navigation: React.createElement('nav', { 'aria-label': 'Workspace views' }, 'Table') });
+    expect(markup.indexOf('<nav')).toBeLessThan(markup.indexOf('<div class="status-strip"'));
+    expect(markup).toContain('aria-label="Open Agent Sessions"');
+  });
+
   it('places the bounded status region before controls in the wide-layout DOM order', () => {
     const markup = render();
 

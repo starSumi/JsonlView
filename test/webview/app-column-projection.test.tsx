@@ -150,12 +150,44 @@ function boot(columns: ColumnSpec[] = [status, prompt]): void {
   deliver('ROWS', page(columns), last('GET_ROWS'));
 }
 const rowRequests = (): WebviewRequest[] => sent.filter((request) => request.type === 'GET_ROWS');
+function chooseDisplay(label: string): void {
+  const visit = (node: ReactNode): boolean => {
+    if (Array.isArray(node)) return node.some(visit);
+    if (!React.isValidElement<{ children?: ReactNode; onClick?: () => void; 'aria-pressed'?: boolean }>(node)) return false;
+    if (node.type === 'button' && node.props.children === label && node.props['aria-pressed'] !== undefined) {
+      node.props.onClick?.(); return true;
+    }
+    return visit(node.props.children);
+  };
+  expect(visit(tree)).toBe(true);
+  commit();
+}
 const visibleValues = (): string[] => {
   const table = props(RecordTable);
   return table.columns.map((column) => getColumnText(table.rows[0]!, column.id));
 };
 
 describe('App column presentation and projection boundary', () => {
+  it('switches conversation display locally without requerying or fetching details, retaining selection and query', () => {
+    boot();
+    props(RecordQueryControls).onSearchChange('keep');
+    props(RecordQueryControls).onSearchSubmit();
+    commit();
+    deliver('ROWS', page([status, prompt]), last('GET_ROWS'));
+    const rows = props(RecordTable).rows;
+    props(RecordTable).onSelect(rows[3]!.ref);
+    commit();
+    const before = sent.length;
+    chooseDisplay('Conversation');
+    expect(props(RecordTable).displayMode).toBe('conversation');
+    expect(props(RecordTable).rows).toBe(rows);
+    expect(props(RecordTable).selectedOrdinal).toBe('3');
+    expect(props(RecordQueryControls).query).toBe('keep');
+    chooseDisplay('Table');
+    expect(props(RecordTable).displayMode).toBe('table');
+    expect(props(RecordTable).selectedOrdinal).toBe('3');
+    expect(sent.slice(before).filter((request) => request.type === 'GET_ROWS' || request.type === 'GET_DETAIL')).toEqual([]);
+  });
   it('hides and restores projected field values locally without rerunning the active query', () => {
     boot();
     props(RecordQueryControls).onSearchChange('keep');

@@ -6,7 +6,13 @@ import type { ColumnSpec, RecordRef, RowProjection, RowSort } from '../../../sha
 import { columnGridTemplate, getColumnText, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from '../../format';
 import { gridCellId, gridCellRowIndex, pinActiveGridRow, useGridFocus, type GridCell } from '../../use-grid-focus';
 import { captureViewportAnchor, GRID_HEADER_HEIGHT, GRID_ROW_HEIGHT, isRowVisible, latestRowIndex,
-  physicalRowKey, resolveViewportAnchor, type ViewportAnchor } from './viewport-anchor';
+  physicalRowKey, resolveViewportAnchor, rowOffset, type ViewportAnchor } from './viewport-anchor';
+import { ConversationRow, conversationRowHeight } from './conversation-row';
+
+const CONVERSATION_COLUMNS: ColumnSpec[] = [
+  { id: '__ordinal', label: '#', source: 'system' },
+  { id: '__conversation', label: 'Conversation · all records', source: 'profile' },
+];
 
 interface EmptyStateProps {
   icon?: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
@@ -28,6 +34,7 @@ export interface RecordTableProps {
   sessionId?: string;
   rows: RowProjection[];
   columns: ColumnSpec[];
+  displayMode?: 'table' | 'conversation';
   selectedOrdinal?: string | undefined;
   loading: boolean;
   emptyTitle?: string | undefined;
@@ -50,7 +57,8 @@ export interface RecordTableProps {
 export function RecordTable({
   sessionId = 'jsonl-view',
   rows,
-  columns,
+  columns: tableColumns,
+  displayMode = 'table',
   selectedOrdinal,
   loading,
   emptyTitle,
@@ -69,11 +77,20 @@ export function RecordTable({
   onTailVisible,
   onManualTailVisible,
 }: RecordTableProps): React.JSX.Element {
+  const compact = displayMode === 'conversation';
+  const columns = compact ? CONVERSATION_COLUMNS : tableColumns;
+  const heights = useMemo(() => compact ? rows.map(conversationRowHeight) : undefined, [compact, rows]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const resizersRef = useRef(new Map<string, HTMLButtonElement>());
   const pointerFocusRef = useRef(false);
   const anchorRef = useRef<ViewportAnchor | undefined>(undefined);
+  const geometryRef = useRef({ displayMode, rows, heights });
+  if (geometryRef.current.displayMode !== displayMode && scrollRef.current) {
+    anchorRef.current = captureViewportAnchor(sessionId, geometryRef.current.rows,
+      scrollRef.current.scrollTop, geometryRef.current.heights);
+  }
+  geometryRef.current = { displayMode, rows, heights };
   const interactionPausedRef = useRef(false);
   const manualFollowingRef = useRef(false);
   const manualIntentRef = useRef<{ rows: RowProjection[]; sessionId: string; revision: number; scrollTop: number } | undefined>(undefined);
@@ -101,11 +118,11 @@ export function RecordTable({
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => GRID_ROW_HEIGHT,
+    estimateSize: (index) => heights?.[index] ?? GRID_ROW_HEIGHT,
     overscan: 10,
     scrollMargin: GRID_HEADER_HEIGHT,
     scrollPaddingStart: GRID_HEADER_HEIGHT,
-    getItemKey: (index) => rows[index] ? `${sessionId}:${physicalRowKey(rows[index]!.ref)}` : index,
+    getItemKey: (index) => rows[index] ? sessionId + ':' + displayMode + ':' + (heights?.[index] ?? GRID_ROW_HEIGHT) + ':' + physicalRowKey(rows[index]!.ref) : index,
     rangeExtractor: (range) => pinActiveGridRow(defaultRangeExtractor(range), activeIndex, rows.length),
   });
   const selectedIndex = rows.findIndex((row) => row.ref.ordinal === selectedOrdinal);
@@ -118,7 +135,7 @@ export function RecordTable({
     rows[selectedIndex]!.ref.contentByteLength,
     rows[selectedIndex]!.ref.delimiterByteLength,
   ].join(':');
-  const template = useMemo(() => columnGridTemplate(columns, columnWidths), [columnWidths, columns]);
+  const template = useMemo(() => compact ? '64px minmax(0, 1fr)' : columnGridTemplate(columns, columnWidths), [columnWidths, columns, compact]);
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | undefined>(undefined);
   const dragColumnRef = useRef<string | undefined>(undefined);
 
@@ -126,8 +143,8 @@ export function RecordTable({
     && !interactionPausedRef.current, [followMode, viewportMode]);
   const captureAnchor = useCallback((): ViewportAnchor | undefined => {
     const grid = scrollRef.current;
-    return grid ? captureViewportAnchor(sessionId, rows, grid.scrollTop) : undefined;
-  }, [sessionId, rows]);
+    return grid ? captureViewportAnchor(sessionId, rows, grid.scrollTop, heights) : undefined;
+  }, [sessionId, rows, heights]);
   const pauseForInteraction = (): void => {
     programmaticScrollRef.current = undefined;
     anchorRef.current = captureAnchor();
@@ -144,7 +161,7 @@ export function RecordTable({
     const grid = scrollRef.current;
     const index = latestRowIndex(rows, latestGeneration, latestSeq, sort);
     const row = rows[index];
-    if (!grid || !row || !isRowVisible(index, grid.scrollTop, grid.clientHeight)) return undefined;
+    if (!grid || !row || !isRowVisible(index, grid.scrollTop, grid.clientHeight, heights)) return undefined;
     const mounted = [...grid.querySelectorAll<HTMLElement>('[data-row-ordinal]')].find((element) =>
       element.dataset.rowOrdinal === row.ref.ordinal && element.dataset.rowGeneration === row.ref.generation);
     if (!mounted) return undefined;
@@ -152,7 +169,7 @@ export function RecordTable({
     const bounds = mounted.getBoundingClientRect();
     if (bounds.top < viewport.top + GRID_HEADER_HEIGHT - 1 || bounds.bottom > viewport.bottom + 1) return undefined;
     return row.ref;
-  }, [loading, rows, latestGeneration, latestSeq, sort]);
+  }, [loading, rows, latestGeneration, latestSeq, sort, heights]);
   const reportTail = useCallback((): void => {
     const ref = visibleTail();
     if (!ref) { reportedTailRef.current = undefined; return; }
@@ -199,12 +216,12 @@ export function RecordTable({
     const previous = committedViewportRef.current;
     const navigationCommitted = previous.sessionId === sessionId && previous.revision !== viewportRevision;
     const rowsReplaced = previous.rows !== rows;
-    const historicalAnchor = resolveViewportAnchor(anchorRef.current, sessionId, rows);
+    const historicalAnchor = resolveViewportAnchor(anchorRef.current, sessionId, rows, heights);
     committedViewportRef.current = { sessionId, revision: viewportRevision, rows, selectedOrdinal };
     if (navigationCommitted && !isFollowing()) {
       // An accepted explicit query/page owns its new origin, even if the old
       // physical reading record happens to be present on the new page.
-      anchorRef.current = captureViewportAnchor(sessionId, rows, 0);
+      anchorRef.current = captureViewportAnchor(sessionId, rows, 0, heights);
       manualIntentRef.current = undefined;
       programmaticScrollRef.current = 0;
       preservedSelectionRef.current = selectedRecordKey;
@@ -220,13 +237,13 @@ export function RecordTable({
         const index = latestRowIndex(rows, latestGeneration, latestSeq, sort);
         if (index < 0) return;
         const top = sort?.direction === 'desc' ? 0
-          : Math.max(0, GRID_HEADER_HEIGHT + rows.length * GRID_ROW_HEIGHT - grid.clientHeight);
+          : Math.max(0, GRID_HEADER_HEIGHT + rowOffset(rows.length, heights) - grid.clientHeight);
         programmaticScrollRef.current = top;
         manualIntentRef.current = undefined;
         virtualizer.scrollToIndex(index, { align: sort?.direction === 'desc' ? 'start' : 'end' });
       } else {
         anchorRef.current ??= captureAnchor();
-        const resolved = resolveViewportAnchor(anchorRef.current, sessionId, rows);
+        const resolved = resolveViewportAnchor(anchorRef.current, sessionId, rows, heights);
         if (resolved) {
           anchorRef.current = resolved.anchor;
           if (!followMode && rowsReplaced && previous.sessionId === sessionId && historicalAnchor
@@ -246,7 +263,7 @@ export function RecordTable({
           if (reposition) {
             virtualizer.scrollToOffset(top);
           }
-          const visible = captureViewportAnchor(sessionId, rows, top);
+          const visible = captureViewportAnchor(sessionId, rows, top, heights);
           if (visible) onViewportAnchor?.(visible.ref);
         }
       }
@@ -263,7 +280,7 @@ export function RecordTable({
       if (frame !== undefined) cancelAnimationFrame(frame);
     };
   }, [sessionId, rows, followMode, viewportRevision, latestGeneration, latestSeq, loading, sort, selectedOrdinal, selectedRecordKey,
-    virtualizer, onViewportAnchor, captureAnchor, reportTail, isFollowing]);
+    virtualizer, onViewportAnchor, captureAnchor, reportTail, isFollowing, heights]);
 
   useLayoutEffect(() => {
     const header = headerRef.current;
@@ -398,6 +415,7 @@ export function RecordTable({
       ref={scrollRef}
       role="grid"
       aria-label="JSONL records"
+      data-display-mode={displayMode}
       aria-rowcount={rows.length + 1}
       aria-colcount={columns.length}
       aria-busy={loading}
@@ -459,7 +477,7 @@ export function RecordTable({
         if (intent) intent.scrollTop = grid.scrollTop;
         if (isFollowing()) {
           const index = latestRowIndex(rows, latestGeneration, latestSeq, sort);
-          if (!isRowVisible(index, grid.scrollTop, grid.clientHeight)) pauseForInteraction();
+          if (!isRowVisible(index, grid.scrollTop, grid.clientHeight, heights)) pauseForInteraction();
         }
         if (!isFollowing()) {
           anchorRef.current = captureAnchor();
@@ -487,9 +505,9 @@ export function RecordTable({
             key={column.id}
             title={column.label}
             aria-sort={sort?.columnId === column.id ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
-            draggable={column.id !== '__ordinal'}
+            draggable={!compact && column.id !== '__ordinal'}
             onDragStart={(event) => {
-              if (column.id === '__ordinal') {
+              if (compact || column.id === '__ordinal') {
                 event.preventDefault();
                 return;
               }
@@ -518,10 +536,10 @@ export function RecordTable({
             }}
             onDragEnd={() => { dragColumnRef.current = undefined; }}
           >
-            {column.id !== '__ordinal' ? <GripVertical size={11} className="column-drag-handle" aria-hidden /> : null}
+            {!compact && column.id !== '__ordinal' ? <GripVertical size={11} className="column-drag-handle" aria-hidden /> : null}
             <span className="data-grid-heading-label">{column.label}</span>
             {/* biome-ignore lint/a11y/useSemanticElements: the column resizer is an interactive separator button */}
-            <button
+            {!compact ? <button
               type="button"
               className="column-resizer"
               ref={(element) => {
@@ -565,7 +583,7 @@ export function RecordTable({
                   scrollRef.current?.focus();
                 }
               }}
-            />
+            /> : null}
           </div>
         ); })}
       </div>
@@ -618,7 +636,8 @@ export function RecordTable({
                     {column.id === '__ordinal' && row.ref.parseState !== 'valid'
                       ? <span className="parse-dot" data-state={row.ref.parseState} role="img" aria-label={row.ref.parseState} />
                       : null}
-                    <span className="cell-text">{text || (column.id === '__ordinal' ? row.ref.ordinal : '')}</span>
+                    {column.id === '__conversation' ? <ConversationRow row={row} />
+                      : <span className="cell-text">{text || (column.id === '__ordinal' ? row.ref.ordinal : '')}</span>}
                   </div>
                 );
               })}

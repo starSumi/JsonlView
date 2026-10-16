@@ -122,11 +122,18 @@ export interface AgentRowProjection {
   confidence: 'source' | 'correlated' | 'inferred';
 }
 
+/** Bounded source text, separate from lossy table-cell previews. Never a full transcript. */
+export interface ConversationProjection {
+  parts: Array<{ role: string; label: string; text: string; path: FieldPath }>;
+  truncated: boolean;
+}
+
 export interface RowProjection {
   ref: RecordRef;
   kind?: JsonKind;
   cells: CellProjection[];
   genericSummary: string;
+  conversation?: ConversationProjection;
   profile?: AgentRowProjection;
   problems?: ProblemRef[];
 }

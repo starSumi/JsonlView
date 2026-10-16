@@ -4,6 +4,7 @@ import { formatBytes } from './format';
 
 export interface WorkspaceHeaderProps {
   children: React.ReactNode;
+  navigation?: React.ReactNode;
   indexedBytes: string;
   sizeBytes: string;
   indexedRecords: string;
@@ -18,7 +19,7 @@ export interface WorkspaceHeaderProps {
   onOpenNavigator: () => void;
 }
 
-export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): React.JSX.Element {
+export function WorkspaceHeader({ children, navigation, ...status }: WorkspaceHeaderProps): React.JSX.Element {
   const indexed = Number(status.indexedBytes);
   const size = Number(status.sizeBytes);
   const progress = size > 0 && Number.isFinite(size) && Number.isFinite(indexed)
@@ -27,6 +28,7 @@ export function WorkspaceHeader({ children, ...status }: WorkspaceHeaderProps): 
 
   return (
     <header className="workspace-header">
+      {navigation}
       <div className="status-strip" role="status" aria-live="polite">
         <span className="status-metric status-records">{status.indexedRecords} rows</span>
         <span className="status-metric status-bytes">{formatBytes(status.indexedBytes)} / {formatBytes(status.sizeBytes)}</span>

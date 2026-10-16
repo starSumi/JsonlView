@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RowProjection } from '../../src/shared/types';
-import { captureViewportAnchor, isRowVisible, latestRowIndex, physicalRowKey, resolveViewportAnchor } from '../../src/webview/features/record-query/viewport-anchor';
+import { captureViewportAnchor, isRowVisible, latestRowIndex, physicalRowKey, resolveViewportAnchor, rowOffset } from '../../src/webview/features/record-query/viewport-anchor';
 
 function rows(start = 0, count = 5, generation = 'g1'): RowProjection[] {
   return Array.from({ length: count }, (_, index) => {
@@ -12,6 +12,25 @@ function rows(start = 0, count = 5, generation = 'g1'): RowProjection[] {
 }
 
 describe('physical viewport anchors', () => {
+  it('preserves the physical record across mixed conversation card heights and mode changes', () => {
+    const heights = [132, 42, 132, 42, 132];
+    const anchor = captureViewportAnchor('doc', rows(100), 250, heights);
+    expect(anchor?.ref.ordinal).toBe('102');
+    expect(anchor?.offset).toBe(76);
+    expect(resolveViewportAnchor(anchor, 'doc', rows(101), [42, 132, 42, 132, 42])?.scrollTop).toBe(118);
+    const table = resolveViewportAnchor(anchor, 'doc', rows(100));
+    expect(table?.scrollTop).toBe(89);
+    expect(table?.anchor.offset).toBe(29);
+  });
+
+  it('keeps a full 500-card page cumulative geometry precise', () => {
+    const heights = Array.from({ length: 500 }, () => 132);
+    expect(rowOffset(500, heights)).toBe(66000);
+    expect(captureViewportAnchor('doc', rows(0, 500), 65881, heights)?.ref.ordinal).toBe('499');
+    expect(isRowVisible(499, 65868, 162, heights)).toBe(true);
+    expect(isRowVisible(499, 65868, 160, heights)).toBe(false);
+  });
+
   it('preserves the record and intra-row offset after append and a shifted page in a safe generation', () => {
     const anchor = captureViewportAnchor('doc', rows(100), 67);
     const resolved = resolveViewportAnchor(anchor, 'doc', rows(101, 5, 'g2'));
