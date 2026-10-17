@@ -81,6 +81,7 @@ export function RecordQueryControls({
     : sortDirection === 'asc'
       ? 'Rows: first line first; activate for last line first'
       : 'Rows: last line first; activate for first line first';
+  const rowOrderLabel = sortDirection === 'desc' ? 'Last line first' : 'First line first';
 
   return (
     <>
@@ -126,6 +127,7 @@ export function RecordQueryControls({
           {sortDirection === 'asc'
             ? <ArrowDownNarrowWide size={15} aria-hidden />
             : <ArrowDownWideNarrow size={15} aria-hidden />}
+          <span className="row-order-label" aria-hidden="true">{rowOrderLabel}</span>
         </button>
       </fieldset>
       <details className="filter-menu" ref={filterMenuRef}>

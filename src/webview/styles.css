@@ -306,20 +306,43 @@ select:focus-visible,
   height: 28px;
   min-width: 0;
   margin: 0;
-  padding: 0;
+  padding: 1px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-panel-border));
 }
 
 .row-order-control > .icon-button {
-  width: 26px;
+  width: auto;
+  min-width: 26px;
   height: 26px;
-  flex-basis: 26px;
+  flex: 0 1 auto;
+  gap: 5px;
+  padding: 0 7px;
+  white-space: nowrap;
 }
 
 .row-order-control .icon-button[aria-pressed='true'] {
+  border: 1px solid var(--vscode-focusBorder);
   color: var(--vscode-button-foreground);
   background: var(--vscode-button-background);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-button-foreground) 18%, transparent);
+}
+
+.row-order-control .icon-button[aria-pressed='false'] {
+  color: var(--vscode-descriptionForeground);
+}
+
+.row-order-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.row-order-control .icon-button[aria-pressed='true']:hover:not(:disabled) {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-hoverBackground);
 }
 
 .row-order-control .icon-button:disabled {
@@ -3247,6 +3270,10 @@ body.is-resizing-column * {
 
   .rebuild-action-label {
     display: none;
+  }
+
+  .row-order-label {
+    max-width: 88px;
   }
 
   .toolbar > .search-box {

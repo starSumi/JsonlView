@@ -38,12 +38,14 @@ describe('record order controls', () => {
     expect(ascendingMarkup).toContain('aria-label="Toggle row order"');
     expect(ascendingMarkup).toContain('aria-pressed="false"');
     expect(ascendingMarkup).toContain('title="Rows: first line first; activate for last line first"');
+    expect(ascendingMarkup).toContain('class="row-order-label" aria-hidden="true">First line first</span>');
 
     const markup = render({ sortDirection: 'desc' });
     expect(markup).toContain('<fieldset class="row-order-control" aria-label="Record order"');
     expect(markup).toContain('aria-label="Toggle row order"');
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('title="Rows: last line first; activate for first line first"');
+    expect(markup).toContain('class="row-order-label" aria-hidden="true">Last line first</span>');
     expect(markup).not.toContain('aria-label="First line first"');
     expect(markup).not.toContain('aria-label="Last line first"');
   });
