@@ -1038,7 +1038,16 @@ select:focus-visible,
   background: var(--vscode-list-hoverBackground);
 }
 
-.workspace-tabs button.is-active,
+.workspace-tabs button.is-active {
+  border-bottom-color: var(--vscode-focusBorder);
+  color: var(--vscode-tab-activeForeground);
+  background: color-mix(
+    in srgb,
+    var(--vscode-list-activeSelectionBackground) 42%,
+    var(--vscode-tab-activeBackground, var(--vscode-editor-background))
+  );
+}
+
 .detail-tabs button.is-active {
   border-bottom-color: var(--vscode-focusBorder);
   color: var(--vscode-tab-activeForeground);
