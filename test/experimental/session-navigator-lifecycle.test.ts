@@ -119,6 +119,44 @@ describe('Session Navigator host lifecycle', () => {
     expect(host.scan).not.toHaveBeenCalled(); expect(host.probe).not.toHaveBeenCalled();
   });
 
+  it('returns an authorization-required bridge result and focuses Add Source without scanning', async () => {
+    host.config.set('sessionNavigator.sources', []);
+    const result = await tree.open();
+    expect(result).toMatchObject({
+      status: 'authorization-required',
+      enabled: 'enabled',
+      authorization: 'required',
+      authorizationReadback: 'not-requested',
+      action: 'focus-add-source',
+      errorCode: 'AUTHORIZATION_REQUIRED',
+    });
+    expect(host.execute).toHaveBeenNthCalledWith(1, 'workbench.view.extension.jsonlViewSessionNavigator');
+    expect(host.execute).toHaveBeenNthCalledWith(2, 'workbench.action.focusView', 'jsonlView.sourceDrop');
+    expect(host.scan).not.toHaveBeenCalled();
+    expect(host.config.get('sessionNavigator.sources')).toEqual([]);
+  });
+
+  it('returns opened only after persisted authorization is visible on readback', async () => {
+    const result = await tree.open();
+    expect(result).toMatchObject({
+      status: 'opened',
+      enabled: 'enabled',
+      authorization: 'granted',
+      authorizationReadback: 'confirmed',
+      action: 'focus-sessions',
+    });
+    expect(host.execute).toHaveBeenCalledExactlyOnceWith('workbench.view.extension.jsonlViewSessionNavigator');
+  });
+
+  it('rejects an authorization whose effective settings readback omits the source', async () => {
+    host.config.set('sessionNavigator.sources', []);
+    host.overridden = true;
+    host.picker.mockResolvedValue({ value: 'codex' });
+    await host.commands.get('jsonlView.sessionNavigator.authorizeAgent')!();
+    expect(host.config.get('sessionNavigator.sources')).toEqual([]);
+    expect(host.scan).not.toHaveBeenCalled();
+  });
+
   it('records only the explicitly selected source without enabling a disabled Navigator', async () => {
     host.config.set('sessionNavigator.enabled', false); host.config.set('sessionNavigator.sources', []);
     host.roots = [...host.roots, { provider: 'claude', rootUri: pathToFileURL(join(root, 'other-home')).toString() }];

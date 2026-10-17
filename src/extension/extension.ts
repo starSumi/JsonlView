@@ -488,7 +488,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly revealRegistry: RevealIntentRegistry,
-    private readonly openSessionNavigator: () => Promise<void>,
+    private readonly openSessionNavigator: () => Promise<unknown> | unknown,
     private readonly output: JsonlViewOutputChannel | undefined,
     private readonly runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
     private readonly previews?: SessionPreviews,

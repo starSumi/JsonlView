@@ -82,8 +82,12 @@ export interface DocumentControllerHooks {
   onFirstRowsResult?: (result: { status: 'posted' | 'rejected' | 'stale' | 'failed' | 'cancelled'; rows?: number; indexedRecords?: string }) => void;
   /** Local metadata only; observer failures cannot change request behavior. */
   onQueryOperation?: (event: ObservabilityEvent) => void;
-  /** Focus the opt-in Session Navigator without changing the document. */
-  onOpenSessionNavigator?: () => Promise<void> | void;
+  /**
+   * Run the Host-owned Navigator bridge without changing the document. The
+   * result is intentionally opaque at this layer; the shared protocol adapter
+   * owns its versioned status payload and may post a correlated receipt.
+   */
+  onOpenSessionNavigator?: () => Promise<unknown> | unknown;
   getPreviewStatus?: () => TemporaryPreviewStatus | undefined;
   /** Native Save As uses the current document, never a Webview-supplied path. */
   onSavePreviewAs?: (isCurrent: () => boolean) => Promise<unknown>;

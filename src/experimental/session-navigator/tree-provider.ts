@@ -17,6 +17,24 @@ const MAX_TRANSIENT_EMPTY_SCANS = 2;
 const MAX_INITIAL_CLAUDE_PAGES = 2;
 const EXCLUDED_SOURCES_KEY = 'sessionNavigator.excludedDefaultSources';
 
+/**
+ * Host-side result for the editor's Open Navigator bridge.  The Webview must
+ * render this result instead of inferring authorization from the fact that a
+ * focus command was accepted.  Source contents and provider details stay out
+ * of this contract; the shared transport adapter maps these facets to its
+ * versioned protocol payload.
+ */
+export interface NavigatorBridgeResult {
+  readonly status: 'disabled' | 'authorization-required' | 'authorization-denied' | 'opened' | 'cancelled' | 'failed';
+  readonly enabled: 'disabled' | 'enabled' | 'unknown';
+  readonly authorization: 'not-requested' | 'required' | 'granted' | 'denied' | 'unknown';
+  readonly authorizationReadback: 'not-requested' | 'confirmed' | 'rejected' | 'unknown';
+  readonly action: 'focus-add-source' | 'focus-sessions' | 'request-enable' | 'request-authorization' | 'none';
+  readonly errorCode?: 'NAVIGATOR_DISABLED' | 'ENABLEMENT_NOT_CONFIRMED' | 'AUTHORIZATION_REQUIRED' | 'AUTHORIZATION_NOT_CONFIRMED' | 'OPEN_FAILED';
+  readonly stage?: 'enablement' | 'authorization' | 'focus';
+  readonly recoverable?: boolean;
+}
+
 interface SourceTreeNode {
   readonly nodeKind: 'source';
   readonly source: NavigatorSourceSummary;
@@ -75,7 +93,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #treeView: vscode.TreeView<SessionNavigatorTreeNode> | undefined;
   #probeTimer: NodeJS.Timeout | undefined;
   #disposed = false;
-  #opening: Promise<void> | undefined;
+  #opening: Promise<NavigatorBridgeResult> | undefined;
 
   public readonly onDidChangeTreeData = this.#changed.event;
 
@@ -665,9 +683,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return this.#store;
   }
 
+  private configuredSources(): readonly AuthorizedSourceSetting[] {
+    return parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
+  }
+
   private settings(): readonly AuthorizedSourceSetting[] {
     if (!this.isEnabled()) return [];
-    const configured = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
+    const configured = this.configuredSources();
     const excluded = new Set(this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []));
     return mergeSourceSettings(configured, []).filter((setting) => !excluded.has(sourceIdFor(setting)));
   }
@@ -676,9 +698,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return vscode.workspace.getConfiguration('jsonlView').get<boolean>(ENABLED_SETTING, false);
   }
 
-  private async setEnabled(enabled: boolean): Promise<void> {
+  private async setEnabled(enabled: boolean): Promise<boolean> {
     await vscode.workspace.getConfiguration('jsonlView').update(ENABLED_SETTING, enabled, vscode.ConfigurationTarget.Global);
     this.#changed.fire(undefined);
+    return this.isEnabled() === enabled;
   }
 
   private providerFor(setting: AuthorizedSourceSetting): SessionNavigatorProvider {
@@ -704,7 +727,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
     const detected = discoverDefaultSources().find((setting) => setting.provider === provider.value);
     if (detected !== undefined) {
-      await this.authorizeSourceSetting(detected);
+      try { await this.authorizeSourceSetting(detected); }
+      catch (error) { if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : 'Source authorization was not confirmed.'); }
       return;
     }
 
@@ -713,7 +737,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (uri === undefined || this.#disposed) return;
     try {
       const canonical = await validateLocalSourceUri(uri.toString());
-      if (!this.#disposed) await this.authorizeSourceUri(provider.value, canonical);
+      if (!this.#disposed) {
+        try { await this.authorizeSourceUri(provider.value, canonical); }
+        catch (error) { if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : 'Source authorization was not confirmed.'); }
+      }
     } catch (error) {
       if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));
     }
@@ -737,12 +764,35 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (this.#disposed || cancelled()) return;
     const sourceId = sourceIdFor(setting);
     const excluded = this.#context.globalState.get<string[]>(EXCLUDED_SOURCES_KEY, []);
-    await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded.filter((id) => id !== sourceId));
+    const nextExcluded = excluded.filter((id) => id !== sourceId);
+    await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, nextExcluded);
     if (this.#disposed || cancelled()) return;
-    const current = parseAuthorizedSources(vscode.workspace.getConfiguration('jsonlView').get<unknown>(SOURCES_SETTING, []));
+    const current = this.configuredSources();
+    const alreadyAuthorized = current.some((candidate) => sourceIdFor(candidate) === sourceId);
     const next = parseAuthorizedSources([...current, setting]);
-    await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
-    if (this.#disposed || cancelled()) return;
+    try {
+      await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, next, vscode.ConfigurationTarget.Global);
+    } catch (error) {
+      // A failed config write must not leave the exclusion registry claiming
+      // that authorization committed. Restore its prior value best-effort.
+      await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded);
+      throw error;
+    }
+    const effective = this.configuredSources();
+    if (this.#disposed || cancelled()) {
+      // A cancellation after the VS Code write still has to obey the no-change
+      // contract. Roll back only when the effective list is exactly the list we
+      // wrote; an external concurrent edit remains authoritative.
+      if (!alreadyAuthorized && sameSourceSettings(effective, next)) {
+        await vscode.workspace.getConfiguration('jsonlView').update(SOURCES_SETTING, current, vscode.ConfigurationTarget.Global);
+      }
+      if (!alreadyAuthorized) await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded);
+      return;
+    }
+    if (!effective.some((candidate) => sourceIdFor(candidate) === sourceId)) {
+      await this.#context.globalState.update(EXCLUDED_SOURCES_KEY, excluded);
+      throw new Error('Source authorization was not confirmed by the effective VS Code settings.');
+    }
     this.#changed.fire(undefined);
     if (this.isEnabled()) await this.refresh();
   }
@@ -846,7 +896,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (selected !== undefined) await this.setSort(selected.value);
   }
 
-  public open(): Promise<void> {
+  public open(): Promise<NavigatorBridgeResult> {
     if (this.#opening !== undefined) return this.#opening;
     const operation = this.openNavigator().finally(() => { this.#opening = undefined; });
     this.#opening = operation;
@@ -857,25 +907,69 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     await vscode.commands.executeCommand('workbench.action.openSettings', 'jsonlView.sessionNavigator.enabled');
   }
 
-  private async openNavigator(): Promise<void> {
-    if (this.#disposed) return;
-    if (!this.isEnabled()) {
-      const action = await vscode.window.showInformationMessage('Enable the built-in Session Navigator? This choice is remembered. Agent source authorization is separate.', 'Enable', 'Settings', 'Cancel');
-      if (this.#disposed) return;
-      if (action === 'Settings') { await this.openSettings(); return; }
-      if (action !== 'Enable') return;
-      await this.setEnabled(true);
-      if (!this.isEnabled()) {
-        void vscode.window.showInformationMessage('Session Navigator is disabled by an effective workspace setting. Enable it in Settings.', 'Settings').then((choice) => { if (choice === 'Settings') void this.openSettings(); });
-        return;
-      }
-    }
-    if (this.#disposed) return;
+  private async focusNavigatorView(viewId: 'jsonlView.sourceDrop' | 'jsonlView.sessionNavigator'): Promise<boolean> {
     try {
       await vscode.commands.executeCommand('workbench.view.extension.jsonlViewSessionNavigator');
     } catch {
-      void vscode.window.showInformationMessage('Session Navigator is enabled. Open the Agent Sessions view from the Activity Bar.');
+      return false;
     }
+    // The Add Source view is intentionally focused only for the missing-auth
+    // route. An authorized open keeps VS Code's current tree selection intact.
+    if (viewId === 'jsonlView.sourceDrop') {
+      try { await vscode.commands.executeCommand('workbench.action.focusView', viewId); }
+      catch { /* The container remains a useful fallback on older VS Code hosts. */ }
+    }
+    return true;
+  }
+
+  private async openNavigator(): Promise<NavigatorBridgeResult> {
+    const disabled = (status: NavigatorBridgeResult['status'], errorCode?: NavigatorBridgeResult['errorCode']): NavigatorBridgeResult => ({
+      status, enabled: 'disabled', authorization: 'not-requested', authorizationReadback: 'not-requested', action: 'none',
+      ...(errorCode === undefined ? {} : { errorCode }), stage: 'enablement', recoverable: status !== 'failed',
+    });
+    if (this.#disposed) return disabled('cancelled');
+    if (!this.isEnabled()) {
+      const action = await vscode.window.showInformationMessage('Enable the built-in Session Navigator? This choice is remembered. Agent source authorization is separate.', 'Enable', 'Settings', 'Cancel');
+      if (this.#disposed) return disabled('cancelled');
+      if (action === 'Settings') { await this.openSettings(); return disabled('cancelled'); }
+      if (action !== 'Enable') return disabled('cancelled');
+      if (!await this.setEnabled(true)) {
+        return {
+          status: 'failed', enabled: 'unknown', authorization: 'not-requested', authorizationReadback: 'unknown', action: 'request-enable',
+          errorCode: 'ENABLEMENT_NOT_CONFIRMED', stage: 'enablement', recoverable: true,
+        };
+      }
+      if (!this.isEnabled()) {
+        void vscode.window.showInformationMessage('Session Navigator is disabled by an effective workspace setting. Enable it in Settings.', 'Settings').then((choice) => { if (choice === 'Settings') void this.openSettings(); });
+        return disabled('failed', 'NAVIGATOR_DISABLED');
+      }
+    }
+    if (this.#disposed) return disabled('cancelled');
+    const authorized = this.settings().length > 0;
+    if (!authorized) {
+      const focused = await this.focusNavigatorView('jsonlView.sourceDrop');
+      if (focused) {
+        if (this.#treeView !== undefined) this.#treeView.message = 'Authorize a local source in Add Source to populate Sessions.';
+        return {
+          status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
+          action: 'focus-add-source', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
+        };
+      }
+      return {
+        status: 'failed', enabled: 'enabled', authorization: 'required', authorizationReadback: 'unknown', action: 'focus-add-source',
+        errorCode: 'OPEN_FAILED', stage: 'focus', recoverable: true,
+      };
+    }
+    const opened = await this.focusNavigatorView('jsonlView.sessionNavigator');
+    if (!opened) {
+      return {
+        status: 'failed', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
+        errorCode: 'OPEN_FAILED', stage: 'focus', recoverable: true,
+      };
+    }
+    return {
+      status: 'opened', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
+    };
   }
 
   private async probeVisibleSources(): Promise<void> {
@@ -899,6 +993,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       // A background hint must never surface an unhandled timer rejection.
     }
   }
+}
+
+function sameSourceSettings(left: readonly AuthorizedSourceSetting[], right: readonly AuthorizedSourceSetting[]): boolean {
+  const keys = (values: readonly AuthorizedSourceSetting[]) => values.map(sourceIdFor).sort();
+  return JSON.stringify(keys(left)) === JSON.stringify(keys(right));
 }
 
 function isContainedFile(rootPath: string, targetPath: string): boolean {
