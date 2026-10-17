@@ -7,7 +7,7 @@ import type * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const host = vi.hoisted(() => ({
-  dialog: vi.fn(), create: vi.fn(), open: vi.fn(), post: vi.fn(), reveal: vi.fn(),
+  dialog: vi.fn(), create: vi.fn(), info: vi.fn(), open: vi.fn(), post: vi.fn(), reveal: vi.fn(),
   receive: undefined as undefined | ((message: unknown) => void),
   close: undefined as undefined | (() => void),
   html: '',
@@ -25,7 +25,7 @@ vi.mock('vscode', () => ({
     },
   },
   ViewColumn: { Active: -1 },
-  window: { createWebviewPanel: host.create, showOpenDialog: host.dialog, showInformationMessage: vi.fn().mockResolvedValue(undefined) },
+  window: { createWebviewPanel: host.create, showOpenDialog: host.dialog, showInformationMessage: host.info },
   env: { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } },
   commands: { executeCommand: host.open },
 }));
@@ -42,6 +42,7 @@ beforeEach(async () => {
   onSource = vi.fn<SourceIntakeHandler>().mockResolvedValue(undefined);
   intake = new SourceIntakePanel(onSource);
   host.dialog.mockReset().mockResolvedValue(undefined);
+  host.info.mockReset().mockResolvedValue(undefined);
   host.open.mockReset().mockResolvedValue(undefined);
   host.post.mockReset().mockResolvedValue(true);
   host.reveal.mockReset();
@@ -119,6 +120,29 @@ describe('bounded source intake validation', () => {
 });
 
 describe('Add Source panel host lifecycle', () => {
+  it('returns the Webview to idle when the diagnostic notification is dismissed', async () => {
+    intake.show();
+    await send({ type: 'webview-diagnostic', name: 'Error', message: 'The source view could not initialize.' });
+    expect(host.info).toHaveBeenCalledTimes(1);
+    expect(host.post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'status', state: 'idle' });
+  });
+
+  it('keeps the Webview busy when another request arrives while a notification is open', async () => {
+    let dismiss!: (value: undefined) => void;
+    host.info.mockReturnValueOnce(new Promise<undefined>((resolve) => { dismiss = resolve; }));
+    intake.show();
+    host.receive!({ type: 'webview-diagnostic', name: 'Error', message: 'The source view could not initialize.' });
+    await vi.waitFor(() => expect(host.info).toHaveBeenCalledTimes(1));
+    host.receive!({ type: 'pick-files' });
+    try {
+      await vi.waitFor(() => expect(host.post.mock.calls.at(-1)?.[0].text).toBe('Finish or cancel the current source selection first.'));
+      expect(host.post.mock.calls.at(-1)?.[0].state).toBe('busy');
+    } finally {
+      dismiss(undefined);
+    }
+    await vi.waitFor(() => expect(host.post.mock.calls.at(-1)?.[0].state).toBe('idle'));
+  });
+
   it('routes Kimi connect through existing explicit authorization rather than direct source reads', async () => {
     const authorize = vi.fn().mockResolvedValue(undefined);
     const panel = new SourceIntakePanel(onSource, authorize);
@@ -307,4 +331,63 @@ it('ships a nonce-only static document without HTML injection or automatic clipb
   expect(html).toContain('Connect pi');
   expect(html).toContain('Connect Kimi Code');
   expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
+});
+
+it('keeps source intake controls disabled only until the host sends a terminal status', () => {
+  const html = getSourceIntakeHtml();
+  const source = html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!;
+  type Event = { readonly data: unknown };
+  type Listener = (event: Event) => void;
+  type Element = {
+    disabled: boolean;
+    readOnly: boolean;
+    value: string;
+    textContent: string;
+    dataset: Record<string, string>;
+    hidden: boolean;
+    listeners: Map<string, Listener[]>;
+    addEventListener(type: string, listener: Listener): void;
+    setAttribute(name: string, value: string): void;
+    focus(): void;
+  };
+  const makeElement = (): Element => ({
+    disabled: false, readOnly: false, value: '', textContent: '', dataset: {}, hidden: false, listeners: new Map(),
+    addEventListener(type, listener) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); },
+    setAttribute() {}, focus() {},
+  });
+  const ids = ['status', 'jsonl', 'drop-zone', 'paste-choice', 'files', 'folder', 'connect-codex', 'connect-claude', 'connect-pi', 'connect-kimi',
+    'preview', 'diagnostic', 'diagnostic-text', 'diagnostic-copy', 'diagnostic-send'];
+  const elements = new Map(ids.map((id) => [id, makeElement()]));
+  const buttons = ids.filter((id) => ['files', 'folder', 'connect-codex', 'connect-claude', 'connect-pi', 'connect-kimi', 'preview', 'diagnostic-copy', 'diagnostic-send'].includes(id))
+    .map((id) => elements.get(id)!);
+  const windowListeners = new Map<string, Listener[]>();
+  const addWindowListener = (type: string, listener: Listener) => windowListeners.set(type, [...(windowListeners.get(type) ?? []), listener]);
+  const posted: unknown[] = [];
+  const document = {
+    getElementById: (id: string) => elements.get(id)!,
+    querySelectorAll: () => buttons,
+    addEventListener: (type: string, listener: Listener) => {
+      const element = elements.get('drop-zone')!;
+      element.addEventListener(type, listener);
+    },
+  };
+  const window = { addEventListener: addWindowListener };
+  new Script(source).runInNewContext({
+    document, window, TextEncoder,
+    acquireVsCodeApi: () => ({ postMessage: (message: unknown) => { posted.push(message); } }),
+  });
+
+  elements.get('files')!.listeners.get('click')![0]!({ data: undefined });
+  expect(posted).toEqual([{ type: 'pick-files' }]);
+  expect(buttons.every((button) => button.disabled)).toBe(true);
+  expect(elements.get('jsonl')!.readOnly).toBe(true);
+  windowListeners.get('message')![0]!({ data: { type: 'status', state: 'busy', text: 'Waiting for a choice.' } });
+  expect(buttons.every((button) => button.disabled)).toBe(true);
+  for (const state of ['idle', 'success', 'error']) {
+    windowListeners.get('message')![0]!({ data: { type: 'status', state, text: 'Request settled.' } });
+    expect(buttons.some((button) => button.disabled)).toBe(false);
+    expect(elements.get('jsonl')!.readOnly).toBe(false);
+    elements.get('files')!.listeners.get('click')![0]!({ data: undefined });
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+  }
 });

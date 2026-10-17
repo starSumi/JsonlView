@@ -106,7 +106,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
     const listener = view.webview.onDidReceiveMessage((message: unknown) => {
       if (controller.signal.aborted) return;
       if (this.#pending !== undefined) {
-        void this.post(view.webview, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
+        void this.post(view.webview, controller.signal, 'busy', 'Finish or cancel the current source selection first.');
         return;
       }
       const operation = this.receive(message, view.webview, controller.signal);
@@ -132,7 +132,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
     const listener = panel.webview.onDidReceiveMessage((message: unknown) => {
       if (controller.signal.aborted) return;
       if (this.#pending !== undefined) {
-        void this.post(panel.webview, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
+        void this.post(panel.webview, controller.signal, 'busy', 'Finish or cancel the current source selection first.');
         return;
       }
       const operation = this.receive(message, panel.webview, controller.signal);
@@ -214,6 +214,8 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       } catch {
         await this.post(webview, signal, 'error', 'VS Code AI is unavailable. Diagnostics were copied instead.');
       }
+    } else {
+      await this.post(webview, signal, 'idle', 'No diagnostic action selected.');
     }
   }
 

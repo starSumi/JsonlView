@@ -29,6 +29,14 @@ The command `jsonlView.diagnoseWebview` gives a recoverable entry point when a
 renderer-owned host error has no extension callback. The command uses a known
 symptom template and marks the source boundary explicitly.
 
+`SourceIntakePanel` owns one pending request across its panel and sidebar view.
+For a still-live view, a diagnostic prompt dismissal is a terminal `idle`
+outcome; a duplicate request reports `busy` until the original operation
+settles. Closing the view aborts delivery, so no terminal message is required
+for a Webview that no longer exists. Do not add a client-only unlock timer: a
+native picker or authorization operation can remain active in the host after a
+renderer timer fires.
+
 For product-owned editor startup, register the host message receiver before
 publishing Webview HTML. The Webview uses one VS Code API handle, retries READY
 for a bounded interval, and shows a named startup error if no OPENED summary
@@ -94,7 +102,8 @@ opening's observation. No source path, body, or error message is added.
 ## Probe and validation
 
 Pure tests cover field bounds, path redaction, policy markers, and prompt
-construction. Focused intake tests cover the message schema and CSP. Installed
+construction. Focused intake tests cover the message schema, CSP, dismissal
+settlement, and duplicate-request busy state. Installed
 host acceptance must separately verify the command palette action, clipboard
 fallback, and behavior when Chat is unavailable.
 Startup tests must deliver READY as soon as HTML is assigned, drop the first
