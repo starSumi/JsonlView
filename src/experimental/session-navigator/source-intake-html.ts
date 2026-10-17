@@ -206,27 +206,28 @@ export function getSourceDropHtml(): string {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';">
   <style nonce="${nonce}">
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 2px 8px 4px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: var(--vscode-font-size)/1.35 var(--vscode-font-family); }
-    button { font: inherit; cursor: pointer; }
-    .toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 4px; color: var(--vscode-foreground); background: transparent; text-align: left; }
+    body { margin: 0; min-width: 0; padding: 2px 8px 5px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: var(--vscode-font-size)/1.35 var(--vscode-font-family); }
+    button { min-width: 0; font: inherit; cursor: pointer; }
+    .toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 4px 5px; border: 0; border-radius: 3px; color: var(--vscode-foreground); background: transparent; text-align: left; }
     .toggle:hover { background: var(--vscode-list-hoverBackground); }
     .toggle:focus-visible, .drop:focus-visible, .source-action:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
     .toggle svg { width: 14px; height: 14px; flex: 0 0 14px; fill: none; stroke: currentColor; stroke-width: 1.8; }
-    .toggle strong { flex: 1; font-weight: 600; }
-    .toggle small { color: var(--vscode-descriptionForeground); font-size: 10px; }
-    .chevron { color: var(--vscode-descriptionForeground); font-size: 13px; }
-    .actions { padding: 4px 0 2px; }
-    .drop { display: block; width: 100%; border: 1px dashed var(--vscode-focusBorder); border-radius: 5px; padding: 10px 8px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-focusBorder) 12%, var(--vscode-sideBar-background)); text-align: center; }
-    .drop:hover { background: color-mix(in srgb, var(--vscode-focusBorder) 20%, var(--vscode-sideBar-background)); }
+    .toggle strong { flex: 1; min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .toggle small { color: var(--vscode-descriptionForeground); font-size: 10px; white-space: nowrap; }
+    .chevron { color: var(--vscode-descriptionForeground); font-size: 13px; line-height: 1; }
+    .actions { padding: 3px 0 1px; }
+    .drop { display: block; width: 100%; border: 1px dashed var(--vscode-focusBorder); border-radius: 4px; padding: 9px 8px 8px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-focusBorder) 10%, var(--vscode-sideBar-background)); text-align: center; }
+    .drop:hover { background: color-mix(in srgb, var(--vscode-focusBorder) 17%, var(--vscode-sideBar-background)); }
     .drop.dragging { border-color: var(--vscode-focusBorder); background: var(--vscode-list-dropBackground); }
-    .drop svg { width: 18px; height: 18px; display: block; margin: 0 auto 3px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+    .drop svg { width: 17px; height: 17px; display: block; margin: 0 auto 3px; fill: none; stroke: currentColor; stroke-width: 1.6; }
     .drop strong { display: block; font-weight: 600; }
-    .hint { display: block; margin-top: 2px; color: var(--vscode-descriptionForeground); font-size: 10px; }
-    .source-actions { display: flex; gap: 5px; margin-top: 5px; }
-    .source-action { flex: 1; padding: 3px 6px; border: 1px solid var(--vscode-button-border, var(--vscode-widget-border)); border-radius: 3px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); }
+    .hint { display: block; margin-top: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.35; }
+    .source-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 0 5px; }
+    .source-action { width: 100%; padding: 3px 4px; border: 1px solid var(--vscode-button-border, var(--vscode-widget-border)); border-radius: 3px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); font-size: 11px; line-height: 1.35; white-space: nowrap; }
     .source-action:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+    .source-action:active, .toggle:active { background: var(--vscode-list-activeSelectionBackground); }
     [hidden] { display: none !important; }
-    #status { min-height: 14px; margin: 3px 0 0; overflow-wrap: anywhere; font-size: 10px; }
+    #status { min-height: 14px; margin: 4px 0 0; overflow-wrap: anywhere; font-size: 10px; }
     #status[data-state=error] { color: var(--vscode-errorForeground); }
   </style>
 </head>

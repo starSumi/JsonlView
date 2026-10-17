@@ -323,6 +323,10 @@ describe('persistent sidebar source drop view', () => {
     expect(html).toContain('id="folder"');
     expect(html).toContain('id="paste"');
     expect(html).toContain('id="connect"');
+    expect(html).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
+    expect(html).toContain('class="source-actions"');
+    expect(html).toContain('toggle:focus-visible');
+    expect(html).toContain('min-width: 0');
     expect(html).toContain(`script-src 'nonce-${nonce}'`);
     expect(html).not.toMatch(/innerHTML|readText|navigator\.clipboard|unsafe-eval|https?:\/\//u);
     expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
