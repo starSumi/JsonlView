@@ -89,6 +89,11 @@ select:focus-visible,
   padding: 0 8px 0 4px;
 }
 
+.workspace-header-primary > .navigator-action {
+  order: 0;
+  flex: 0 0 28px;
+}
+
 .workspace-header-secondary {
   flex: 0 0 auto;
   gap: 12px;
@@ -132,6 +137,15 @@ select:focus-visible,
   gap: 6px;
   min-width: 0;
   overflow: hidden;
+}
+
+.workspace-header-primary > .workspace-controls {
+  order: 2;
+  flex: 0 1 auto;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
 }
 
 .toolbar-context {
@@ -825,6 +839,7 @@ select:focus-visible,
   min-width: 0;
   height: 34px;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
   padding: 0 4px;
   border-bottom: 0;
 }
@@ -3186,6 +3201,13 @@ body.is-resizing-column * {
 @container workspace (max-width: 520px) {
   .workspace-header-primary > .workspace-tabs {
     flex-basis: 100%;
+  }
+
+  .workspace-header-primary > .workspace-controls {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    padding-left: 0;
+    border-left: 0;
   }
 
   .workspace-header-secondary.has-query {

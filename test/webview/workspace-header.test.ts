@@ -31,6 +31,28 @@ describe('workspace header status', () => {
     expect(markup).toContain('aria-label="Open Navigator"');
   });
 
+  it('keeps Navigator, view tabs, and workspace options in the requested order', () => {
+    const markup = render({
+      navigation: React.createElement('nav', { 'aria-label': 'Workspace views' }, 'Table Timeline Schema Problems Insights'),
+      children: React.createElement(React.Fragment, null,
+        React.createElement('label', { className: 'profile-field' }, 'Profile'),
+        React.createElement('label', { className: 'follow-toggle' }, 'Follow'),
+      ),
+    });
+
+    const navigatorIndex = markup.indexOf('aria-label="Open Navigator"');
+    const tabsIndex = markup.indexOf('aria-label="Workspace views"');
+    const optionsIndex = markup.indexOf('class="toolbar workspace-controls"');
+    const profileIndex = markup.indexOf('class="profile-field"');
+    const followIndex = markup.indexOf('class="follow-toggle"');
+
+    expect(navigatorIndex).toBeGreaterThanOrEqual(0);
+    expect(navigatorIndex).toBeLessThan(tabsIndex);
+    expect(tabsIndex).toBeLessThan(optionsIndex);
+    expect(optionsIndex).toBeLessThan(profileIndex);
+    expect(profileIndex).toBeLessThan(followIndex);
+  });
+
   it('places the bounded status region in the second row before query controls', () => {
     const markup = render({ secondary: React.createElement('fieldset', { className: 'table-query-toolbar' }, 'Search records') });
 

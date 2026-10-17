@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import { Check, CircleAlert, ListTree, LoaderCircle, RefreshCw } from 'lucide-react';
 import { formatBytes } from './format';
 
@@ -34,7 +34,7 @@ export function WorkspaceHeader({ children, navigation, secondary, ...status }: 
           <ListTree size={15} aria-hidden />
         </button>
         {navigation}
-        <div className="toolbar">
+        <div className="toolbar workspace-controls">
           {children}
         {status.rebuildAvailable ? (
           <button
