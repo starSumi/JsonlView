@@ -37,10 +37,17 @@ describe('shared protocol contract', () => {
     })).toBe(true);
   });
 
-  it('rejects a result that claims open without a target or a failed result without failure metadata', () => {
+  it('allows opening the empty Navigator without source authorization', () => {
+    expect(isNavigatorBridgeResult({
+      version: 1, status: 'opened', enabled: 'enabled', authorization: 'not-requested',
+      authorizationReadback: 'not-requested', action: 'focus-sessions',
+    })).toBe(true);
+  });
+
+  it('rejects an opened result with mismatched target identity or missing failure metadata', () => {
     expect(isNavigatorBridgeResult({
       version: 1, status: 'opened', enabled: 'enabled', authorization: 'granted',
-      authorizationReadback: 'confirmed', action: 'focus-sessions',
+      authorizationReadback: 'confirmed', action: 'focus-sessions', sourceId: 'source-1',
     })).toBe(false);
     expect(isNavigatorBridgeResult({
       version: 1, status: 'failed', enabled: 'enabled', authorization: 'granted',

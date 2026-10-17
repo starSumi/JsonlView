@@ -22,21 +22,17 @@ function detail(parseState: RecordDetail['ref']['parseState'], rawComplete: bool
 }
 
 describe('detail drawer unavailable record states', () => {
-  it('exposes the existing Open Navigator command as a secondary bridge without replacing record detail', () => {
+  it('keeps the tree detail focused on the selected record without a secondary Navigator action', () => {
     const selected = detail('valid', true);
     selected.value = { message: 'keep current record visible' };
     selected.problems = [];
     const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
       detail: selected, loading: false, activeTab: 'tree',
-      navigatorState: 'authorization-required',
-      onOpenNavigator: () => undefined,
       onTabChange: () => undefined, onRequestFull: () => undefined, onClose: () => undefined,
     }));
 
-    expect(markup).toContain('aria-label="Open Navigator bridge"');
-    expect(markup).toContain('需要一次授权');
-    expect(markup).toContain('打开 Navigator 设置');
-    expect(markup).toContain('与顶部 Open Navigator 共用 Host command');
+    expect(markup).not.toContain('aria-label="Open Navigator bridge"');
+    expect(markup).not.toContain('打开 Navigator');
     expect(markup).toContain('aria-label="Bounded JSON tree"');
   });
 

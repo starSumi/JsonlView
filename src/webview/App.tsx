@@ -1287,8 +1287,6 @@ export function App(): React.JSX.Element {
                   requestDetail(ref, true, false);
                 }
               }}
-              onOpenNavigator={openNavigator}
-              navigatorState={navigatorBridgeState}
               onClose={closeDetail}
             />
           </>

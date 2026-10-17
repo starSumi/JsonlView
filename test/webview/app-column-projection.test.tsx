@@ -202,7 +202,6 @@ describe('App column presentation and projection boundary', () => {
       sourceId: 'source-1',
       targetDocumentId: 'doc',
     }, request);
-    expect(props(DetailDrawer).navigatorState).toBe('authorized');
   });
 
   it('shows only current-page dataset observations and hides them during a new page request', () => {

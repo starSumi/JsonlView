@@ -831,7 +831,6 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       `Add ${canonical.fsPath} as a read-only source?`,
       { modal: true },
       'Add source',
-      'Cancel',
     );
     if (action !== 'Add source' || cancelled() || this.#disposed) return;
     const provider = await vscode.window.showQuickPick(
@@ -932,11 +931,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (this.#disposed) return disabled('cancelled');
     if (!this.isEnabled()) {
       const action = await vscode.window.showInformationMessage(
-        'Enable the built-in Session Navigator? This choice is remembered. Agent source authorization is separate.',
+        'Enable the built-in Session Navigator? This choice is remembered.',
         { modal: true },
         'Enable',
         'Settings',
-        'Cancel',
       );
       if (this.#disposed) return disabled('cancelled');
       if (action === 'Settings') { await this.openSettings(); return disabled('cancelled'); }
@@ -952,48 +950,12 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
           'Session Navigator is disabled by an effective workspace setting. Enable it in Settings.',
           { modal: true },
           'Settings',
-          'Cancel',
         ).then((choice) => { if (choice === 'Settings') void this.openSettings(); });
         return disabled('failed', 'NAVIGATOR_DISABLED');
       }
     }
     if (this.#disposed) return disabled('cancelled');
     const authorized = this.settings().length > 0;
-    if (!authorized) {
-      const action = await vscode.window.showInformationMessage(
-        'Session Navigator needs a read-only source authorization before it can open sessions.',
-        { modal: true },
-        'Authorize source',
-        'Settings',
-        'Cancel',
-      );
-      if (this.#disposed) return disabled('cancelled');
-      if (action === 'Settings') {
-        await this.openSettings();
-        return {
-          version: 1, status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
-          action: 'none', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
-        };
-      }
-      if (action !== 'Authorize source') {
-        return {
-          version: 1, status: 'cancelled', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
-          action: 'none', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
-        };
-      }
-      const focused = await this.focusNavigatorView('jsonlView.sourceDrop');
-      if (focused) {
-        if (this.#treeView !== undefined) this.#treeView.message = 'Authorize a local source in Add Source to populate Sessions.';
-        return {
-          version: 1, status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
-          action: 'focus-add-source', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
-        };
-      }
-      return {
-        version: 1, status: 'failed', enabled: 'enabled', authorization: 'required', authorizationReadback: 'unknown', action: 'focus-add-source',
-        errorCode: 'OPEN_FAILED', stage: 'focus', recoverable: true,
-      };
-    }
     const sourceId = target === undefined ? undefined : this.sourceIdForTarget(target.sourceUri);
     if (target !== undefined && sourceId === undefined) {
       const focused = await this.focusNavigatorView('jsonlView.sourceDrop');
@@ -1010,8 +972,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         errorCode: 'OPEN_FAILED', stage: 'focus', recoverable: true,
       };
     }
+    const authorization = authorized ? 'granted' : 'not-requested';
+    const authorizationReadback = authorized ? 'confirmed' : 'not-requested';
     return {
-      version: 1, status: 'opened', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
+      version: 1, status: 'opened', enabled: 'enabled', authorization, authorizationReadback, action: 'focus-sessions',
       ...(target === undefined ? {} : { targetDocumentId: target.documentId }),
       ...(sourceId === undefined ? {} : { sourceId }),
     };

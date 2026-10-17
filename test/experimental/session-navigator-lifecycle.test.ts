@@ -103,7 +103,14 @@ describe('Session Navigator host lifecycle', () => {
 
   it('remembers explicit Enable and opens later without repeating the authorization prompt', async () => {
     host.config.set('sessionNavigator.enabled', false); host.info.mockResolvedValue('Enable');
-    await tree.open(); await tree.open();
+    await tree.open();
+    expect(host.info).toHaveBeenCalledWith(
+      'Enable the built-in Session Navigator? This choice is remembered.',
+      { modal: true },
+      'Enable',
+      'Settings',
+    );
+    await tree.open();
     expect(host.updates).toHaveBeenCalledExactlyOnceWith('sessionNavigator.enabled', true);
     expect(host.info).toHaveBeenCalledTimes(1);
     expect(host.execute).toHaveBeenCalledTimes(2);
@@ -119,48 +126,19 @@ describe('Session Navigator host lifecycle', () => {
     expect(host.scan).not.toHaveBeenCalled(); expect(host.probe).not.toHaveBeenCalled();
   });
 
-  it('returns an authorization-required bridge result and focuses Add Source without scanning', async () => {
+  it('opens the empty Navigator after enablement without a second source-authorization modal', async () => {
     host.config.set('sessionNavigator.sources', []);
-    host.info.mockResolvedValue('Authorize source');
     const result = await tree.open();
     expect(result).toMatchObject({
-      status: 'authorization-required',
+      status: 'opened',
       enabled: 'enabled',
-      authorization: 'required',
+      authorization: 'not-requested',
       authorizationReadback: 'not-requested',
-      action: 'focus-add-source',
-      errorCode: 'AUTHORIZATION_REQUIRED',
+      action: 'focus-sessions',
     });
-    expect(host.execute).toHaveBeenNthCalledWith(1, 'workbench.view.extension.jsonlViewSessionNavigator');
-    expect(host.execute).toHaveBeenNthCalledWith(2, 'workbench.action.focusView', 'jsonlView.sourceDrop');
+    expect(host.info).not.toHaveBeenCalled();
+    expect(host.execute).toHaveBeenCalledExactlyOnceWith('workbench.view.extension.jsonlViewSessionNavigator');
     expect(host.scan).not.toHaveBeenCalled();
-    expect(host.config.get('sessionNavigator.sources')).toEqual([]);
-  });
-
-  it('uses a modal decision before focusing Add Source when authorization is missing', async () => {
-    host.config.set('sessionNavigator.sources', []);
-    host.info.mockResolvedValue('Authorize source');
-    await tree.open();
-    expect(host.info).toHaveBeenCalledWith(
-      'Session Navigator needs a read-only source authorization before it can open sessions.',
-      { modal: true },
-      'Authorize source',
-      'Settings',
-      'Cancel',
-    );
-  });
-
-  it('does not move focus when the authorization modal is cancelled', async () => {
-    host.config.set('sessionNavigator.sources', []);
-    host.info.mockResolvedValue('Cancel');
-    const result = await tree.open();
-    expect(result).toMatchObject({
-      status: 'cancelled',
-      authorization: 'required',
-      action: 'none',
-      errorCode: 'AUTHORIZATION_REQUIRED',
-    });
-    expect(host.execute).not.toHaveBeenCalled();
   });
 
   it('returns opened only after persisted authorization is visible on readback', async () => {

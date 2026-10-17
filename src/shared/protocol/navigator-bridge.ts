@@ -34,6 +34,8 @@ export type NavigatorStageCode = Extract<ProtocolStageCode, 'enablement' | 'auth
  * Correlated host result for an explicit Open Navigator/locate action.
  * Enablement, authorization persistence, and opening are separate facets so
  * a guide result cannot be mistaken for a successful open.
+ * Opening the empty Navigator is valid before any source is authorized; source authorization is
+ * an explicit Add Source action owned by the Navigator surface.
  */
 export interface NavigatorBridgeResultV1 {
   version: SharedContractVersion;
@@ -69,11 +71,16 @@ export function isNavigatorBridgeResult(value: unknown): value is NavigatorBridg
   if (value.status === 'authorization-required' && (value.enabled !== 'enabled' || value.authorization !== 'required')) return false;
   if (value.status === 'authorization-pending' && (value.enabled !== 'enabled' || value.authorization !== 'pending')) return false;
   if (value.status === 'authorization-denied' && value.authorization !== 'denied') return false;
-  if (value.status === 'opened' && (value.enabled !== 'enabled' || value.authorization !== 'granted')) return false;
+  if (value.status === 'opened' && value.enabled !== 'enabled') return false;
+  if (value.status === 'opened' && !isOneOf(value.authorization, ['not-requested', 'granted'])) return false;
+  if (value.status === 'opened' && value.authorization === 'not-requested'
+    && (value.authorizationReadback !== 'not-requested' || value.sourceId !== undefined || value.targetDocumentId !== undefined)) return false;
+  if (value.status === 'opened' && value.authorization === 'granted'
+    && value.authorizationReadback !== 'confirmed') return false;
+  if (value.status === 'opened' && ((value.sourceId === undefined) !== (value.targetDocumentId === undefined))) return false;
   if (value.status === 'authorization-denied' && value.errorCode !== 'AUTHORIZATION_NOT_CONFIRMED') return false;
   if ((value.status === 'failed' || value.status === 'unknown')
     && (value.errorCode === undefined || value.stage === undefined || value.recoverable === undefined)) return false;
-  if (value.status === 'opened' && (value.targetDocumentId === undefined || value.sourceId === undefined)) return false;
   return true;
 }
 

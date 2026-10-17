@@ -26,29 +26,10 @@ interface DetailDrawerProps {
   onTabChange: (tab: DetailTab) => void;
   onRequestFull: () => void;
   onInteraction?: () => void;
-  /** Reuses the existing top-level Open Navigator command; never opens a parallel route. */
-  onOpenNavigator?: () => void;
-  navigatorState?: NavigatorBridgeState;
   onClose: () => void;
 }
 
 export type NavigatorBridgeState = 'disabled' | 'authorization-required' | 'authorized' | 'cancelled' | 'failed';
-
-function navigatorBridgeCopy(state: NavigatorBridgeState): { title: string; message: string; action: string } {
-  switch (state) {
-    case 'authorized':
-      return { title: 'Navigator 已授权', message: '使用顶部 Open Navigator 的同一命令定位对应来源或会话；不会重复请求授权。', action: '定位左侧 Navigator' };
-    case 'authorization-required':
-      return { title: '需要一次授权', message: 'Navigator 已打开或正在打开。请在左侧确认只读来源范围；取消不会改变当前记录。', action: '打开 Navigator 设置' };
-    case 'cancelled':
-      return { title: '授权已取消', message: '当前记录和直接打开 JSONL 的主路径保持可用；没有启动扫描或修改配置。', action: '重新打开 Navigator' };
-    case 'failed':
-      return { title: 'Navigator 暂时不可用', message: '授权或索引失败已隔离。可重试或继续查看当前记录，不会清空其他 editor。', action: '重试 Navigator' };
-    case 'disabled':
-    default:
-      return { title: '打开 Navigator', message: '从左侧打开 Navigator，再按需完成一次只读授权；这不会替换当前记录详情。', action: '打开 Navigator' };
-  }
-}
 
 function UnavailableRecordView({ detail, loading, readBlocked, onRequestFull }: { detail: RecordDetail; loading: boolean; readBlocked: boolean; onRequestFull: () => void }): React.JSX.Element {
   const automaticFullLimitMiB = AUTOMATIC_FULL_RECORD_LIMIT_BYTES / (1024 * 1024);
@@ -90,7 +71,7 @@ const detailTabs: Array<{
   { id: 'bytes', label: 'Bytes', icon: Database },
 ];
 
-export function DetailDrawer({ id = 'record-detail', modal = false, detail, selectedRef, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onInteraction, onOpenNavigator, navigatorState = 'disabled', onClose }: DetailDrawerProps): React.JSX.Element {
+export function DetailDrawer({ id = 'record-detail', modal = false, detail, selectedRef, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onInteraction, onClose }: DetailDrawerProps): React.JSX.Element {
   const drawerRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const tabs = useManualTabs({ ids: detailTabs.map((tab) => tab.id), activeId: activeTab,
@@ -123,7 +104,6 @@ export function DetailDrawer({ id = 'record-detail', modal = false, detail, sele
       return { key: `${baseKey}:${occurrence}`, problem };
     });
   }, [visibleDetail?.problems]);
-  const navigatorCopy = navigatorBridgeCopy(navigatorState);
 
   return (
     <>
@@ -224,14 +204,6 @@ export function DetailDrawer({ id = 'record-detail', modal = false, detail, sele
                 <span>{problem.message}</span>
               </div>
             ))}
-          </section>
-        ) : null}
-        {onOpenNavigator && (visibleDetail !== undefined || selectedRef !== undefined || blockedOrdinal !== undefined) ? (
-          <section className={'navigator-bridge navigator-bridge-' + navigatorState} aria-label="Open Navigator bridge">
-            <strong>{navigatorCopy.title}</strong>
-            <span>{navigatorCopy.message}</span>
-            <button type="button" className="event-section-action" onClick={onOpenNavigator}>{navigatorCopy.action}</button>
-            <small>与顶部 Open Navigator 共用 Host command；授权状态由 Host 读回。</small>
           </section>
         ) : null}
       </div>
