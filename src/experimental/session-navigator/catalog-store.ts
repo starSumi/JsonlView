@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
+import type { CatalogCheckpoint, CatalogPort, CatalogSourceInput, CatalogSourceMetadata } from '../../application';
 import type { NavigationRelation } from '../navigation-contract';
 import type { NavigatorEntity, NavigatorLocation, NavigatorSnapshot, NavigatorSourceSummary, SessionNavigatorProviderId, SessionNavigatorSortKey } from './types';
 import type { AuthorizedSourceSetting } from './types';
@@ -77,7 +78,7 @@ interface LocationRow {
   row_ordinal: string;
 }
 
-export class CatalogStore {
+export class CatalogStore implements CatalogPort {
   readonly #db: DatabaseSync;
   readonly #path: string;
 
@@ -163,12 +164,95 @@ export class CatalogStore {
     ensureColumn(db, 'entities', 'relationship', "TEXT NOT NULL DEFAULT 'generic'");
     ensureColumn(db, 'entities', 'project', 'TEXT');
     db.exec('CREATE INDEX IF NOT EXISTS entities_activity_idx ON entities(source_id, generation, activity_at, started_at, native_id);');
+    migrateMetadataPlane(db);
     return new CatalogStore(path, db);
   }
 
   public get path(): string { return this.#path; }
 
+  /**
+   * Reconcile the metadata plane without reading source content. A disabled
+   * Navigator may still register exact personal files, but it must never turn
+   * that registration into an entity scan. The legacy `sources` table remains
+   * the compatibility store for the existing tree provider.
+   */
+  public reconcileSourceMetadata(inputs: readonly CatalogSourceInput[], navigatorEnabled: boolean): void {
+    const now = new Date().toISOString();
+    const active = new Set(inputs.map((input) => input.sourceId));
+    this.#db.exec('BEGIN IMMEDIATE');
+    try {
+      const upsert = this.#db.prepare(`INSERT INTO source_registry(
+        source_id, provider_id, source_kind, canonical_uri, display_label, config_revision,
+        authorization_state, availability_state, metadata_state, entity_scan_state,
+        created_at, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)
+      ON CONFLICT(source_id) DO UPDATE SET
+        provider_id = excluded.provider_id, source_kind = excluded.source_kind,
+        canonical_uri = excluded.canonical_uri, display_label = excluded.display_label,
+        config_revision = excluded.config_revision, authorization_state = excluded.authorization_state,
+        availability_state = excluded.availability_state, metadata_state = 'ready',
+        entity_scan_state = CASE
+          WHEN excluded.entity_scan_state = 'disabled' THEN 'disabled'
+          WHEN source_registry.entity_scan_state = 'ready' THEN 'ready'
+          ELSE 'pending'
+        END, verified_at = excluded.verified_at`);
+      for (const input of inputs) {
+        upsert.run(
+          input.sourceId, input.providerId, input.sourceKind, input.canonicalUri, input.displayLabel,
+          input.configRevision, input.authorizationState, input.availabilityState ?? 'unknown',
+          navigatorEnabled ? 'pending' : 'disabled', now, now,
+        );
+        this.#db.prepare(`INSERT INTO index_checkpoint(source_id, plane, scan_epoch, config_revision, state, committed_at)
+          VALUES (?, 'metadata', 'config', ?, 'ready', ?)
+          ON CONFLICT(source_id, plane, scan_epoch) DO UPDATE SET
+            config_revision = excluded.config_revision, state = 'ready', terminal_code = NULL, committed_at = excluded.committed_at`).run(input.sourceId, input.configRevision, now);
+        this.#db.prepare(`INSERT INTO index_checkpoint(source_id, plane, scan_epoch, config_revision, state, committed_at)
+          VALUES (?, 'entity', 'disabled', ?, ?, ?)
+          ON CONFLICT(source_id, plane, scan_epoch) DO UPDATE SET
+            config_revision = excluded.config_revision, state = CASE
+              WHEN excluded.state = 'disabled' THEN 'disabled'
+              WHEN index_checkpoint.state = 'ready' THEN 'ready'
+              ELSE 'pending'
+            END`).run(input.sourceId, input.configRevision, navigatorEnabled ? 'pending' : 'disabled', now);
+      }
+      if (navigatorEnabled) {
+        const rows = this.#db.prepare('SELECT source_id FROM source_registry').all() as Array<{ source_id: string }>;
+        const remove = this.#db.prepare('DELETE FROM source_registry WHERE source_id = ?');
+        for (const row of rows) if (!active.has(row.source_id)) remove.run(row.source_id);
+      }
+      this.#db.exec('COMMIT');
+    } catch (error) {
+      this.#db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  public listSourceMetadata(): readonly CatalogSourceMetadata[] {
+    const rows = this.#db.prepare('SELECT * FROM source_registry ORDER BY display_label COLLATE NOCASE, source_id').all() as unknown as SourceMetadataRow[];
+    return rows.map(toSourceMetadata);
+  }
+
+  public getSourceMetadata(sourceId: string): CatalogSourceMetadata | undefined {
+    const row = this.#db.prepare('SELECT * FROM source_registry WHERE source_id = ?').get(sourceId) as SourceMetadataRow | undefined;
+    return row === undefined ? undefined : toSourceMetadata(row);
+  }
+
+  public getCheckpoint(sourceId: string, plane: 'metadata' | 'entity'): CatalogCheckpoint | undefined {
+    const row = this.#db.prepare('SELECT * FROM index_checkpoint WHERE source_id = ? AND plane = ? ORDER BY committed_at DESC LIMIT 1').get(sourceId, plane) as CheckpointRow | undefined;
+    return row === undefined ? undefined : toCheckpoint(row);
+  }
+
   public syncSources(settings: readonly AuthorizedSourceSetting[]): void {
+    this.reconcileSourceMetadata(settings.map((setting) => ({
+      sourceId: sourceIdFor(setting),
+      providerId: setting.provider,
+      sourceKind: sourceKindFor(setting),
+      canonicalUri: setting.rootUri,
+      displayLabel: sourceLabelFor(setting),
+      configRevision: 'legacy-sync',
+      authorizationState: 'authorized',
+      availabilityState: 'unknown',
+    })), true);
     const active = new Set(settings.map(sourceIdFor));
     this.#db.exec('BEGIN IMMEDIATE');
     try {
@@ -383,6 +467,10 @@ export class CatalogStore {
       this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0, truncated = ?, next_cursor = ? WHERE source_id = ?').run(
         nextGenerationNumber, page.capturedAt, fingerprint, page.truncated ? 1 : 0, page.nextCursor ?? null, sourceId,
       );
+      this.#db.prepare(`UPDATE source_registry SET fingerprint = ?, entity_scan_state = 'ready', verified_at = ?, error_code = NULL WHERE source_id = ?`).run(fingerprint, page.capturedAt, sourceId);
+      this.#db.prepare(`INSERT INTO index_checkpoint(source_id, plane, scan_epoch, config_revision, state, fingerprint, committed_at)
+        SELECT source_id, 'entity', ?, config_revision, 'ready', ?, ? FROM source_registry WHERE source_id = ?
+        ON CONFLICT(source_id, plane, scan_epoch) DO UPDATE SET state = 'ready', fingerprint = excluded.fingerprint, terminal_code = NULL, committed_at = excluded.committed_at`).run(generation, fingerprint, page.capturedAt, sourceId);
       this.#db.exec('COMMIT');
     } catch (error) {
       this.#db.exec('ROLLBACK');
@@ -427,6 +515,10 @@ export class CatalogStore {
       const insertLocation = this.#db.prepare('INSERT OR REPLACE INTO locations(source_id, generation, native_id, relative_path, row_ordinal) VALUES (?, ?, ?, ?, ?)');
       for (const location of nextSnapshot.locations) insertLocation.run(sourceId, generation, location.nativeId, location.relativePath, location.rowOrdinal);
       this.#db.prepare('UPDATE sources SET generation = ?, captured_at = ?, fingerprint = ?, update_available = 0, truncated = ?, next_cursor = ? WHERE source_id = ?').run(nextGeneration, nextSnapshot.capturedAt, fingerprint, nextSnapshot.truncated ? 1 : 0, nextSnapshot.nextCursor ?? null, sourceId);
+      this.#db.prepare(`UPDATE source_registry SET fingerprint = ?, entity_scan_state = 'ready', verified_at = ?, error_code = NULL WHERE source_id = ?`).run(fingerprint, nextSnapshot.capturedAt, sourceId);
+      this.#db.prepare(`INSERT INTO index_checkpoint(source_id, plane, scan_epoch, config_revision, state, fingerprint, committed_at)
+        SELECT source_id, 'entity', ?, config_revision, 'ready', ?, ? FROM source_registry WHERE source_id = ?
+        ON CONFLICT(source_id, plane, scan_epoch) DO UPDATE SET state = 'ready', fingerprint = excluded.fingerprint, terminal_code = NULL, committed_at = excluded.committed_at`).run(generation, fingerprint, nextSnapshot.capturedAt, sourceId);
       this.#db.exec('COMMIT');
     } catch (error) {
       this.#db.exec('ROLLBACK');
@@ -569,4 +661,121 @@ function toEntity(row: EntityRow, provider: SessionNavigatorProviderId): Navigat
 
 function snapshotId(sourceId: string, generation: string, snapshot: NavigatorSnapshot): string {
   return `catalog-${createHash('sha256').update(JSON.stringify({ sourceId, generation, capturedAt: snapshot.capturedAt, entities: snapshot.entities.length, relations: snapshot.relations.length }), 'utf8').digest('hex').slice(0, 32)}`;
+}
+
+interface SourceMetadataRow {
+  source_id: string;
+  provider_id: string;
+  source_kind: CatalogSourceMetadata['sourceKind'];
+  canonical_uri: string;
+  display_label: string;
+  config_revision: string;
+  authorization_state: CatalogSourceMetadata['authorizationState'];
+  availability_state: CatalogSourceMetadata['availabilityState'];
+  metadata_state: CatalogSourceMetadata['metadataState'];
+  entity_scan_state: CatalogSourceMetadata['entityScanState'];
+  fingerprint: string | null;
+  size_bytes: string | null;
+  modified_at: string | null;
+  created_at: string;
+  verified_at: string | null;
+  error_code: string | null;
+}
+
+interface CheckpointRow {
+  source_id: string;
+  plane: CatalogCheckpoint['plane'];
+  scan_epoch: string;
+  config_revision: string;
+  state: CatalogCheckpoint['state'];
+  cursor: string | null;
+  fingerprint: string | null;
+  terminal_code: string | null;
+  committed_at: string | null;
+}
+
+function toSourceMetadata(row: SourceMetadataRow): CatalogSourceMetadata {
+  return {
+    sourceId: row.source_id, providerId: row.provider_id, sourceKind: row.source_kind, canonicalUri: row.canonical_uri,
+    displayLabel: row.display_label, configRevision: row.config_revision, authorizationState: row.authorization_state,
+    availabilityState: row.availability_state, metadataState: row.metadata_state, entityScanState: row.entity_scan_state,
+    ...(row.fingerprint === null ? {} : { fingerprint: row.fingerprint }),
+    ...(row.size_bytes === null ? {} : { sizeBytes: row.size_bytes }),
+    ...(row.modified_at === null ? {} : { modifiedAt: row.modified_at }),
+    createdAt: row.created_at, ...(row.verified_at === null ? {} : { verifiedAt: row.verified_at }),
+    ...(row.error_code === null ? {} : { errorCode: row.error_code }),
+  };
+}
+
+function toCheckpoint(row: CheckpointRow): CatalogCheckpoint {
+  return {
+    sourceId: row.source_id, plane: row.plane, scanEpoch: row.scan_epoch, configRevision: row.config_revision, state: row.state,
+    ...(row.cursor === null ? {} : { cursor: row.cursor }), ...(row.fingerprint === null ? {} : { fingerprint: row.fingerprint }),
+    ...(row.terminal_code === null ? {} : { terminalCode: row.terminal_code }),
+    ...(row.committed_at === null ? {} : { committedAt: row.committed_at }),
+  };
+}
+
+function sourceKindFor(setting: AuthorizedSourceSetting): CatalogSourceMetadata['sourceKind'] {
+  let pathname = '';
+  try { pathname = decodeURIComponent(new URL(setting.rootUri).pathname); } catch { /* parse fallback below */ }
+  if (/\.(?:jsonl|ndjson)$/iu.test(pathname)) return 'exact_file';
+  return setting.provider === 'generic' ? 'folder' : 'provider_home';
+}
+
+/** Additive migration: legacy tables stay intact until the catalog adapter is promoted. */
+function migrateMetadataPlane(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS source_registry (
+      source_id TEXT PRIMARY KEY NOT NULL,
+      provider_id TEXT NOT NULL,
+      source_kind TEXT NOT NULL CHECK (source_kind IN ('provider_home','folder','exact_file')),
+      canonical_uri TEXT NOT NULL,
+      display_label TEXT NOT NULL,
+      config_revision TEXT NOT NULL,
+      authorization_state TEXT NOT NULL CHECK (authorization_state IN ('authorized','revoked','unknown')),
+      availability_state TEXT NOT NULL CHECK (availability_state IN ('available','missing','unknown')),
+      metadata_state TEXT NOT NULL CHECK (metadata_state IN ('pending','ready','stale','failed')),
+      entity_scan_state TEXT NOT NULL CHECK (entity_scan_state IN ('disabled','pending','ready','stale','failed')),
+      fingerprint TEXT,
+      size_bytes TEXT,
+      modified_at TEXT,
+      created_at TEXT NOT NULL,
+      verified_at TEXT,
+      error_code TEXT,
+      UNIQUE (provider_id, canonical_uri)
+    );
+    CREATE TABLE IF NOT EXISTS index_checkpoint (
+      source_id TEXT NOT NULL REFERENCES source_registry(source_id) ON DELETE CASCADE,
+      plane TEXT NOT NULL CHECK (plane IN ('metadata','entity')),
+      scan_epoch TEXT NOT NULL,
+      config_revision TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending','ready','stale','failed','disabled')),
+      cursor TEXT,
+      fingerprint TEXT,
+      terminal_code TEXT,
+      committed_at TEXT,
+      PRIMARY KEY (source_id, plane, scan_epoch)
+    );
+    CREATE INDEX IF NOT EXISTS source_registry_label_idx ON source_registry(display_label COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS checkpoint_recent_idx ON index_checkpoint(source_id, plane, committed_at DESC);
+    INSERT OR IGNORE INTO source_registry(
+      source_id, provider_id, source_kind, canonical_uri, display_label, config_revision,
+      authorization_state, availability_state, metadata_state, entity_scan_state,
+      fingerprint, created_at, verified_at
+    ) SELECT source_id, provider,
+      CASE WHEN lower(root_uri) LIKE '%.jsonl' OR lower(root_uri) LIKE '%.ndjson' THEN 'exact_file'
+        WHEN provider = 'generic' THEN 'folder' ELSE 'provider_home' END,
+      root_uri, label, 'legacy-sync', 'authorized', 'unknown', 'ready',
+      CASE WHEN generation > 0 THEN 'ready' ELSE 'disabled' END, fingerprint,
+      COALESCE(captured_at, '1970-01-01T00:00:00.000Z'), captured_at
+      FROM sources;
+    INSERT OR IGNORE INTO index_checkpoint(source_id, plane, scan_epoch, config_revision, state, fingerprint, committed_at)
+      SELECT source_id, 'metadata', 'config', config_revision, 'ready', fingerprint, verified_at FROM source_registry;
+    INSERT OR IGNORE INTO index_checkpoint(source_id, plane, scan_epoch, config_revision, state, fingerprint, committed_at)
+      SELECT source_id, 'entity', CASE WHEN entity_scan_state = 'ready' THEN 'legacy' ELSE 'disabled' END,
+        config_revision, entity_scan_state, fingerprint, verified_at FROM source_registry;
+    INSERT INTO catalog_meta(key, value) VALUES ('schema_version', '3')
+      ON CONFLICT(key) DO UPDATE SET value = CASE WHEN CAST(catalog_meta.value AS INTEGER) < 3 THEN '3' ELSE catalog_meta.value END;
+  `);
 }

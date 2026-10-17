@@ -641,6 +641,16 @@ documents:
     evidence: []
     revisit: when the navigator bridge or task-lane integration order changes
     rollback: remove this brief after superseding the integration branch record
+  - id: adr-050-navigator-catalog-metadata-plane
+    path: docs/decisions/050-navigator-catalog-metadata-plane.md
+    title: Navigator Catalog Metadata Plane
+    kind: decision
+    status: experimental
+    owner: product
+    tags: [session-navigator, sqlite, metadata, checkpoints]
+    evidence: []
+    revisit: when Save As registration or a second catalog consumer is promoted
+    rollback: disable metadata-plane callers and retain the additive migration
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

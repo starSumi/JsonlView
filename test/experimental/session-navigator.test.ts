@@ -188,6 +188,31 @@ describe('session navigator source boundary', () => {
     reopened.close();
   });
 
+  it('keeps exact personal files in the metadata plane while Navigator scanning is disabled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-metadata-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const file = join(root, 'personal.jsonl');
+    await writeFile(file, JSON.stringify({ prompt: 'body must remain in the source file' }) + '\n', 'utf8');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(file).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+
+    store.reconcileSourceMetadata([{
+      sourceId, providerId: 'generic', sourceKind: 'exact_file', canonicalUri: setting.rootUri,
+      displayLabel: 'personal.jsonl', configRevision: 'config-1', authorizationState: 'authorized',
+    }], false);
+
+    expect(store.getSourceMetadata(sourceId)).toMatchObject({
+      sourceId, sourceKind: 'exact_file', canonicalUri: setting.rootUri,
+      authorizationState: 'authorized', metadataState: 'ready', entityScanState: 'disabled',
+    });
+    expect(store.getCheckpoint(sourceId, 'metadata')).toMatchObject({ plane: 'metadata', state: 'ready', configRevision: 'config-1' });
+    expect(store.getCheckpoint(sourceId, 'entity')).toMatchObject({ plane: 'entity', state: 'disabled' });
+    expect(JSON.stringify(store.listSourceMetadata())).not.toContain('body must remain in the source file');
+    store.close();
+  });
+
   it('reads bounded catalog child pages with a generation-bound keyset cursor', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-pages-'));
     cleanup.push(root);
