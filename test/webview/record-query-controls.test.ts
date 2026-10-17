@@ -32,22 +32,18 @@ function render(overrides: Partial<RecordQueryControlsProps> = {}): string {
 }
 
 describe('record order controls', () => {
-  it('shows physical line direction as one explicit sort toggle', () => {
+  it('shows ascending and descending as explicit selected options', () => {
     const ascendingMarkup = render({ sortDirection: 'asc' });
     expect(ascendingMarkup).toContain('<fieldset class="row-order-control" data-direction="asc" aria-label="Record order"');
-    expect(ascendingMarkup).toContain('aria-label="Toggle row order"');
-    expect(ascendingMarkup).toContain('aria-pressed="false"');
-    expect(ascendingMarkup).toContain('title="Rows: first line first; activate for last line first"');
-    expect(ascendingMarkup).toContain('class="row-order-label" aria-hidden="true">First line first</span>');
+    expect(ascendingMarkup).toContain('aria-label="Ascending row order; first line first" aria-pressed="true"');
+    expect(ascendingMarkup).toContain('aria-label="Descending row order; last line first" aria-pressed="false"');
+    expect(ascendingMarkup).toContain('Sort rows ascending; first line first');
 
     const markup = render({ sortDirection: 'desc' });
     expect(markup).toContain('<fieldset class="row-order-control" data-direction="desc" aria-label="Record order"');
-    expect(markup).toContain('aria-label="Toggle row order"');
-    expect(markup).toContain('aria-pressed="true"');
-    expect(markup).toContain('title="Rows: last line first; activate for first line first"');
-    expect(markup).toContain('class="row-order-label" aria-hidden="true">Last line first</span>');
-    expect(markup).not.toContain('aria-label="First line first"');
-    expect(markup).not.toContain('aria-label="Last line first"');
+    expect(markup).toContain('aria-label="Ascending row order; first line first" aria-pressed="false"');
+    expect(markup).toContain('aria-label="Descending row order; last line first" aria-pressed="true"');
+    expect(markup).toContain('Sort rows descending; last line first');
   });
 
   it('exposes the indexing reason when reverse order is unavailable', () => {
@@ -57,8 +53,9 @@ describe('record order controls', () => {
     });
     expect(markup).toContain('title="Available when indexing completes"');
     expect(markup).toContain('aria-description="Available when indexing completes" disabled=""');
-    expect(markup).toContain('aria-label="Toggle row order"');
-    expect(markup).toContain('aria-pressed="false"');
+    expect(markup).toContain('aria-label="Ascending row order; first line first"');
+    expect(markup).toContain('aria-label="Descending row order; last line first"');
+    expect(markup.match(/class="row-order-option"[^>]*disabled=""/gu)).toHaveLength(2);
   });
 
   it('preserves native details disclosure with scrollable fields and reachable actions', () => {

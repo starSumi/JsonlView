@@ -76,12 +76,7 @@ export function RecordQueryControls({
   if (selectedColumn !== undefined && !displayedFields.some((column) => column.id === filterColumnId)) displayedFields.unshift(selectedColumn);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
-  const rowOrderTitle = descendingDisabled
-    ? descendingDisabledReason
-    : sortDirection === 'asc'
-      ? 'Rows: first line first; activate for last line first'
-      : 'Rows: last line first; activate for first line first';
-  const rowOrderLabel = sortDirection === 'desc' ? 'Last line first' : 'First line first';
+  const rowOrderDescription = descendingDisabled ? descendingDisabledReason : undefined;
 
   return (
     <>
@@ -117,18 +112,29 @@ export function RecordQueryControls({
       >
         <button
           type="button"
-          className="icon-button"
-          title={rowOrderTitle}
-          aria-label="Toggle row order"
-          aria-pressed={sortDirection === 'desc'}
-          aria-description={descendingDisabled ? descendingDisabledReason : undefined}
+          className="row-order-option"
+          title="Sort rows ascending; first line first"
+          aria-label="Ascending row order; first line first"
+          aria-pressed={sortDirection === 'asc'}
+          aria-description={rowOrderDescription}
           disabled={descendingDisabled}
-          onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
+          onClick={() => onSortDirectionChange('asc')}
         >
-          {sortDirection === 'asc'
-            ? <ArrowUpNarrowWide size={15} aria-hidden />
-            : <ArrowDownWideNarrow size={15} aria-hidden />}
-          <span className="row-order-label" aria-hidden="true">{rowOrderLabel}</span>
+          <ArrowUpNarrowWide size={15} aria-hidden />
+          <span aria-hidden="true">Asc</span>
+        </button>
+        <button
+          type="button"
+          className="row-order-option"
+          title="Sort rows descending; last line first"
+          aria-label="Descending row order; last line first"
+          aria-pressed={sortDirection === 'desc'}
+          aria-description={rowOrderDescription}
+          disabled={descendingDisabled}
+          onClick={() => onSortDirectionChange('desc')}
+        >
+          <ArrowDownWideNarrow size={15} aria-hidden />
+          <span aria-hidden="true">Desc</span>
         </button>
       </fieldset>
       <details className="filter-menu" ref={filterMenuRef}>
