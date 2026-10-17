@@ -73,7 +73,7 @@ export function isNavigatorBridgeResult(value: unknown): value is NavigatorBridg
   if (value.status === 'authorization-denied' && value.errorCode !== 'AUTHORIZATION_NOT_CONFIRMED') return false;
   if ((value.status === 'failed' || value.status === 'unknown')
     && (value.errorCode === undefined || value.stage === undefined || value.recoverable === undefined)) return false;
-  if (value.status === 'opened' && value.targetDocumentId === undefined && value.sourceId === undefined) return false;
+  if (value.status === 'opened' && (value.targetDocumentId === undefined || value.sourceId === undefined)) return false;
   return true;
 }
 

@@ -33,6 +33,7 @@ describe('shared protocol contract', () => {
       authorizationReadback: 'confirmed',
       action: 'focus-sessions',
       sourceId: 'source-1',
+      targetDocumentId: 'document-1',
     })).toBe(true);
   });
 

@@ -105,6 +105,43 @@ function queryDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+describe('Navigator bridge handoff', () => {
+  const opened = {
+    version: 1 as const,
+    status: 'opened' as const,
+    enabled: 'enabled' as const,
+    authorization: 'granted' as const,
+    authorizationReadback: 'confirmed' as const,
+    action: 'focus-sessions' as const,
+    targetDocumentId: 'document',
+    sourceId: 'codex-source',
+  };
+
+  it('publishes only a Host-validated result as NAVIGATOR_STATUS', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { onOpenSessionNavigator: async () => opened });
+
+    await controller.handleMessage(request('OPEN_SESSION_NAVIGATOR'));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'NAVIGATOR_STATUS', requestId: 'request-OPEN_SESSION_NAVIGATOR', payload: opened });
+  });
+
+  it('rejects an untyped Host handoff without mutating Navigator state', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { onOpenSessionNavigator: async () => ({ status: 'opened' }) });
+
+    await controller.handleMessage(request('OPEN_SESSION_NAVIGATOR'));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'NAVIGATOR_RESULT_INVALID', recoverable: true } });
+  });
+});
+
 describe('GET_ROWS local operation observations', () => {
   function fixture() {
     const session = fakeSession();

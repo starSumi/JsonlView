@@ -364,4 +364,25 @@ describe('VS Code message client', () => {
     expect(client.accept(message('PROBLEMS', request.id, 'g2', payload))?.type).toBe('PROBLEMS');
     expect(client.hasPending('problems')).toBe(false);
   });
+
+  it('accepts a correlated Navigator Host readback and completes the handoff', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g2',
+    });
+    const request = client.send('OPEN_SESSION_NAVIGATOR', {});
+    const payload = {
+      version: 1 as const,
+      status: 'opened' as const,
+      enabled: 'enabled' as const,
+      authorization: 'granted' as const,
+      authorizationReadback: 'confirmed' as const,
+      action: 'focus-sessions' as const,
+      targetDocumentId: 'doc',
+      sourceId: 'source-1',
+    };
+
+    expect(client.accept(message('NAVIGATOR_STATUS', request.id, 'g2', payload))).toMatchObject({ type: 'NAVIGATOR_STATUS', payload });
+    expect(client.hasPending('ready')).toBe(false);
+  });
 });

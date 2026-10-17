@@ -8,6 +8,7 @@ import type { RevealIntentRegistry } from './reveal-intents';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
 import { SessionPreviews } from './session-previews';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorSortKey } from './types';
+import type { NavigatorBridgeResultV1 } from '../../shared/protocol/navigator-bridge';
 
 const SOURCES_SETTING = 'sessionNavigator.sources';
 const ENABLED_SETTING = 'sessionNavigator.enabled';
@@ -24,15 +25,11 @@ const EXCLUDED_SOURCES_KEY = 'sessionNavigator.excludedDefaultSources';
  * of this contract; the shared transport adapter maps these facets to its
  * versioned protocol payload.
  */
-export interface NavigatorBridgeResult {
-  readonly status: 'disabled' | 'authorization-required' | 'authorization-denied' | 'opened' | 'cancelled' | 'failed';
-  readonly enabled: 'disabled' | 'enabled' | 'unknown';
-  readonly authorization: 'not-requested' | 'required' | 'granted' | 'denied' | 'unknown';
-  readonly authorizationReadback: 'not-requested' | 'confirmed' | 'rejected' | 'unknown';
-  readonly action: 'focus-add-source' | 'focus-sessions' | 'request-enable' | 'request-authorization' | 'none';
-  readonly errorCode?: 'NAVIGATOR_DISABLED' | 'ENABLEMENT_NOT_CONFIRMED' | 'AUTHORIZATION_REQUIRED' | 'AUTHORIZATION_NOT_CONFIRMED' | 'OPEN_FAILED';
-  readonly stage?: 'enablement' | 'authorization' | 'focus';
-  readonly recoverable?: boolean;
+export type NavigatorBridgeResult = NavigatorBridgeResultV1;
+
+export interface NavigatorBridgeTarget {
+  readonly documentId: string;
+  readonly sourceUri: string;
 }
 
 interface SourceTreeNode {
@@ -896,9 +893,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (selected !== undefined) await this.setSort(selected.value);
   }
 
-  public open(): Promise<NavigatorBridgeResult> {
+  public open(target?: NavigatorBridgeTarget): Promise<NavigatorBridgeResult> {
     if (this.#opening !== undefined) return this.#opening;
-    const operation = this.openNavigator().finally(() => { this.#opening = undefined; });
+    const operation = this.openNavigator(target).finally(() => { this.#opening = undefined; });
     this.#opening = operation;
     return operation;
   }
@@ -922,9 +919,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return true;
   }
 
-  private async openNavigator(): Promise<NavigatorBridgeResult> {
+  private async openNavigator(target?: NavigatorBridgeTarget): Promise<NavigatorBridgeResult> {
     const disabled = (status: NavigatorBridgeResult['status'], errorCode?: NavigatorBridgeResult['errorCode']): NavigatorBridgeResult => ({
-      status, enabled: 'disabled', authorization: 'not-requested', authorizationReadback: 'not-requested', action: 'none',
+      version: 1, status, enabled: 'disabled', authorization: 'not-requested', authorizationReadback: 'not-requested', action: 'none',
       ...(errorCode === undefined ? {} : { errorCode }), stage: 'enablement', recoverable: status !== 'failed',
     });
     if (this.#disposed) return disabled('cancelled');
@@ -935,7 +932,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       if (action !== 'Enable') return disabled('cancelled');
       if (!await this.setEnabled(true)) {
         return {
-          status: 'failed', enabled: 'unknown', authorization: 'not-requested', authorizationReadback: 'unknown', action: 'request-enable',
+          version: 1, status: 'failed', enabled: 'unknown', authorization: 'not-requested', authorizationReadback: 'unknown', action: 'request-enable',
           errorCode: 'ENABLEMENT_NOT_CONFIRMED', stage: 'enablement', recoverable: true,
         };
       }
@@ -951,25 +948,55 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       if (focused) {
         if (this.#treeView !== undefined) this.#treeView.message = 'Authorize a local source in Add Source to populate Sessions.';
         return {
-          status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
+          version: 1, status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
           action: 'focus-add-source', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
         };
       }
       return {
-        status: 'failed', enabled: 'enabled', authorization: 'required', authorizationReadback: 'unknown', action: 'focus-add-source',
+        version: 1, status: 'failed', enabled: 'enabled', authorization: 'required', authorizationReadback: 'unknown', action: 'focus-add-source',
         errorCode: 'OPEN_FAILED', stage: 'focus', recoverable: true,
+      };
+    }
+    const sourceId = target === undefined ? undefined : this.sourceIdForTarget(target.sourceUri);
+    if (target !== undefined && sourceId === undefined) {
+      const focused = await this.focusNavigatorView('jsonlView.sourceDrop');
+      if (focused && this.#treeView !== undefined) this.#treeView.message = 'Authorize the source containing this file in Add Source to link it to Navigator.';
+      return {
+        version: 1, status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
+        action: 'focus-add-source', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
       };
     }
     const opened = await this.focusNavigatorView('jsonlView.sessionNavigator');
     if (!opened) {
       return {
-        status: 'failed', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
+        version: 1, status: 'failed', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
         errorCode: 'OPEN_FAILED', stage: 'focus', recoverable: true,
       };
     }
     return {
-      status: 'opened', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
+      version: 1, status: 'opened', enabled: 'enabled', authorization: 'granted', authorizationReadback: 'confirmed', action: 'focus-sessions',
+      ...(target === undefined ? {} : { targetDocumentId: target.documentId }),
+      ...(sourceId === undefined ? {} : { sourceId }),
     };
+  }
+
+  private sourceIdForTarget(sourceUri: string): string | undefined {
+    let sourcePath: string;
+    try {
+      sourcePath = resolve(vscode.Uri.parse(sourceUri).fsPath);
+    } catch {
+      return undefined;
+    }
+    for (const setting of this.settings()) {
+      try {
+        const rootPath = resolve(vscode.Uri.parse(setting.rootUri).fsPath);
+        if (isContainedFile(rootPath, sourcePath)) return sourceIdFor(setting);
+      } catch {
+        // An invalid source setting is filtered by parseAuthorizedSources; keep
+        // this bridge fail-closed if a host override is malformed at runtime.
+      }
+    }
+    return undefined;
   }
 
   private async probeVisibleSources(): Promise<void> {

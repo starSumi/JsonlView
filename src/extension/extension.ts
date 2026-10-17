@@ -18,7 +18,7 @@ import {
 } from './follow-recovery';
 import { getWebviewHtml } from './webview-html';
 import { RevealIntentRegistry, type RevealIntent } from '../experimental';
-import { SessionNavigatorTreeProvider } from '../experimental/session-navigator/tree-provider';
+import { SessionNavigatorTreeProvider, type NavigatorBridgeTarget } from '../experimental/session-navigator/tree-provider';
 import { RecentPreviewsTreeProvider } from '../experimental/session-navigator/recent-previews';
 import type { SessionPreviews } from '../experimental/session-navigator/session-previews';
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
@@ -488,7 +488,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly revealRegistry: RevealIntentRegistry,
-    private readonly openSessionNavigator: () => Promise<unknown> | unknown,
+    private readonly openSessionNavigator: (target?: NavigatorBridgeTarget) => Promise<unknown> | unknown,
     private readonly output: JsonlViewOutputChannel | undefined,
     private readonly runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
     private readonly previews?: SessionPreviews,
@@ -626,7 +626,10 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
           + (rows === undefined ? '' : ' rows=' + String(rows))
           + (indexedRecords === undefined ? '' : ' indexedRecords=' + indexedRecords));
       },
-      onOpenSessionNavigator: () => this.openSessionNavigator(),
+      onOpenSessionNavigator: () => {
+        const snapshot = document.session.getSummary().snapshot;
+        return this.openSessionNavigator({ documentId: snapshot.documentId, sourceUri: snapshot.uri });
+      },
       getPreviewStatus: () => this.previews?.status(document.uri),
       onSavePreviewAs: async (isCurrent) => this.previews?.saveAs(document.uri, isCurrent),
       onTransientSourceChange: () => document.notifyTransientSourceChange(),
@@ -818,7 +821,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
   activeNavigator = navigator;
   const recentPreviews = new RecentPreviewsTreeProvider(navigator.previews);
-  const provider = new JsonlViewProvider(context, revealRegistry, () => navigator.open(), outputChannel, runtimeIdentity, navigator.previews);
+  const provider = new JsonlViewProvider(context, revealRegistry, (target) => navigator.open(target), outputChannel, runtimeIdentity, navigator.previews);
   context.subscriptions.push(
     ...navigator.register(),
     navigator,

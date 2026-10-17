@@ -15,6 +15,7 @@ import type {
 } from '../shared/types';
 import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
 import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transport';
+import { isNavigatorBridgeResult } from '../shared/protocol/navigator-bridge';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
 import { summaryIdentityMatches } from './summary-identity';
@@ -182,7 +183,15 @@ export class DocumentController {
           }
           return;
         case 'OPEN_SESSION_NAVIGATOR':
-          await this.hooks.onOpenSessionNavigator?.();
+          {
+            const result = await this.hooks.onOpenSessionNavigator?.();
+            if (result === undefined) return;
+            if (!isNavigatorBridgeResult(result)) {
+              await this.postError(request, acceptedIdentity, 'NAVIGATOR_RESULT_INVALID', 'The Navigator handoff returned an invalid Host result.', true);
+              return;
+            }
+            await this.postIfCurrent(request, acceptedIdentity, 'NAVIGATOR_STATUS', result);
+          }
           return;
         case 'SAVE_PREVIEW_AS':
           await this.hooks.onSavePreviewAs?.(() => !this.disposed && this.isCurrentIdentity(acceptedIdentity));

@@ -631,6 +631,16 @@ documents:
     evidence: []
     revisit: when a second wire consumer needs a new direction or protocol version
     rollback: remove the new registry exports and result message cases before consumer rollback
+  - id: integration-navigator-20261017
+    path: docs/operations/integration-navigator-20261017.md
+    title: Navigator Integration Task Brief
+    kind: guide
+    status: active
+    owner: product
+    tags: [navigator, integration, protocol, validation]
+    evidence: []
+    revisit: when the navigator bridge or task-lane integration order changes
+    rollback: remove this brief after superseding the integration branch record
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

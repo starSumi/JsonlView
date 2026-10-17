@@ -20,6 +20,7 @@ import type {
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
+import type { NavigatorBridgeResultV1 } from '../shared/protocol/navigator-bridge';
 import { DetailDrawer, type NavigatorBridgeState } from './detail-drawer';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
@@ -71,6 +72,19 @@ import {
   type WorkspaceTab,
   type WorkspaceState,
 } from './state';
+
+function navigatorUiState(result: NavigatorBridgeResultV1): NavigatorBridgeState {
+  switch (result.status) {
+    case 'opened': return 'authorized';
+    case 'authorization-required':
+    case 'authorization-pending': return 'authorization-required';
+    case 'cancelled': return 'cancelled';
+    case 'failed':
+    case 'authorization-denied':
+    case 'unknown': return 'failed';
+    case 'disabled': return 'disabled';
+  }
+}
 
 function datasetProvenanceTooltip(provenance: DatasetRuntimeProvenanceV1): string {
   if (provenance.status === 'pending') return 'Dataset head sample pending';
@@ -217,7 +231,6 @@ export function App(): React.JSX.Element {
     // This is the same command used by the top toolbar. The response/status
     // remains Host-owned; the webview only records the handoff state and never
     // treats a request as proof of authorization.
-    setNavigatorBridgeState((current) => current === 'authorized' ? 'authorized' : 'authorization-required');
     const session = clientRef.current.session;
     const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
@@ -464,6 +477,7 @@ export function App(): React.JSX.Element {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
       if (message.type === 'PREVIEW_STATUS') { setPreviewStatus(message.payload); return; }
+      if (message.type === 'NAVIGATOR_STATUS') setNavigatorBridgeState(navigatorUiState(message.payload));
       if (message.type === 'ERROR' && acceptedSessionRef.current === undefined
         && startupReadyIdsRef.current.has(message.requestId)) {
         startupErrorRef.current = true;

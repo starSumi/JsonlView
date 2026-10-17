@@ -89,6 +89,9 @@ export function shouldAcceptMessage(
     return message.requestId.length === 0 || request?.generation === session.generation;
   }
   if (message.type === 'PREVIEW_STATUS') return true;
+  if (message.type === 'NAVIGATOR_STATUS') {
+    return request?.kind === 'ready' && request.generation === session.generation;
+  }
   if (message.type === 'ROWS') {
     return request?.kind === 'rows' && request.generation === session.generation;
   }
@@ -166,6 +169,7 @@ function responseCompletesRequest(type: ExtensionMessage['type']): boolean {
     || type === 'INDEX_PROGRESS'
     || type === 'PROFILE_CHANGED'
     || type === 'ROW_ORDER_CHANGED'
+    || type === 'NAVIGATOR_STATUS'
     || type === 'ERROR';
 }
 
