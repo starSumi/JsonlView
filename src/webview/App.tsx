@@ -20,7 +20,7 @@ import type {
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
-import { DetailDrawer } from './detail-drawer';
+import { DetailDrawer, type NavigatorBridgeState } from './detail-drawer';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -170,6 +170,9 @@ export function App(): React.JSX.Element {
   );
   const [pageInput, setPageInputState] = React.useState('1');
   const [previewStatus, setPreviewStatus] = React.useState<TemporaryPreviewStatus>();
+  const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>(
+    restored?.navigatorBridgeState ?? 'disabled',
+  );
   const stateRef = useRef(state);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
@@ -211,6 +214,10 @@ export function App(): React.JSX.Element {
   const schemaRequestIdRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
   const openNavigator = useCallback((): void => {
+    // This is the same command used by the top toolbar. The response/status
+    // remains Host-owned; the webview only records the handoff state and never
+    // treats a request as proof of authorization.
+    setNavigatorBridgeState((current) => current === 'authorized' ? 'authorized' : 'authorization-required');
     const session = clientRef.current.session;
     const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
@@ -259,17 +266,17 @@ export function App(): React.JSX.Element {
     // State persistence is non-critical for first paint. Coalesce bursts of
     // indexing/progress updates and flush the latest snapshot during idle time.
     return deferIdle(() => {
-      vscode.setState(persistedStateRef.current);
+      vscode.setState({ ...persistedStateRef.current, navigatorBridgeState });
     });
-  }, [state]);
+  }, [navigatorBridgeState, state]);
 
   useEffect(() => {
     const flushPersistedState = (): void => {
-      vscode.setState(persistedStateRef.current);
+      vscode.setState({ ...persistedStateRef.current, navigatorBridgeState });
     };
     window.addEventListener('pagehide', flushPersistedState);
     return () => window.removeEventListener('pagehide', flushPersistedState);
-  }, []);
+  }, [navigatorBridgeState]);
 
   const finishCancelled = useCallback((kind: RequestKind, ids: string[]): void => {
     for (const requestId of ids) dispatch({ type: 'REQUEST_FINISHED', kind, requestId });
@@ -1274,6 +1281,8 @@ export function App(): React.JSX.Element {
                   requestDetail(ref, true, false);
                 }
               }}
+              onOpenNavigator={openNavigator}
+              navigatorState={navigatorBridgeState}
               onClose={closeDetail}
             />
           </>

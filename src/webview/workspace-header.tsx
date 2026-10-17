@@ -61,7 +61,7 @@ export function WorkspaceHeader({ children, navigation, ...status }: WorkspaceHe
         </span>
       </div>
       <div className="toolbar">
-        <button type="button" className="icon-button navigator-action" title="Open Agent Sessions" aria-label="Open Agent Sessions" onClick={status.onOpenNavigator}>
+        <button type="button" className="icon-button navigator-action" title="Open Navigator" aria-label="Open Navigator" onClick={status.onOpenNavigator}>
           <ListTree size={15} aria-hidden />
         </button>
         {status.rebuildAvailable ? (

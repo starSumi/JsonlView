@@ -27,7 +27,7 @@ describe('workspace header status', () => {
   it('places workspace tabs in the same header while preserving the Navigator action', () => {
     const markup = render({ navigation: React.createElement('nav', { 'aria-label': 'Workspace views' }, 'Table') });
     expect(markup.indexOf('<nav')).toBeLessThan(markup.indexOf('<div class="status-strip"'));
-    expect(markup).toContain('aria-label="Open Agent Sessions"');
+    expect(markup).toContain('aria-label="Open Navigator"');
   });
 
   it('places the bounded status region before controls in the wide-layout DOM order', () => {
@@ -42,7 +42,7 @@ describe('workspace header status', () => {
     const markup = render();
 
     expect(markup).toContain('<header class="workspace-header"');
-    expect(markup).toContain('aria-label="Open Agent Sessions"');
+    expect(markup).toContain('aria-label="Open Navigator"');
     expect(markup).toContain('24 rows');
     expect(markup).toContain('512 B / 1.0 KB');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');

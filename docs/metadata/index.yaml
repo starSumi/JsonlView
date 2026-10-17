@@ -91,6 +91,16 @@ documents:
     evidence: []
     revisit: when host-theme ownership or interaction tokens change
     rollback: restore the accepted design baseline
+  - id: navigator-bridge
+    path: docs/designs/navigator-bridge.md
+    title: Navigator Bridge in Record Detail
+    kind: design
+    status: proposed
+    owner: product
+    tags: [webview, navigator, authorization, accessibility]
+    evidence: []
+    revisit: when the Host publishes Navigator authorization status
+    rollback: remove the bridge and retain the top-level Navigator action
   - id: postmortem-policy
     path: docs/operations/postmortem-policy.md
     title: Incident Review and Postmortem Contract

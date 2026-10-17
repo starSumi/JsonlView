@@ -22,6 +22,24 @@ function detail(parseState: RecordDetail['ref']['parseState'], rawComplete: bool
 }
 
 describe('detail drawer unavailable record states', () => {
+  it('exposes the existing Open Navigator command as a secondary bridge without replacing record detail', () => {
+    const selected = detail('valid', true);
+    selected.value = { message: 'keep current record visible' };
+    selected.problems = [];
+    const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
+      detail: selected, loading: false, activeTab: 'tree',
+      navigatorState: 'authorization-required',
+      onOpenNavigator: () => undefined,
+      onTabChange: () => undefined, onRequestFull: () => undefined, onClose: () => undefined,
+    }));
+
+    expect(markup).toContain('aria-label="Open Navigator bridge"');
+    expect(markup).toContain('需要一次授权');
+    expect(markup).toContain('打开 Navigator 设置');
+    expect(markup).toContain('与顶部 Open Navigator 共用 Host command');
+    expect(markup).toContain('aria-label="Bounded JSON tree"');
+  });
+
   it('shows the selected record preview by default before its JSON fields', () => {
     const selected = detail('valid', true);
     selected.value = { type: 'session_meta', payload: {

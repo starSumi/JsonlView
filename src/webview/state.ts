@@ -133,6 +133,8 @@ export function shouldCloseDetailOnEscape(
 }
 
 export interface PersistedWorkspaceState {
+  /** UI handoff only; Host authorization remains authoritative and must be read back. */
+  navigatorBridgeState?: 'disabled' | 'authorization-required' | 'authorized' | 'cancelled' | 'failed';
   activeTab?: WorkspaceTab;
   displayMode?: 'table' | 'conversation';
   detailTab?: DetailTab;
