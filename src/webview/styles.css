@@ -1040,19 +1040,26 @@ select:focus-visible,
 }
 
 .workspace-tabs button.is-active {
-  border-bottom-color: var(--vscode-focusBorder);
+  border-bottom-color: var(--vscode-tab-activeBorderTop, var(--vscode-focusBorder));
   color: var(--vscode-tab-activeForeground);
-  background: color-mix(
-    in srgb,
-    var(--vscode-list-activeSelectionBackground) 42%,
-    var(--vscode-tab-activeBackground, var(--vscode-editor-background))
-  );
+  background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+  font-weight: 600;
 }
 
 .detail-tabs button.is-active {
-  border-bottom-color: var(--vscode-focusBorder);
-  color: var(--vscode-tab-activeForeground);
-  background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+  border-bottom-color: var(--vscode-panelTitle-activeBorder, var(--vscode-focusBorder));
+  color: var(--vscode-panelTitle-activeForeground, var(--vscode-tab-activeForeground));
+  background: var(--vscode-sideBar-background, var(--vscode-editorWidget-background));
+}
+
+@media (forced-colors: active) {
+  .workspace-tabs button.is-active,
+  .detail-tabs button.is-active {
+    border: 1px solid Highlight;
+    border-bottom-width: 2px;
+    color: HighlightText;
+    background: Highlight;
+  }
 }
 
 .tab-count {
