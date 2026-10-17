@@ -827,7 +827,12 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       return;
     }
     if (cancelled() || this.#disposed) return;
-    const action = await vscode.window.showWarningMessage(`Add ${canonical.fsPath} as a read-only source?`, 'Add source');
+    const action = await vscode.window.showWarningMessage(
+      `Add ${canonical.fsPath} as a read-only source?`,
+      { modal: true },
+      'Add source',
+      'Cancel',
+    );
     if (action !== 'Add source' || cancelled() || this.#disposed) return;
     const provider = await vscode.window.showQuickPick(
       [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'pi', value: 'pi' as const }, { label: 'Kimi Code', value: 'kimi' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
@@ -926,7 +931,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     });
     if (this.#disposed) return disabled('cancelled');
     if (!this.isEnabled()) {
-      const action = await vscode.window.showInformationMessage('Enable the built-in Session Navigator? This choice is remembered. Agent source authorization is separate.', 'Enable', 'Settings', 'Cancel');
+      const action = await vscode.window.showInformationMessage(
+        'Enable the built-in Session Navigator? This choice is remembered. Agent source authorization is separate.',
+        { modal: true },
+        'Enable',
+        'Settings',
+        'Cancel',
+      );
       if (this.#disposed) return disabled('cancelled');
       if (action === 'Settings') { await this.openSettings(); return disabled('cancelled'); }
       if (action !== 'Enable') return disabled('cancelled');
@@ -937,13 +948,39 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         };
       }
       if (!this.isEnabled()) {
-        void vscode.window.showInformationMessage('Session Navigator is disabled by an effective workspace setting. Enable it in Settings.', 'Settings').then((choice) => { if (choice === 'Settings') void this.openSettings(); });
+        void vscode.window.showInformationMessage(
+          'Session Navigator is disabled by an effective workspace setting. Enable it in Settings.',
+          { modal: true },
+          'Settings',
+          'Cancel',
+        ).then((choice) => { if (choice === 'Settings') void this.openSettings(); });
         return disabled('failed', 'NAVIGATOR_DISABLED');
       }
     }
     if (this.#disposed) return disabled('cancelled');
     const authorized = this.settings().length > 0;
     if (!authorized) {
+      const action = await vscode.window.showInformationMessage(
+        'Session Navigator needs a read-only source authorization before it can open sessions.',
+        { modal: true },
+        'Authorize source',
+        'Settings',
+        'Cancel',
+      );
+      if (this.#disposed) return disabled('cancelled');
+      if (action === 'Settings') {
+        await this.openSettings();
+        return {
+          version: 1, status: 'authorization-required', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
+          action: 'none', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
+        };
+      }
+      if (action !== 'Authorize source') {
+        return {
+          version: 1, status: 'cancelled', enabled: 'enabled', authorization: 'required', authorizationReadback: 'not-requested',
+          action: 'none', errorCode: 'AUTHORIZATION_REQUIRED', stage: 'authorization', recoverable: true,
+        };
+      }
       const focused = await this.focusNavigatorView('jsonlView.sourceDrop');
       if (focused) {
         if (this.#treeView !== undefined) this.#treeView.message = 'Authorize a local source in Add Source to populate Sessions.';

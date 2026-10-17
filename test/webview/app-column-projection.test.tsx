@@ -6,6 +6,7 @@ import { ColumnChooser, RecordPager, RecordQueryControls, RecordTable } from '..
 import { getColumnText, recordColumnForPath } from '../../src/webview/format';
 import type { PersistedWorkspaceState } from '../../src/webview/state';
 import { WorkspaceHeader } from '../../src/webview/workspace-header';
+import { DetailDrawer } from '../../src/webview/detail-drawer';
 import { DatasetInsights } from '../../src/webview/dataset-insights';
 import { InsightsToolbar } from '../../src/webview/insights-toolbar';
 import { summarizeDatasetRecord } from '../../src/profiles/dataset-analysis';
@@ -184,6 +185,26 @@ const visibleValues = (): string[] => {
 };
 
 describe('App column presentation and projection boundary', () => {
+  it('correlates the Navigator button with the Host status response', () => {
+    boot();
+    props(RecordTable).onSelect(page([status]).rows[0]!.ref);
+    commit();
+    props(WorkspaceHeader).onOpenNavigator();
+    const request = last('OPEN_SESSION_NAVIGATOR');
+    expect(request.requestId).toBeTruthy();
+    deliver('NAVIGATOR_STATUS', {
+      version: 1,
+      status: 'opened',
+      enabled: 'enabled',
+      authorization: 'granted',
+      authorizationReadback: 'confirmed',
+      action: 'focus-sessions',
+      sourceId: 'source-1',
+      targetDocumentId: 'doc',
+    }, request);
+    expect(props(DetailDrawer).navigatorState).toBe('authorized');
+  });
+
   it('shows only current-page dataset observations and hides them during a new page request', () => {
     commit();
     deliver('OPENED', { ...summary, profileVersion: '1' }, last('READY'));

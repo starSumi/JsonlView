@@ -229,20 +229,11 @@ export function App(): React.JSX.Element {
   const schemaRequestIdRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
   const openNavigator = useCallback((): void => {
-    // This is the same command used by the top toolbar. The response/status
-    // remains Host-owned; the webview only records the handoff state and never
-    // treats a request as proof of authorization.
-    const session = clientRef.current.session;
-    const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : 'navigator-' + Date.now().toString(36);
-    vscode.postMessage(createProtocolEnvelope({
-      type: 'OPEN_SESSION_NAVIGATOR',
-      documentId: session.documentId,
-      generation: session.generation,
-      requestId,
-      payload: {},
-    }));
+    // Route through the correlated client so NAVIGATOR_STATUS is accepted by
+    // the same request-response gate as every other Host action. A raw
+    // postMessage has no pending entry and would be discarded as stale.
+    const request = clientRef.current.send('OPEN_SESSION_NAVIGATOR', {});
+    dispatch({ type: 'REQUEST_SENT', request });
   }, []);
 
   const savePreviewAs = useCallback((): void => {
