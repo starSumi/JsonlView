@@ -29,6 +29,7 @@ describe('workspace header status', () => {
     expect(markup.indexOf('aria-label="Open Navigator"')).toBeLessThan(markup.indexOf('<nav'));
     expect(markup.indexOf('<nav')).toBeLessThan(markup.indexOf('<div class="status-strip"'));
     expect(markup).toContain('aria-label="Open Navigator"');
+    expect(markup).toContain('lucide-panel-left');
   });
 
   it('keeps Navigator, view tabs, and workspace options in the requested order', () => {

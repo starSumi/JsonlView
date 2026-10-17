@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Check, CircleAlert, ListTree, LoaderCircle, RefreshCw } from 'lucide-react';
+import { Check, CircleAlert, LoaderCircle, PanelLeft, RefreshCw } from 'lucide-react';
 import { formatBytes } from './format';
 
 export interface WorkspaceHeaderProps {
@@ -31,7 +31,7 @@ export function WorkspaceHeader({ children, navigation, secondary, ...status }: 
     <header className="workspace-header">
       <div className="workspace-header-primary">
         <button type="button" className="icon-button navigator-action" title="Open Navigator" aria-label="Open Navigator" onClick={status.onOpenNavigator}>
-          <ListTree size={15} aria-hidden />
+          <PanelLeft size={15} aria-hidden />
         </button>
         {navigation}
         <div className="toolbar workspace-controls">
