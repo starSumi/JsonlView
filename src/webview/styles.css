@@ -69,6 +69,7 @@ select:focus-visible,
   align-items: center;
   gap: 6px;
   min-width: 0;
+  overflow: hidden;
   min-height: 34px;
   padding: 0 8px 0 0;
   border-bottom: 1px solid var(--vscode-panel-border);
@@ -81,12 +82,14 @@ select:focus-visible,
   align-items: center;
   gap: 6px;
   order: 3;
+  min-width: 0;
 }
 
 .toolbar-context {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  min-width: 0;
   color: var(--vscode-descriptionForeground);
 }
 
@@ -734,6 +737,37 @@ select:focus-visible,
   padding: 0 8px;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.workspace-tabs:hover,
+.workspace-tabs:focus-within {
+  scrollbar-color: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background)) transparent;
+}
+
+.workspace-tabs::-webkit-scrollbar,
+.detail-tabs::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.workspace-tabs::-webkit-scrollbar-track,
+.detail-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-tabs::-webkit-scrollbar-thumb,
+.detail-tabs::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: transparent;
+}
+
+.workspace-tabs:hover::-webkit-scrollbar-thumb,
+.workspace-tabs:focus-within::-webkit-scrollbar-thumb,
+.detail-tabs:hover::-webkit-scrollbar-thumb,
+.detail-tabs:focus-within::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background));
 }
 
 .workspace-header > .workspace-tabs {

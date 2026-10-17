@@ -192,7 +192,80 @@ export function getSourceIntakeHtml(): string {
 }
 
 /** Compact persistent Webview View used as the always-visible local source drop target. */
-export function getSourceDropHtml(): string {
+function getLegacySourceDropHtml(): string {
   const nonce = randomBytes(18).toString('base64url');
   return String.raw`<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';"><style nonce="${nonce}">*{box-sizing:border-box}body{margin:0;padding:6px 8px;color:var(--vscode-foreground);background:var(--vscode-sideBar-background);font:var(--vscode-font-size)/1.35 var(--vscode-font-family)}.drop{display:block;width:100%;border:1px dashed var(--vscode-focusBorder);border-radius:6px;padding:14px 8px;text-align:center;color:var(--vscode-foreground);background:color-mix(in srgb,var(--vscode-focusBorder) 12%,var(--vscode-sideBar-background));cursor:pointer}.drop:hover{background:color-mix(in srgb,var(--vscode-focusBorder) 20%,var(--vscode-sideBar-background))}.drop.dragging{border-color:var(--vscode-focusBorder);background:var(--vscode-list-dropBackground)}svg{width:20px;height:20px;display:block;margin:0 auto 4px;fill:none;stroke:currentColor;stroke-width:1.6}strong{display:block;font-weight:600}.hint{display:block;margin-top:2px;color:var(--vscode-descriptionForeground);font-size:11px}button{margin-top:6px;padding:3px 9px;border:1px solid var(--vscode-button-border,var(--vscode-button-background));border-radius:3px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);font:inherit;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}button:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}button:disabled{opacity:.6;cursor:default}#status{min-height:14px;margin:4px 0 0;font-size:11px;overflow-wrap:anywhere}#status[data-state=error]{color:var(--vscode-errorForeground)}</style></head><body><button class="drop" id="drop" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 15v4h16v-4"/></svg><strong>Drop JSONL here</strong><span class="hint">or choose a local file</span><span id="status" role="status" aria-live="polite"></span></button><script nonce="${nonce}">(()=>{const v=acquireVsCodeApi(),d=document.getElementById('drop'),s=document.getElementById('status');let busy=false,depth=0;function status(t,state){s.textContent=t;s.dataset.state=state}function send(m){if(busy)return;busy=true;status('Adding source…','busy');v.postMessage(m).catch(()=>{busy=false;status('Source view was closed. Reopen it and try again.','error')})}d.addEventListener('click',()=>send({type:'pick-files'}));document.addEventListener('dragenter',e=>{e.preventDefault();depth++;d.classList.add('dragging')});document.addEventListener('dragleave',e=>{e.preventDefault();if(--depth<=0){depth=0;d.classList.remove('dragging')}});document.addEventListener('dragover',e=>{e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect=busy?'none':'copy'});document.addEventListener('drop',e=>{e.preventDefault();depth=0;d.classList.remove('dragging');if(busy||!e.dataTransfer)return;const raw=e.dataTransfer.getData('text/uri-list');if(raw){const uris=raw.split(/\r?\n/u).map(x=>x.trim()).filter(x=>x&&!x.startsWith('#'));send({type:'drop-uris',uris});return}status('Drop from the VS Code Explorer or click this box to choose files.','idle')});window.addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='status'||typeof m.text!=='string')return;busy=m.state==='busy';status(m.text,m.state)})})();</script></body></html>`;
+}
+export function getSourceDropHtml(): string {
+  const nonce = randomBytes(18).toString('base64url');
+  return String.raw`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';">
+  <style nonce="${nonce}">
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 2px 8px 4px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: var(--vscode-font-size)/1.35 var(--vscode-font-family); }
+    button { font: inherit; cursor: pointer; }
+    .toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 4px; color: var(--vscode-foreground); background: transparent; text-align: left; }
+    .toggle:hover { background: var(--vscode-list-hoverBackground); }
+    .toggle:focus-visible, .drop:focus-visible, .source-action:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+    .toggle svg { width: 14px; height: 14px; flex: 0 0 14px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .toggle strong { flex: 1; font-weight: 600; }
+    .toggle small { color: var(--vscode-descriptionForeground); font-size: 10px; }
+    .chevron { color: var(--vscode-descriptionForeground); font-size: 13px; }
+    .actions { padding: 4px 0 2px; }
+    .drop { display: block; width: 100%; border: 1px dashed var(--vscode-focusBorder); border-radius: 5px; padding: 10px 8px; color: var(--vscode-foreground); background: color-mix(in srgb, var(--vscode-focusBorder) 12%, var(--vscode-sideBar-background)); text-align: center; }
+    .drop:hover { background: color-mix(in srgb, var(--vscode-focusBorder) 20%, var(--vscode-sideBar-background)); }
+    .drop.dragging { border-color: var(--vscode-focusBorder); background: var(--vscode-list-dropBackground); }
+    .drop svg { width: 18px; height: 18px; display: block; margin: 0 auto 3px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+    .drop strong { display: block; font-weight: 600; }
+    .hint { display: block; margin-top: 2px; color: var(--vscode-descriptionForeground); font-size: 10px; }
+    .source-actions { display: flex; gap: 5px; margin-top: 5px; }
+    .source-action { flex: 1; padding: 3px 6px; border: 1px solid var(--vscode-button-border, var(--vscode-widget-border)); border-radius: 3px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); }
+    .source-action:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
+    [hidden] { display: none !important; }
+    #status { min-height: 14px; margin: 3px 0 0; overflow-wrap: anywhere; font-size: 10px; }
+    #status[data-state=error] { color: var(--vscode-errorForeground); }
+  </style>
+</head>
+<body>
+  <button class="toggle" id="toggle" type="button" aria-expanded="false" aria-controls="source-actions">
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    <strong>Add source</strong><small>JSONL / folder</small><span class="chevron" aria-hidden="true">›</span>
+  </button>
+  <section class="actions" id="source-actions" hidden aria-label="Source options">
+    <button class="drop" id="drop" type="button">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 15v4h16v-4"/></svg>
+      <strong>Drop JSONL here</strong><span class="hint">or choose a local file</span>
+    </button>
+    <div class="source-actions"><button class="source-action" id="files" type="button">Files</button><button class="source-action" id="folder" type="button">Folder</button></div>
+    <span class="hint">Paste JSONL and Connect are available from the Add Source command menu.</span>
+    <span id="status" role="status" aria-live="polite"></span>
+  </section>
+  <script nonce="${nonce}">
+    (() => {
+      const v = acquireVsCodeApi();
+      const toggle = document.getElementById('toggle');
+      const actions = document.getElementById('source-actions');
+      const drop = document.getElementById('drop');
+      const statusNode = document.getElementById('status');
+      let busy = false;
+      let depth = 0;
+      function status(text, state) { statusNode.textContent = text; statusNode.dataset.state = state; }
+      function send(message) { if (busy) return; busy = true; status('Adding source…', 'busy'); Promise.resolve(v.postMessage(message)).catch(() => { busy = false; status('Source view was closed. Reopen it and try again.', 'error'); }); }
+      toggle.addEventListener('click', () => { const expanded = toggle.getAttribute('aria-expanded') === 'true'; toggle.setAttribute('aria-expanded', String(!expanded)); actions.hidden = expanded; toggle.querySelector('.chevron').textContent = expanded ? '›' : '⌄'; if (!expanded) drop.focus(); });
+      drop.addEventListener('click', () => send({ type: 'pick-files' }));
+      document.getElementById('files').addEventListener('click', () => send({ type: 'pick-files' }));
+      document.getElementById('folder').addEventListener('click', () => send({ type: 'pick-folder' }));
+      document.addEventListener('dragenter', event => { event.preventDefault(); if (actions.hidden) { actions.hidden = false; toggle.setAttribute('aria-expanded', 'true'); toggle.querySelector('.chevron').textContent = '⌄'; } depth++; drop.classList.add('dragging'); });
+      document.addEventListener('dragleave', event => { event.preventDefault(); if (--depth <= 0) { depth = 0; drop.classList.remove('dragging'); } });
+      document.addEventListener('dragover', event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; });
+      document.addEventListener('drop', event => { event.preventDefault(); depth = 0; drop.classList.remove('dragging'); if (busy || !event.dataTransfer) return; const raw = event.dataTransfer.getData('text/uri-list'); if (raw) { const uris = raw.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#')); send({ type: 'drop-uris', uris }); return; } status('Drop from the VS Code Explorer or choose Files.', 'idle'); });
+      window.addEventListener('message', event => { const message = event.data; if (!message || message.type !== 'status' || typeof message.text !== 'string') return; busy = message.state === 'busy'; status(message.text, message.state); });
+    })();
+  </script>
+</body>
+</html>`;
 }

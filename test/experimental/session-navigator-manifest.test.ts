@@ -15,13 +15,10 @@ describe('Session Navigator layout contract', () => {
         when: '!config.jsonlView.sessionNavigator.enabled',
         contents: expect.stringContaining('[Enable Session Navigator](command:jsonlView.sessionNavigator.enable)'),
       }),
-      expect.objectContaining({
-        view: 'jsonlView.recentPreviews',
-        contents: expect.stringContaining('[Paste JSONL](command:jsonlView.sessionNavigator.addSourceFromClipboard)'),
-      }),
     ]);
     expect(manifest.contributes.views.jsonlViewSessionNavigator[0]).toMatchObject({ type: 'webview', id: 'jsonlView.sourceDrop' });
     expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.sessionNavigator')).toBeTruthy();
+    expect(manifest.contributes.views.jsonlViewSessionNavigator.find((view: { id: string }) => view.id === 'jsonlView.recentPreviews')).toBeUndefined();
   });
 
   it('keeps Agent Sessions as one fixed Activity Bar entry', async () => {
@@ -34,7 +31,7 @@ describe('Session Navigator layout contract', () => {
     const listTreeIcons = manifest.contributes.commands.filter((command: { icon?: string }) => command.icon === '$(list-tree)');
     expect(listTreeIcons).toHaveLength(0);
     expect(manifest.contributes.views.jsonlViewSessionNavigator.map((view: { id: string }) => view.id)).toEqual([
-      'jsonlView.sourceDrop', 'jsonlView.sessionNavigator', 'jsonlView.recentPreviews',
+      'jsonlView.sourceDrop', 'jsonlView.sessionNavigator',
     ]);
   });
 
@@ -84,5 +81,15 @@ describe('Session Navigator layout contract', () => {
     ]);
     expect(sourceItems.every((item: { when: string }) => item.when === 'view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.source(?:\\.partial)?$/')).toBe(true);
     expect(sourceItems.some((item: { command: string }) => /openEntity|openEntityWith|copySessionId|openTimeline/iu.test(item.command))).toBe(false);
+  });
+
+  it('keeps temporary preview actions inside the Sessions tree', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    const previewItems = manifest.contributes.menus['view/item/context'].filter((item: { command: string }) => item.command.startsWith('jsonlView.previews.'));
+    expect(previewItems.map((item: { command: string }) => item.command)).toEqual([
+      'jsonlView.previews.saveAs', 'jsonlView.previews.openSavedCopy',
+    ]);
+    expect(previewItems.every((item: { when: string }) => item.when.startsWith('view == jsonlView.sessionNavigator && viewItem == jsonlView.preview.'))).toBe(true);
+    expect(JSON.stringify(manifest)).not.toContain('jsonlView.recentPreviews');
   });
 });

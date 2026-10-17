@@ -11,11 +11,11 @@ import {
 } from '../../src/webview/state';
 
 describe('persisted table query migration', () => {
-  it('persists the display choice without changing query, page, follow or selection intent', () => {
+  it('keeps legacy conversation state writable but restores the supported table view', () => {
     const initial = createInitialState({ query: 'answer', followMode: true, sortDirection: 'desc' });
     const next = workspaceReducer(initial, { type: 'SET_DISPLAY_MODE', mode: 'conversation' });
     expect(next).toEqual({ ...initial, displayMode: 'conversation' });
-    expect(createInitialState(toPersistedState(next)).displayMode).toBe('conversation');
+    expect(createInitialState(toPersistedState(next)).displayMode).toBe('table');
     expect(createInitialState().displayMode).toBe('table');
   });
 

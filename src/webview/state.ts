@@ -207,7 +207,9 @@ export function createInitialState(restored?: PersistedWorkspaceState, pageSize 
     insightScope: restored?.insightScope ?? 'current-view',
     analysisIntentRevision: 0,
     activeTab: restored?.activeTab ?? 'table',
-    displayMode: restored?.displayMode === 'conversation' ? 'conversation' : 'table',
+    // Conversation projection is retained internally for compatibility, but is
+    // temporarily unavailable until its profile-aware formatting is complete.
+    displayMode: 'table',
     detailTab: restored?.detailTab ?? 'tree',
     detailWidth: restored?.detailWidth ?? DEFAULT_DETAIL_WIDTH,
     query: restored?.query ?? '',

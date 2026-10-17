@@ -19,7 +19,6 @@ import {
 import { getWebviewHtml } from './webview-html';
 import { RevealIntentRegistry, type RevealIntent } from '../experimental';
 import { SessionNavigatorTreeProvider, type NavigatorBridgeTarget } from '../experimental/session-navigator/tree-provider';
-import { RecentPreviewsTreeProvider } from '../experimental/session-navigator/recent-previews';
 import type { SessionPreviews } from '../experimental/session-navigator/session-previews';
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
 import { appendExecutionIdentityLog, appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
@@ -820,13 +819,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const revealRegistry = new RevealIntentRegistry();
   const navigator = new SessionNavigatorTreeProvider(context, revealRegistry);
   activeNavigator = navigator;
-  const recentPreviews = new RecentPreviewsTreeProvider(navigator.previews);
   const provider = new JsonlViewProvider(context, revealRegistry, (target) => navigator.open(target), outputChannel, runtimeIdentity, navigator.previews);
   context.subscriptions.push(
     ...navigator.register(),
     navigator,
-    ...recentPreviews.register(),
-    recentPreviews,
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {
       supportsMultipleEditorsPerDocument: false,
       webviewOptions: { retainContextWhenHidden: false },

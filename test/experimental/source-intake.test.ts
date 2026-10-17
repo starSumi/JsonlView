@@ -308,8 +308,10 @@ describe('persistent sidebar source drop view', () => {
     const html = getSourceDropHtml();
     const nonce = html.match(/<script nonce="([^"]+)"/u)?.[1];
     expect(nonce).toBeTruthy();
-    expect(html).toContain('border:1px dashed');
-    expect(html).toContain('Drop from the VS Code Explorer');
+    expect(html).toContain('border: 1px dashed');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('id="source-actions" hidden');
+    expect(html).toContain('Paste JSONL and Connect are available from the Add Source command menu.');
     expect(html).toContain(`script-src 'nonce-${nonce}'`);
     expect(html).not.toMatch(/innerHTML|readText|navigator\.clipboard|unsafe-eval|https?:\/\//u);
     expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();

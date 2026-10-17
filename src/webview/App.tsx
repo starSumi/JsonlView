@@ -1045,9 +1045,6 @@ export function App(): React.JSX.Element {
           <fieldset className="display-mode-switch" aria-label="Record display">
             <button type="button" aria-pressed={state.displayMode === 'table'}
               onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', mode: 'table' })}>Table</button>
-            <button type="button" aria-pressed={state.displayMode === 'conversation'}
-              title="Compact conversation previews; all physical records remain available"
-              onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', mode: 'conversation' })}>Conversation</button>
           </fieldset>
         <RecordQueryControls
           query={state.query}

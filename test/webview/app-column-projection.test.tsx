@@ -225,7 +225,7 @@ describe('App column presentation and projection boundary', () => {
     expect(props(DatasetInsights).summary.scenes).toEqual({ pretraining: 20 });
   });
 
-  it('switches conversation display locally without requerying or fetching details, retaining selection and query', () => {
+  it('keeps the supported table display while conversation projection is temporarily unavailable', () => {
     boot();
     props(RecordQueryControls).onSearchChange('keep');
     props(RecordQueryControls).onSearchSubmit();
@@ -235,13 +235,20 @@ describe('App column presentation and projection boundary', () => {
     props(RecordTable).onSelect(rows[3]!.ref);
     commit();
     const before = sent.length;
-    chooseDisplay('Conversation');
-    expect(props(RecordTable).displayMode).toBe('conversation');
+    expect(props(RecordTable).displayMode).toBe('table');
+    const displayLabels: string[] = [];
+    const visit = (node: ReactNode): void => {
+      if (Array.isArray(node)) { node.forEach(visit); return; }
+      if (!React.isValidElement<{ children?: ReactNode }>(node)) return;
+      if (node.type === 'button' && typeof node.props.children === 'string') displayLabels.push(node.props.children);
+      visit(node.props.children);
+    };
+    visit(tree);
+    expect(displayLabels).toContain('Table');
+    expect(displayLabels).not.toContain('Conversation');
     expect(props(RecordTable).rows).toBe(rows);
     expect(props(RecordTable).selectedOrdinal).toBe('3');
     expect(props(RecordQueryControls).query).toBe('keep');
-    chooseDisplay('Table');
-    expect(props(RecordTable).displayMode).toBe('table');
     expect(props(RecordTable).selectedOrdinal).toBe('3');
     expect(sent.slice(before).filter((request) => request.type === 'GET_ROWS' || request.type === 'GET_DETAIL')).toEqual([]);
   });

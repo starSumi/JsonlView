@@ -6,7 +6,7 @@ import { createSessionNavigatorProvider } from './provider-factory';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import type { RevealIntentRegistry } from './reveal-intents';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
-import { SessionPreviews } from './session-previews';
+import { type SessionPreview, SessionPreviews } from './session-previews';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorSortKey } from './types';
 import type { NavigatorBridgeResultV1 } from '../../shared/protocol/navigator-bridge';
 
@@ -59,9 +59,18 @@ interface CatalogErrorTreeNode {
   readonly detail: string;
 }
 
+interface PreviewGroupTreeNode {
+  readonly nodeKind: 'preview-group';
+}
+
+interface PreviewTreeNode {
+  readonly nodeKind: 'preview';
+  readonly previewId: string;
+}
+
 interface SourceStatus { phase: 'loading' | 'error'; detail?: string }
 
-export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode | CatalogPageTreeNode | CatalogErrorTreeNode;
+export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode | CatalogPageTreeNode | CatalogErrorTreeNode | PreviewGroupTreeNode | PreviewTreeNode;
 
 export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<SessionNavigatorTreeNode>, vscode.Disposable {
   readonly #context: vscode.ExtensionContext;
@@ -70,6 +79,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   readonly #providers = new Map<string, SessionNavigatorProvider>();
   readonly #sourceStatus = new Map<string, SourceStatus>();
   readonly #intake: SourceIntakePanel;
+  readonly #previewRegistration: vscode.Disposable;
   #store: CatalogStore | undefined;
   #openingStore: Promise<CatalogStore> | undefined;
   #refreshing: Promise<void> | undefined;
@@ -102,6 +112,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       (provider, signal) => this.authorizeDetectedAgent(provider, signal),
       previews,
     );
+    this.#previewRegistration = previews.onDidChange(() => this.#changed.fire(undefined));
   }
 
   public register(): vscode.Disposable[] {
@@ -130,6 +141,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sortTitle', () => this.setSort('title')),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.sort', () => this.chooseSort()),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.addSourceFromClipboard', () => this.addSource()),
+      vscode.commands.registerCommand('jsonlView.previews.open', (node: unknown) => this.openPreview(node)),
+      vscode.commands.registerCommand('jsonlView.previews.saveAs', (node: unknown) => this.savePreviewAs(node)),
+      vscode.commands.registerCommand('jsonlView.previews.openSavedCopy', (node: unknown) => this.openSavedPreviewCopy(node)),
       vscode.commands.registerCommand('jsonlView.revealSessionNode', (node: EntityTreeNode) => this.reveal(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.openEntity', (node: SessionNavigatorTreeNode) => this.openEntity(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.openEntityWith', (node: SessionNavigatorTreeNode) => this.openEntityWith(node)),
@@ -159,6 +173,31 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   }
 
   public getTreeItem(node: SessionNavigatorTreeNode): vscode.TreeItem {
+    if (node.nodeKind === 'preview-group') {
+      const item = new vscode.TreeItem('Recent Previews', vscode.TreeItemCollapsibleState.Collapsed);
+      item.id = 'recent-previews';
+      item.contextValue = 'jsonlView.sessionNavigator.previewGroup';
+      item.description = String(this.previews.list().length);
+      item.iconPath = new vscode.ThemeIcon('history');
+      item.tooltip = 'Temporary previews from this VS Code session. Save As keeps a permanent copy.';
+      return item;
+    }
+    if (node.nodeKind === 'preview') {
+      const preview = this.previewForId(node.previewId);
+      const item = new vscode.TreeItem(
+        preview === undefined ? 'Preview unavailable' : 'Preview · ' + new Date(preview.createdAt).toLocaleTimeString(),
+        vscode.TreeItemCollapsibleState.None,
+      );
+      item.id = 'preview:' + node.previewId;
+      item.contextValue = preview?.savedUri === undefined ? 'jsonlView.preview.temporary' : 'jsonlView.preview.savedCopy';
+      item.description = preview === undefined ? 'Refresh to remove' : String(preview.recordCount) + ' records · ' + (preview.status === 'saving' ? 'Saving…' : preview.savedUri === undefined ? 'Temporary' : 'Saved copy');
+      item.tooltip = preview === undefined
+        ? 'This temporary preview is no longer available.'
+        : new Date(preview.createdAt).toLocaleString() + '\n' + String(preview.sizeBytes) + ' UTF-8 bytes. Temporary source is recoverable during this VS Code session only. Save As keeps a permanent copy.';
+      item.iconPath = new vscode.ThemeIcon(preview?.status === 'saving' ? 'loading~spin' : 'file');
+      item.command = { command: 'jsonlView.previews.open', title: 'Open temporary preview', arguments: [node] };
+      return item;
+    }
     if (node.nodeKind === 'catalog-page') {
       const item = new vscode.TreeItem('More indexed sessions…', vscode.TreeItemCollapsibleState.Collapsed);
       item.id = 'catalog-page:' + childrenFlightKey(node);
@@ -223,7 +262,16 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   }
 
   public async getChildren(node?: SessionNavigatorTreeNode): Promise<SessionNavigatorTreeNode[]> {
-    if (this.#disposed || !this.isEnabled()) return [];
+    if (this.#disposed) return [];
+    // Temporary previews belong to this VS Code session, not to Agent source
+    // authorization. Keep their metadata-only recovery branch visible even
+    // while Navigator is opt-in disabled, without opening the catalog or
+    // probing any configured source.
+    if (!this.isEnabled()) {
+      if (node?.nodeKind === 'preview-group') return this.previews.list().slice().reverse().map((preview) => ({ nodeKind: 'preview', previewId: preview.id } satisfies PreviewTreeNode));
+      if (node === undefined && this.previews.list().length > 0) return [{ nodeKind: 'preview-group' }];
+      return [];
+    }
     const store = await this.ensureStore();
     if (this.#disposed || !this.isEnabled()) return [];
     if (node === undefined) {
@@ -234,8 +282,12 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         this.#initialized = true;
         void this.refresh();
       }
-      return store.listSources().map((source) => ({ nodeKind: 'source', source } satisfies SourceTreeNode));
+      const children: SessionNavigatorTreeNode[] = store.listSources().map((source) => ({ nodeKind: 'source', source } satisfies SourceTreeNode));
+      if (this.previews.list().length > 0) children.push({ nodeKind: 'preview-group' });
+      return children;
     }
+    if (node.nodeKind === 'preview-group') return this.previews.list().slice().reverse().map((preview) => ({ nodeKind: 'preview', previewId: preview.id } satisfies PreviewTreeNode));
+    if (node.nodeKind === 'preview') return [];
     if (node.nodeKind === 'source') {
       if (store.getSourcePageState(node.source.sourceId)?.generation !== node.source.generation) {
         return this.catalogPageError(node.source.sourceId, 'Catalog source generation is stale. Refresh to reload session pages.');
@@ -648,6 +700,34 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (node.nodeKind === 'entity') await vscode.env.clipboard.writeText(node.entity.nativeId);
   }
 
+  private previewForId(id: string): SessionPreview | undefined {
+    return this.previews.list().find((preview) => preview.id === id);
+  }
+
+  private previewFromCommand(node: unknown): SessionPreview | undefined {
+    if (node === null || typeof node !== 'object') return undefined;
+    const candidate = node as { previewId?: unknown; id?: unknown };
+    const id = typeof candidate.previewId === 'string' ? candidate.previewId : typeof candidate.id === 'string' ? candidate.id : undefined;
+    return id === undefined ? undefined : this.previewForId(id);
+  }
+
+  private openPreview(node: unknown): Promise<void> | undefined {
+    const preview = this.previewFromCommand(node);
+    return preview === undefined ? undefined : this.previews.reopen(preview.id);
+  }
+
+  private savePreviewAs(node: unknown): Promise<'cancelled' | 'failed' | 'saved' | 'saved-open-failed'> | undefined {
+    const preview = this.previewFromCommand(node);
+    return preview === undefined ? undefined : this.previews.saveAs(preview.sourceUri);
+  }
+
+  private async openSavedPreviewCopy(node: unknown): Promise<void> {
+    const preview = this.previewFromCommand(node);
+    if (preview?.savedUri === undefined) return;
+    try { await vscode.commands.executeCommand('vscode.openWith', preview.savedUri, 'jsonlView.editor'); }
+    catch { void vscode.window.showErrorMessage('The saved preview copy could not be opened.'); }
+  }
+
   public dispose(): void {
     this.#disposed = true;
     this.#scanController?.abort();
@@ -658,6 +738,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     this.#store = undefined;
     this.#providers.clear();
     void this.#intake.dispose().catch(() => { /* Preserve any preview whose cleanup could not be verified. */ });
+    this.#previewRegistration.dispose();
     void this.previews.dispose().catch(() => {});
     this.#changed.dispose();
   }

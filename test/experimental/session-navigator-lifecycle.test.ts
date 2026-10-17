@@ -27,7 +27,7 @@ vi.mock('vscode', () => ({
     parse: (value: string) => ({ scheme: new URL(value).protocol.replace(':', ''), fsPath: fileURLToPath(value), toString: () => value }),
   },
   ConfigurationTarget: { Global: 1 },
-  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showInformationMessage: host.info, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
+  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showSaveDialog: host.dialog, showInformationMessage: host.info, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
   workspace: {
     fs: { createDirectory: async ({ fsPath }: { fsPath: string }) => { const { mkdir } = await import('node:fs/promises'); await mkdir(fsPath, { recursive: true }); } },
     getConfiguration: () => ({
@@ -99,6 +99,32 @@ describe('Session Navigator host lifecycle', () => {
     expect(await tree.getChildren()).toEqual([]);
     if (choice === 'Settings') expect(host.execute).toHaveBeenCalledWith('workbench.action.openSettings', 'jsonlView.sessionNavigator.enabled');
     else expect(host.execute).not.toHaveBeenCalled();
+  });
+
+  it('keeps metadata-only previews in the Sessions tree without opening the catalog when disabled', async () => {
+    host.config.set('sessionNavigator.enabled', false);
+    const opening = vi.spyOn(CatalogStore, 'open');
+    const preview = await tree.previews.create('{"synthetic":true}\n', 1, new AbortController().signal);
+    expect(preview).toBeDefined();
+    const roots = await tree.getChildren();
+    const group = roots.find((node) => node.nodeKind === 'preview-group');
+    expect(group).toBeDefined();
+    expect(roots.filter((node) => node.nodeKind === 'preview-group')).toHaveLength(1);
+    const children = await tree.getChildren(group);
+    expect(children).toHaveLength(1);
+    const child = children[0]!;
+    const item = tree.getTreeItem(child);
+    expect(item.contextValue).toBe('jsonlView.preview.temporary');
+    expect(item.description).toContain('1 records');
+    expect(item.command).toMatchObject({ command: 'jsonlView.previews.open' });
+    host.execute.mockClear();
+    await host.commands.get('jsonlView.previews.open')!(child);
+    expect(host.execute).toHaveBeenCalledWith('vscode.openWith', preview!.sourceUri, 'jsonlView.editor');
+    host.dialog.mockResolvedValue(undefined);
+    expect(await host.commands.get('jsonlView.previews.saveAs')!(child)).toBe('cancelled');
+    expect(host.scan).not.toHaveBeenCalled();
+    expect(host.probe).not.toHaveBeenCalled();
+    expect(opening).not.toHaveBeenCalled();
   });
 
   it('remembers explicit Enable and opens later without repeating the authorization prompt', async () => {
