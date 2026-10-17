@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useRef, useState } from 'react';
-import { ArrowDownNarrowWide, ArrowDownWideNarrow, Filter, Search, X } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Filter, Search, X } from 'lucide-react';
 import type { ColumnSpec, RowFilter, RowFilterOperator, SortDirection } from '../../../shared/types';
 import { useLightDismiss } from '../../use-light-dismiss';
 import { useViewportPopover } from '../../use-viewport-popover';
@@ -111,6 +111,7 @@ export function RecordQueryControls({
       </form>
       <fieldset
         className="row-order-control"
+        data-direction={sortDirection}
         aria-label="Record order"
         title={descendingDisabled ? descendingDisabledReason : undefined}
       >
@@ -125,7 +126,7 @@ export function RecordQueryControls({
           onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
         >
           {sortDirection === 'asc'
-            ? <ArrowDownNarrowWide size={15} aria-hidden />
+            ? <ArrowUpNarrowWide size={15} aria-hidden />
             : <ArrowDownWideNarrow size={15} aria-hidden />}
           <span className="row-order-label" aria-hidden="true">{rowOrderLabel}</span>
         </button>
