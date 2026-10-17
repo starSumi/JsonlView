@@ -5,6 +5,7 @@ import { formatBytes } from './format';
 export interface WorkspaceHeaderProps {
   children: React.ReactNode;
   navigation?: React.ReactNode;
+  secondary?: React.ReactNode;
   indexedBytes: string;
   sizeBytes: string;
   indexedRecords: string;
@@ -19,7 +20,7 @@ export interface WorkspaceHeaderProps {
   onOpenNavigator: () => void;
 }
 
-export function WorkspaceHeader({ children, navigation, ...status }: WorkspaceHeaderProps): React.JSX.Element {
+export function WorkspaceHeader({ children, navigation, secondary, ...status }: WorkspaceHeaderProps): React.JSX.Element {
   const indexed = Number(status.indexedBytes);
   const size = Number(status.sizeBytes);
   const progress = size > 0 && Number.isFinite(size) && Number.isFinite(indexed)
@@ -28,42 +29,13 @@ export function WorkspaceHeader({ children, navigation, ...status }: WorkspaceHe
 
   return (
     <header className="workspace-header">
-      {navigation}
-      <div className="status-strip" role="status" aria-live="polite">
-        <span className="status-metric status-records">{status.indexedRecords} rows</span>
-        <span className="status-metric status-bytes">{formatBytes(status.indexedBytes)} / {formatBytes(status.sizeBytes)}</span>
-        <span className="status-metric status-valid"><Check size={13} aria-hidden />{status.validRecords}</span>
-        <span
-          role="status"
-          className={`status-metric status-problems${status.problemRecords === '0' ? '' : ' status-problem'}`}
-          data-empty={status.problemRecords === '0'}
-          title="Problem records observed during hydration for this document generation; this is not a complete-file total"
-          aria-label={`${status.problemRecords} problem records observed during hydration; not a complete-file total`}
-        >
-          <CircleAlert size={13} aria-hidden />
-          <span>{status.problemRecords}</span>
-          <span className="status-scope">{status.problemRecords === '1' ? 'record' : 'records'} observed</span>
-        </span>
-        {status.appendPending ? (
-          <span className="snapshot-update" title="The current snapshot remains readable; rebuild to include appended records.">
-            <span className="snapshot-update-label">Update pending</span>
-            <span className="snapshot-update-compact">Pending</span>
-          </span>
-        ) : null}
-        <span className="status-phase" data-complete={status.complete}>
-          {!status.complete ? <LoaderCircle size={13} className="spin" aria-hidden /> : null}
-          {status.phase}
-        </span>
-        <span className="progress-track" role="progressbar" aria-label={`${progress.toFixed(0)}% indexed`}
-          aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}
-          aria-valuetext={`${Math.round(progress)}% indexed`}>
-          <span style={{ width: `${progress}%` }} />
-        </span>
-      </div>
-      <div className="toolbar">
+      <div className="workspace-header-primary">
         <button type="button" className="icon-button navigator-action" title="Open Navigator" aria-label="Open Navigator" onClick={status.onOpenNavigator}>
           <ListTree size={15} aria-hidden />
         </button>
+        {navigation}
+        <div className="toolbar">
+          {children}
         {status.rebuildAvailable ? (
           <button
             type="button"
@@ -77,7 +49,41 @@ export function WorkspaceHeader({ children, navigation, ...status }: WorkspaceHe
             <span className="rebuild-action-label">Rebuild</span>
           </button>
         ) : null}
-        {children}
+        </div>
+      </div>
+      <div className={`workspace-header-secondary${secondary ? ' has-query' : ''}`}>
+        <div className="status-strip" role="status" aria-live="polite">
+          <span className="status-metric status-records">{status.indexedRecords} rows</span>
+          <span className="status-metric status-bytes">{formatBytes(status.indexedBytes)} / {formatBytes(status.sizeBytes)}</span>
+          <span className="status-metric status-valid"><Check size={13} aria-hidden />{status.validRecords}</span>
+          <span
+            role="status"
+            className={`status-metric status-problems${status.problemRecords === '0' ? '' : ' status-problem'}`}
+            data-empty={status.problemRecords === '0'}
+            title="Problem records observed during hydration for this document generation; this is not a complete-file total"
+            aria-label={`${status.problemRecords} problem records observed during hydration; not a complete-file total`}
+          >
+            <CircleAlert size={13} aria-hidden />
+            <span>{status.problemRecords}</span>
+            <span className="status-scope">{status.problemRecords === '1' ? 'record' : 'records'} observed</span>
+          </span>
+          {status.appendPending ? (
+            <span className="snapshot-update" title="The current snapshot remains readable; rebuild to include appended records.">
+              <span className="snapshot-update-label">Update pending</span>
+              <span className="snapshot-update-compact">Pending</span>
+            </span>
+          ) : null}
+          <span className="status-phase" data-complete={status.complete}>
+            {!status.complete ? <LoaderCircle size={13} className="spin" aria-hidden /> : null}
+            {status.phase}
+          </span>
+          <span className="progress-track" role="progressbar" aria-label={`${progress.toFixed(0)}% indexed`}
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}
+            aria-valuetext={`${Math.round(progress)}% indexed`}>
+            <span style={{ width: `${progress}%` }} />
+          </span>
+        </div>
+        {secondary ? <div className="workspace-query-controls">{secondary}</div> : null}
       </div>
     </header>
   );

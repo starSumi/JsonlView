@@ -26,15 +26,18 @@ function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
 describe('workspace header status', () => {
   it('places workspace tabs in the same header while preserving the Navigator action', () => {
     const markup = render({ navigation: React.createElement('nav', { 'aria-label': 'Workspace views' }, 'Table') });
+    expect(markup.indexOf('aria-label="Open Navigator"')).toBeLessThan(markup.indexOf('<nav'));
     expect(markup.indexOf('<nav')).toBeLessThan(markup.indexOf('<div class="status-strip"'));
     expect(markup).toContain('aria-label="Open Navigator"');
   });
 
-  it('places the bounded status region before controls in the wide-layout DOM order', () => {
-    const markup = render();
+  it('places the bounded status region in the second row before query controls', () => {
+    const markup = render({ secondary: React.createElement('fieldset', { className: 'table-query-toolbar' }, 'Search records') });
 
     expect(markup.indexOf('<div class="status-strip"')).toBeGreaterThanOrEqual(0);
-    expect(markup.indexOf('<div class="status-strip"')).toBeLessThan(markup.indexOf('<div class="toolbar"'));
+    expect(markup.indexOf('class="workspace-header-primary')).toBeLessThan(markup.indexOf('class="workspace-header-secondary'));
+    expect(markup.indexOf('<div class="status-strip"')).toBeLessThan(markup.indexOf('<div class="workspace-query-controls"'));
+    expect(markup).toContain('Search records');
     expect(markup).toContain('role="status" aria-live="polite"');
   });
 

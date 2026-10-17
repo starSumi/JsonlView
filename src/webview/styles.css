@@ -66,23 +66,72 @@ select:focus-visible,
   z-index: 6;
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
   overflow: hidden;
-  min-height: 34px;
-  padding: 0 8px 0 0;
+  padding: 0;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
 }
 
+.workspace-header-primary,
+.workspace-header-secondary {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspace-header-primary {
+  flex: 0 0 34px;
+  gap: 6px;
+  overflow: hidden;
+  padding: 0 8px 0 4px;
+}
+
+.workspace-header-secondary {
+  flex: 0 0 auto;
+  gap: 12px;
+  min-height: 34px;
+  overflow: hidden;
+  padding: 0 8px 3px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
+}
+
+.workspace-header-secondary.has-query {
+  justify-content: space-between;
+}
+
+.workspace-query-controls {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workspace-query-controls > .table-query-toolbar {
+  width: 100%;
+  justify-content: flex-end;
+  padding: 2px 0 0;
+  border: 0;
+  background: transparent;
+}
+
+.workspace-query-controls .table-query-toolbar .search-box {
+  flex: 0 1 clamp(180px, 32vw, 420px);
+  min-width: min(160px, 100%);
+  max-width: 420px;
+}
+
 .toolbar {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  order: 3;
   min-width: 0;
+  overflow: hidden;
 }
 
 .toolbar-context {
@@ -587,11 +636,11 @@ select:focus-visible,
 
 .status-strip {
   display: flex;
-  flex: 0 0 auto;
-  order: 2;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
 }
@@ -770,7 +819,7 @@ select:focus-visible,
   background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background));
 }
 
-.workspace-header > .workspace-tabs {
+.workspace-header-primary > .workspace-tabs {
   order: 1;
   flex: 1 1 390px;
   min-width: 0;
@@ -780,7 +829,7 @@ select:focus-visible,
   border-bottom: 0;
 }
 
-.workspace-header > .workspace-tabs button {
+.workspace-header-primary > .workspace-tabs button {
   flex: 0 0 auto;
   min-width: 0;
   padding: 0 8px;
@@ -3106,7 +3155,9 @@ body.is-resizing-column * {
 }
 
 @container workspace (max-width: 720px) {
-  .workspace-header {
+  .workspace-header-primary,
+  .workspace-header-secondary {
+    flex-basis: auto;
     flex-wrap: wrap;
     column-gap: 6px;
     row-gap: 4px;
@@ -3133,7 +3184,16 @@ body.is-resizing-column * {
 }
 
 @container workspace (max-width: 520px) {
-  .workspace-header > .workspace-tabs {
+  .workspace-header-primary > .workspace-tabs {
+    flex-basis: 100%;
+  }
+
+  .workspace-header-secondary.has-query {
+    align-items: flex-start;
+  }
+
+  .workspace-header-secondary.has-query .status-strip,
+  .workspace-header-secondary.has-query .workspace-query-controls {
     flex-basis: 100%;
   }
 

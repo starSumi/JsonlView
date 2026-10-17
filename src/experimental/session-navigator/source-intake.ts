@@ -11,6 +11,7 @@ const MAX_SOURCES = 32;
 
 type IntakeMessage =
   | { readonly type: 'pick-files' | 'pick-folder' }
+  | { readonly type: 'paste-jsonl' | 'connect-agent' }
   | { readonly type: 'drop-uris'; readonly uris: readonly string[] }
   | { readonly type: 'import-jsonl'; readonly text: string }
   | { readonly type: 'authorize-agent'; readonly provider: 'codex' | 'claude' | 'pi' | 'kimi' }
@@ -20,7 +21,7 @@ export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid source request.');
   const message = value as Record<string, unknown>;
   const keys = Object.keys(message);
-  if ((message.type === 'pick-files' || message.type === 'pick-folder') && keys.length === 1) return { type: message.type };
+  if ((message.type === 'pick-files' || message.type === 'pick-folder' || message.type === 'paste-jsonl' || message.type === 'connect-agent') && keys.length === 1) return { type: message.type };
   if (message.type === 'import-jsonl' && keys.length === 2 && typeof message.text === 'string') {
     if (message.text.length > SOURCE_INTAKE_MAX_BYTES || Buffer.byteLength(message.text, 'utf8') > SOURCE_INTAKE_MAX_BYTES) {
       throw new Error('JSONL preview is limited to 1 MiB. Choose Files to open a larger local source.');
@@ -78,11 +79,13 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
 
 export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
 export type DetectedAgentHandler = (provider: Extract<SessionNavigatorProviderId, 'codex' | 'claude' | 'pi' | 'kimi'>, signal: AbortSignal) => Promise<void>;
+export type ConnectSourceHandler = (signal: AbortSignal) => Promise<void>;
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
 export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewProvider {
   readonly #onSource: SourceIntakeHandler;
   readonly #onDetectedAgent: DetectedAgentHandler | undefined;
+  readonly #onConnect: ConnectSourceHandler | undefined;
   readonly #lifetime = new AbortController();
   #panel: vscode.WebviewPanel | undefined;
   #view: vscode.WebviewView | undefined;
@@ -91,9 +94,10 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   #pending: Promise<void> | undefined;
   #disposal: Promise<void> | undefined;
 
-  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, public readonly previews = new SessionPreviews()) {
+  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, public readonly previews = new SessionPreviews(), onConnect?: ConnectSourceHandler) {
     this.#onSource = onSource;
     this.#onDetectedAgent = onDetectedAgent;
+    this.#onConnect = onConnect;
   }
 
   public resolveWebviewView(view: vscode.WebviewView): void {
@@ -159,6 +163,10 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
         await this.handleWebviewDiagnostic(webview, signal, message);
         return;
       }
+      if (message.type === 'paste-jsonl') {
+        this.show();
+        return;
+      }
       await this.post(webview, signal, 'busy', 'Adding source…');
       if (signal.aborted) return;
       if (message.type === 'authorize-agent') {
@@ -166,6 +174,12 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
         await this.#onDetectedAgent(message.provider, signal);
         const providerLabel = message.provider === 'codex' ? 'Codex' : message.provider === 'claude' ? 'Claude' : message.provider === 'kimi' ? 'Kimi Code' : 'pi';
         await this.post(webview, signal, 'success', providerLabel + ' source connected.');
+        return;
+      }
+      if (message.type === 'connect-agent') {
+        if (this.#onConnect === undefined) throw new Error('Source connection is unavailable. Use Add Source to choose a local folder.');
+        await this.#onConnect(signal);
+        await this.post(webview, signal, 'success', 'Source connection complete.');
         return;
       }
       if (message.type === 'import-jsonl') {

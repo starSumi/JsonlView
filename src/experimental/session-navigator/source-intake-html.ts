@@ -231,17 +231,17 @@ export function getSourceDropHtml(): string {
   </style>
 </head>
 <body>
-  <button class="toggle" id="toggle" type="button" aria-expanded="false" aria-controls="source-actions">
+  <button class="toggle" id="toggle" type="button" aria-expanded="true" aria-controls="source-actions">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-    <strong>Add source</strong><small>JSONL / folder</small><span class="chevron" aria-hidden="true">›</span>
+    <strong>Add source</strong><small>JSONL / folder</small><span class="chevron" aria-hidden="true">⌄</span>
   </button>
-  <section class="actions" id="source-actions" hidden aria-label="Source options">
+  <section class="actions" id="source-actions" aria-label="Source options">
+    <div class="source-actions"><button class="source-action" id="files" type="button">Files</button><button class="source-action" id="folder" type="button">Folder</button><button class="source-action" id="paste" type="button">Paste</button><button class="source-action" id="connect" type="button">Connect</button></div>
     <button class="drop" id="drop" type="button">
       <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 15v4h16v-4"/></svg>
       <strong>Drop JSONL here</strong><span class="hint">or choose a local file</span>
     </button>
-    <div class="source-actions"><button class="source-action" id="files" type="button">Files</button><button class="source-action" id="folder" type="button">Folder</button></div>
-    <span class="hint">Paste JSONL and Connect are available from the Add Source command menu.</span>
+    <span class="hint">Files and folders stay read-only. Paste opens a temporary preview; Connect adds an authorized local source.</span>
     <span id="status" role="status" aria-live="polite"></span>
   </section>
   <script nonce="${nonce}">
@@ -259,6 +259,8 @@ export function getSourceDropHtml(): string {
       drop.addEventListener('click', () => send({ type: 'pick-files' }));
       document.getElementById('files').addEventListener('click', () => send({ type: 'pick-files' }));
       document.getElementById('folder').addEventListener('click', () => send({ type: 'pick-folder' }));
+      document.getElementById('paste').addEventListener('click', () => { if (!busy) v.postMessage({ type: 'paste-jsonl' }); });
+      document.getElementById('connect').addEventListener('click', () => send({ type: 'connect-agent' }));
       document.addEventListener('dragenter', event => { event.preventDefault(); if (actions.hidden) { actions.hidden = false; toggle.setAttribute('aria-expanded', 'true'); toggle.querySelector('.chevron').textContent = '⌄'; } depth++; drop.classList.add('dragging'); });
       document.addEventListener('dragleave', event => { event.preventDefault(); if (--depth <= 0) { depth = 0; drop.classList.remove('dragging'); } });
       document.addEventListener('dragover', event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; });

@@ -101,6 +101,9 @@ describe('bounded source intake validation', () => {
     expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'pi' })).toEqual({ type: 'authorize-agent', provider: 'pi' });
     expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi' })).toEqual({ type: 'authorize-agent', provider: 'kimi' });
     expect(() => parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi', root: '/unapproved' })).toThrow();
+    expect(parseSourceIntakeMessage({ type: 'paste-jsonl' })).toEqual({ type: 'paste-jsonl' });
+    expect(parseSourceIntakeMessage({ type: 'connect-agent' })).toEqual({ type: 'connect-agent' });
+    expect(() => parseSourceIntakeMessage({ type: 'paste-jsonl', extra: true })).toThrow();
   });
 
   it('checks local file and folder reality while rejecting remote, command, missing and linked paths', async () => {
@@ -298,6 +301,9 @@ describe('persistent sidebar source drop view', () => {
     expect(html).toContain('Drop JSONL here');
     expect(html).toContain('Drop JSONL here');
     expect(html).toContain('type="button"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).not.toContain('id="source-actions" hidden');
+    for (const id of ['files', 'folder', 'paste', 'connect']) expect(html).toContain(`id="${id}"`);
     receive!({ type: 'drop-uris', uris: [pathToFileURL(directory).toString()] });
     await vi.waitFor(() => expect(host.post.mock.calls.at(-1)?.[0].state).toBe('idle'));
     expect(onSource).toHaveBeenCalledWith(expect.objectContaining({ fsPath: directory }), expect.any(AbortSignal));
@@ -309,12 +315,43 @@ describe('persistent sidebar source drop view', () => {
     const nonce = html.match(/<script nonce="([^"]+)"/u)?.[1];
     expect(nonce).toBeTruthy();
     expect(html).toContain('border: 1px dashed');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('id="source-actions" hidden');
-    expect(html).toContain('Paste JSONL and Connect are available from the Add Source command menu.');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).not.toContain('id="source-actions" hidden');
+    expect(html).toContain("type: 'paste-jsonl'");
+    expect(html).toContain("type: 'connect-agent'");
+    expect(html).toContain('id="files"');
+    expect(html).toContain('id="folder"');
+    expect(html).toContain('id="paste"');
+    expect(html).toContain('id="connect"');
     expect(html).toContain(`script-src 'nonce-${nonce}'`);
     expect(html).not.toMatch(/innerHTML|readText|navigator\.clipboard|unsafe-eval|https?:\/\//u);
     expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
+  });
+
+  it('wires all four native-styled source actions to bounded host messages', async () => {
+    const html = getSourceDropHtml();
+    const source = html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!;
+    for (const [id, expected] of [['files', { type: 'pick-files' }], ['folder', { type: 'pick-folder' }], ['paste', { type: 'paste-jsonl' }], ['connect', { type: 'connect-agent' }]] as const) {
+      const attrs = new Map<string, string>();
+      const element = (initialHidden = false) => ({
+        hidden: initialHidden, textContent: '', dataset: {} as Record<string, string>,
+        listeners: new Map<string, ((event: unknown) => void)[]>(),
+        addEventListener(type: string, listener: (event: unknown) => void) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); },
+        getAttribute(name: string) { return attrs.get(name) ?? null; },
+        setAttribute(name: string, value: string) { attrs.set(name, value); },
+        querySelector() { return { textContent: '' }; },
+        focus() {},
+      });
+      const elements = new Map(['toggle', 'source-actions', 'drop', 'status', 'files', 'folder', 'paste', 'connect'].map((name) => [name, element(name === 'source-actions')]));
+      const posted: unknown[] = [];
+      const document = {
+        getElementById(id: string) { return elements.get(id)!; },
+        addEventListener() {},
+      };
+      new Script(source).runInNewContext({ document, window: { addEventListener() {} }, acquireVsCodeApi: () => ({ postMessage(message: unknown) { posted.push(message); } }) });
+      elements.get(id)!.listeners.get('click')!.at(-1)!({});
+      expect(posted).toEqual([expected]);
+    }
   });
 });
 

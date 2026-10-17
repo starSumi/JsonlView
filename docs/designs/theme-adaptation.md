@@ -50,6 +50,27 @@ theme change while the editor is open must update the surface through the
 existing VS Code token values without rebuilding the document or changing query
 state.
 
+### Two-row workbench header
+
+The workbench header uses two stable rows at normal width. The primary row
+starts with the Session Navigator action at the far left, followed by the
+existing workspace view tabs and file context, then Profile, Follow, and the
+refresh or rebuild action. Profile keeps a short explanatory tooltip so the
+profile selector does not need a second help panel for its basic meaning.
+
+The secondary row separates telemetry from query controls: bounded rows, bytes,
+valid/problem observations, phase, and progress stay in the left group; search,
+order, field filters, row types, and Columns stay in the right group. The query
+input has a bounded width and may wrap on narrow hosts. It must not create an
+outer horizontal scrollbar or displace the telemetry status.
+
+The header and its controls use host semantic tokens and the same focus, hover,
+active, and disabled states as the existing VS Code-native controls. The
+layout change does not alter source bytes, query scope, or indexing semantics.
+The compact Conversation projection remains dormant until its profile-aware
+format contract is accepted; the shipped toolbar exposes the single Table view
+entry.
+
 ## Token and state contract
 
 The following semantic roles are stable. The exact token mapping may evolve

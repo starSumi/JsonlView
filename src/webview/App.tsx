@@ -905,6 +905,89 @@ export function App(): React.JSX.Element {
     dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(desired, containerWidth) });
   };
 
+  const tableQueryControls = state.activeTab === 'table' ? (
+    <fieldset className="table-query-toolbar" aria-label="Table search and display">
+      {previewStatus ? <div className="preview-lifecycle-actions">
+        <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} />
+      </div> : null}
+      <RecordQueryControls
+        query={state.query}
+        searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
+        sortDirection={state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc'}
+        descendingDisabled={summary?.indexingComplete !== true
+          || state.invalidationReason !== undefined
+          || Boolean(state.pending.rebuild)
+          || Boolean(state.pending.order)}
+        descendingDisabledReason={state.invalidationReason !== undefined
+          ? 'Rebuild the changed source before reversing row order'
+          : state.pending.rebuild
+            ? 'Rebuilding the index'
+            : state.pending.order
+              ? 'Saving the row order preference'
+              : 'Indexing the file before reverse order is available'}
+        onSortDirectionChange={setSortDirection}
+        onSearchSubmit={() => {
+          const query = queryController.query;
+          requestRows({ query });
+        }}
+        onSearchChange={(query) => {
+          queryController.pauseFollowing();
+          queryController.editQuery(query);
+        }}
+        onSearchClear={() => {
+          // Clear is an explicit cross-control action. Release a stale
+          // Page focus gate even when the host did not deliver onBlur.
+          queryController.releasePageInputFocus();
+          queryController.editQuery('');
+          requestRows({ query: '' });
+        }}
+        filterActive={state.filters.length > 0}
+        filters={state.filters}
+        filterableColumns={filterableColumns}
+        filterColumnId={filterColumnId}
+        filterOperator={filterOperator}
+        filterOperators={availableFilterOperators}
+        filterValue={filterValue}
+        filterCaseSensitive={filterCaseSensitive}
+        onFilterColumnChange={setFilterColumnId}
+        onFilterOperatorChange={setFilterOperator}
+        onFilterValueChange={setFilterValue}
+        onFilterCaseSensitiveChange={setFilterCaseSensitive}
+        onFilterSubmit={submitStructuredFilter}
+        onFilterClear={() => queryController.applyFilters([])}
+        onFilterRemove={(index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index))}
+      />
+      <RowTypeChooser
+        sources={rowTypeSources(baseColumns, state.schema, state.rows, state.rowTypes)}
+        selection={state.rowTypes}
+        disabled={!summary || !canReadSnapshot(state.invalidationReason)}
+        onChange={(selection) => queryController.applyRowTypes(selection)}
+      />
+      {state.displayMode === 'table' ? <ColumnChooser
+        columns={availableColumns}
+        schema={state.schema}
+        selectedRecordIds={selectedRecordIds}
+        visibility={state.columnVisibility}
+        recordColumnLimit={recordColumnLimit}
+        schemaComplete={state.schemaComplete}
+        schemaLoadFailed={schemaLoadFailed}
+        onRetrySchema={requestSchema}
+        onVisibilityChange={(column, visible) => {
+          dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
+          if (column.source !== 'record') return;
+          const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
+          const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
+          // Retain the current page's bounded projection for display-only
+          // changes. Missing fields (including promoted overflow) still
+          // require hydration through the existing viewport query.
+          if (columns.every((selected) => state.columns.some((current) => current.id === selected.id))) return;
+          requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+        }}
+      /> : null}
+      <small className="table-query-scope">Search and filters query this file together in bounded scans. Results appear in this view.</small>
+    </fieldset>
+  ) : null;
+
   const workspaceStyle = drawerOpen
     ? ({ '--detail-pane-width': `${displayedDetailWidth}px` } as CSSProperties)
     : undefined;
@@ -944,12 +1027,13 @@ export function App(): React.JSX.Element {
             })}
           </nav>
         }
+        secondary={tableQueryControls}
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
           {previewStatus && state.activeTab !== 'table' ? <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} /> : null}
         </div>
-        <label className="compact-field profile-field">
+        <label className="compact-field profile-field" title="Profile controls semantic field labels and dataset projections">
           <span className="profile-label">Profile</span>
           <span className="profile-control">
             <select
@@ -1038,90 +1122,6 @@ export function App(): React.JSX.Element {
         <section className="workspace-primary" aria-label={`${state.activeTab} view`}>
           <div {...workspaceTabs.getPanelProps('table')} className="workspace-tab-panel">
           {state.activeTab === 'table' ? <>
-        <fieldset className="table-query-toolbar" aria-label="Table search and display">
-          {previewStatus ? <div className="preview-lifecycle-actions">
-            <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} />
-          </div> : null}
-          <fieldset className="display-mode-switch" aria-label="Record display">
-            <button type="button" aria-pressed={state.displayMode === 'table'}
-              onClick={() => dispatch({ type: 'SET_DISPLAY_MODE', mode: 'table' })}>Table</button>
-          </fieldset>
-        <RecordQueryControls
-          query={state.query}
-          searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
-          sortDirection={state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc'}
-           descendingDisabled={summary?.indexingComplete !== true
-             || state.invalidationReason !== undefined
-             || Boolean(state.pending.rebuild)
-             || Boolean(state.pending.order)}
-           descendingDisabledReason={state.invalidationReason !== undefined
-             ? 'Rebuild the changed source before reversing row order'
-             : state.pending.rebuild
-               ? 'Rebuilding the index'
-               : state.pending.order
-                 ? 'Saving the row order preference'
-                 : 'Indexing the file before reverse order is available'}
-          onSortDirectionChange={setSortDirection}
-          onSearchSubmit={() => {
-            const query = queryController.query;
-            requestRows({ query });
-          }}
-          onSearchChange={(query) => {
-            queryController.pauseFollowing();
-            queryController.editQuery(query);
-          }}
-          onSearchClear={() => {
-            // Clear is an explicit cross-control action. Release a stale
-            // Page focus gate even when the host did not deliver onBlur.
-            queryController.releasePageInputFocus();
-            queryController.editQuery('');
-            requestRows({ query: '' });
-          }}
-          filterActive={state.filters.length > 0}
-          filters={state.filters}
-          filterableColumns={filterableColumns}
-          filterColumnId={filterColumnId}
-          filterOperator={filterOperator}
-          filterOperators={availableFilterOperators}
-          filterValue={filterValue}
-          filterCaseSensitive={filterCaseSensitive}
-          onFilterColumnChange={setFilterColumnId}
-          onFilterOperatorChange={setFilterOperator}
-          onFilterValueChange={setFilterValue}
-          onFilterCaseSensitiveChange={setFilterCaseSensitive}
-          onFilterSubmit={submitStructuredFilter}
-          onFilterClear={() => queryController.applyFilters([])}
-          onFilterRemove={(index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index))}
-        />
-          <RowTypeChooser
-            sources={rowTypeSources(baseColumns, state.schema, state.rows, state.rowTypes)}
-            selection={state.rowTypes}
-            disabled={!summary || !canReadSnapshot(state.invalidationReason)}
-            onChange={(selection) => queryController.applyRowTypes(selection)}
-          />
-          {state.displayMode === 'table' ? <ColumnChooser
-            columns={availableColumns}
-            schema={state.schema}
-            selectedRecordIds={selectedRecordIds}
-            visibility={state.columnVisibility}
-            recordColumnLimit={recordColumnLimit}
-            schemaComplete={state.schemaComplete}
-            schemaLoadFailed={schemaLoadFailed}
-            onRetrySchema={requestSchema}
-            onVisibilityChange={(column, visible) => {
-              dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
-              if (column.source !== 'record') return;
-              const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
-              const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
-              // Retain the current page's bounded projection for display-only
-              // changes. Missing fields (including promoted overflow) still
-              // require hydration through the existing viewport query.
-              if (columns.every((selected) => state.columns.some((current) => current.id === selected.id))) return;
-              requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
-            }}
-          /> : null}
-          <small className="table-query-scope">Search and filters query this file together in bounded scans. Results appear in this view.</small>
-        </fieldset>
         <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
           </> : null}
           {state.activeTab === 'table' ? (

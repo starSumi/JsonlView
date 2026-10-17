@@ -111,6 +111,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       (uri, signal) => this.confirmCustomSource(uri, () => signal.aborted),
       (provider, signal) => this.authorizeDetectedAgent(provider, signal),
       previews,
+      (signal) => this.authorizeAgent(() => this.#disposed || signal.aborted),
     );
     this.#previewRegistration = previews.onDidChange(() => this.#changed.fire(undefined));
   }
@@ -795,29 +796,29 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (!this.#disposed) this.#intake.show();
   }
 
-  private async authorizeAgent(): Promise<void> {
-    if (this.#disposed) return;
+  private async authorizeAgent(cancelled = () => this.#disposed): Promise<void> {
+    if (this.#disposed || cancelled()) return;
     const provider = await vscode.window.showQuickPick(
       [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'pi', value: 'pi' as const }, { label: 'Kimi Code', value: 'kimi' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
       { placeHolder: 'Choose the source format to authorize' },
     );
-    if (provider === undefined || this.#disposed) return;
+    if (provider === undefined || this.#disposed || cancelled()) return;
 
     const detected = discoverDefaultSources().find((setting) => setting.provider === provider.value);
     if (detected !== undefined) {
       try { await this.authorizeSourceSetting(detected); }
-      catch (error) { if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : 'Source authorization was not confirmed.'); }
+      catch (error) { if (!this.#disposed && !cancelled()) void vscode.window.showWarningMessage(error instanceof Error ? error.message : 'Source authorization was not confirmed.'); }
       return;
     }
 
     const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: true, canSelectMany: false, openLabel: 'Authorize source' });
     const uri = picked?.[0];
-    if (uri === undefined || this.#disposed) return;
+    if (uri === undefined || this.#disposed || cancelled()) return;
     try {
       const canonical = await validateLocalSourceUri(uri.toString());
-      if (!this.#disposed) {
-        try { await this.authorizeSourceUri(provider.value, canonical); }
-        catch (error) { if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : 'Source authorization was not confirmed.'); }
+      if (!this.#disposed && !cancelled()) {
+        try { await this.authorizeSourceUri(provider.value, canonical, cancelled); }
+        catch (error) { if (!this.#disposed && !cancelled()) void vscode.window.showWarningMessage(error instanceof Error ? error.message : 'Source authorization was not confirmed.'); }
       }
     } catch (error) {
       if (!this.#disposed) void vscode.window.showWarningMessage(error instanceof Error ? error.message : String(error));

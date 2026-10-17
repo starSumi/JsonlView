@@ -108,7 +108,10 @@ function props<Props,>(component: ComponentType<Props>): Props {
       for (const child of node) { const found = find(child); if (found !== undefined) return found; }
     } else if (React.isValidElement<{ children?: ReactNode }>(node)) {
       if (node.type === component) return node.props as Props;
-      return find(node.props.children);
+      const foundInChildren = find(node.props.children);
+      if (foundInChildren !== undefined) return foundInChildren;
+      const secondary = (node.props as { secondary?: ReactNode }).secondary;
+      return find(secondary);
     }
     return undefined;
   };
@@ -244,7 +247,7 @@ describe('App column presentation and projection boundary', () => {
       visit(node.props.children);
     };
     visit(tree);
-    expect(displayLabels).toContain('Table');
+    expect(displayLabels).not.toContain('Table');
     expect(displayLabels).not.toContain('Conversation');
     expect(props(RecordTable).rows).toBe(rows);
     expect(props(RecordTable).selectedOrdinal).toBe('3');
