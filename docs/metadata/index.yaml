@@ -611,6 +611,16 @@ documents:
     evidence: []
     revisit: when projection budgets or dataset observation semantics change
     rollback: disable the optional projections and retain the physical record table
+  - id: adr-049-shared-protocol-wire-registry
+    path: docs/decisions/049-shared-protocol-wire-registry.md
+    title: Shared Protocol Wire Registry
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [protocol, transport, navigator, source-registration, lifecycle]
+    evidence: []
+    revisit: when a second wire consumer needs a new direction or protocol version
+    rollback: remove the new registry exports and result message cases before consumer rollback
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

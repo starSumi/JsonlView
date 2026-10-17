@@ -1,6 +1,9 @@
 import type { DatasetRecordSummary } from './dataset-analysis';
+import type { NavigatorBridgeResultV1 } from './protocol/navigator-bridge';
+import type { SourceRegistrationFactsV1 } from './protocol/source-registration';
 
 export const PROTOCOL_VERSION = 1 as const;
+export type ProtocolDirection = 'webview-to-host' | 'host-to-webview';
 export const MAX_DIAGNOSTIC_CODE_LENGTH = 128;
 export const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 512;
 /** Shared producer/receiver limits, measured in UTF-16 code units. */
@@ -419,6 +422,8 @@ export interface TemporaryPreviewStatus {
 
 export interface ProtocolEnvelope<TType extends string, TPayload> {
   protocolVersion: typeof PROTOCOL_VERSION;
+  /** Optional direction discriminator. Legacy envelopes omit it. */
+  direction?: ProtocolDirection;
   type: TType;
   documentId: string;
   generation: string;
@@ -474,7 +479,13 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'ROW_ORDER_CHANGED', { direction: RowSort['direction'] }>
   | ProtocolEnvelope<'REVEAL', { sourceId: string; generation: string; nativeId: string; anchorOrdinal: string }>
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>
-  | ProtocolEnvelope<'ERROR', { code: string; message: string; recoverable: boolean }>;
+  | ProtocolEnvelope<'ERROR', { code: string; message: string; recoverable: boolean }>
+  | ProtocolEnvelope<'NAVIGATOR_STATUS', NavigatorBridgeResultV1>
+  | ProtocolEnvelope<'SOURCE_REGISTRATION_RESULT', SourceRegistrationFactsV1>;
+
+export function isProtocolDirection(value: unknown): value is ProtocolDirection {
+  return value === 'webview-to-host' || value === 'host-to-webview';
+}
 
 export function keyPath(...keys: string[]): FieldPath {
   return { tokens: keys.map((value) => ({ kind: 'key' as const, value })) };

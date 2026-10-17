@@ -17,6 +17,8 @@ import type {
   RowSort,
   SortDirection,
 } from '../shared/types';
+import type { NavigatorBridgeResultV1 } from '../shared/protocol/navigator-bridge';
+import type { SourceRegistrationFactsV1 } from '../shared/protocol/source-registration';
 import { analysisIntentEquals } from '../shared/analysis-intent';
 import { normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage } from './paging';
 import { DEFAULT_DETAIL_WIDTH } from './split-pane';
@@ -106,6 +108,8 @@ export interface WorkspaceState {
   rebuildDetail?: RebuildDetailIntent | undefined;
   detailStale?: boolean | undefined;
   error?: WorkspaceError | undefined;
+  navigatorBridge?: NavigatorBridgeResultV1 | undefined;
+  sourceRegistration?: SourceRegistrationFactsV1 | undefined;
 }
 
 export function canReadSnapshot(reason: WorkspaceState['invalidationReason']): boolean {
@@ -708,6 +712,10 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
       return { ...state, pending };
     case 'REVEAL':
       return { ...state, pending };
+    case 'NAVIGATOR_STATUS':
+      return { ...state, navigatorBridge: message.payload, pending };
+    case 'SOURCE_REGISTRATION_RESULT':
+      return { ...state, sourceRegistration: message.payload, pending };
     case 'SOURCE_INVALIDATED': {
       const reason = nextInvalidationReason(state.invalidationReason, message.payload.reason);
       return {

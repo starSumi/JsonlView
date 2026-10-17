@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, type ProtocolEnvelope } from '../types';
+import { isProtocolDirection, PROTOCOL_VERSION, type ProtocolDirection, type ProtocolEnvelope } from '../types';
 
 export const MAX_PROTOCOL_DOCUMENT_ID_LENGTH = 256;
 export const MAX_PROTOCOL_GENERATION_LENGTH = 256;
@@ -13,6 +13,7 @@ export interface ProtocolEnvelopeInput<TType extends string, TPayload> extends P
   type: TType;
   payload: TPayload;
   epoch?: number;
+  direction?: ProtocolDirection;
 }
 
 export type ProtocolEnvelopeValidation =
@@ -29,6 +30,7 @@ export function createProtocolEnvelope<TType extends string, TPayload>(
 ): ProtocolEnvelope<TType, TPayload> {
   return {
     protocolVersion: PROTOCOL_VERSION,
+    ...(input.direction === undefined ? {} : { direction: input.direction }),
     type: input.type,
     documentId: input.documentId,
     generation: input.generation,
@@ -48,6 +50,9 @@ export function validateProtocolEnvelope(value: unknown): ProtocolEnvelopeValida
   }
   if (value.protocolVersion !== PROTOCOL_VERSION) {
     return { ok: false, error: 'Unsupported protocol version.' };
+  }
+  if (value.direction !== undefined && !isProtocolDirection(value.direction)) {
+    return { ok: false, error: 'Direction is invalid.' };
   }
   if (!isBoundedString(value.type, 64)) {
     return { ok: false, error: 'Message type is required.' };

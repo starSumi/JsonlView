@@ -27,6 +27,8 @@ import {
 import { validateProtocolEnvelope } from './protocol';
 import { isDatasetRuntimeProvenance } from './dataset-provenance';
 import { isDatasetRecordSummary } from './dataset-summary';
+import { isNavigatorBridgeResult } from '../protocol/navigator-bridge';
+import { isSourceRegistrationFacts } from '../protocol/source-registration';
 
 const AGENT_EVENT_KINDS: ReadonlySet<string> = new Set([
   'session', 'turn', 'message', 'log', 'span', 'task', 'action', 'observation',
@@ -43,6 +45,7 @@ const SCAN_TRUNCATION_REASONS: ReadonlySet<string> = new Set([
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
   const envelope = validateProtocolEnvelope(value);
   if (!envelope.ok) return false;
+  if (envelope.envelope.direction !== undefined && envelope.envelope.direction !== 'host-to-webview') return false;
 
   switch (envelope.envelope.type) {
     case 'OPENED':
@@ -91,6 +94,10 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
         && isString(envelope.envelope.payload.code)
         && isString(envelope.envelope.payload.message)
         && typeof envelope.envelope.payload.recoverable === 'boolean';
+    case 'NAVIGATOR_STATUS':
+      return isNavigatorBridgeResult(envelope.envelope.payload);
+    case 'SOURCE_REGISTRATION_RESULT':
+      return isSourceRegistrationFacts(envelope.envelope.payload);
     default:
       return false;
   }

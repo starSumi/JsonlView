@@ -71,6 +71,7 @@ Read these before changing a shared boundary:
 47. [ADR-046 Insights analysis intent and scope](046-insights-analysis-intent-and-scope.md)
 48. [ADR-047 execution identity and request correlation](047-execution-identity-and-request-correlation.md)
 49. [ADR-048 bounded conversation and dataset scenes](048-bounded-conversation-and-dataset-scenes.md)
+50. [ADR-049 shared protocol wire registry](049-shared-protocol-wire-registry.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

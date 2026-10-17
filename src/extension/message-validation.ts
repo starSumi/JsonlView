@@ -28,6 +28,9 @@ export function validateWebviewRequest(rawValue: unknown): ValidationResult {
     return failure(envelope.error);
   }
   const value = envelope.envelope;
+  if (value.direction !== undefined && value.direction !== 'webview-to-host') {
+    return failure('Message direction is invalid for a Webview request.');
+  }
   const { type, payload } = value;
   if (envelope.envelope.requestId.length === 0) {
     return failure('Request id is required.');
