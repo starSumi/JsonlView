@@ -215,11 +215,12 @@ export class CatalogStore implements CatalogPort {
               ELSE 'pending'
             END`).run(input.sourceId, input.configRevision, navigatorEnabled ? 'pending' : 'disabled', now);
       }
-      if (navigatorEnabled) {
-        const rows = this.#db.prepare('SELECT source_id FROM source_registry').all() as Array<{ source_id: string }>;
-        const remove = this.#db.prepare('DELETE FROM source_registry WHERE source_id = ?');
-        for (const row of rows) if (!active.has(row.source_id)) remove.run(row.source_id);
-      }
+      // The effective authorization snapshot is authoritative in either
+      // Navigator mode. Disabled only suppresses entity scanning; it must not
+      // leave revoked metadata rows discoverable on the next session.
+      const rows = this.#db.prepare('SELECT source_id FROM source_registry').all() as Array<{ source_id: string }>;
+      const remove = this.#db.prepare('DELETE FROM source_registry WHERE source_id = ?');
+      for (const row of rows) if (!active.has(row.source_id)) remove.run(row.source_id);
       this.#db.exec('COMMIT');
     } catch (error) {
       this.#db.exec('ROLLBACK');

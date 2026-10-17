@@ -213,6 +213,28 @@ describe('session navigator source boundary', () => {
     store.close();
   });
 
+  it('removes revoked metadata while disabled without starting an entity scan', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-revoke-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const first = await CatalogStore.open(dbPath);
+    const sourceId = 'generic-revoked-source';
+    const input = {
+      sourceId, providerId: 'generic' as const, sourceKind: 'exact_file' as const, canonicalUri: 'file:///E:/synthetic/revoked.jsonl',
+      displayLabel: 'revoked.jsonl', configRevision: 'config-1', authorizationState: 'authorized' as const,
+    };
+    first.reconcileSourceMetadata([input], false);
+    expect(first.getSourceMetadata(sourceId)).toMatchObject({ entityScanState: 'disabled' });
+    first.close();
+
+    const reopened = await CatalogStore.open(dbPath);
+    reopened.reconcileSourceMetadata([], false);
+    expect(reopened.getSourceMetadata(sourceId)).toBeUndefined();
+    expect(reopened.getCheckpoint(sourceId, 'metadata')).toBeUndefined();
+    expect(reopened.getCheckpoint(sourceId, 'entity')).toBeUndefined();
+    reopened.close();
+  });
+
   it('reads bounded catalog child pages with a generation-bound keyset cursor', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-pages-'));
     cleanup.push(root);
