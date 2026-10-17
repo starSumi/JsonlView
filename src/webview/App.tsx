@@ -184,9 +184,10 @@ export function App(): React.JSX.Element {
   );
   const [pageInput, setPageInputState] = React.useState('1');
   const [previewStatus, setPreviewStatus] = React.useState<TemporaryPreviewStatus>();
-  const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>(
-    restored?.navigatorBridgeState ?? 'disabled',
-  );
+  // A Webview restore is only UI state. Host authorization must be read back
+  // for this document lifecycle before the detail can show an authorized
+  // Navigator handoff again.
+  const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>('disabled');
   const stateRef = useRef(state);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));

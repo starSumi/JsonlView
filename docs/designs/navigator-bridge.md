@@ -6,9 +6,9 @@ used by the workspace header. It does not create a second command or replace
 the JSONL editor route.
 
 The Webview presents a fail-closed handoff state: disabled,
-authorization-required, authorized, cancelled, or failed. The state is only a
-UI handoff hint and is persisted with the Webview view state so a reopened
-editor can explain the last transition. The Host remains authoritative for
+authorization-required, authorized, cancelled, or failed. A restored editor
+starts at disabled and waits for a current Host readback before showing
+authorized; the Webview state is never authorization evidence. The Host remains authoritative for
 Navigator enablement, source authorization, and durable local registration;
 the Webview must never infer authorization from a request being posted.
 
