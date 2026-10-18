@@ -9,6 +9,7 @@ const distFiles = [
   { path: 'execution-bundle-inventory.json', bytes: 8, sha256: '9'.repeat(64) },
   { path: 'execution-identity.json', bytes: 9, sha256: '0'.repeat(64) },
   { path: 'extension.cjs', bytes: 10, sha256: '1'.repeat(64) },
+  { path: 'mcp-server.cjs', bytes: 13, sha256: '4'.repeat(64) },
   { path: 'webview.css', bytes: 11, sha256: '2'.repeat(64) },
   { path: 'webview.js', bytes: 12, sha256: '3'.repeat(64) },
 ];

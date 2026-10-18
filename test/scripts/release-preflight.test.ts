@@ -425,15 +425,15 @@ describe('release candidate integrity', () => {
   });
 
   it('rejects npm and VSIX candidates built from different production bundles', () => {
-    const npmFiles = ['execution-bundle-inventory.json', 'execution-identity.json', 'extension.cjs', 'webview.css', 'webview.js'].map((path, index) => ({
+    const npmFiles = ['execution-bundle-inventory.json', 'execution-identity.json', 'extension.cjs', 'mcp-server.cjs', 'webview.css', 'webview.js'].map((path, index) => ({
       path,
       bytes: index + 1,
       sha256: String(index + 1).repeat(64),
     }));
     const vsixFiles = npmFiles.map((file) => ({ ...file }));
     vsixFiles[0] = { ...vsixFiles[0]!, sha256: 'f'.repeat(64) };
-    const npmBundle = { files: npmFiles, bytes: 15, sha256: bundleInventoryDigest(npmFiles) };
-    const vsixBundle = { files: vsixFiles, bytes: 15, sha256: bundleInventoryDigest(vsixFiles) };
+    const npmBundle = { files: npmFiles, bytes: 21, sha256: bundleInventoryDigest(npmFiles) };
+    const vsixBundle = { files: vsixFiles, bytes: 21, sha256: bundleInventoryDigest(vsixFiles) };
 
     expect(compareBundleInventories(npmBundle, npmBundle)).toEqual([]);
     expect(compareBundleInventories(npmBundle, vsixBundle)).toContain('bundle inventory digests differ');
@@ -495,6 +495,7 @@ describe('release candidate integrity', () => {
       { name: 'extension/dist/execution-bundle-inventory.json', contents: Buffer.from('{}', 'utf8') },
       { name: 'extension/dist/execution-identity.json', contents: Buffer.from('{}', 'utf8') },
       { name: 'extension/dist/extension.cjs', contents: Buffer.from('extension', 'utf8') },
+      { name: 'extension/dist/mcp-server.cjs', contents: Buffer.from('mcp-server', 'utf8') },
       { name: 'extension/dist/webview.css', contents: Buffer.from('css', 'utf8') },
       { name: 'extension/dist/webview.js', contents: Buffer.from('webview', 'utf8') },
     ];
