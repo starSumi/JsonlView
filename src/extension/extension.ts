@@ -29,6 +29,7 @@ import { summaryIdentityMatches } from './summary-identity';
 import { EXECUTION_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
 import { captureRuntimeExecutionIdentity } from './execution-runtime';
 import { buildActivationConflictDiagnostic, buildSideAgentDiagnostic, createSideAgentDiagnosticPort, type SideAgentDiagnosticEvent, type SideAgentDiagnosticPort } from './side-agent-diagnostics';
+import { createMcpDiagnosticPlan } from './native-mcp-manager';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 const STARTUP_STALL_MS = 10_000;
@@ -820,22 +821,20 @@ async function sendDiagnosticToSideAgent(
   appendOutputLog(outputChannel, 'side-agent-diagnostic', `kind=${diagnostic.kind} outcome=${delivery ?? 'unavailable'}`);
   if (delivery === 'delivered' || delivery === 'duplicate') return;
 
-  // The external side-agent command is optional. VS Code Chat is the bounded
-  // local fallback; if the host has no Chat command, retain the prompt in the
-  // clipboard so the diagnostic is still actionable without source content.
+  // The external side-agent command is optional. Keep the fallback provider-neutral.
   const prompt = formatDiagnosticPrompt(envelope);
   await vscode.env.clipboard.writeText(prompt);
-  try {
-    await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
-  } catch {
-    void vscode.window.showInformationMessage('The side agent is unavailable. The bounded diagnostic prompt was copied instead.');
-  }
+  void vscode.window.showInformationMessage('No side-agent MCP bridge is available. The bounded diagnostic prompt was copied instead.');
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('JsonlView', { log: true });
   context.subscriptions.push(outputChannel);
-  sideAgentDiagnostics = createSideAgentDiagnosticPort((command, diagnostic) => vscode.commands.executeCommand(command, diagnostic));
+  sideAgentDiagnostics = createSideAgentDiagnosticPort(
+    (command, dispatch) => vscode.commands.executeCommand(command, dispatch),
+    undefined,
+    (diagnostic) => createMcpDiagnosticPlan(context.extensionPath, diagnostic),
+  );
   appendOutputLog(outputChannel, 'activated', 'output-channel=JsonlView');
   const runtimeIdentity = captureRuntimeExecutionIdentity(context);
   appendExecutionIdentityLog(outputChannel, EXECUTION_IDENTITY, runtimeIdentity);
@@ -850,9 +849,6 @@ export function activate(context: vscode.ExtensionContext): void {
       extensionId: context.extension.id,
     });
     lastDiagnostic = envelope;
-    void sideAgentDiagnostics?.publish(diagnostic).then((outcome) => {
-      appendOutputLog(outputChannel, 'side-agent-diagnostic', `kind=${diagnostic.kind} outcome=${outcome}`);
-    });
     void (async () => {
       const action = await vscode.window.showErrorMessage(
       `JsonlView cannot activate while ${conflict.extensionId} is enabled because both extensions declare ${conflict.contributionIds.join(', ')}. Disable or uninstall one JsonlView build, then reload the window.`,

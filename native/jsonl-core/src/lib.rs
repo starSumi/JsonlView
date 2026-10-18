@@ -4,6 +4,7 @@ use napi_derive::napi;
 
 pub const ABI_VERSION: u32 = 2;
 pub const CAPABILITY_SCAN_LF: u32 = 1 << 0;
+pub const CAPABILITY_MCP_MANAGER: u32 = 1 << 1;
 pub const MAX_SCAN_OFFSETS: u32 = 16 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -47,7 +48,12 @@ pub fn abi_version() -> u32 {
 
 #[napi]
 pub fn capabilities() -> u32 {
-    CAPABILITY_SCAN_LF
+    CAPABILITY_SCAN_LF | CAPABILITY_MCP_MANAGER
+}
+
+#[napi(js_name = "mcpManagerCapability")]
+pub fn mcp_manager_capability() -> u32 {
+    CAPABILITY_MCP_MANAGER
 }
 
 #[napi(js_name = "scanLf")]
@@ -134,3 +140,5 @@ mod tests {
         );
     }
 }
+
+mod mcp_manager;

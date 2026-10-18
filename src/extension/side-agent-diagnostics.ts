@@ -1,5 +1,6 @@
 import type { ExtensionContributionConflict } from './extension-conflicts';
 import type { JsonlViewDiagnosticEnvelope } from './diagnostic-context';
+import type { McpDiagnosticPlan } from './native-mcp-manager';
 
 /** Optional host command consumed by a side-agent integration. */
 export const SIDE_AGENT_DIAGNOSTIC_COMMAND = 'jsonlView.sideAgent.receiveDiagnostic';
@@ -26,10 +27,21 @@ export interface SideAgentDiagnostic {
 
 export type SideAgentDiagnosticEvent = ActivationConflictDiagnostic | SideAgentDiagnostic;
 
+export interface SideAgentDiagnosticDispatch {
+  readonly schema: 'jsonlview.side-agent-dispatch.v1';
+  readonly action: 'report_diagnostic';
+  readonly diagnostic: SideAgentDiagnosticEvent;
+  readonly mcp?: McpDiagnosticPlan;
+}
+
 export type SideAgentCommandExecutor = (
   command: string,
-  diagnostic: SideAgentDiagnosticEvent,
+  dispatch: SideAgentDiagnosticDispatch,
 ) => PromiseLike<unknown> | unknown;
+
+export type McpDiagnosticPlanFactory = (
+  diagnostic: SideAgentDiagnosticEvent,
+) => McpDiagnosticPlan | undefined;
 
 export type SideAgentDelivery = 'delivered' | 'duplicate' | 'failed';
 
@@ -77,6 +89,7 @@ export function buildSideAgentDiagnostic(envelope: JsonlViewDiagnosticEnvelope):
 export function createSideAgentDiagnosticPort(
   executeCommand: SideAgentCommandExecutor,
   command = SIDE_AGENT_DIAGNOSTIC_COMMAND,
+  createMcpPlan?: McpDiagnosticPlanFactory,
 ): SideAgentDiagnosticPort {
   const delivered = new Set<string>();
   const inFlight = new Map<string, Promise<SideAgentDelivery>>();
@@ -88,7 +101,13 @@ export function createSideAgentDiagnosticPort(
       if (active !== undefined) return active;
       const attempt = (async (): Promise<SideAgentDelivery> => {
         try {
-          await executeCommand(command, diagnostic);
+          const mcp = createMcpPlan?.(diagnostic);
+          await executeCommand(command, {
+            schema: 'jsonlview.side-agent-dispatch.v1',
+            action: 'report_diagnostic',
+            diagnostic,
+            ...(mcp === undefined ? {} : { mcp }),
+          });
           delivered.add(key);
           return 'delivered';
         } catch {

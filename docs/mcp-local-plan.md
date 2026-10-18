@@ -34,6 +34,22 @@ policies. The existing experimental adapter is the compatibility seam until an
 independently owned transport and security review exist.
 
 The shipped inspection command only reports the frozen capability descriptor:
+
+## Diagnostic bridge
+
+The Rust `McpManager` in `native/jsonl-core/src/mcp_manager.rs` is a
+transport-neutral lifecycle manager. It stays dormant until the user explicitly
+chooses `Send to side agent` or invokes the corresponding command. The extension
+then asks the native manager for a bounded, metadata-only request plan; the
+manager never starts a process, opens a socket, or contacts a provider.
+
+The plan includes the current MCP handshake (`2026-07-28`) and compatibility
+attempts for `2025-11-25` (the repository's existing line) and `2025-06-18`
+(the Codex legacy line). A host-owned bridge decides whether and how to execute
+one attempt, applies its own timeout and trust policy, and may route to any
+compatible agent. Copilot is not a required dependency. When no bridge is
+registered, JsonlView copies the bounded diagnostic prompt and leaves the user
+in control.
 experimental, disabled by default, metadata-only, and without transport,
 process, network, command execution, or source mutation. It does not construct
 a facade or read a provider. A future transport must keep the same explicit

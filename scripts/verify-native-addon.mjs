@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { assertNativeContract, NATIVE_ABI_VERSION, NATIVE_CAPABILITY_SCAN_LF, readNativeContract } from './native-contract.mjs';
+import { assertNativeContract, readNativeContract } from './native-contract.mjs';
 
 const addonPath = resolve(parseAddonPath(process.argv.slice(2)) ?? 'native/jsonl-core/jsonl_core.win32-x64-msvc.node');
 if (process.platform !== 'win32' || process.arch !== 'x64') {
@@ -26,7 +26,7 @@ if (offsets.length !== 2 || offsets[0] !== 3 || offsets[1] !== 8) {
   throw new Error(`Native addon newline smoke failed: ${JSON.stringify(offsets)}`);
 }
 
-console.log(JSON.stringify({ addonPath, abiVersion: NATIVE_ABI_VERSION, capabilities: NATIVE_CAPABILITY_SCAN_LF, offsets }));
+console.log(JSON.stringify({ addonPath, abiVersion: contract.abiVersion, capabilities: contract.capabilities, offsets }));
 
 function parseAddonPath(args) {
   let addon;

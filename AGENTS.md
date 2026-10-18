@@ -40,8 +40,9 @@ summaries, timelines, and session catalog rows are disposable projections.
 The runtime has no required network listener, hosted control plane, source
 mutation path, arbitrary command execution, or provider database write.
 Activation conflicts may publish a metadata-only diagnostic through the
-optional `jsonlView.sideAgent.receiveDiagnostic` command. The consumer is
-best-effort; delivery failure falls back to the existing VS Code Chat and
+optional `jsonlView.sideAgent.receiveDiagnostic` command only after an
+explicit user action. The dispatch is provider-neutral and may include a
+Rust-generated MCP request plan. Delivery failure falls back to a bounded
 clipboard path, and never changes activation safety or includes source data.
 
 ## Toolchain
@@ -216,6 +217,9 @@ network-, command-execution-, and source-mutation-free until a separate host
 transport and security review admits it. Staged mutation is similarly opt-in
 only after the setting, workspace trust, source authorization, and explicit
 user gesture gates are all satisfied.
+The native `McpManager` remains dormant until that explicit diagnostic action;
+it supports `2026-07-28` with `2025-11-25` and `2025-06-18` compatibility
+fallbacks while leaving transport ownership to the host.
 
 Writable team lanes use separate Git worktrees and branches. Workers edit only
 their assigned subtree and tests. Workers are not alone in the repository;

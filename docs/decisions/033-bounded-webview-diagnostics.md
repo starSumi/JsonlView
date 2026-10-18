@@ -15,15 +15,17 @@ an AI pane.
 - Product-controlled Webview errors produce a bounded diagnostic envelope.
 - The envelope contains error metadata only: no source records, prompts,
   credentials, absolute paths, or arbitrary Webview payloads.
-- Sending to VS Code Chat is best effort and always has a clipboard fallback.
-  Third-party panes remain responsible for their own commands and consent.
+- Sending to a side agent is available only after an explicit user action. The
+  dispatch contract is provider-neutral and may be consumed by an MCP bridge;
+  it does not require Copilot or any particular Chat provider. A missing
+  bridge has a clipboard fallback.
 - A host-generated error is described as a host boundary; JsonlView never
   claims to have repaired a VS Code or Chromium lifecycle failure.
 
 ## Owner and decision
 
 `src/extension/diagnostic-context.ts` owns the versioned, redacted envelope.
-The extension host owns the copy and Chat actions. `SourceIntakePanel` exposes
+The extension host owns the copy, optional Chat, and side-agent actions. `SourceIntakePanel` exposes
 the same bounded action for its own `error` and `unhandledrejection` events.
 The command `jsonlView.diagnoseWebview` gives a recoverable entry point when a
 renderer-owned host error has no extension callback. The command uses a known
@@ -83,8 +85,12 @@ opening's observation. No source path, body, or error message is added.
   VS Code.
 - Calling Claude/Copilot/Codex pane identifiers directly was rejected: those
   commands are provider-owned and are not a stable VS Code extension contract.
-- An MCP diagnostic tool is deferred until the read-only local MCP transport
-  has its own trust, cancellation, output, and audit gate.
+- Starting an MCP transport inside the extension is deferred. The Rust
+  `McpManager` in `native/jsonl-core/src/mcp_manager.rs` only prepares bounded,
+  metadata-only JSON-RPC messages for the host-owned bridge. It supports the
+  modern `2026-07-28` handshake and legacy `2025-11-25` plus Codex's
+  `2025-06-18` compatibility lines without spawning a process or opening a
+  socket.
 - Racing creation against a rejecting timeout was rejected: a diagnostic
   deadline must not replace the existing creation result or leave a hidden
   operation running after a new product-owned failure.
@@ -103,9 +109,11 @@ opening's observation. No source path, body, or error message is added.
 
 Pure tests cover field bounds, path redaction, policy markers, and prompt
 construction. Focused intake tests cover the message schema, CSP, dismissal
-settlement, and duplicate-request busy state. Installed
-host acceptance must separately verify the command palette action, clipboard
-fallback, and behavior when Chat is unavailable.
+settlement, and duplicate-request busy state. Installed-host acceptance must
+separately verify the explicit side-agent action, clipboard fallback,
+provider-neutral dispatch, and behavior when Chat or an MCP bridge is
+unavailable. Native tests cover the protocol handshakes, bounded payload, and
+closed-state behavior.
 Startup tests must deliver READY as soon as HTML is assigned, drop the first
 READY, and withhold OPENED; verify listener order, bounded retry/error, and
 late-response recovery. Installed-host acceptance must match the running
