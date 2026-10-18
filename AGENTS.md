@@ -164,10 +164,10 @@ avoid premature package or workspace splitting until an independently
 buildable boundary and consumer contract exist.
 
 The Webview stylesheet entry is a fixed cascade contract: it imports the
-tokens, layout, workspace-header, record-query, views, source-intake, and
-accessibility modules in that order. CSS migrations move complete top-level
-blocks and keep source-intake bridge status separate from the standalone Add
-Source Webview's inline stylesheet.
+tokens, base, layout, workspace-header, record-query, views, source-intake,
+and accessibility modules in that order. CSS migrations move complete
+top-level blocks and keep source-intake bridge status separate from the
+standalone Add Source Webview's inline stylesheet.
 
 Within the Webview, keep App.tsx as the composition root, put record-query
 policies in features/record-query, provider-specific event projections in
