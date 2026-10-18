@@ -79,6 +79,8 @@ async function main() {
       },
     });
     phases[phases.length - 1].status = 'built';
+    const archive = await inspectVsixArchive(artifact);
+    candidateBundleDigests = bundleDigestsFromArchive(archive);
   }
 
   const artifactDigest = await digestFile(artifact);
@@ -209,6 +211,10 @@ export function findInstalledTargetConflicts(installed, extensionId, extensionNa
     && entry.name.toLowerCase() !== extensionId.toLowerCase()
     && (alternateIds.has(entry.name.toLowerCase())
       || entry.name.toLowerCase().endsWith(`.${extensionName.toLowerCase()}`)));
+}
+
+export function bundleDigestsFromArchive(archive) {
+  return Object.fromEntries(archive.bundle.files.map((file) => [`dist/${file.path}`, file.sha256]));
 }
 
 async function resolveCodeRuntime(explicit) {
