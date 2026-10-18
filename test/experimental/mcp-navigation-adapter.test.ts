@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MCP_NAVIGATION_PROTOCOL_VERSIONS,
+  MCP_NAVIGATION_CAPABILITY,
   MCP_NAVIGATION_TOOL_NAME,
   McpNavigationAdapterError,
   McpReadOnlyNavigationAdapter,
@@ -52,6 +53,33 @@ function adapter(options: {
 }
 
 describe('MCP read-only navigation contract adapter', () => {
+  it('publishes a disabled, transport-free capability descriptor', () => {
+    expect(MCP_NAVIGATION_CAPABILITY).toMatchObject({
+      id: 'jsonlview.mcp.navigation',
+      status: 'experimental',
+      enabledByDefault: false,
+      transport: 'none',
+      process: 'none',
+      network: false,
+      commandExecution: false,
+      sourceMutation: false,
+      providerDatabaseWrite: false,
+      redaction: 'metadata-only',
+      identifiers: 'opaque',
+      protocolVersions: ['2026-07-28', '2025-11-25'],
+      tools: [{ name: MCP_NAVIGATION_TOOL_NAME, readOnly: true, destructive: false }],
+      limits: {
+        default: { maxEntities: 500, maxRelations: 2_000, maxRecords: 2_000, maxMilliseconds: 1_000, maxBytes: 64 * 1024 },
+        maximum: { maxEntities: 10_000, maxRelations: 50_000, maxRecords: 50_000, maxMilliseconds: 10_000, maxBytes: 1024 * 1024 },
+      },
+    });
+    expect(Object.isFrozen(MCP_NAVIGATION_CAPABILITY)).toBe(true);
+    expect(Object.isFrozen(MCP_NAVIGATION_CAPABILITY.tools)).toBe(true);
+    expect(Object.isFrozen(MCP_NAVIGATION_CAPABILITY.tools[0])).toBe(true);
+    expect(Object.isFrozen(MCP_NAVIGATION_CAPABILITY.limits)).toBe(true);
+    expect(MCP_NAVIGATION_CAPABILITY.tools[0]?.name).toBe(MCP_NAVIGATION_TOOL_NAME);
+  });
+
   it('negotiates the July 2026 revision and retains the November 2025 revision', () => {
     expect(negotiateMcpNavigationProtocolVersion(['2025-11-25', '2026-07-28'])).toBe('2026-07-28');
     expect(negotiateMcpNavigationProtocolVersion(['2025-11-25'])).toBe('2025-11-25');
