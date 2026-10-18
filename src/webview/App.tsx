@@ -109,9 +109,9 @@ import {
   detailWidthValueText,
   MIN_DETAIL_WIDTH,
   MIN_PRIMARY_WIDTH,
-  resizedDetailWidth,
   SPLITTER_WIDTH,
 } from './split-pane';
+import { useDetailSplitter } from './use-detail-splitter';
 
 const configuredPageSize = Number(document.body.dataset.pageSize ?? '100');
 const PAGE_SIZE = Number.isSafeInteger(configuredPageSize)
@@ -715,6 +715,13 @@ export function App(): React.JSX.Element {
   const displayedDetailWidth = workspaceWidth > 900
     ? clampDetailWidth(state.detailWidth, workspaceWidth)
     : state.detailWidth;
+  const detailSplitter = useDetailSplitter({
+    readContainerWidth: () => workspaceRef.current?.clientWidth ?? window.innerWidth,
+    readPointerStartWidth: () => displayedDetailWidth,
+    readKeyboardStartWidth: () => state.detailWidth,
+    setWidth: (width) => dispatch({ type: 'SET_DETAIL_WIDTH', width }),
+    pauseFollowing: () => queryController.pauseFollowing(),
+  });
   const selectedFilterColumn = useMemo(
     () => filterableColumns.find((column) => column.id === filterColumnId),
     [filterColumnId, filterableColumns],
@@ -859,51 +866,6 @@ export function App(): React.JSX.Element {
         }
       })()
   );
-
-  const resizeDetailFromPointer = (event: React.PointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0) return;
-    queryController.pauseFollowing();
-    const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
-    const initialPointerX = event.clientX;
-    const initialWidth = displayedDetailWidth;
-    const splitter = event.currentTarget;
-    try {
-      splitter.setPointerCapture(event.pointerId);
-    } catch {
-      // Window listeners still handle the drag if pointer capture is unavailable.
-    }
-    document.body.classList.add('is-resizing-detail');
-
-    const onPointerMove = (moveEvent: PointerEvent): void => {
-      dispatch({
-        type: 'SET_DETAIL_WIDTH',
-        width: resizedDetailWidth(initialWidth, initialPointerX, moveEvent.clientX, containerWidth),
-      });
-    };
-    const finish = (): void => {
-      document.body.classList.remove('is-resizing-detail');
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', finish);
-    };
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', finish, { once: true });
-    window.addEventListener('pointercancel', finish, { once: true });
-  };
-
-  const resizeDetailFromKeyboard = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
-    const step = event.shiftKey ? 64 : 16;
-    let desired: number | undefined;
-    if (event.key === 'ArrowLeft') desired = state.detailWidth + step;
-    if (event.key === 'ArrowRight') desired = state.detailWidth - step;
-    if (event.key === 'Home') desired = 0;
-    if (event.key === 'End') desired = containerWidth;
-    if (desired === undefined) return;
-    queryController.pauseFollowing();
-    event.preventDefault();
-    dispatch({ type: 'SET_DETAIL_WIDTH', width: clampDetailWidth(desired, containerWidth) });
-  };
 
   const tableQueryControls = state.activeTab === 'table' ? (
     <fieldset className="table-query-toolbar" aria-label="Table search and display">
@@ -1257,8 +1219,8 @@ export function App(): React.JSX.Element {
               aria-valuetext={detailWidthValueText(displayedDetailWidth)}
               tabIndex={0}
               title="Drag to resize detail"
-              onPointerDown={resizeDetailFromPointer}
-              onKeyDown={resizeDetailFromKeyboard}
+              onPointerDown={detailSplitter.onPointerDown}
+              onKeyDown={detailSplitter.onKeyDown}
               onDoubleClick={() => {
                 queryController.pauseFollowing();
                 const containerWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
