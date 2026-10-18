@@ -3235,6 +3235,49 @@ body.is-resizing-column * {
   }
 }
 
+@container workspace (max-width: 900px) {
+  .workspace-query-controls > .table-query-toolbar {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+    scrollbar-width: thin;
+    scroll-padding-inline: 8px;
+  }
+
+  .workspace-query-controls .table-query-toolbar > :not(.search-box) {
+    flex: 0 0 auto;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex: 0 1 220px;
+    min-width: min(160px, 100%);
+    max-width: 220px;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: var(--vscode-scrollbarSlider-background);
+    background-clip: padding-box;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground);
+    background-clip: padding-box;
+  }
+}
+
 @container workspace (max-width: 720px) {
   .workspace-header-primary,
   .workspace-header-secondary {

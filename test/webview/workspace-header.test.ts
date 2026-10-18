@@ -27,6 +27,17 @@ function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
 }
 
 describe('workspace header status', () => {
+  it('keeps compact query controls on one horizontally scrollable rail', () => {
+    const compactToolbarRules = styles.slice(styles.indexOf('@container workspace (max-width: 900px)'), styles.indexOf('@container workspace (max-width: 720px)'));
+
+    expect(compactToolbarRules).toContain('flex-wrap: nowrap');
+    expect(compactToolbarRules).toContain('overflow-x: auto');
+    expect(compactToolbarRules).toContain('overscroll-behavior-inline: contain');
+    expect(compactToolbarRules).toContain('scrollbar-color: var(--vscode-scrollbarSlider-background) transparent');
+    expect(compactToolbarRules).toContain('flex: 0 1 220px');
+    expect(compactToolbarRules).not.toContain('display: none');
+  });
+
   it('applies compact sizing to the nested query controls', () => {
     const compactRules = styles.slice(styles.indexOf('@container workspace (max-width: 720px)'), styles.indexOf('@container workspace (max-width: 520px)'));
     expect(compactRules).toContain('.workspace-query-controls .table-query-toolbar > .search-box');

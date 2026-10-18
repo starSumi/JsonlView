@@ -61,8 +61,11 @@ profile selector does not need a second help panel for its basic meaning.
 The secondary row separates telemetry from query controls: bounded rows, bytes,
 valid/problem observations, phase, and progress stay in the left group; search,
 order, field filters, row types, and Columns stay in the right group. The query
-input has a bounded width and may wrap on narrow hosts. It must not create an
-outer horizontal scrollbar or displace the telemetry status.
+input has a bounded width. At workspace widths of 900px or less, query controls
+stay on one horizontal rail; when they do not fit, that rail scrolls with a thin
+host-token scrollbar. The search input shrinks before the other controls, while
+labels and keyboard tab order remain available. This inner rail must not create
+an outer horizontal scrollbar or displace the telemetry status.
 
 The header and its controls use host semantic tokens and the same focus, hover,
 active, and disabled states as the existing VS Code-native controls. The
