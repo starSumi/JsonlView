@@ -27,6 +27,7 @@ enum QueryError {
     ReadFailed,
     ScanBudgetExceeded,
     RecordTooLarge,
+    RecordExceedsByteBudget,
     InvalidUtf8,
     ResponseTooLarge,
 }
@@ -44,6 +45,7 @@ impl QueryError {
             Self::ReadFailed => "read-failed",
             Self::ScanBudgetExceeded => "scan-budget-exceeded",
             Self::RecordTooLarge => "record-too-large",
+            Self::RecordExceedsByteBudget => "record-exceeds-max-bytes",
             Self::InvalidUtf8 => "invalid-utf8",
             Self::ResponseTooLarge => "response-too-large",
         }
@@ -61,6 +63,7 @@ impl QueryError {
             | Self::ReadFailed
             | Self::ScanBudgetExceeded
             | Self::RecordTooLarge
+            | Self::RecordExceedsByteBudget
             | Self::InvalidUtf8
             | Self::ResponseTooLarge => Status::GenericFailure,
         }
@@ -226,6 +229,10 @@ fn query_reader<R: BufRead>(
         if ordinal < start_ordinal {
             ordinal = ordinal.saturating_add(1);
             continue;
+        }
+
+        if records.is_empty() && content.len() > max_bytes {
+            return Err(QueryError::RecordExceedsByteBudget);
         }
 
         let raw = std::str::from_utf8(content)
@@ -405,6 +412,28 @@ mod tests {
         );
         assert_eq!(page.next_ordinal, Some(2));
         assert_eq!(page.truncation_reason, Some("max-bytes"));
+    }
+
+    #[test]
+    fn errors_when_the_first_record_cannot_fit_the_byte_budget() {
+        let error = query_reader(Cursor::new(b"oversized\nnext\n"), snapshot(), 0, 10, 4)
+            .expect_err("a page must not return a stationary continuation for an unreadable row");
+        assert_eq!(error, QueryError::RecordExceedsByteBudget);
+        assert_eq!(error.code(), "record-exceeds-max-bytes");
+    }
+
+    #[test]
+    fn returns_a_cursor_before_an_oversized_later_record_then_errors_on_that_record() {
+        let input = b"\noversized\n";
+        let first = query_reader(Cursor::new(input), snapshot(), 0, 10, 4).expect("first page");
+        assert_eq!(first.records.len(), 1);
+        assert_eq!(first.records[0].ordinal, 0);
+        assert_eq!(first.next_ordinal, Some(1));
+        assert_eq!(first.truncation_reason, Some("max-bytes"));
+
+        let retry = query_reader(Cursor::new(input), snapshot(), 1, 10, 4)
+            .expect_err("the oversized physical record must fail explicitly on retry");
+        assert_eq!(retry, QueryError::RecordExceedsByteBudget);
     }
 
     #[test]

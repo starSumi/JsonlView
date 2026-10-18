@@ -27,6 +27,7 @@ export interface RustQueryResult {
   readonly records: readonly RustQueryRecord[];
   readonly nextOrdinal: string | null;
   readonly truncated: boolean;
+  readonly truncationReason?: string;
 }
 
 export interface RustQueryBinding {
@@ -58,7 +59,7 @@ export class RustQueryBridge {
     const binding = this.binding;
     if (binding === undefined) throw new RustQueryUnavailableError('Native Rust query capability is unavailable.');
     const raw = binding.queryRecords(path, startOrdinal, limit, maxBytes);
-    return validateResult(raw);
+    return validateResult(raw, startOrdinal, limit, maxBytes);
   }
 
   private assertAuthorized(path: string): void {
@@ -114,7 +115,7 @@ function loadRustQueryBinding(extensionPath: string): RustQueryBinding | undefin
     try {
       const loaded = requireNative(candidate) as Partial<RustQueryBinding>;
       if (typeof loaded.abiVersion !== 'function' || typeof loaded.capabilities !== 'function' || typeof loaded.queryRecords !== 'function') continue;
-      if (loaded.abiVersion() < 2 || (loaded.capabilities() & RUST_QUERY_CAPABILITY) === 0) continue;
+      if (loaded.abiVersion() !== 2 || (loaded.capabilities() & RUST_QUERY_CAPABILITY) === 0) continue;
       return loaded as RustQueryBinding;
     } catch {
       // Native is an optional accelerator; callers retain an explicit unavailable state.
@@ -138,24 +139,45 @@ function boundedInteger(value: number, minimum: number, maximum: number, name: s
   return value;
 }
 
-function validateResult(raw: string): RustQueryResult {
-  if (typeof raw !== 'string' || raw.length > RUST_QUERY_MAX_BYTES * 2) throw new Error('Native Rust query returned an oversized response.');
+function validateResult(raw: string, startOrdinal: string, limit: number, maxBytes: number): RustQueryResult {
+  if (typeof raw !== 'string' || raw.length > RUST_QUERY_MAX_BYTES * 8) throw new Error('Native Rust query returned an oversized response.');
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new Error('Native Rust query returned invalid JSON.'); }
   if (!isRecord(value) || value.schema !== RUST_QUERY_SCHEMA || !isRecord(value.snapshot) || !Array.isArray(value.records)) {
     throw new Error('Native Rust query returned an invalid response schema.');
   }
   const snapshot = value.snapshot;
-  if (typeof snapshot.sizeBytes !== 'string' || typeof snapshot.modifiedUnixMillis !== 'string') throw new Error('Native Rust query returned an invalid snapshot.');
+  if (!isDecimal(snapshot.sizeBytes) || !isSignedDecimal(snapshot.modifiedUnixMillis)) throw new Error('Native Rust query returned an invalid snapshot.');
+  if (value.records.length > limit) throw new Error('Native Rust query exceeded the requested record limit.');
   const records: RustQueryRecord[] = [];
+  let expectedOrdinal = BigInt(startOrdinal);
+  let previousEnd = -1n;
+  let totalRawBytes = 0;
   for (const item of value.records) {
-    if (!isRecord(item) || typeof item.ordinal !== 'string' || typeof item.startByte !== 'string' || typeof item.endByte !== 'string' || typeof item.raw !== 'string') throw new Error('Native Rust query returned an invalid record.');
+    if (!isRecord(item) || !isDecimal(item.ordinal) || !isDecimal(item.startByte) || !isDecimal(item.endByte) || typeof item.raw !== 'string') throw new Error('Native Rust query returned an invalid record.');
+    const ordinal = BigInt(item.ordinal);
+    const startByte = BigInt(item.startByte);
+    const endByte = BigInt(item.endByte);
+    if (ordinal !== expectedOrdinal || startByte < previousEnd || endByte < startByte || endByte > BigInt(snapshot.sizeBytes)) throw new Error('Native Rust query returned inconsistent record cursors.');
+    totalRawBytes += Buffer.byteLength(item.raw, 'utf8');
+    if (totalRawBytes > maxBytes) throw new Error('Native Rust query exceeded the requested byte limit.');
     records.push({ ordinal: item.ordinal, startByte: item.startByte, endByte: item.endByte, raw: item.raw });
+    expectedOrdinal += 1n;
+    previousEnd = endByte;
   }
-  if (typeof value.truncated !== 'boolean' || !(value.nextOrdinal === null || typeof value.nextOrdinal === 'string')) throw new Error('Native Rust query returned invalid paging metadata.');
-  return { schema: RUST_QUERY_SCHEMA, snapshot: { sizeBytes: snapshot.sizeBytes, modifiedUnixMillis: snapshot.modifiedUnixMillis }, records, nextOrdinal: value.nextOrdinal, truncated: value.truncated };
+  if (typeof value.truncated !== 'boolean' || !(value.nextOrdinal === null || isDecimal(value.nextOrdinal)) || !(value.truncationReason === null || typeof value.truncationReason === 'string')) throw new Error('Native Rust query returned invalid paging metadata.');
+  if (value.truncated !== (value.nextOrdinal !== null) || (value.nextOrdinal !== null && BigInt(value.nextOrdinal) !== expectedOrdinal)) throw new Error('Native Rust query returned inconsistent continuation metadata.');
+  return { schema: RUST_QUERY_SCHEMA, snapshot: { sizeBytes: snapshot.sizeBytes, modifiedUnixMillis: snapshot.modifiedUnixMillis }, records, nextOrdinal: value.nextOrdinal, truncated: value.truncated, ...(typeof value.truncationReason === 'string' ? { truncationReason: value.truncationReason } : {}) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isDecimal(value: unknown): value is string {
+  return typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) && value.length <= 20;
+}
+
+function isSignedDecimal(value: unknown): value is string {
+  return typeof value === 'string' && /^-?(0|[1-9][0-9]*)$/.test(value) && value.length <= 21;
 }

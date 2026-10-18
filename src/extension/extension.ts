@@ -31,7 +31,7 @@ import { captureRuntimeExecutionIdentity } from './execution-runtime';
 import { buildActivationConflictDiagnostic, buildSideAgentDiagnostic, createSideAgentDiagnosticPort, type SideAgentDiagnosticEvent, type SideAgentDiagnosticPort } from './side-agent-diagnostics';
 import { createMcpDiagnosticPlan } from './native-mcp-manager';
 import { loadRustQueryBridge, type RustQueryBridge } from './rust-query-bridge';
-import { AcpSessionManager } from './acp-session-manager';
+import { AcpSessionCancelledError, AcpSessionManager } from './acp-session-manager';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 const STARTUP_STALL_MS = 10_000;
@@ -751,6 +751,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
 }
 
 let lastDiagnostic: JsonlViewDiagnosticEnvelope | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
 let outputChannel: vscode.LogOutputChannel | undefined;
 let activeNavigator: SessionNavigatorTreeProvider | undefined;
 let sideAgentDiagnostics: SideAgentDiagnosticPort | undefined;
@@ -761,6 +762,8 @@ const OPEN_JSONLVIEW_LOG = 'Open JsonlView Log';
 const COPY_DIAGNOSTIC_CONTEXT = 'Copy diagnostic context';
 const QUERY_RUST_PAGE = 'jsonlView.queryRustPage';
 const SEND_DIAGNOSTIC_VIA_ACP = 'jsonlView.sendLastDiagnosticViaAcp';
+const ACP_TRANSCRIPT_MAX_BYTES = 512 * 1024;
+const ACP_TRANSCRIPT_MAX_UPDATES = 256;
 
 function currentDiagnostic(): JsonlViewDiagnosticEnvelope {
   return lastDiagnostic ?? buildDiagnosticEnvelope({
@@ -806,7 +809,7 @@ async function handleDiagnosticAction(action: string | undefined, envelope: Json
     return;
   }
   if (action === SEND_TO_SIDE_AGENT) {
-    await sendDiagnosticToSideAgent(buildSideAgentDiagnostic(envelope), envelope);
+    await sendDiagnosticToSideAgent(buildSideAgentDiagnostic(envelope), envelope, extensionContext);
     return;
   }
   if (action !== 'Explain with VS Code Chat') return;
@@ -822,7 +825,20 @@ async function handleDiagnosticAction(action: string | undefined, envelope: Json
 async function sendDiagnosticToSideAgent(
   diagnostic: SideAgentDiagnosticEvent,
   envelope: JsonlViewDiagnosticEnvelope,
+  context: vscode.ExtensionContext | undefined,
 ): Promise<void> {
+  const acpCommand = vscode.workspace.getConfiguration('jsonlView.acp').get<string>('command', '').trim();
+  if (acpCommand.length > 0) {
+    if (!vscode.workspace.isTrusted) {
+      await vscode.env.clipboard.writeText(formatDiagnosticPrompt(envelope));
+      void vscode.window.showInformationMessage('The workspace is untrusted, so the configured ACP agent was not launched. The bounded diagnostic prompt was copied instead.');
+      return;
+    }
+    if (context !== undefined) {
+      await sendDiagnosticViaAcp(envelope, context);
+      return;
+    }
+  }
   const delivery = await sideAgentDiagnostics?.publish(diagnostic);
   appendOutputLog(outputChannel, 'side-agent-diagnostic', `kind=${diagnostic.kind} outcome=${delivery ?? 'unavailable'}`);
   if (delivery === 'delivered' || delivery === 'duplicate') return;
@@ -833,7 +849,112 @@ async function sendDiagnosticToSideAgent(
   void vscode.window.showInformationMessage('No side-agent MCP bridge is available. The bounded diagnostic prompt was copied instead.');
 }
 
+async function sendDiagnosticViaAcp(envelope: JsonlViewDiagnosticEnvelope, context: vscode.ExtensionContext): Promise<void> {
+  if (!vscode.workspace.isTrusted) {
+    void vscode.window.showErrorMessage('ACP agents can only be launched in a trusted workspace.');
+    return;
+  }
+  const configuration = vscode.workspace.getConfiguration('jsonlView.acp');
+  const command = configuration.get<string>('command', '').trim();
+  if (command.length === 0) {
+    void vscode.window.showInformationMessage('Configure jsonlView.acp.command with a local ACP agent executable first.');
+    return;
+  }
+  acpSession?.close();
+  const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const source = activeResourceUri();
+  const mcpServers = source !== undefined && source.scheme === 'file' && isJsonlResource(source)
+    ? [{
+      name: 'jsonlview',
+      command: process.execPath,
+      args: [resolve(context.extensionPath, 'dist', 'mcp-server.cjs')],
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        JSONLVIEW_EXTENSION_PATH: context.extensionPath,
+        JSONLVIEW_MCP_SOURCE_ID: 'active-jsonl',
+        JSONLVIEW_MCP_SOURCE_PATH: source.fsPath,
+      },
+    }]
+    : [];
+  const acpUpdates: unknown[] = [];
+  let acpUpdatesBytes = 0;
+  let acpUpdatesTruncated = false;
+  let acpPromptResult: unknown;
+  let acpSessionId: string | undefined;
+  let cancellationRequested = false;
+  const activeAcpSession = new AcpSessionManager({
+    launch: {
+      command,
+      args: configuration.get<string[]>('args', []),
+      ...(workspacePath === undefined ? {} : { cwd: workspacePath, sessionCwd: workspacePath }),
+      sessionMcpServers: mcpServers,
+      timeoutMs: configuration.get<number>('timeoutMs', 10_000),
+    },
+    onStderr: (line) => appendOutputLog(outputChannel, 'acp-stderr', JSON.stringify({ bytes: Buffer.byteLength(line, 'utf8') })),
+    onUpdate: (event) => {
+      if (acpUpdates.length >= ACP_TRANSCRIPT_MAX_UPDATES) {
+        acpUpdatesTruncated = true;
+        return;
+      }
+      let encoded: string;
+      try { encoded = JSON.stringify(event); } catch { acpUpdatesTruncated = true; return; }
+      const bytes = Buffer.byteLength(encoded, 'utf8');
+      if (acpUpdatesBytes + bytes > ACP_TRANSCRIPT_MAX_BYTES) {
+        acpUpdatesTruncated = true;
+        return;
+      }
+      acpUpdates.push(JSON.parse(encoded) as unknown);
+      acpUpdatesBytes += bytes;
+    },
+  });
+  acpSession = activeAcpSession;
+  try {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Sending diagnostic via ACP', cancellable: true }, async (_progress, token) => {
+      const cancellation = token.onCancellationRequested(() => {
+        cancellationRequested = true;
+        activeAcpSession.cancel();
+      });
+      try {
+        acpSessionId = await activeAcpSession.start();
+        if (token.isCancellationRequested) throw new AcpSessionCancelledError();
+        acpPromptResult = await activeAcpSession.prompt(formatDiagnosticPrompt(envelope));
+        cancellationRequested ||= token.isCancellationRequested;
+      } finally {
+        cancellation.dispose();
+      }
+    });
+    const cancelledByAgent = typeof acpPromptResult === 'object' && acpPromptResult !== null &&
+      'stopReason' in acpPromptResult && acpPromptResult.stopReason === 'cancelled';
+    const transcript = {
+      schema: 'jsonlview.acp-transcript.v1',
+      sessionId: acpSessionId,
+      updates: acpUpdates,
+      result: acpPromptResult,
+      cancelled: cancellationRequested || cancelledByAgent,
+      truncated: acpUpdatesTruncated,
+    };
+    const resultDocument = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(transcript, null, 2) });
+    await vscode.window.showTextDocument(resultDocument, { preview: true });
+    if (cancellationRequested || cancelledByAgent) {
+      void vscode.window.showInformationMessage('The ACP diagnostic request was cancelled. The bounded transcript is open.');
+    } else {
+      void vscode.window.showInformationMessage('The bounded diagnostic was sent through the configured ACP agent.');
+    }
+  } catch (error) {
+    if (error instanceof AcpSessionCancelledError) {
+      void vscode.window.showInformationMessage('The ACP diagnostic request was cancelled.');
+    } else {
+      appendOutputLog(outputChannel, 'acp-error', error instanceof Error ? error.name : 'Error');
+      void vscode.window.showErrorMessage('The configured ACP agent did not accept the diagnostic.');
+    }
+  } finally {
+    activeAcpSession.close();
+    if (acpSession === activeAcpSession) acpSession = undefined;
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+  extensionContext = context;
   outputChannel = vscode.window.createOutputChannel('JsonlView', { log: true });
   context.subscriptions.push(outputChannel);
   sideAgentDiagnostics = createSideAgentDiagnosticPort(
@@ -860,7 +981,7 @@ export function activate(context: vscode.ExtensionContext): void {
       `JsonlView cannot activate while ${conflict.extensionId} is enabled because both extensions declare ${conflict.contributionIds.join(', ')}. Disable or uninstall one JsonlView build, then reload the window.`,
         SEND_TO_SIDE_AGENT, COPY_DIAGNOSTIC_CONTEXT, OPEN_JSONLVIEW_LOG,
       );
-      if (action === SEND_TO_SIDE_AGENT) await sendDiagnosticToSideAgent(diagnostic, envelope);
+      if (action === SEND_TO_SIDE_AGENT) await sendDiagnosticToSideAgent(diagnostic, envelope, context);
       else await handleDiagnosticAction(action, envelope);
     })();
     return;
@@ -901,51 +1022,21 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage('The Rust data plane accepts JSONL and NDJSON sources only.');
         return undefined;
       }
-      rustQueryBridge ??= loadRustQueryBridge(context.extensionPath, [dirname(target.fsPath)]);
-      const page = rustQueryBridge.query({ sourcePath: target.fsPath, limit: 100, maxBytes: 1024 * 1024 });
-      appendOutputLog(outputChannel, 'rust-query', JSON.stringify({ source: target.fsPath, records: page.records.length, nextOrdinal: page.nextOrdinal, truncated: page.truncated }));
-      return page;
+      rustQueryBridge = loadRustQueryBridge(context.extensionPath, [dirname(target.fsPath)]);
+      try {
+        const page = rustQueryBridge.query({ sourcePath: target.fsPath, limit: 100, maxBytes: 1024 * 1024 });
+        appendOutputLog(outputChannel, 'rust-query', JSON.stringify({ records: page.records.length, nextOrdinal: page.nextOrdinal, truncated: page.truncated }));
+        const resultDocument = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(page, null, 2) });
+        await vscode.window.showTextDocument(resultDocument, { preview: true });
+        return page;
+      } catch (error) {
+        appendOutputLog(outputChannel, 'rust-query-error', error instanceof Error ? error.name : 'Error');
+        void vscode.window.showErrorMessage('The Rust query capability is unavailable or rejected the bounded page. The normal JsonlView reader remains available.');
+        return undefined;
+      }
     }),
     vscode.commands.registerCommand(SEND_DIAGNOSTIC_VIA_ACP, async () => {
-      const configuration = vscode.workspace.getConfiguration('jsonlView.acp');
-      const command = configuration.get<string>('command', '').trim();
-      if (command.length === 0) {
-        void vscode.window.showInformationMessage('Configure jsonlView.acp.command with a local ACP agent executable first.');
-        return;
-      }
-      acpSession?.close();
-      const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      const source = activeResourceUri();
-      const mcpServers = source !== undefined && source.scheme === 'file' && isJsonlResource(source)
-        ? [{
-          name: 'jsonlview',
-          command: process.execPath,
-          args: [resolve(context.extensionPath, 'dist', 'mcp-server.cjs')],
-          env: {
-            JSONLVIEW_EXTENSION_PATH: context.extensionPath,
-            JSONLVIEW_MCP_SOURCE_ID: 'active-jsonl',
-            JSONLVIEW_MCP_SOURCE_PATH: source.fsPath,
-          },
-        }]
-        : [];
-      acpSession = new AcpSessionManager({
-        launch: {
-          command,
-          args: configuration.get<string[]>('args', []),
-          ...(workspacePath === undefined ? {} : { cwd: workspacePath, sessionCwd: workspacePath }),
-          sessionMcpServers: mcpServers,
-          timeoutMs: configuration.get<number>('timeoutMs', 10_000),
-        },
-        onStderr: (line) => appendOutputLog(outputChannel, 'acp-stderr', line.slice(0, 512)),
-      });
-      try {
-        await acpSession.start();
-        await acpSession.prompt(formatDiagnosticPrompt(currentDiagnostic()));
-        void vscode.window.showInformationMessage('The bounded diagnostic was sent through the configured ACP agent.');
-      } catch (error) {
-        appendOutputLog(outputChannel, 'acp-error', error instanceof Error ? error.message : String(error));
-        void vscode.window.showErrorMessage('The configured ACP agent did not accept the diagnostic.');
-      }
+      await sendDiagnosticViaAcp(currentDiagnostic(), context);
     }),
     vscode.commands.registerCommand('jsonlView.diagnoseWebview', async () => {
       const envelope = currentDiagnostic();
@@ -964,7 +1055,7 @@ export function activate(context: vscode.ExtensionContext): void {
           { extensionId: 'unknown', contributionIds: [envelope.stage] },
         )
         : buildSideAgentDiagnostic(envelope);
-      await sendDiagnosticToSideAgent(sideAgentDiagnostic, envelope);
+      await sendDiagnosticToSideAgent(sideAgentDiagnostic, envelope, context);
     }),
     vscode.commands.registerCommand('jsonlView.sessionNavigator.mcpCapability', async () => {
       appendOutputLog(outputChannel, 'mcp-capability', JSON.stringify(MCP_NAVIGATION_CAPABILITY));

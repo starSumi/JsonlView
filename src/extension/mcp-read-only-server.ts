@@ -7,15 +7,16 @@ export const MCP_READ_ONLY_SERVER_NAME = 'JsonlView' as const;
 export const MCP_READ_ONLY_SERVER_VERSION = '0.1.0' as const;
 
 const DEFAULT_TIMEOUT = 10_000;
-const DEFAULT_MAX_LINE = 1024 * 1024;
-const DEFAULT_MAX_RESPONSE = 1024 * 1024;
+export const MCP_READ_ONLY_MAX_LINE_BYTES = 1024 * 1024;
+const DEFAULT_MAX_LINE = MCP_READ_ONLY_MAX_LINE_BYTES;
+const DEFAULT_MAX_RESPONSE = 4 * 1024 * 1024;
 const MAX_ARGUMENT_BYTES = 32 * 1024;
 const MAX_DEPTH = 6;
 const MAX_STRING = 4096;
 const MAX_ARRAY = 256;
 const MAX_KEYS = 64;
-const MAX_LIMIT = 10_000;
-const MAX_BYTES = 1024 * 1024;
+const MAX_LIMIT = 256;
+const MAX_BYTES = 512 * 1024;
 const FORBIDDEN_KEYS = new Set(['path', 'sourcePath', 'filePath', 'fsPath', 'rootPath', 'rootUri', 'uri', 'file', 'cwd', 'command', 'write', 'mutation']);
 
 export interface McpLineTransport {
@@ -35,6 +36,7 @@ export interface McpReadOnlyQueryRequest {
   readonly arguments: Readonly<Record<string, unknown>>;
   readonly protocolVersion: McpReadOnlyProtocolVersion;
   readonly signal: AbortSignal;
+  readonly cancellationSupported: boolean;
 }
 
 export interface McpReadOnlyQueryResult {
@@ -51,7 +53,10 @@ export interface McpReadOnlyServerOptions {
   readonly tools?: readonly McpReadOnlyToolDefinition[];
   readonly protocolVersions?: readonly string[];
   readonly allowedSourceIds?: readonly string[];
+  /** Enforced only for cooperative queries; bounded synchronous native queries do not yield to the event loop. */
   readonly requestTimeoutMs?: number;
+  /** Defaults to unsupported; opt in only when the query observes AbortSignal and yields to the event loop. */
+  readonly cancellationMode?: 'cooperative' | 'unsupported';
   readonly maxLineBytes?: number;
   readonly maxResponseBytes?: number;
 }
@@ -60,19 +65,15 @@ export type McpJsonRpcId = string | number | null;
 
 export const MCP_READ_ONLY_TOOL: McpReadOnlyToolDefinition = Object.freeze({
   name: MCP_READ_ONLY_TOOL_NAME,
-  description: 'Query bounded, read-only JSONL records through the JsonlView data plane.',
+  description: 'Read a bounded page of raw physical JSONL records from the explicitly authorized JsonlView source. Records are not split: a single record larger than maxBytes fails explicitly. The packaged Rust stdio adapter performs a synchronous read with a 64 MiB ordinal-scan cap and cannot be cancelled or timed out mid-read.',
   inputSchema: Object.freeze({
     type: 'object',
     additionalProperties: false,
     properties: Object.freeze({
       sourceId: { type: 'string', minLength: 1, maxLength: 256 },
-      snapshotId: { type: 'string', minLength: 1, maxLength: 256 },
-      cursor: { type: 'string', minLength: 1, maxLength: 1024 },
-      startOrdinal: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      startOrdinal: { type: 'string', minLength: 1, maxLength: 20, pattern: '^(0|[1-9][0-9]*)$' },
       limit: { type: 'integer', minimum: 1, maximum: MAX_LIMIT },
-      maxBytes: { type: 'integer', minimum: 128, maximum: MAX_BYTES },
-      query: { type: 'string', maxLength: 1024 },
-      columns: { type: 'array', maxItems: 128, items: { type: 'string', maxLength: 128 } },
+      maxBytes: { type: 'integer', minimum: 1, maximum: MAX_BYTES },
     }),
   }),
   annotations: Object.freeze({ readOnlyHint: true, destructiveHint: false }),
@@ -103,6 +104,7 @@ export class McpReadOnlyServer {
   readonly #versions: readonly McpReadOnlyProtocolVersion[];
   readonly #allowedSourceIds: ReadonlySet<string> | undefined;
   readonly #timeoutMs: number;
+  readonly #cancellationMode: 'cooperative' | 'unsupported';
   readonly #maxLineBytes: number;
   readonly #maxResponseBytes: number;
   readonly #pending = new Map<string, PendingRequest>();
@@ -118,6 +120,7 @@ export class McpReadOnlyServer {
     this.#versions = normalizeVersions(options.protocolVersions);
     this.#allowedSourceIds = options.allowedSourceIds === undefined ? undefined : new Set(options.allowedSourceIds);
     this.#timeoutMs = bounded(options.requestTimeoutMs ?? DEFAULT_TIMEOUT, 1, 60_000, 'requestTimeoutMs');
+    this.#cancellationMode = options.cancellationMode ?? 'unsupported';
     this.#maxLineBytes = bounded(options.maxLineBytes ?? DEFAULT_MAX_LINE, 256, 16 * 1024 * 1024, 'maxLineBytes');
     this.#maxResponseBytes = bounded(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE, 256, 16 * 1024 * 1024, 'maxResponseBytes');
   }
@@ -158,6 +161,7 @@ export class McpReadOnlyServer {
       return this.fitResponse(id!, result);
     } catch (error) {
       if (!hasId) return undefined;
+      if (error instanceof McpReadOnlyServerError && error.code === 'query_cancelled') return undefined;
       return rpcError(id!, error instanceof McpReadOnlyServerError ? error.rpcCode : -32000, error instanceof Error ? error.message : 'MCP request failed.', error instanceof McpReadOnlyServerError ? { code: error.code } : undefined);
     }
   }
@@ -172,7 +176,8 @@ export class McpReadOnlyServer {
       this.#initialized = true;
       return { protocolVersion: version, capabilities: { tools: {} }, serverInfo: { name: MCP_READ_ONLY_SERVER_NAME, version: MCP_READ_ONLY_SERVER_VERSION } };
     }
-    if (method === 'notifications/initialized' || method === 'notifications/cancelled') return undefined;
+    if (method === 'notifications/initialized') return undefined;
+    if (method === 'notifications/cancelled') { this.cancel(params); return undefined; }
     if (method === '$/cancelRequest') { this.cancel(params); return undefined; }
     if (method === 'ping') return request ? {} : undefined;
     if (!this.#initialized) throw new McpReadOnlyServerError('not_initialized', 'MCP server must be initialized first.');
@@ -188,21 +193,24 @@ export class McpReadOnlyServer {
       if (typeof sourceId !== 'string' || !this.#allowedSourceIds.has(sourceId)) throw new McpReadOnlyServerError('invalid_params', 'sourceId is not allowlisted for this MCP session.');
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
-    this.#pending.set(requestKey(id), { controller, timeoutHandle: timeout });
+    let timedOut = false;
+    const timeout = this.#cancellationMode === 'cooperative'
+      ? setTimeout(() => { timedOut = true; controller.abort(); }, this.#timeoutMs)
+      : undefined;
+    if (timeout !== undefined) this.#pending.set(requestKey(id), { controller, timeoutHandle: timeout });
     try {
-      const value = await this.#query({ toolName: parsed.name, arguments: parsed.arguments, protocolVersion: this.#version!, signal: controller.signal });
-      if (controller.signal.aborted) throw new McpReadOnlyServerError('request_timeout', 'MCP query exceeded the configured timeout.');
+      const value = await this.#query({ toolName: parsed.name, arguments: parsed.arguments, protocolVersion: this.#version!, signal: controller.signal, cancellationSupported: this.#cancellationMode === 'cooperative' });
+      if (controller.signal.aborted) throw new McpReadOnlyServerError(timedOut ? 'request_timeout' : 'query_cancelled', timedOut ? 'MCP query exceeded the configured timeout.' : 'MCP query was cancelled.');
       const result = isQueryResult(value) ? value : { structuredContent: value };
       const content = result.content ?? [{ type: 'text' as const, text: safeJson(result.structuredContent) }];
       return { content, ...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }), ...(result.isError === true ? { isError: true } : {}) };
     } catch (error) {
-      if (controller.signal.aborted) throw new McpReadOnlyServerError('request_timeout', 'MCP query exceeded the configured timeout.');
+      if (controller.signal.aborted) throw new McpReadOnlyServerError(timedOut ? 'request_timeout' : 'query_cancelled', timedOut ? 'MCP query exceeded the configured timeout.' : 'MCP query was cancelled.');
       if (error instanceof McpReadOnlyServerError) throw error;
       throw new McpReadOnlyServerError('query_failed', error instanceof Error ? error.message : 'MCP query failed.');
     } finally {
-      clearTimeout(timeout);
-      this.#pending.delete(requestKey(id));
+      if (timeout !== undefined) clearTimeout(timeout);
+      if (this.#cancellationMode === 'cooperative') this.#pending.delete(requestKey(id));
     }
   }
 
@@ -232,7 +240,7 @@ function freezeTools(tools: readonly McpReadOnlyToolDefinition[]): readonly McpR
 
 function normalizeVersions(input: readonly string[] | undefined): readonly McpReadOnlyProtocolVersion[] {
   const values = input === undefined ? [...MCP_READ_ONLY_PROTOCOL_VERSIONS] : input;
-  const result = values.filter((value): value is McpReadOnlyProtocolVersion => MCP_READ_ONLY_PROTOCOL_VERSIONS.includes(value as McpReadOnlyProtocolVersion));
+  const result = MCP_READ_ONLY_PROTOCOL_VERSIONS.filter((value) => values.includes(value));
   if (result.length === 0) throw new McpReadOnlyServerError('unsupported_protocol_version', 'No supported MCP protocol version is configured.');
   return Object.freeze([...new Set(result)]);
 }
@@ -240,8 +248,9 @@ function normalizeVersions(input: readonly string[] | undefined): readonly McpRe
 function negotiate(value: unknown, server: readonly McpReadOnlyProtocolVersion[]): McpReadOnlyProtocolVersion {
   if (!isRecord(value) || typeof value.protocolVersion !== 'string') throw new McpReadOnlyServerError('invalid_params', 'initialize.protocolVersion is required.');
   const version = value.protocolVersion as McpReadOnlyProtocolVersion;
-  if (!MCP_READ_ONLY_PROTOCOL_VERSIONS.includes(version) || !server.includes(version)) throw new McpReadOnlyServerError('unsupported_protocol_version', 'No supported MCP protocol version is shared.');
-  return version;
+  if (MCP_READ_ONLY_PROTOCOL_VERSIONS.includes(version) && server.includes(version)) return version;
+  // MCP 2025-11-25 requires the server to return another supported version.
+  return server[0]!;
 }
 
 function parseToolCall(value: unknown, tools: readonly McpReadOnlyToolDefinition[]): { name: string; arguments: Readonly<Record<string, unknown>> } {
@@ -266,6 +275,7 @@ function validateSchema(args: Readonly<Record<string, unknown>>, properties: Rea
     if (!isRecord(schema)) continue;
     if (schema.type === 'integer' && (!Number.isSafeInteger(value) || (typeof schema.minimum === 'number' && (value as number) < schema.minimum) || (typeof schema.maximum === 'number' && (value as number) > schema.maximum))) throw new McpReadOnlyServerError('invalid_params', 'MCP integer argument is outside its schema: ' + key);
     if (schema.type === 'string' && typeof value !== 'string') throw new McpReadOnlyServerError('invalid_params', 'MCP argument must be a string: ' + key);
+    if (typeof schema.pattern === 'string' && typeof value === 'string' && !new RegExp(schema.pattern, 'u').test(value)) throw new McpReadOnlyServerError('invalid_params', 'MCP string argument does not match its schema: ' + key);
     if (schema.type === 'array' && !Array.isArray(value)) throw new McpReadOnlyServerError('invalid_params', 'MCP argument must be an array: ' + key);
     if (typeof schema.maxLength === 'number' && typeof value === 'string' && value.length > schema.maxLength) throw new McpReadOnlyServerError('invalid_params', 'MCP string argument is too long: ' + key);
     if (typeof schema.maxItems === 'number' && Array.isArray(value) && value.length > schema.maxItems) throw new McpReadOnlyServerError('invalid_params', 'MCP array argument is too large: ' + key);

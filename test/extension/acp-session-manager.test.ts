@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ACP_CANCEL_GRACE_MS,
   AcpSessionCancelledError,
   AcpSessionManager,
   type AcpProcessFactory,
@@ -96,7 +97,7 @@ describe('ACP session manager', () => {
       onUpdate: update,
     });
     const start = session.start();
-    process.emitMessage({ jsonrpc: '2.0', id: 1, result: {} });
+    process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } });
     await Promise.resolve();
     process.emitMessage({ jsonrpc: '2.0', id: 2, result: { sessionId: 's' } });
     await start;
@@ -117,18 +118,103 @@ describe('ACP session manager', () => {
     expect(session.state).toBe('ready');
   });
 
-  it('cancels an active prompt with the ACP notification and isolates the rejected request', async () => {
-    const { process, manager } = createHarness();
-    const start = manager.start();
-    process.emitMessage({ jsonrpc: '2.0', id: 1, result: {} });
+  it('waits for a cancelled prompt terminal response and continues forwarding trailing updates', async () => {
+    const { process } = createHarness();
+    const update = vi.fn();
+    const session = new AcpSessionManager({
+      launch: { command: 'fake-agent', timeoutMs: 100 },
+      processFactory: () => process,
+      onUpdate: update,
+    });
+    const start = session.start();
+    process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } });
     await Promise.resolve();
     process.emitMessage({ jsonrpc: '2.0', id: 2, result: { sessionId: 's' } });
     await start;
 
-    const prompt = manager.prompt('long running');
-    manager.cancel();
-    await expect(prompt).rejects.toBeInstanceOf(AcpSessionCancelledError);
+    const prompt = session.prompt('long running');
+    session.cancel();
     expect(process.writes.at(-1)).toEqual({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 's' } });
+    expect(session.state).toBe('prompting');
+    process.emitMessage({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's', update: { type: 'agent_message_chunk' } } });
+    process.emitMessage({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } });
+    await expect(prompt).resolves.toEqual({ stopReason: 'cancelled' });
+    expect(update).toHaveBeenCalledWith({ sessionId: 's', update: { type: 'agent_message_chunk' } });
+    expect(session.state).toBe('ready');
+  });
+
+  it('kills the process when a cancelled prompt ignores the grace deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const { process, manager } = createHarness();
+      const start = manager.start();
+      process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } });
+      await Promise.resolve();
+      process.emitMessage({ jsonrpc: '2.0', id: 2, result: { sessionId: 's' } });
+      await start;
+
+      const prompt = manager.prompt('long running');
+      manager.cancel();
+      const rejected = expect(prompt).rejects.toBeInstanceOf(AcpSessionCancelledError);
+      await vi.advanceTimersByTimeAsync(ACP_CANCEL_GRACE_MS);
+      await rejected;
+      expect(process.kill).toHaveBeenCalledTimes(1);
+      expect(manager.state).toBe('failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels startup by killing the process and does not create a session', async () => {
+    const { process, manager } = createHarness();
+    const start = manager.start();
+    manager.cancel();
+
+    await expect(start).rejects.toBeInstanceOf(AcpSessionCancelledError);
+    expect(process.kill).toHaveBeenCalledTimes(1);
+    expect(process.writes.map((message) => (message as { method: string }).method)).toEqual(['initialize']);
+    expect(manager.state).toBe('failed');
+  });
+
+  it('does not create a session when startup is cancelled after initialize completes', async () => {
+    const { process, manager } = createHarness();
+    const start = manager.start();
+    process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } });
+    manager.cancel();
+
+    await expect(start).rejects.toBeInstanceOf(AcpSessionCancelledError);
+    expect(process.kill).toHaveBeenCalledTimes(1);
+    expect(process.writes.map((message) => (message as { method: string }).method)).toEqual(['initialize']);
+  });
+
+  it('requires protocol version 1 and rejects agents requiring unsupported authentication', async () => {
+    const incompatible = createHarness();
+    const incompatibleStart = incompatible.manager.start();
+    incompatible.process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 2 } });
+    await expect(incompatibleStart).rejects.toThrow('protocol version 1');
+    expect(incompatible.process.writes).toHaveLength(1);
+    expect(incompatible.process.kill).toHaveBeenCalledTimes(1);
+
+    const authenticated = createHarness();
+    const authenticatedStart = authenticated.manager.start();
+    authenticated.process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1, authMethods: [{ id: 'oauth' }] } });
+    await expect(authenticatedStart).rejects.toThrow('authentication');
+    expect(authenticated.process.writes).toHaveLength(1);
+    expect(authenticated.process.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats the ACP cancelled-request response as cancellation only after user cancellation', async () => {
+    const { process, manager } = createHarness();
+    const start = manager.start();
+    process.emitMessage({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } });
+    await Promise.resolve();
+    process.emitMessage({ jsonrpc: '2.0', id: 2, result: { sessionId: 's' } });
+    await start;
+
+    const prompt = manager.prompt('cancel me');
+    manager.cancel();
+    process.emitMessage({ jsonrpc: '2.0', id: 3, error: { code: -32800, message: 'Cancelled' } });
+    await expect(prompt).rejects.toBeInstanceOf(AcpSessionCancelledError);
     expect(manager.state).toBe('ready');
   });
 

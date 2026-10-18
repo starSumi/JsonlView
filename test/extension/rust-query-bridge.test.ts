@@ -7,6 +7,7 @@ const result = JSON.stringify({
   records: [{ ordinal: '2', startByte: '8', endByte: '20', raw: '{"ok":true}' }],
   nextOrdinal: '3',
   truncated: true,
+  truncationReason: 'page-limit',
 });
 
 describe('RustQueryBridge', () => {

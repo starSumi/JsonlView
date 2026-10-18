@@ -6,6 +6,7 @@ import {
   McpReadOnlyServerError,
   type McpLineTransport,
 } from '../../src/extension/mcp-read-only-server';
+import { createMcpRustQueryHandler, RustQueryBridge, RUST_QUERY_SCHEMA } from '../../src/extension/rust-query-bridge';
 
 function transport(): McpLineTransport & { lines: string[]; emit(line: string): void } {
   const lines: string[] = [];
@@ -49,6 +50,24 @@ describe('MCP read-only JSON-RPC server', () => {
     }
   });
 
+  it('falls back to the newest server-supported version for unknown and future client versions', async () => {
+    for (const protocolVersion of ['2024-10-01', '2099-01-01']) {
+      const server = new McpReadOnlyServer({ transport: transport(), query: vi.fn(async () => null) });
+      server.start();
+      const initialized = await request(server, 1, 'initialize', { protocolVersion });
+      expect(initialized.result).toMatchObject({ protocolVersion: '2026-07-28' });
+    }
+
+    const configured = new McpReadOnlyServer({
+      transport: transport(),
+      protocolVersions: ['2025-06-18', '2025-11-25'],
+      query: vi.fn(async () => null),
+    });
+    configured.start();
+    const initialized = await request(configured, 1, 'initialize', { protocolVersion: '2099-01-01' });
+    expect(initialized.result).toMatchObject({ protocolVersion: '2025-11-25' });
+  });
+
   it('validates the read-only boundary before invoking the query function', async () => {
     const host = transport();
     const query = vi.fn(async () => ({ rows: [{ ordinal: 0 }] }));
@@ -65,21 +84,19 @@ describe('MCP read-only JSON-RPC server', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it('returns standard errors for protocol, method, and argument failures', async () => {
+  it('returns standard errors for method and argument failures', async () => {
     const host = transport();
     const server = new McpReadOnlyServer({ transport: host, query: vi.fn(async () => null) });
     server.start();
     const beforeInit = await request(server, 1, 'tools/list');
     expect(beforeInit.error).toMatchObject({ code: -32002, data: { code: 'not_initialized' } });
-    const unsupported = await request(server, 2, 'initialize', { protocolVersion: '2024-10-01' });
-    expect(unsupported.error).toMatchObject({ code: -32602, data: { code: 'unsupported_protocol_version' } });
-    const initialized = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25' });
+    const initialized = await request(server, 2, 'initialize', { protocolVersion: '2025-11-25' });
     expect(initialized.result).toMatchObject({ protocolVersion: '2025-11-25' });
-    const unknownMethod = await request(server, 4, 'unknown/method');
+    const unknownMethod = await request(server, 3, 'unknown/method');
     expect(unknownMethod.error).toMatchObject({ code: -32601, data: { code: 'method_not_found' } });
-    const unknownTool = await request(server, 5, 'tools/call', { name: 'jsonlview_write_file', arguments: {} });
+    const unknownTool = await request(server, 4, 'tools/call', { name: 'jsonlview_write_file', arguments: {} });
     expect(unknownTool.error).toMatchObject({ code: -32601, data: { code: 'unknown_tool' } });
-    const invalid = await request(server, 6, 'tools/call', { name: MCP_READ_ONLY_TOOL_NAME, arguments: { limit: 0 } });
+    const invalid = await request(server, 5, 'tools/call', { name: MCP_READ_ONLY_TOOL_NAME, arguments: { limit: 0 } });
     expect(invalid.error).toMatchObject({ code: -32602, data: { code: 'invalid_params' } });
   });
 
@@ -88,6 +105,7 @@ describe('MCP read-only JSON-RPC server', () => {
     const server = new McpReadOnlyServer({
       transport: host,
       requestTimeoutMs: 5,
+      cancellationMode: 'cooperative',
       maxResponseBytes: 256,
       query: vi.fn(async ({ signal }) => new Promise((resolve, reject) => {
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
@@ -103,6 +121,65 @@ describe('MCP read-only JSON-RPC server', () => {
     await request(oversized, 1, 'initialize', { protocolVersion: '2026-07-28' });
     const result = await request(oversized, 2, 'tools/call', { name: MCP_READ_ONLY_TOOL_NAME, arguments: {} });
     expect(result.error).toMatchObject({ data: { code: 'response_too_large' } });
+  });
+
+  it('cancels a pending tools/call through notifications/cancelled', async () => {
+    const host = transport();
+    const query = vi.fn(async ({ signal }: { signal: AbortSignal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }));
+    const server = new McpReadOnlyServer({ transport: host, query, cancellationMode: 'cooperative' });
+    server.start();
+    await request(server, 1, 'initialize', { protocolVersion: '2026-07-28' });
+    const pending = server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: MCP_READ_ONLY_TOOL_NAME, arguments: {} } }));
+    await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+    await server.handleLine(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'user' } }));
+    expect(await pending).toBeUndefined();
+  });
+
+  it('reports oversized records explicitly through the Rust-to-MCP production adapter', async () => {
+    const bridge = new RustQueryBridge({ binding: {
+      abiVersion: () => 2,
+      capabilities: () => 4,
+      queryRecords: () => { throw new Error('jsonl-query:record-exceeds-max-bytes'); },
+    } });
+    const query = createMcpRustQueryHandler(bridge, new Map([['local', 'C:/authorized/data.jsonl']]));
+    const server = new McpReadOnlyServer({ transport: transport(), allowedSourceIds: ['local'], query });
+    server.start();
+    await request(server, 1, 'initialize', { protocolVersion: '2025-11-25' });
+    const response = await request(server, 2, 'tools/call', { name: MCP_READ_ONLY_TOOL_NAME, arguments: { sourceId: 'local', maxBytes: 4 } });
+    expect(response.error).toMatchObject({ data: { code: 'query_failed' } });
+    expect(response.error).toMatchObject({ message: 'jsonl-query:record-exceeds-max-bytes' });
+  });
+
+  it('marks the synchronous Rust adapter non-cancellable and does not report a false timeout', async () => {
+    const bridge = new RustQueryBridge({ binding: {
+      abiVersion: () => 2,
+      capabilities: () => 4,
+      queryRecords: () => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        return JSON.stringify({
+          schema: RUST_QUERY_SCHEMA,
+          snapshot: { sizeBytes: '3', modifiedUnixMillis: '1' },
+          records: [{ ordinal: '0', startByte: '0', endByte: '3', raw: 'row' }],
+          nextOrdinal: null,
+          truncated: false,
+          truncationReason: null,
+        });
+      },
+    } });
+    const query = vi.fn(createMcpRustQueryHandler(bridge, new Map([['local', 'C:/authorized/data.jsonl']])));
+    const server = new McpReadOnlyServer({
+      transport: transport(),
+      allowedSourceIds: ['local'],
+      requestTimeoutMs: 1,
+      query,
+    });
+    server.start();
+    await request(server, 1, 'initialize', { protocolVersion: '2025-11-25' });
+    const response = await request(server, 2, 'tools/call', { name: MCP_READ_ONLY_TOOL_NAME, arguments: { sourceId: 'local' } });
+    expect(response.result).toMatchObject({ structuredContent: { records: [{ raw: 'row' }] } });
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ cancellationSupported: false, signal: expect.any(AbortSignal) }));
   });
 
   it('writes responses through the injected line transport and ignores notifications', async () => {

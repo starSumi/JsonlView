@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add bounded Rust JSONL record queries to the product command and expose the
+  same read-only data plane through an opt-in MCP stdio server and configured
+  ACP agent sessions. Keep source paths host-owned and transport connections
+  explicit.
 - Add a metadata-only side-agent handoff for activation contribution conflicts,
   with VS Code Chat and clipboard fallback when no side-agent consumer is
   installed.

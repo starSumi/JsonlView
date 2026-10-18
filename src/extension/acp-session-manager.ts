@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 export const ACP_CLIENT_NAME = 'JsonlView';
 export const ACP_PROTOCOL_VERSION = 1;
 export const ACP_DEFAULT_TIMEOUT_MS = 10_000;
+export const ACP_CANCEL_GRACE_MS = 2_000;
 export const ACP_MAX_LINE_BYTES = 1_048_576;
 
 export type AcpSessionState = 'idle' | 'starting' | 'ready' | 'prompting' | 'closed' | 'failed';
@@ -95,7 +96,7 @@ interface JsonRpcNotification {
 
 interface PendingRequest {
   readonly operation: string;
-  readonly timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout>;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
 }
@@ -111,6 +112,7 @@ export class AcpSessionManager {
   private sessionId: string | undefined;
   private stateValue: AcpSessionState = 'idle';
   private promptRequestId: number | undefined;
+  private promptCancelRequested = false;
   private intentionalClose = false;
 
   constructor(options: AcpSessionManagerOptions) {
@@ -146,11 +148,13 @@ export class AcpSessionManager {
       this.process.onStderr((line) => this.onStderr?.(line));
       this.process.onExit((error) => this.handleExit(error));
 
-      await this.request('initialize', {
+      const initializeResult = await this.request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
         clientInfo: this.launch.clientInfo ?? { name: ACP_CLIENT_NAME, version: '0.0.0' },
         clientCapabilities: this.launch.clientCapabilities ?? {},
       }, 'initialize');
+      validateInitializeResult(initializeResult);
+      this.assertStarting();
 
       const result = await this.request(
         'session/new',
@@ -160,6 +164,7 @@ export class AcpSessionManager {
         },
         'session/new',
       );
+      this.assertStarting();
       const id = readSessionId(result);
       if (id === undefined) throw new Error('ACP session/new response did not include sessionId');
       this.sessionId = id;
@@ -179,28 +184,39 @@ export class AcpSessionManager {
     const prompt = typeof content === 'string' ? [{ type: 'text' as const, text: content }] : [...content];
     const requestId = this.nextId;
     this.promptRequestId = requestId;
+    this.promptCancelRequested = false;
     try {
       return await this.request('session/prompt', { sessionId: this.sessionId, prompt }, 'session/prompt');
     } finally {
       if (this.promptRequestId === requestId) this.promptRequestId = undefined;
+      this.promptCancelRequested = false;
       if (this.stateValue === 'prompting') this.stateValue = 'ready';
     }
   }
 
   cancel(): void {
-    if (this.stateValue !== 'prompting' || this.sessionId === undefined) return;
-    this.writeNotification('session/cancel', { sessionId: this.sessionId });
+    if (this.stateValue === 'starting') {
+      this.fail(new AcpSessionCancelledError());
+      return;
+    }
+    if (this.stateValue !== 'prompting' || this.sessionId === undefined || this.promptCancelRequested) return;
+    this.promptCancelRequested = true;
+    try {
+      this.writeNotification('session/cancel', { sessionId: this.sessionId });
+    } catch (error) {
+      this.fail(asError(error));
+      return;
+    }
     const requestId = this.promptRequestId;
     if (requestId !== undefined) {
       const pending = this.pending.get(requestId);
       if (pending !== undefined) {
-        this.pending.delete(requestId);
         clearTimeout(pending.timer);
-        pending.reject(new AcpSessionCancelledError());
+        pending.timer = setTimeout(() => {
+          if (this.pending.get(requestId) === pending) this.fail(new AcpSessionCancelledError());
+        }, ACP_CANCEL_GRACE_MS);
       }
     }
-    this.promptRequestId = undefined;
-    this.stateValue = 'ready';
   }
 
   close(): void {
@@ -282,6 +298,10 @@ export class AcpSessionManager {
     this.pending.delete(response.id);
     clearTimeout(pending.timer);
     if (response.error !== undefined) {
+      if (response.error.code === -32800 && response.id === this.promptRequestId && this.promptCancelRequested) {
+        pending.reject(new AcpSessionCancelledError());
+        return;
+      }
       pending.reject(new AcpRpcError(response.error.code, response.error.message, response.error.data));
     } else {
       pending.resolve(response.result);
@@ -291,6 +311,10 @@ export class AcpSessionManager {
   private handleExit(error?: Error): void {
     if (this.intentionalClose || this.stateValue === 'closed') return;
     this.fail(error ?? new Error('ACP process exited'));
+  }
+
+  private assertStarting(): void {
+    if (this.stateValue !== 'starting') throw new AcpSessionCancelledError();
   }
 
   private fail(error: Error): void {
@@ -386,6 +410,18 @@ function createNodeAcpProcess(spec: AcpProcessSpec): AcpProcessHandle {
 function readSessionId(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined;
   return typeof result.sessionId === 'string' ? result.sessionId : undefined;
+}
+
+function validateInitializeResult(result: unknown): void {
+  if (!isRecord(result) || result.protocolVersion !== ACP_PROTOCOL_VERSION) {
+    throw new Error(`ACP agent must negotiate protocol version ${ACP_PROTOCOL_VERSION}`);
+  }
+  if ('authMethods' in result && !Array.isArray(result.authMethods)) {
+    throw new Error('ACP agent returned an invalid authMethods value');
+  }
+  if (Array.isArray(result.authMethods) && result.authMethods.length > 0) {
+    throw new Error('ACP agent requires authentication, which JsonlView does not support');
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
