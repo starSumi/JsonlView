@@ -39,6 +39,10 @@ summaries, timelines, and session catalog rows are disposable projections.
 
 The runtime has no required network listener, hosted control plane, source
 mutation path, arbitrary command execution, or provider database write.
+Activation conflicts may publish a metadata-only diagnostic through the
+optional `jsonlView.sideAgent.receiveDiagnostic` command. The consumer is
+best-effort; delivery failure falls back to the existing VS Code Chat and
+clipboard path, and never changes activation safety or includes source data.
 
 ## Toolchain
 
@@ -158,6 +162,8 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Do not silently drop blank, malformed, oversized, unknown, or uncorrelated
   records.
 - Do not execute source content, arbitrary JavaScript, or concatenated SQL.
+- Side-agent diagnostics are fixed-schema host events only; never invoke a
+  command derived from diagnostic data or forward notification/source bodies.
 - Keep Webview CSP, nonce, resource roots, and message validation in force.
 - Native failures degrade to the portable scanner and never make unchecked
   offsets or unbounded memory trusted.

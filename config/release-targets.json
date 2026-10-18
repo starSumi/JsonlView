@@ -30,6 +30,7 @@
     "jsonlView.showOutput",
     "jsonlView.explainLastDiagnostic",
     "jsonlView.copyLastDiagnostic",
+    "jsonlView.sendLastDiagnosticToSideAgent",
     "jsonlView.editor",
     "jsonlView.hydration.maxBytes",
     "jsonlView.hydration.fullMaxBytes",

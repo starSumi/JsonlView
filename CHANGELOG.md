@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a metadata-only side-agent handoff for activation contribution conflicts,
+  with VS Code Chat and clipboard fallback when no side-agent consumer is
+  installed.
 - Keep ascending row order available while reverse indexing is incomplete, expose order as a radio group, and use host semantic tokens for selected options and workspace tab indicators.
 - Match compact header rules to the nested query controls, and keep Navigator intake actions legible in forced-colors and very narrow sidebars.
 - Keep compact query controls on a single horizontally scrollable rail so Columns stays reachable without wrapping into another header row.

@@ -105,6 +105,11 @@
         "icon": "$(copy)"
       },
       {
+        "command": "jsonlView.sendLastDiagnosticToSideAgent",
+        "title": "JsonlView: Send Last Diagnostic to Side Agent",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "jsonlView.sessionNavigator.enable",
         "title": "JsonlView: Enable Session Navigator",
         "icon": "$(activate-breakpoints)"

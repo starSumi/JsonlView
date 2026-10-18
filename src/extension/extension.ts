@@ -28,6 +28,7 @@ import { logLifecycleFailure } from './lifecycle-failure';
 import { summaryIdentityMatches } from './summary-identity';
 import { EXECUTION_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
 import { captureRuntimeExecutionIdentity } from './execution-runtime';
+import { buildActivationConflictDiagnostic, buildSideAgentDiagnostic, createSideAgentDiagnosticPort, type SideAgentDiagnosticEvent, type SideAgentDiagnosticPort } from './side-agent-diagnostics';
 
 const SOURCE_RECONCILE_DELAY_MS = 150;
 const STARTUP_STALL_MS = 10_000;
@@ -749,6 +750,10 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
 let lastDiagnostic: JsonlViewDiagnosticEnvelope | undefined;
 let outputChannel: vscode.LogOutputChannel | undefined;
 let activeNavigator: SessionNavigatorTreeProvider | undefined;
+let sideAgentDiagnostics: SideAgentDiagnosticPort | undefined;
+const SEND_TO_SIDE_AGENT = 'Send to side agent';
+const OPEN_JSONLVIEW_LOG = 'Open JsonlView Log';
+const COPY_DIAGNOSTIC_CONTEXT = 'Copy diagnostic context';
 
 function currentDiagnostic(): JsonlViewDiagnosticEnvelope {
   return lastDiagnostic ?? buildDiagnosticEnvelope({
@@ -776,6 +781,7 @@ async function offerDiagnostic(input: { stage: string; name: string; message: st
   }
   const action = await vscode.window.showErrorMessage(
     'JsonlView detected a bounded Webview error. Source contents were not included.',
+    SEND_TO_SIDE_AGENT,
     'Explain with VS Code Chat',
     'Copy diagnostic context',
     'Open JsonlView Log',
@@ -784,12 +790,16 @@ async function offerDiagnostic(input: { stage: string; name: string; message: st
 }
 
 async function handleDiagnosticAction(action: string | undefined, envelope: JsonlViewDiagnosticEnvelope): Promise<void> {
-  if (action === 'Copy diagnostic context') {
+  if (action === COPY_DIAGNOSTIC_CONTEXT) {
     await vscode.env.clipboard.writeText(formatDiagnosticContext(envelope));
     return;
   }
-  if (action === 'Open JsonlView Log') {
+  if (action === OPEN_JSONLVIEW_LOG) {
     outputChannel?.show(true);
+    return;
+  }
+  if (action === SEND_TO_SIDE_AGENT) {
+    await sendDiagnosticToSideAgent(buildSideAgentDiagnostic(envelope), envelope);
     return;
   }
   if (action !== 'Explain with VS Code Chat') return;
@@ -802,18 +812,55 @@ async function handleDiagnosticAction(action: string | undefined, envelope: Json
   }
 }
 
+async function sendDiagnosticToSideAgent(
+  diagnostic: SideAgentDiagnosticEvent,
+  envelope: JsonlViewDiagnosticEnvelope,
+): Promise<void> {
+  const delivery = await sideAgentDiagnostics?.publish(diagnostic);
+  appendOutputLog(outputChannel, 'side-agent-diagnostic', `kind=${diagnostic.kind} outcome=${delivery ?? 'unavailable'}`);
+  if (delivery === 'delivered' || delivery === 'duplicate') return;
+
+  // The external side-agent command is optional. VS Code Chat is the bounded
+  // local fallback; if the host has no Chat command, retain the prompt in the
+  // clipboard so the diagnostic is still actionable without source content.
+  const prompt = formatDiagnosticPrompt(envelope);
+  await vscode.env.clipboard.writeText(prompt);
+  try {
+    await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
+  } catch {
+    void vscode.window.showInformationMessage('The side agent is unavailable. The bounded diagnostic prompt was copied instead.');
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('JsonlView', { log: true });
   context.subscriptions.push(outputChannel);
+  sideAgentDiagnostics = createSideAgentDiagnosticPort((command, diagnostic) => vscode.commands.executeCommand(command, diagnostic));
   appendOutputLog(outputChannel, 'activated', 'output-channel=JsonlView');
   const runtimeIdentity = captureRuntimeExecutionIdentity(context);
   appendExecutionIdentityLog(outputChannel, EXECUTION_IDENTITY, runtimeIdentity);
   const conflict = findExtensionContributionConflict(context.extension.id, vscode.extensions.all);
   if (conflict !== undefined) {
     appendOutputLog(outputChannel, 'activation-blocked', `conflict=${conflict.extensionId}`);
-    void vscode.window.showErrorMessage(
+    const diagnostic = buildActivationConflictDiagnostic(context.extension.id, conflict);
+    const envelope = buildDiagnosticEnvelope({
+      stage: 'activation-contribution-conflict',
+      name: 'ExtensionContributionConflict',
+      message: `Another enabled extension declares ${diagnostic.contributionIds.join(', ')}.`,
+      extensionId: context.extension.id,
+    });
+    lastDiagnostic = envelope;
+    void sideAgentDiagnostics?.publish(diagnostic).then((outcome) => {
+      appendOutputLog(outputChannel, 'side-agent-diagnostic', `kind=${diagnostic.kind} outcome=${outcome}`);
+    });
+    void (async () => {
+      const action = await vscode.window.showErrorMessage(
       `JsonlView cannot activate while ${conflict.extensionId} is enabled because both extensions declare ${conflict.contributionIds.join(', ')}. Disable or uninstall one JsonlView build, then reload the window.`,
-    );
+        SEND_TO_SIDE_AGENT, COPY_DIAGNOSTIC_CONTEXT, OPEN_JSONLVIEW_LOG,
+      );
+      if (action === SEND_TO_SIDE_AGENT) await sendDiagnosticToSideAgent(diagnostic, envelope);
+      else await handleDiagnosticAction(action, envelope);
+    })();
     return;
   }
   const revealRegistry = new RevealIntentRegistry();
@@ -851,6 +898,16 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('jsonlView.showOutput', () => outputChannel?.show(true)),
     vscode.commands.registerCommand('jsonlView.explainLastDiagnostic', () => handleDiagnosticAction('Explain with VS Code Chat', currentDiagnostic())),
     vscode.commands.registerCommand('jsonlView.copyLastDiagnostic', () => vscode.env.clipboard.writeText(formatDiagnosticContext(currentDiagnostic()))),
+    vscode.commands.registerCommand('jsonlView.sendLastDiagnosticToSideAgent', async () => {
+      const envelope = currentDiagnostic();
+      const sideAgentDiagnostic = envelope.stage === 'activation-contribution-conflict'
+        ? buildActivationConflictDiagnostic(
+          envelope.extension?.id ?? context.extension.id,
+          { extensionId: 'unknown', contributionIds: [envelope.stage] },
+        )
+        : buildSideAgentDiagnostic(envelope);
+      await sendDiagnosticToSideAgent(sideAgentDiagnostic, envelope);
+    }),
     vscode.commands.registerCommand('jsonlView.sessionNavigator.mcpCapability', async () => {
       appendOutputLog(outputChannel, 'mcp-capability', JSON.stringify(MCP_NAVIGATION_CAPABILITY));
       const action = await vscode.window.showInformationMessage(
@@ -869,6 +926,7 @@ export async function deactivate(): Promise<void> {
   navigator?.dispose();
   await navigator?.previews.dispose();
   appendOutputLog(outputChannel, 'deactivated');
+  sideAgentDiagnostics = undefined;
   outputChannel = undefined;
 }
 
