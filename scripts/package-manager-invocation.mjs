@@ -29,7 +29,9 @@ export function resolvePnpmInvocation() {
       // a Node script produces the MZ/SyntaxError failure seen by nested
       // package commands. Execute native binaries directly; only JavaScript
       // CLIs go through the active Node runtime.
-      if (extname(candidate).toLowerCase() === '.exe') return { command: candidate, prefix: [] };
+      const extension = extname(candidate).toLowerCase();
+      if (extension === '.exe') return { command: candidate, prefix: [] };
+      if (process.platform === 'win32' && (extension === '.cmd' || extension === '.bat')) continue;
       return { command: process.execPath, prefix: [candidate] };
     }
   }
