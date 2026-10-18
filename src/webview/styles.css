@@ -3245,14 +3245,13 @@ body.is-resizing-column * {
     padding: 4px 8px;
   }
 
-  .toolbar > .search-box {
-    order: 2;
+  .workspace-query-controls .table-query-toolbar > .search-box {
     flex: 1 1 160px;
     max-width: none;
   }
 
-  .toolbar > .row-order-control {
-    order: 2;
+  .workspace-query-controls .table-query-toolbar > .row-order-control {
+    flex: 0 0 auto;
   }
 
   .status-strip {
@@ -3315,7 +3314,7 @@ body.is-resizing-column * {
     display: none;
   }
 
-  .toolbar > .search-box {
+  .workspace-query-controls .table-query-toolbar > .search-box {
     min-width: 120px;
   }
 }

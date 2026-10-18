@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { WorkspaceHeader, type WorkspaceHeaderProps } from '../../src/webview/workspace-header';
+
+const styles = readFileSync(new URL('../../src/webview/styles.css', import.meta.url), 'utf8');
 
 const status: WorkspaceHeaderProps = {
   children: React.createElement('button', { type: 'button', 'aria-label': 'Rebuild index' }, 'Rebuild'),
@@ -24,6 +27,13 @@ function render(overrides: Partial<WorkspaceHeaderProps> = {}): string {
 }
 
 describe('workspace header status', () => {
+  it('applies compact sizing to the nested query controls', () => {
+    const compactRules = styles.slice(styles.indexOf('@container workspace (max-width: 720px)'), styles.indexOf('@container workspace (max-width: 520px)'));
+    expect(compactRules).toContain('.workspace-query-controls .table-query-toolbar > .search-box');
+    expect(compactRules).toContain('.workspace-query-controls .table-query-toolbar > .row-order-control');
+    expect(compactRules).not.toContain('.toolbar > .search-box');
+  });
+
   it('places workspace tabs in the same header while preserving the Navigator action', () => {
     const markup = render({ navigation: React.createElement('nav', { 'aria-label': 'Workspace views' }, 'Table') });
     expect(markup.indexOf('aria-label="Open Navigator"')).toBeLessThan(markup.indexOf('<nav'));

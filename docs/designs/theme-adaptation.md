@@ -205,6 +205,10 @@ stays on one choice and selection remains available without a pointer. Forced
 colors preserve a visible selected state and focus outline. Workspace tabs use
 the host's tab active-border token on their bottom indicator without changing
 label weight or control geometry.
+Secondary source actions use the host's secondary-button border token, with a
+two-column layout below 240 CSS pixels and forced-colors system colors. Narrow
+header rules target the nested query toolbar in the rendered DOM; controls keep
+their visible labels and may wrap as a group when the host pane is narrow.
 
 ## Ownership and lifecycle
 

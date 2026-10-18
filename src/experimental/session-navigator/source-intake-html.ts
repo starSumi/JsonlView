@@ -223,9 +223,11 @@ export function getSourceDropHtml(): string {
     .drop strong { display: block; font-weight: 600; }
     .hint { display: block; margin-top: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.35; }
     .source-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 0 5px; }
-    .source-action { width: 100%; padding: 3px 4px; border: 1px solid var(--vscode-button-border, var(--vscode-widget-border)); border-radius: 3px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); font-size: 11px; line-height: 1.35; white-space: nowrap; }
+    .source-action { width: 100%; padding: 3px 4px; border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 3px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); font-size: 11px; line-height: 1.35; white-space: nowrap; }
     .source-action:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
     .source-action:active, .toggle:active { background: var(--vscode-list-activeSelectionBackground); }
+    @media (max-width: 240px) { .source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (forced-colors: active) { .source-action { border-color: ButtonText; color: ButtonText; background: ButtonFace; } .source-action:active { color: HighlightText; background: Highlight; } .toggle:focus-visible, .drop:focus-visible, .source-action:focus-visible { outline-color: Highlight; } .drop { border-color: ButtonText; } }
     [hidden] { display: none !important; }
     #status { min-height: 14px; margin: 4px 0 0; overflow-wrap: anywhere; font-size: 10px; }
     #status[data-state=error] { color: var(--vscode-errorForeground); }
