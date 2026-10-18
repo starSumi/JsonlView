@@ -1,6 +1,46 @@
 schema: jsonlview.documentation-metadata
 version: 1
 documents:
+  - id: architecture-v2-roadmap
+    path: docs/architecture-v2-roadmap.md
+    title: JsonlView V2 Architecture Roadmap
+    kind: roadmap
+    status: accepted
+    owner: product
+    tags: [architecture, native, control-plane, projection, mcp, staged-mutation]
+    evidence: []
+    revisit: when a V2 capability passes its stage gate or a plane boundary changes
+    rollback: disable the capability and retain the portable read-only path
+  - id: rust-engineering-rules
+    path: docs/rust-engineering-rules.md
+    title: Rust Native Engineering Rules
+    kind: policy
+    status: active
+    owner: product
+    tags: [rust, native, bounds, fallback, abi]
+    evidence: []
+    revisit: when native ownership or promotion gates change
+    rollback: disable native selection and use the portable scanner
+  - id: mcp-local-plan
+    path: docs/mcp-local-plan.md
+    title: Local MCP and Audit Plan
+    kind: guide
+    status: proposed
+    owner: product
+    tags: [mcp, audit, otel, redaction, staging]
+    evidence: []
+    revisit: when the read-only MCP transport or trust boundary gains evidence
+    rollback: keep MCP disabled and retain local read-only navigation
+  - id: adr-051-v2-plane-boundaries-and-engineering-gates
+    path: docs/decisions/051-v2-plane-boundaries-and-engineering-gates.md
+    title: V2 Plane Boundaries and Engineering Gates
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [architecture, native, mcp, otel, evaluation, rollback]
+    evidence: []
+    revisit: when a V2 plane boundary or capability gate changes
+    rollback: supersede ADR-051 with an explicit replacement and disable the affected capability
   - id: kimi-format-profile
     path: docs/kimi-format-profile.md
     title: Kimi persisted session profile

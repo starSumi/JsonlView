@@ -5,6 +5,7 @@
 - Keep ascending row order available while reverse indexing is incomplete, expose order as a radio group, and use host semantic tokens for selected options and workspace tab indicators.
 - Match compact header rules to the nested query controls, and keep Navigator intake actions legible in forced-colors and very narrow sidebars.
 - Keep compact query controls on a single horizontally scrollable rail so Columns stays reachable without wrapping into another header row.
+- Register the V2 four-plane architecture, Rust/native rules, and read-only MCP/audit plan with evidence-gated experiments for sparse indexes, staging, OTel, ML, and provider-neutral agent parsing.
 - Extract detail splitter interactions, profile-query reconciliation, and Kimi event section projection into focused internal modules while preserving App composition, reducer ownership, and provider arbitration.
 - Organize detail-splitter geometry and interaction under a feature boundary, and execute native pnpm binaries directly for nested packaging commands.
 - Split the Webview stylesheet into fixed-order feature modules and add complete-block regression coverage without changing style declarations.

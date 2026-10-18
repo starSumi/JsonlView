@@ -34,6 +34,9 @@ release input.
    change affects performance, failure handling, paths, or data exposure.
 7. Read `operations/postmortem-policy.md` when a failure needs corrective
    action or recurrence prevention.
+8. Read `architecture-v2-roadmap.md`, `rust-engineering-rules.md`, and
+   `mcp-local-plan.md` before changing a native, control-plane, projection,
+   MCP, audit, or staged-mutation boundary.
 
 ## Design baselines
 

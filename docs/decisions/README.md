@@ -73,6 +73,7 @@ Read these before changing a shared boundary:
 49. [ADR-048 bounded conversation and dataset scenes](048-bounded-conversation-and-dataset-scenes.md)
 50. [ADR-049 shared protocol wire registry](049-shared-protocol-wire-registry.md)
 51. [ADR-050 Navigator catalog metadata plane](050-navigator-catalog-metadata-plane.md)
+52. [ADR-051 V2 plane boundaries and engineering gates](051-v2-plane-boundaries-and-engineering-gates.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

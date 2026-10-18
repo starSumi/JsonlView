@@ -157,6 +157,27 @@ maintenance, and rollback trade-offs in docs/decisions/.
 
 ## Architecture and Parallel Work
 
+## V2 Architecture Rule Entrypoints
+
+The reviewed architecture inputs are translated into product-owned, evidence-
+gated rules rather than loaded at runtime. Read these entrypoints before a
+cross-plane change:
+
+- [V2 architecture roadmap](docs/architecture-v2-roadmap.md): four-plane
+  topology, delivery stages, hypotheses, and rollback boundaries.
+- [Rust native engineering rules](docs/rust-engineering-rules.md): bounded
+  `native/jsonl-core/` ownership, typed failures, offset invariants, and
+  accelerator promotion gates.
+- [Local MCP and audit plan](docs/mcp-local-plan.md): read-only MCP, audit/OTel
+  separation, redaction, budgets, and staged mutation phases.
+- [ADR-051 plane boundaries](docs/decisions/051-v2-plane-boundaries-and-engineering-gates.md):
+  accepted source-authority and evidence rules for V2 evolution.
+
+The Vault design notes are read-only research inputs. Do not add their paths,
+raw bodies, screenshots, or private evidence to the product runtime or package.
+Do not promote claims such as zero-copy, 120 FPS, Roaring indexes, PieceTree,
+DuckDB, ONNX, or source mutation without the gates in these documents.
+
 The Webview uses feature-first slices. The Extension Host uses
 ports-and-adapters. Provider adapters are vertical slices over shared record,
 presentation, and transport contracts. Avoid a global services bucket and
