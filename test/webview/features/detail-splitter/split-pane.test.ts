@@ -4,7 +4,7 @@ import {
   detailWidthValueText,
   MIN_DETAIL_WIDTH,
   resizedDetailWidth,
-} from '../../src/webview/split-pane';
+} from '../../../../src/webview/features/detail-splitter';
 
 describe('detail split pane sizing', () => {
   it('keeps both panes usable inside the current workspace', () => {

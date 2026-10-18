@@ -21,7 +21,7 @@ import type { NavigatorBridgeResultV1 } from '../shared/protocol/navigator-bridg
 import type { SourceRegistrationFactsV1 } from '../shared/protocol/source-registration';
 import { analysisIntentEquals } from '../shared/analysis-intent';
 import { normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage } from './paging';
-import { DEFAULT_DETAIL_WIDTH } from './split-pane';
+import { DEFAULT_DETAIL_WIDTH } from './features/detail-splitter';
 import { snapshotIdentityChanged } from './snapshot-identity';
 import type { RowTypeSelection } from './features/record-query/query-selection';
 import { columnsAfterProfileChange } from './features/record-query/model';

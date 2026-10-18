@@ -324,6 +324,8 @@ describe('release candidate integrity', () => {
     expect(npm.command).toBe(process.execPath);
     expect(npm.prefix[0]).toMatch(/npm-cli\.js$/i);
     expect(pnpm.command.toLowerCase()).not.toMatch(/\.cmd$/);
+    if (pnpm.command.toLowerCase().endsWith('.exe') && pnpm.command.toLowerCase() !== process.execPath.toLowerCase()) expect(pnpm.prefix).toEqual([]);
+    else expect(pnpm.prefix[0]).toMatch(/pnpm\.(?:c?js)$/i);
   });
 
   it('distinguishes npm access tokens from npm runtime environment names', () => {

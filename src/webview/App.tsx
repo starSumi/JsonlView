@@ -110,8 +110,8 @@ import {
   MIN_DETAIL_WIDTH,
   MIN_PRIMARY_WIDTH,
   SPLITTER_WIDTH,
-} from './split-pane';
-import { useDetailSplitter } from './use-detail-splitter';
+} from './features/detail-splitter';
+import { useDetailSplitter } from './features/detail-splitter';
 
 const configuredPageSize = Number(document.body.dataset.pageSize ?? '100');
 const PAGE_SIZE = Number.isSafeInteger(configuredPageSize)

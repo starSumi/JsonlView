@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, extname, resolve } from 'node:path';
 
 export function resolveNpmInvocation() {
   const runtimeDirectory = dirname(process.execPath);
@@ -25,6 +25,11 @@ export function resolvePnpmInvocation() {
   ];
   for (const candidate of candidates) {
     if (candidate !== undefined && isRegularFile(candidate)) {
+      // npm_execpath may point at pnpm.exe on Windows. Passing that binary as
+      // a Node script produces the MZ/SyntaxError failure seen by nested
+      // package commands. Execute native binaries directly; only JavaScript
+      // CLIs go through the active Node runtime.
+      if (extname(candidate).toLowerCase() === '.exe') return { command: candidate, prefix: [] };
       return { command: process.execPath, prefix: [candidate] };
     }
   }

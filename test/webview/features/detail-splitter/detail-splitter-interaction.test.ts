@@ -4,7 +4,7 @@ import {
   type DetailSplitterInteractionOptions,
   type DetailSplitterInteractionTargets,
   type DetailSplitterPointerEventHost,
-} from '../../src/webview/use-detail-splitter';
+} from '../../../../src/webview/features/detail-splitter';
 
 type PointerEventName = 'pointermove' | 'pointerup' | 'pointercancel';
 type PointerListener = (event: Pick<PointerEvent, 'pointerId' | 'clientX'>) => void;
