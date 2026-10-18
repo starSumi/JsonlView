@@ -7,7 +7,7 @@ import {
 } from '../../src/webview/use-detail-splitter';
 
 type PointerEventName = 'pointermove' | 'pointerup' | 'pointercancel';
-type PointerListener = Parameters<DetailSplitterPointerEventHost['addEventListener']>[1];
+type PointerListener = (event: Pick<PointerEvent, 'pointerId' | 'clientX'>) => void;
 
 class PointerHost implements DetailSplitterPointerEventHost {
   private readonly listeners = new Map<PointerEventName, Set<PointerListener>>();
@@ -22,8 +22,8 @@ class PointerHost implements DetailSplitterPointerEventHost {
     this.listeners.get(type)?.delete(listener);
   }
 
-  emit(type: PointerEventName, clientX = 0): void {
-    for (const listener of [...(this.listeners.get(type) ?? [])]) listener({ clientX });
+  emit(type: PointerEventName, pointerId: number, clientX = 0): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener({ pointerId, clientX });
   }
 
   count(type: PointerEventName): number {
@@ -71,14 +71,14 @@ describe('detail splitter interactions', () => {
     expect(test.classes.has('is-resizing-detail')).toBe(true);
     expect(test.events[0]).toBe('pause');
 
-    test.pointerEvents.emit('pointermove', 80);
+    test.pointerEvents.emit('pointermove', 7, 80);
     expect(test.widths).toEqual([420]);
-    test.pointerEvents.emit('pointerup');
+    test.pointerEvents.emit('pointerup', 7);
     expect(test.classes.has('is-resizing-detail')).toBe(false);
     expect(test.pointerEvents.count('pointermove')).toBe(0);
     expect(test.pointerEvents.count('pointerup')).toBe(0);
     expect(test.pointerEvents.count('pointercancel')).toBe(0);
-    test.pointerEvents.emit('pointermove', 60);
+    test.pointerEvents.emit('pointermove', 7, 60);
     expect(test.widths).toEqual([420]);
   });
 
@@ -86,9 +86,9 @@ describe('detail splitter interactions', () => {
     const test = fixture();
     const splitter = { setPointerCapture: vi.fn(() => { throw new Error('capture unavailable'); }) };
     expect(() => test.interaction.onPointerDown(pointerDown(splitter))).not.toThrow();
-    test.pointerEvents.emit('pointermove', 90);
+    test.pointerEvents.emit('pointermove', 7, 90);
     expect(test.widths).toEqual([410]);
-    test.pointerEvents.emit('pointerup');
+    test.pointerEvents.emit('pointerup', 7);
     expect(test.pointerEvents.count('pointermove')).toBe(0);
     expect(test.classes.has('is-resizing-detail')).toBe(false);
   });
@@ -96,7 +96,28 @@ describe('detail splitter interactions', () => {
   it('cleans up listeners and the resize class on pointercancel', () => {
     const test = fixture();
     test.interaction.onPointerDown(pointerDown({ setPointerCapture: vi.fn() }));
-    test.pointerEvents.emit('pointercancel');
+    test.pointerEvents.emit('pointercancel', 7);
+    expect(test.classes.has('is-resizing-detail')).toBe(false);
+    expect(test.pointerEvents.count('pointermove')).toBe(0);
+    expect(test.pointerEvents.count('pointerup')).toBe(0);
+    expect(test.pointerEvents.count('pointercancel')).toBe(0);
+  });
+
+  it('ignores move, up and cancel events from a different pointer', () => {
+    const test = fixture();
+    test.interaction.onPointerDown(pointerDown({ setPointerCapture: vi.fn() }));
+    test.pointerEvents.emit('pointermove', 8, 80);
+    test.pointerEvents.emit('pointerup', 8);
+    test.pointerEvents.emit('pointercancel', 8);
+    expect(test.widths).toEqual([]);
+    expect(test.classes.has('is-resizing-detail')).toBe(true);
+    expect(test.pointerEvents.count('pointermove')).toBe(1);
+    expect(test.pointerEvents.count('pointerup')).toBe(1);
+    expect(test.pointerEvents.count('pointercancel')).toBe(1);
+
+    test.pointerEvents.emit('pointermove', 7, 80);
+    expect(test.widths).toEqual([420]);
+    test.pointerEvents.emit('pointercancel', 7);
     expect(test.classes.has('is-resizing-detail')).toBe(false);
     expect(test.pointerEvents.count('pointermove')).toBe(0);
     expect(test.pointerEvents.count('pointerup')).toBe(0);

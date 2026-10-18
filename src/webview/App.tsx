@@ -1206,6 +1206,7 @@ export function App(): React.JSX.Element {
               {/* biome-ignore lint/a11y/useSemanticElements: the splitter is an interactive resize control, not a document rule */}
               <div
               className="detail-splitter"
+              ref={detailSplitter.ref}
               role="separator"
               aria-label="Resize record detail"
               aria-orientation="vertical"

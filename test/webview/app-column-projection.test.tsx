@@ -13,8 +13,9 @@ import { summarizeDatasetRecord } from '../../src/profiles/dataset-analysis';
 
 type Effect = { deps?: readonly unknown[] | undefined; cleanup?: (() => void) | undefined };
 const hooks = vi.hoisted(() => ({
-  cursor: 0, dirty: false, slots: [] as unknown[], effects: [] as Array<() => void>,
+  cursor: 0, dirty: false, slots: [] as unknown[], layoutEffects: [] as Array<() => void>, effects: [] as Array<() => void>,
 }));
+const bodyClasses = new Set<string>();
 
 // The repository uses a Node test environment. This bounded hook host commits
 // the real App, effects, reducer and controller without adding a DOM dependency.
@@ -58,7 +59,15 @@ vi.mock('react', async (importOriginal) => {
     hooks.slots[index] = effect;
     hooks.effects.push(() => { previous?.cleanup?.(); effect.cleanup = setup() || undefined; });
   };
-  const replacements = { useState, useReducer, useRef, useMemo, useEffect,
+  const useLayoutEffect = (setup: () => (() => void) | undefined, deps?: readonly unknown[]) => {
+    const index = hooks.cursor++;
+    const previous = hooks.slots[index] as Effect | undefined;
+    if (previous !== undefined && same(previous.deps, deps)) return;
+    const effect: Effect = { deps };
+    hooks.slots[index] = effect;
+    hooks.layoutEffects.push(() => { previous?.cleanup?.(); effect.cleanup = setup() || undefined; });
+  };
+  const replacements = { useState, useReducer, useRef, useMemo, useEffect, useLayoutEffect,
     useCallback: <Value,>(callback: Value, deps: readonly unknown[]) => useMemo(() => callback, deps) };
   return { ...react, ...replacements, default: { ...react, ...replacements } };
 });
@@ -70,7 +79,10 @@ let App: () => React.JSX.Element;
 let browser: EventTarget;
 
 beforeAll(async () => {
-  vi.stubGlobal('document', { body: { dataset: { documentId: 'doc', generation: 'bootstrap', pageSize: '20' } } });
+  vi.stubGlobal('document', { body: {
+    dataset: { documentId: 'doc', generation: 'bootstrap', pageSize: '20' },
+    classList: { add: (name: string) => bodyClasses.add(name), remove: (name: string) => bodyClasses.delete(name) },
+  } });
   browser = Object.assign(new EventTarget(), { innerWidth: 1400,
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     __jsonlViewVscodeApi: { getState: () => persisted, setState: vi.fn(),
@@ -82,11 +94,13 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  hooks.slots = []; hooks.effects = []; hooks.cursor = 0;
+  hooks.slots = []; hooks.layoutEffects = []; hooks.effects = []; hooks.cursor = 0;
+  bodyClasses.clear();
   sent.length = 0; persisted = undefined;
 });
 afterEach(() => {
   for (const slot of hooks.slots) (slot as Effect | undefined)?.cleanup?.();
+  hooks.layoutEffects = [];
   hooks.effects = [];
   vi.useRealTimers();
 });
@@ -98,6 +112,7 @@ function commit(): void {
     if (++renders > 25) throw new Error('App effects did not settle');
     hooks.cursor = 0; hooks.dirty = false;
     tree = App();
+    for (const run of hooks.layoutEffects.splice(0)) run();
     for (const run of hooks.effects.splice(0)) run();
   } while (hooks.dirty);
 }
@@ -118,6 +133,21 @@ function props<Props,>(component: ComponentType<Props>): Props {
   const found = find(tree);
   if (found === undefined) throw new Error('App child missing');
   return found;
+}
+
+function elementByClassName(className: string): ReactElement | undefined {
+  const find = (node: ReactNode): ReactElement | undefined => {
+    if (Array.isArray(node)) {
+      for (const child of node) { const found = find(child); if (found !== undefined) return found; }
+    } else if (React.isValidElement<{ children?: ReactNode; className?: string; secondary?: ReactNode }>(node)) {
+      if (node.props.className?.split(' ').includes(className)) return node;
+      const found = find(node.props.children);
+      if (found !== undefined) return found;
+      return find(node.props.secondary);
+    }
+    return undefined;
+  };
+  return find(tree);
 }
 
 function last<Type extends WebviewRequest['type']>(type: Type): Extract<WebviewRequest, { type: Type }> {
@@ -188,6 +218,48 @@ const visibleValues = (): string[] => {
 };
 
 describe('App column presentation and projection boundary', () => {
+  it('uses committed splitter options and cancels the drag when its separator detaches', () => {
+    boot();
+    props(RecordTable).onSelect(props(RecordTable).rows[0]!.ref);
+    commit();
+
+    type SplitterProps = {
+      ref: (instance: HTMLDivElement | null) => void;
+      onPointerDown(event: { button: number; pointerId: number; clientX: number; currentTarget: {
+        setPointerCapture(pointerId: number): void;
+        releasePointerCapture(pointerId: number): void;
+      } }): void;
+      onKeyDown(event: { key: string; shiftKey: boolean; preventDefault(): void }): void;
+    };
+    const splitter = (): SplitterProps => {
+      const found = elementByClassName('detail-splitter');
+      if (found === undefined) throw new Error('Detail splitter missing');
+      return found.props as SplitterProps;
+    };
+    const current = splitter();
+    const preventDefault = vi.fn();
+    current.onKeyDown({ key: 'ArrowLeft', shiftKey: false, preventDefault });
+    commit();
+    current.onKeyDown({ key: 'ArrowLeft', shiftKey: false, preventDefault });
+    commit();
+    const workspace = elementByClassName('workspace')?.props as { style?: Record<string, string> } | undefined;
+    expect(workspace?.style?.['--detail-pane-width']).toBe('512px');
+
+    const separator = { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() };
+    const latest = splitter();
+    latest.onPointerDown({ button: 0, pointerId: 7, clientX: 100, currentTarget: separator });
+    expect(bodyClasses.has('is-resizing-detail')).toBe(true);
+    latest.ref({} as HTMLDivElement);
+    latest.ref(null);
+    expect(separator.releasePointerCapture).toHaveBeenCalledWith(7);
+    expect(bodyClasses.has('is-resizing-detail')).toBe(false);
+
+    browser.dispatchEvent(Object.assign(new Event('pointermove'), { pointerId: 7, clientX: 50 }));
+    commit();
+    const afterDetach = elementByClassName('workspace')?.props as { style?: Record<string, string> } | undefined;
+    expect(afterDetach?.style?.['--detail-pane-width']).toBe('512px');
+  });
+
   it('correlates the Navigator button with the Host status response', () => {
     boot();
     props(RecordTable).onSelect(page([status]).rows[0]!.ref);

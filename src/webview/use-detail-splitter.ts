@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { clampDetailWidth, resizedDetailWidth } from './split-pane';
 
 type PointerEventName = 'pointermove' | 'pointerup' | 'pointercancel';
-type PointerMoveEvent = Pick<PointerEvent, 'clientX'>;
+type PointerInteractionEvent = Pick<PointerEvent, 'pointerId' | 'clientX'>;
 
 export interface DetailSplitterPointerDownEvent {
   button: number;
@@ -26,10 +26,10 @@ export interface PointerCaptureTarget {
 export interface DetailSplitterPointerEventHost {
   addEventListener(
     type: PointerEventName,
-    listener: (event: PointerMoveEvent) => void,
+    listener: (event: PointerInteractionEvent) => void,
     options?: boolean | AddEventListenerOptions,
   ): void;
-  removeEventListener(type: PointerEventName, listener: (event: PointerMoveEvent) => void): void;
+  removeEventListener(type: PointerEventName, listener: (event: PointerInteractionEvent) => void): void;
 }
 
 export interface DetailSplitterInteractionOptions {
@@ -52,6 +52,7 @@ export interface DetailSplitterInteraction {
 }
 
 export interface DetailSplitterHandlers {
+  ref(instance: HTMLDivElement | null): void;
   onPointerDown(event: ReactPointerEvent<HTMLDivElement>): void;
   onKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void;
 }
@@ -64,8 +65,8 @@ export function createDetailSplitterInteraction(
     pointerId: number;
     splitter: PointerCaptureTarget;
     captured: boolean;
-    onPointerMove(event: PointerMoveEvent): void;
-    finish(): void;
+    onPointerMove(event: PointerInteractionEvent): void;
+    finish(event: PointerInteractionEvent): void;
   } | undefined;
 
   const stopDrag = (releaseCapture: boolean): void => {
@@ -102,11 +103,13 @@ export function createDetailSplitterInteraction(
     }
     targets.bodyClassList.add('is-resizing-detail');
 
-    const onPointerMove = (moveEvent: PointerMoveEvent): void => {
+    const onPointerMove = (moveEvent: PointerInteractionEvent): void => {
+      if (moveEvent.pointerId !== event.pointerId) return;
       if (activeDrag?.onPointerMove !== onPointerMove) return;
       options.setWidth(resizedDetailWidth(initialWidth, initialPointerX, moveEvent.clientX, containerWidth));
     };
-    const finish = (): void => {
+    const finish = (finishEvent: PointerInteractionEvent): void => {
+      if (finishEvent.pointerId !== event.pointerId) return;
       if (activeDrag?.finish === finish) stopDrag(false);
     };
     activeDrag = {
@@ -118,8 +121,8 @@ export function createDetailSplitterInteraction(
     };
     try {
       targets.pointerEvents.addEventListener('pointermove', onPointerMove);
-      targets.pointerEvents.addEventListener('pointerup', finish, { once: true });
-      targets.pointerEvents.addEventListener('pointercancel', finish, { once: true });
+      targets.pointerEvents.addEventListener('pointerup', finish);
+      targets.pointerEvents.addEventListener('pointercancel', finish);
     } catch (error) {
       stopDrag(true);
       throw error;
@@ -163,7 +166,9 @@ function browserTargets(): DetailSplitterInteractionTargets {
 
 export function useDetailSplitter(options: DetailSplitterInteractionOptions): DetailSplitterHandlers {
   const optionsRef = useRef(options);
-  optionsRef.current = options;
+  useLayoutEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
   const interactionRef = useRef<DetailSplitterInteraction | undefined>(undefined);
   if (interactionRef.current === undefined) {
     interactionRef.current = createDetailSplitterInteraction({
@@ -176,5 +181,8 @@ export function useDetailSplitter(options: DetailSplitterInteractionOptions): De
   }
   const interaction = interactionRef.current;
   useEffect(() => () => interaction.dispose(), [interaction]);
-  return interaction;
+  const ref = useCallback((instance: HTMLDivElement | null): void => {
+    if (instance === null) interaction.dispose();
+  }, [interaction]);
+  return { ...interaction, ref };
 }
