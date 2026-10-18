@@ -36,7 +36,7 @@ describe('workspace header status', () => {
     expect(compactToolbarRules).toContain('overflow-x: auto');
     expect(compactToolbarRules).toContain('overscroll-behavior-inline: contain');
     expect(compactToolbarRules).toContain('scrollbar-color: var(--vscode-scrollbarSlider-background) transparent');
-    expect(compactToolbarRules).toContain('flex: 0 1 220px');
+    expect(compactToolbarRules).toContain('flex: 0 0 clamp(160px, 32vw, 220px)');
     expect(compactToolbarRules).not.toContain('display: none');
   });
 
