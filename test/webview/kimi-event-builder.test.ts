@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { buildKimiEventSections, type KimiEventBuilderContext, type KimiEventObject } from '../../src/webview/providers/kimi-event-builder';
-import { kimiEventStrategyRegistry } from '../../src/webview/providers/kimi-event-strategies';
+import {
+  decodeKimiEvent,
+  KIMI_CURRENT_RECORD_COUNT,
+  KIMI_HISTORICAL_RECORD_COUNT,
+  KIMI_EVENT_TYPES,
+  KIMI_WIRE_MANIFEST_REVISION,
+  kimiEventHandlers,
+  kimiEventStrategyRegistry,
+} from '../../src/webview/providers/kimi-event-strategies';
 import type { EventPresentationSection } from '../../src/webview/features/event-presentation/model';
 
 const kimiProfile = { profileId: 'kimi-code-session' } as never;
@@ -24,6 +32,85 @@ function context(): KimiEventBuilderContext {
 }
 
 describe('Kimi event builder', () => {
+  it('keeps the source-backed handler table complete and explicit', () => {
+    expect(Object.keys(kimiEventHandlers).sort()).toEqual([...KIMI_EVENT_TYPES].sort());
+    expect(kimiEventStrategyRegistry.size).toBe(KIMI_EVENT_TYPES.length);
+    expect(KIMI_EVENT_TYPES).toHaveLength(64);
+    expect(KIMI_EVENT_TYPES).toHaveLength(KIMI_CURRENT_RECORD_COUNT + KIMI_HISTORICAL_RECORD_COUNT);
+    expect(KIMI_WIRE_MANIFEST_REVISION).toMatch(/^[0-9a-f]{40}$/);
+    for (const eventType of KIMI_EVENT_TYPES) {
+      expect(kimiEventHandlers[eventType].strategy).toMatch(/^(content|lifecycle|loop|raw|tool-schema)$/);
+      expect(kimiEventStrategyRegistry.get(eventType)).toBeDefined();
+    }
+  });
+
+  it('decodes unknown or malformed wire records without reaching assertNever', () => {
+    const unknown = decodeKimiEvent({ type: 'memory.compact', tokens: 12 });
+    expect(unknown).toEqual({ kind: 'unknown', reason: 'event-type', raw: { type: 'memory.compact', tokens: 12 } });
+    expect(buildKimiEventSections({ type: 'memory.compact', tokens: 12 }, kimiProfile, context())).toEqual([
+      expect.objectContaining({ title: 'Kimi raw fallback · unknown event', code: expect.stringContaining('event-type') }),
+    ]);
+    const futureFieldOnly = decodeKimiEvent({ type: 'future.event', command: 'echo hidden', output: 'ignored' });
+    expect(futureFieldOnly).toEqual(expect.objectContaining({ kind: 'unknown', reason: 'event-type' }));
+    expect(() => buildKimiEventSections({ type: 'future.event', command: 'echo hidden', output: 'ignored' }, kimiProfile, context())).not.toThrow();
+
+    const malformedNested = decodeKimiEvent({
+      type: 'context.append_loop_event',
+      event: { type: 'memory.compact', tokens: 12 },
+    });
+    expect(malformedNested).toEqual(expect.objectContaining({ kind: 'invalid', reason: 'nested-event' }));
+    expect(buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: { type: 'memory.compact', tokens: 12 },
+    }, kimiProfile, context())).toEqual([
+      expect.objectContaining({ title: 'Kimi raw fallback · unknown event', code: expect.stringContaining('nested-event') }),
+    ]);
+
+    const malformedToolResult = decodeKimiEvent({
+      type: 'context.append_loop_event',
+      event: { type: 'tool.result', result: null },
+    });
+    expect(malformedToolResult).toEqual(expect.objectContaining({ kind: 'invalid', reason: 'nested-event' }));
+    expect(buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: { type: 'tool.result', result: null },
+    }, kimiProfile, context())).toEqual([
+      expect.objectContaining({ title: 'Kimi raw fallback · unknown event', code: expect.stringContaining('nested-event') }),
+    ]);
+
+    const futurePart = decodeKimiEvent({
+      type: 'context.append_loop_event',
+      event: { type: 'content.part', part: { type: 'document', text: 'future payload' } },
+    });
+    expect(futurePart).toEqual(expect.objectContaining({ kind: 'invalid', reason: 'nested-event' }));
+    expect(buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: { type: 'content.part', part: { type: 'document', text: 'future payload' } },
+    }, kimiProfile, context())).toEqual([
+      expect.objectContaining({ title: 'Kimi raw fallback · unknown event', code: expect.stringContaining('nested-event') }),
+    ]);
+
+    expect(decodeKimiEvent({ type: 'context.append_message', message: null })).toEqual(expect.objectContaining({ kind: 'invalid', reason: 'payload-shape' }));
+  });
+
+  it('handles every nested loop discriminant through the typed union', () => {
+    expect(buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: 'step-1', turnId: 'turn-1', step: 2 },
+    }, kimiProfile, context())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Step', text: 'step-1' }),
+      expect.objectContaining({ title: 'Turn', text: 'turn-1' }),
+      expect.objectContaining({ title: 'Step index', text: '2' }),
+    ]));
+    expect(buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: { type: 'step.end', finishReason: 'tool_use', usage: { output: 3 } },
+    }, kimiProfile, context())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Finish reason', text: 'tool_use' }),
+      expect.objectContaining({ title: 'Usage', code: expect.stringContaining('output') }),
+    ]));
+  });
+
   it('routes source discriminants through one bounded strategy registry', () => {
     expect(kimiEventStrategyRegistry.get('context.append_loop_event')?.id).toBe('loop');
     expect(kimiEventStrategyRegistry.get('prompt.steered')?.id).toBe('content');
