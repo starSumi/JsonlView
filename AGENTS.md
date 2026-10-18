@@ -114,6 +114,10 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Generic dataset previews use fields from the selected physical record. An
   ordinary nested payload must not replace its top-level fields; recognized
   event and tool envelopes retain their profile semantics.
+- ShareGPT, VirtualHome, and the pinned `sft-master` conversation/keyword-result
+  families are bounded JSONL semantic adapters. They preserve the physical row
+  and Raw value; top-level JSON arrays remain an explicit unsupported-framing
+  fallback until a structural JSON format adapter exists.
 - Display columns are independent of query predicates. Visibility changes stay
   local when the current row projection covers every required column; missing
   fields and projection overflow still require a bounded page refresh.
@@ -145,6 +149,9 @@ maintenance, and rollback trade-offs in docs/decisions/.
   cancelling or opening Settings while disabled must not scan or create a catalog.
   Scan only explicitly configured sources; detected homes are candidates until
   separately authorized, and authorizing a source does not enable the Navigator.
+  Gemini, OpenCode and AgentsView are explicit generic read-only source choices
+  selected through environment roots or Add Source; never recursively scan a
+  user's home directory for them.
 - Insights results commit only against the current AnalysisIntent v1, including
   normalized query conditions, scope, monotonic intent revision, source identity,
   and the selected profile revision. Display columns remain independent.
@@ -196,6 +203,13 @@ providers, and interaction lifecycles in focused hooks when they own cleanup
 and keyboard/pointer behavior. Keep reducer orchestration and provider
 arbitration at their current owners; extract pure policies without moving
 transaction boundaries or adding a second store or speculative registry.
+
+The MCP navigation capability is discoverable through its disabled-by-default
+descriptor and inspection command. It must remain transport-, process-,
+network-, command-execution-, and source-mutation-free until a separate host
+transport and security review admits it. Staged mutation is similarly opt-in
+only after the setting, workspace trust, source authorization, and explicit
+user gesture gates are all satisfied.
 
 Writable team lanes use separate Git worktrees and branches. Workers edit only
 their assigned subtree and tests. Workers are not alone in the repository;

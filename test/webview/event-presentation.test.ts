@@ -5,6 +5,30 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
 
 describe('structured agent event presentation', () => {
+  it('projects sft-master conversation and keyword result columns into bounded detail sections', () => {
+    const conversation = buildAgentEventPresentation({
+      conversation_id: 1,
+      category: 'dialogue',
+      conversation: [{ human: '用户问题', assistant: '模型回答' }],
+      dataset: 'psychology',
+    }, { profileId: 'generic', eventKind: 'message', summary: 'conversation', evidence: [], confidence: 'inferred' });
+    expect(conversation?.kind).toBe('conversation');
+    expect(conversation?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Conversation 1 · human', text: '用户问题' }),
+      expect.objectContaining({ title: 'Conversation 1 · assistant', text: '模型回答', richText: true }),
+      expect.objectContaining({ title: 'Conversation id', text: '1' }),
+      expect.objectContaining({ title: 'Dataset', text: 'psychology' }),
+    ]));
+
+    const result = buildAgentEventPresentation({ input: '抽取关键词', predict: '预测', target: '目标' }, { profileId: 'generic', eventKind: 'message', summary: 'keyword result', evidence: [], confidence: 'inferred' });
+    expect(result?.kind).toBe('keyword-result');
+    expect(result?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Input', text: '抽取关键词' }),
+      expect.objectContaining({ title: 'Prediction', text: '预测', richText: true }),
+      expect.objectContaining({ title: 'Target', text: '目标' }),
+    ]));
+  });
+
   it('parses unified diff hunks into numbered additions, removals, and context', () => {
     const result = parseUnifiedDiff('--- a/example.ts\n+++ b/example.ts\n@@ -4,2 +4,3 @@\n-old\n context\n+new\n');
     expect(result.truncated).toBe(false);
@@ -888,6 +912,36 @@ describe('structured agent event presentation', () => {
       expect.objectContaining({ title: 'Title', text: 'Row title' }),
       expect.objectContaining({ title: 'Tags', code: '[\n  "row"\n]' }),
     ]);
+  });
+
+  it('renders ShareGPT and VirtualHome dataset fields without hiding the physical row', () => {
+    const sharegpt = buildAgentEventPresentation({
+      conversations: [
+        { from: 'human', value: 'Find the dictionary.' },
+        { from: 'gpt', value: 'I will search.' },
+      ],
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'conversations', evidence: [], confidence: 'source',
+    });
+    expect(sharegpt?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Conversation 1 · user', text: 'Find the dictionary.' }),
+      expect.objectContaining({ title: 'Conversation 2 · assistant', text: 'I will search.' }),
+    ]));
+
+    const virtualhome = buildAgentEventPresentation({
+      task: 'Find dictionary', description: 'Move towards the bookshelf.',
+      action_list: ['Walk to bookshelf'], FailReasons: ['Not found'], SuccessOrFail: [false],
+      revised_graph: { nodes: [] },
+    }, {
+      profileId: 'generic', eventKind: 'other', summary: 'virtualhome', evidence: [], confidence: 'source',
+    });
+    expect(virtualhome?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Task', text: 'Find dictionary' }),
+      expect.objectContaining({ title: 'Description', text: 'Move towards the bookshelf.' }),
+      expect.objectContaining({ title: 'Action list', language: 'json' }),
+      expect.objectContaining({ title: 'Failure reasons', language: 'json' }),
+      expect.objectContaining({ title: 'Revised graph', language: 'json' }),
+    ]));
   });
 
   it.each([undefined, null, [], [{ prompt: 'Nested prompt' }]])('keeps Generic row fields with a non-object payload %j', (payload) => {

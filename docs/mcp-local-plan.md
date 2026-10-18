@@ -32,3 +32,9 @@ This plan does not add an MCP server to extension startup. Transport ownership,
 Restricted Mode behavior, Workspace Trust, and source authorization remain host
 policies. The existing experimental adapter is the compatibility seam until an
 independently owned transport and security review exist.
+
+The shipped inspection command only reports the frozen capability descriptor:
+experimental, disabled by default, metadata-only, and without transport,
+process, network, command execution, or source mutation. It does not construct
+a facade or read a provider. A future transport must keep the same explicit
+allowlist, generation, budget, cancellation and redaction gates.

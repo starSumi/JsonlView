@@ -358,6 +358,7 @@ function isEventEnvelope(value: EventObject, profile?: AgentRowProjection): bool
       ['text', 'content', 'message'].some((key) => textOf(own(value, key)) !== undefined)
       || Array.isArray(value.messages)
       || Array.isArray(value.conversations)
+      || Array.isArray(value.conversation)
       || Array.isArray(value.chosen_messages)
       || Array.isArray(value.rejected_messages)
       || textOf(own(value, 'instruction')) !== undefined
@@ -369,6 +370,11 @@ function isEventEnvelope(value: EventObject, profile?: AgentRowProjection): bool
       || Array.isArray(value.input_ids)
       || textOf(own(value, 'question')) !== undefined
       || textOf(own(value, 'answer')) !== undefined
+      || textOf(own(value, 'input')) !== undefined
+      || textOf(own(value, 'predict')) !== undefined
+      || textOf(own(value, 'target')) !== undefined
+      || (typeof own(value, 'task') === 'string'
+        && (typeof own(value, 'description') === 'string' || Array.isArray(value.action_list)))
       || (textOf(own(value, 'chosen')) !== undefined && textOf(own(value, 'rejected')) !== undefined)
     );
 }
@@ -910,10 +916,40 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
       });
     }
   };
+  const addSftMasterConversation = (messages: unknown[]): void => {
+    messages.slice(0, MAX_DATASET_MESSAGES).forEach((rawMessage, index) => {
+      const message = objectOf(rawMessage);
+      if (!message) {
+        addCodeCandidate(sections, `Conversation ${index + 1} · structured content`, rawMessage, 'json');
+        return;
+      }
+      addTextCandidate(sections, `Conversation ${index + 1} · human`, own(message, 'human'));
+      addTextCandidate(sections, `Conversation ${index + 1} · assistant`, own(message, 'assistant'), true);
+    });
+    const remaining = messages.length - MAX_DATASET_MESSAGES;
+    if (remaining > 0) sections.push({ title: 'Conversation preview', text: `Preview covers the first ${MAX_DATASET_MESSAGES} of ${messages.length} entries. ${remaining} additional ${remaining === 1 ? 'entry is' : 'entries are'} available in Raw.` });
+  };
   if (Array.isArray(payload.messages)) addMessageGroup('Message', payload.messages);
   if (Array.isArray(payload.conversations)) addMessageGroup('Conversation', payload.conversations);
+  if (Array.isArray(payload.conversation)) addSftMasterConversation(payload.conversation);
   if (Array.isArray(payload.chosen_messages)) addMessageGroup('Chosen', payload.chosen_messages);
   if (Array.isArray(payload.rejected_messages)) addMessageGroup('Rejected', payload.rejected_messages);
+
+  // VirtualHome rows are task records rather than message envelopes. Keep the
+  // physical row authoritative while exposing the bounded fields users need to
+  // inspect a plan, its actions, and the resulting evaluation.
+  for (const [key, title] of [
+    ['task', 'Task'], ['description', 'Description'], ['steps', 'Steps'], ['path', 'Source path'], ['id', 'Record id'],
+  ] as const) {
+    addTextCandidate(sections, title, own(payload, key), key === 'description' || key === 'steps');
+  }
+  for (const [key, title] of [
+    ['new_program_lines', 'Program lines'], ['action_list', 'Action list'], ['ObserANDState', 'Observed state'],
+    ['SuccessOrFail', 'Success or fail'], ['FailReasons', 'Failure reasons'], ['revised_graph', 'Revised graph'],
+    ['object_id_dict', 'Object ids'],
+  ] as const) {
+    addCodeCandidate(sections, title, own(payload, key), 'json');
+  }
 
   // Named-column datasets keep scalar text readable and structured metadata
   // in bounded JSON sections. Raw remains authoritative for fields outside
@@ -932,6 +968,9 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
     addTextCandidate(sections, 'Input', own(payload, 'input'));
     addTextCandidate(sections, 'Response', own(payload, 'output'), true);
   }
+  addTextCandidate(sections, 'Prediction', own(payload, 'predict'), true);
+  addTextCandidate(sections, 'Target', own(payload, 'target'));
+  addTextCandidate(sections, 'Conversation id', own(payload, 'conversation_id'));
   addTextCandidate(sections, 'Completion', own(payload, 'completion'), true);
   addTextCandidate(sections, own(payload, 'output') === undefined ? 'Response' : 'Response column', own(payload, 'response'), true);
   addTextCandidate(sections, 'History', own(payload, 'history'));
@@ -939,6 +978,7 @@ function genericDatasetSections(payload: EventObject, toolEvent: boolean): Event
   addTextCandidate(sections, 'Rejected', own(payload, 'rejected'), true);
   addTextCandidate(sections, 'Title', own(payload, 'title'));
   addTextCandidate(sections, 'Category', own(payload, 'category'));
+  addTextCandidate(sections, 'Dataset', own(payload, 'dataset'));
   const label = own(payload, 'label');
   if (typeof label === 'string' && label.length > 0) addTextCandidate(sections, 'Label', label);
   else addCodeCandidate(sections, 'Label', label === '' ? '""' : label, 'json');
@@ -963,6 +1003,9 @@ function genericDatasetKind(
 ): string | undefined {
   if (Array.isArray(payload.messages)) return 'messages';
   if (Array.isArray(payload.conversations)) return 'conversations';
+  if (Array.isArray(payload.conversation)) return 'conversation';
+  if (textOf(own(payload, 'predict')) !== undefined && textOf(own(payload, 'target')) !== undefined) return 'keyword-result';
+  if (typeof payload.task === 'string' && (Array.isArray(payload.action_list) || typeof payload.description === 'string')) return 'virtualhome';
   if (Array.isArray(payload.chosen_messages) || Array.isArray(payload.rejected_messages)) return 'preference';
   if (Array.isArray(payload.input_ids) || Array.isArray(payload.tokens)) return 'tokenized';
   if (genericTextKey) return genericTextKey;

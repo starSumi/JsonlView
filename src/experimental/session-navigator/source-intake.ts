@@ -2,7 +2,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import * as vscode from 'vscode';
 import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
-import type { SessionNavigatorProviderId } from './types';
+import { sessionNavigatorProviderLabel, type DetectedAgentProviderId } from './types';
 import { SessionPreviews } from './session-previews';
 
 export const SOURCE_INTAKE_MAX_BYTES = 1_048_576;
@@ -14,7 +14,7 @@ type IntakeMessage =
   | { readonly type: 'paste-jsonl' | 'connect-agent' }
   | { readonly type: 'drop-uris'; readonly uris: readonly string[] }
   | { readonly type: 'import-jsonl'; readonly text: string }
-  | { readonly type: 'authorize-agent'; readonly provider: 'codex' | 'claude' | 'pi' | 'kimi' }
+  | { readonly type: 'authorize-agent'; readonly provider: DetectedAgentProviderId }
   | { readonly type: 'webview-diagnostic'; readonly name: string; readonly message: string };
 
 export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
@@ -39,7 +39,9 @@ export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
     && typeof message.message === 'string' && message.message.length > 0 && message.message.length <= 512) {
     return { type: 'webview-diagnostic', name: message.name, message: message.message };
   }
-  if (message.type === 'authorize-agent' && keys.length === 2 && (message.provider === 'codex' || message.provider === 'claude' || message.provider === 'pi' || message.provider === 'kimi')) {
+  if (message.type === 'authorize-agent' && keys.length === 2
+    && (message.provider === 'codex' || message.provider === 'claude' || message.provider === 'pi' || message.provider === 'kimi'
+      || message.provider === 'gemini' || message.provider === 'opencode' || message.provider === 'agentsview')) {
     return { type: 'authorize-agent', provider: message.provider };
   }
   throw new Error('Invalid or oversized source request.');
@@ -78,7 +80,7 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
 }
 
 export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
-export type DetectedAgentHandler = (provider: Extract<SessionNavigatorProviderId, 'codex' | 'claude' | 'pi' | 'kimi'>, signal: AbortSignal) => Promise<void>;
+export type DetectedAgentHandler = (provider: DetectedAgentProviderId, signal: AbortSignal) => Promise<void>;
 export type ConnectSourceHandler = (signal: AbortSignal) => Promise<void>;
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
@@ -172,8 +174,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       if (message.type === 'authorize-agent') {
         if (this.#onDetectedAgent === undefined) throw new Error('Detected agent authorization is unavailable. Use Add Source to choose a local folder.');
         await this.#onDetectedAgent(message.provider, signal);
-        const providerLabel = message.provider === 'codex' ? 'Codex' : message.provider === 'claude' ? 'Claude' : message.provider === 'kimi' ? 'Kimi Code' : 'pi';
-        await this.post(webview, signal, 'success', providerLabel + ' source connected.');
+        await this.post(webview, signal, 'success', sessionNavigatorProviderLabel(message.provider) + ' source connected.');
         return;
       }
       if (message.type === 'connect-agent') {

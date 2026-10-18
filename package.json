@@ -120,6 +120,11 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "jsonlView.sessionNavigator.mcpCapability",
+        "title": "JsonlView: Inspect MCP Navigation Capability",
+        "icon": "$(symbol-interface)"
+      },
+      {
         "command": "jsonlView.previews.open",
         "title": "Open Temporary Preview",
         "icon": "$(go-to-file)"
@@ -454,10 +459,15 @@
           "default": "off",
           "description": "Experimental Rust newline scanner. Native failures always fall back to the bounded Node implementation."
         },
+        "jsonlView.experimental.stagedMutation.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to the staged mutation experiment. A trusted workspace, separately authorized source, and explicit user gesture are still required; source files remain unchanged until a future commit flow is enabled."
+        },
         "jsonlView.sessionNavigator.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex, Claude, and pi roots are detected automatically; custom roots remain explicit."
+          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex, Claude, and pi roots plus explicitly configured generic agent homes are detected; custom roots remain explicit."
         },
         "jsonlView.sessionNavigator.sort": {
           "type": "string",
@@ -473,13 +483,13 @@
         "jsonlView.sessionNavigator.sources": {
           "type": "array",
           "default": [],
-          "description": "Additional local Agent source roots. Standard Codex, Claude, pi, and Kimi Code roots may be detected as candidates; scanning requires separate source authorization. All paths are read-only.",
+          "description": "Additional local Agent source roots. Standard Codex, Claude, pi, and Kimi Code roots plus explicit Gemini, OpenCode, and AgentsView homes may be detected as candidates; scanning requires separate source authorization. All paths are read-only.",
           "items": {
             "type": "object",
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["codex", "claude", "pi", "kimi", "generic"]
+                "enum": ["codex", "claude", "pi", "kimi", "gemini", "opencode", "agentsview", "generic"]
               },
               "rootUri": {
                 "type": "string",

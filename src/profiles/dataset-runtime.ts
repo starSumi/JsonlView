@@ -40,6 +40,7 @@ export class DatasetHeadInspection {
   private samples: DatasetRecordSample[] = [];
   private examinedBytes = 0n;
   private invalidRecords = 0;
+  private unsupportedFraming = false;
   private inspectionBoundaryFailure = false;
   private stoppedBy: DatasetHeadCoverageV1['stoppedBy'];
 
@@ -70,6 +71,7 @@ export class DatasetHeadInspection {
     const valid = record.parseState === 'valid'
       && record.value !== null && typeof record.value === 'object' && !Array.isArray(record.value);
     if (!valid) this.invalidRecords += 1;
+    if (Array.isArray(record.value)) this.unsupportedFraming = true;
     this.samples.push({
       value: record.value, ordinal: record.ref.ordinal, parseState: record.parseState,
       byteLength: Number(byteLength),
@@ -99,15 +101,15 @@ export class DatasetHeadInspection {
       confidence: 'none', clockBasis: 'none', fallback: { code, candidateShapes: [...candidateShapes] },
     });
     try {
+      if (this.unsupportedFraming) return fallback('unsupported_framing');
       if (this.inspectionBoundaryFailure || this.invalidRecords > 0) return fallback('invalid_sample');
       if (this.samples.length === 0) return fallback('sample_unavailable');
       const { detection } = this.inspect(this.samples, { samplePlan: DATASET_HEAD_PLAN });
       if (detection.fallback !== undefined) {
-        const code = detection.fallback.code === 'unsupported_framing' ? 'inspection_failed' : detection.fallback.code;
-        return fallback(code, detection.fallback.candidateShapes);
+        return fallback(detection.fallback.code, detection.fallback.candidateShapes);
       }
       return {
-        ...base, status: partial ? 'partial' : 'ready', adapterId: 'llamafactory-v1',
+        ...base, status: partial ? 'partial' : 'ready', adapterId: detection.selectedAdapterId as 'llamafactory-v1' | 'sharegpt-v1' | 'virtualhome-v1' | 'sft-master-conversation-v1' | 'sft-master-keyword-result-v1',
         shape: detection.shape, confidence: partial ? 'medium' : detection.confidence, clockBasis: 'record-order',
       };
     } catch {

@@ -68,6 +68,9 @@ export function getSourceIntakeHtml(): string {
         <button id="connect-claude" type="button">Connect Claude</button>
         <button id="connect-pi" type="button">Connect pi</button>
         <button id="connect-kimi" type="button">Connect Kimi Code</button>
+        <button id="connect-gemini" type="button">Connect Gemini</button>
+        <button id="connect-opencode" type="button">Connect OpenCode</button>
+        <button id="connect-agentsview" type="button">Connect AgentsView</button>
       </div>
     </section>
     <div class="choices" aria-label="Source options">
@@ -138,6 +141,9 @@ export function getSourceIntakeHtml(): string {
       document.getElementById('connect-claude').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'claude' }));
       document.getElementById('connect-pi').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'pi' }));
       document.getElementById('connect-kimi').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'kimi' }));
+      document.getElementById('connect-gemini').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'gemini' }));
+      document.getElementById('connect-opencode').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'opencode' }));
+      document.getElementById('connect-agentsview').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'agentsview' }));
       pasteChoice.addEventListener('click', () => {
         document.getElementById('paste-section').hidden = false;
         pasteChoice.setAttribute('aria-expanded', 'true'); text.focus();

@@ -65,6 +65,15 @@ describe('dataset head runtime provenance', () => {
     expect(result).toMatchObject({ status: 'fallback', fallback: { code: 'unknown_shape' }, adapterId: 'generic-jsonl', shape: 'unknown' });
   });
 
+  it('reports top-level JSON arrays as unsupported framing instead of pretending they are JSONL rows', () => {
+    const inspection = new DatasetHeadInspection();
+    inspection.accept({ value: [{ conversations: [{ from: 'human', value: 'x' }] }], ref: ref('0', '64'), parseState: 'valid' });
+    const result = inspection.finish(page(false), true);
+
+    expect(result).toMatchObject({ status: 'fallback', adapterId: 'generic-jsonl', shape: 'unknown', fallback: { code: 'unsupported_framing' } });
+    expect(isDatasetRuntimeProvenance(result)).toBe(true);
+  });
+
   it('retains completed inspection fallback separately from an I/O failure terminal', () => {
     const inspection = new DatasetHeadInspection(() => { throw new Error('private inspector error'); });
     inspection.accept({ value: { messages: [{ role: 'user', content: 'private' }] }, ref: ref('0', '32'), parseState: 'valid' });

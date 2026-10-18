@@ -1,8 +1,9 @@
 import type { DatasetRuntimeProvenanceV1 } from '../types';
 
-const SHAPES = new Set(['sft', 'preference', 'tool-use', 'multimodal', 'unknown']);
+const SHAPES = new Set(['sft', 'preference', 'tool-use', 'multimodal', 'sharegpt', 'virtualhome', 'sft-master-conversation', 'keyword-result', 'unknown']);
 const STOPS = new Set(['record_limit', 'byte_limit', 'time_limit', 'hydration_limit', 'uninspectable_record']);
-const FALLBACKS = new Set(['unknown_shape', 'conflicting_shapes', 'invalid_sample', 'sample_unavailable', 'inspection_failed']);
+const FALLBACKS = new Set(['unknown_shape', 'conflicting_shapes', 'invalid_sample', 'unsupported_framing', 'sample_unavailable', 'inspection_failed']);
+const ADAPTERS = new Set(['llamafactory-v1', 'sharegpt-v1', 'virtualhome-v1', 'sft-master-conversation-v1', 'sft-master-keyword-result-v1', 'generic-jsonl']);
 const STAGES = new Set(['not-started', 'head-hydration', 'head-inspection', 'profile-sampling', 'profile-classification']);
 const TERMINALS = {
   failed: { code: 'detection_failed', retryable: true, action: 'reload' },
@@ -28,6 +29,7 @@ export function isDatasetRuntimeProvenance(value: unknown): value is DatasetRunt
   }
   if (!keys(value, ['version', 'status', 'samplePlan', 'framing', 'adapterId', 'adapterVersion', 'shape', 'confidence', 'clockBasis', 'coverage', 'fallback'])
     || value.framing !== 'jsonl' || value.adapterVersion !== '1.0.0'
+    || typeof value.adapterId !== 'string' || !ADAPTERS.has(value.adapterId)
     || typeof value.shape !== 'string' || !SHAPES.has(value.shape)
     || !object(value.coverage)) return false;
   const coverage = value.coverage;
@@ -48,7 +50,7 @@ export function isDatasetRuntimeProvenance(value: unknown): value is DatasetRunt
       && new Set(value.fallback.candidateShapes).size === value.fallback.candidateShapes.length;
   }
   return (value.status === 'ready' || value.status === 'partial')
-    && value.fallback === undefined && value.adapterId === 'llamafactory-v1'
+    && value.fallback === undefined && value.adapterId !== 'generic-jsonl'
     && value.shape !== 'unknown' && value.clockBasis === 'record-order'
     && coverage.sampledRecords > 0 && coverage.invalidRecords === 0
     && coverage.partial === (value.status === 'partial')

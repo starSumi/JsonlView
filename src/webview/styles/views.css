@@ -40,15 +40,25 @@
 
 .workspace-query-controls > .table-query-toolbar {
   width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
   justify-content: flex-end;
   padding: 2px 0 0;
   border: 0;
   background: transparent;
 }
 
+.workspace-query-controls > .table-query-toolbar > :not(.search-box) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .workspace-query-controls .table-query-toolbar .search-box {
-  flex: 0 1 clamp(180px, 32vw, 420px);
-  min-width: min(160px, 100%);
+  flex: 0 0 clamp(120px, 32vw, 420px);
+  min-width: 120px;
   max-width: 420px;
 }
 

@@ -100,6 +100,9 @@ describe('bounded source intake validation', () => {
     }
     expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'pi' })).toEqual({ type: 'authorize-agent', provider: 'pi' });
     expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi' })).toEqual({ type: 'authorize-agent', provider: 'kimi' });
+    expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'gemini' })).toEqual({ type: 'authorize-agent', provider: 'gemini' });
+    expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'opencode' })).toEqual({ type: 'authorize-agent', provider: 'opencode' });
+    expect(parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'agentsview' })).toEqual({ type: 'authorize-agent', provider: 'agentsview' });
     expect(() => parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi', root: '/unapproved' })).toThrow();
     expect(parseSourceIntakeMessage({ type: 'paste-jsonl' })).toEqual({ type: 'paste-jsonl' });
     expect(parseSourceIntakeMessage({ type: 'connect-agent' })).toEqual({ type: 'connect-agent' });
@@ -165,6 +168,9 @@ describe('Add Source panel host lifecycle', () => {
     expect(host.create.mock.calls[0]?.[3]).toMatchObject({ enableScripts: true, localResourceRoots: [] });
     expect(host.html).toContain('Paste JSONL');
     expect(host.html).toContain('--vscode-editor-background');
+    expect(host.html).toContain('Connect Gemini');
+    expect(host.html).toContain('Connect OpenCode');
+    expect(host.html).toContain('Connect AgentsView');
   });
 
   it('makes cancelled native file selection a no-op', async () => {
@@ -404,9 +410,9 @@ it('keeps source intake controls disabled only until the host sends a terminal s
     setAttribute() {}, focus() {},
   });
   const ids = ['status', 'jsonl', 'drop-zone', 'paste-choice', 'files', 'folder', 'connect-codex', 'connect-claude', 'connect-pi', 'connect-kimi',
-    'preview', 'diagnostic', 'diagnostic-text', 'diagnostic-copy', 'diagnostic-send'];
+    'connect-gemini', 'connect-opencode', 'connect-agentsview', 'preview', 'diagnostic', 'diagnostic-text', 'diagnostic-copy', 'diagnostic-send'];
   const elements = new Map(ids.map((id) => [id, makeElement()]));
-  const buttons = ids.filter((id) => ['files', 'folder', 'connect-codex', 'connect-claude', 'connect-pi', 'connect-kimi', 'preview', 'diagnostic-copy', 'diagnostic-send'].includes(id))
+  const buttons = ids.filter((id) => ['files', 'folder', 'connect-codex', 'connect-claude', 'connect-pi', 'connect-kimi', 'connect-gemini', 'connect-opencode', 'connect-agentsview', 'preview', 'diagnostic-copy', 'diagnostic-send'].includes(id))
     .map((id) => elements.get(id)!);
   const windowListeners = new Map<string, Listener[]>();
   const addWindowListener = (type: string, listener: Listener) => windowListeners.set(type, [...(windowListeners.get(type) ?? []), listener]);

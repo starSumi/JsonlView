@@ -287,7 +287,8 @@ export interface RecordDetail {
   problems: ProblemRef[];
 }
 
-export type DatasetShapeV1 = 'sft' | 'preference' | 'tool-use' | 'multimodal' | 'unknown';
+export type DatasetShapeV1 = 'sft' | 'preference' | 'tool-use' | 'multimodal' | 'sharegpt' | 'virtualhome'
+  | 'sft-master-conversation' | 'keyword-result' | 'unknown';
 
 export interface DatasetHeadPlanV1 {
   strategy: 'head';
@@ -308,7 +309,8 @@ export interface DatasetResultV1 {
   version: 1;
   framing: 'jsonl';
   samplePlan: DatasetHeadPlanV1;
-  adapterId: 'llamafactory-v1' | 'generic-jsonl';
+  adapterId: 'llamafactory-v1' | 'sharegpt-v1' | 'virtualhome-v1' | 'sft-master-conversation-v1'
+    | 'sft-master-keyword-result-v1' | 'generic-jsonl';
   adapterVersion: '1.0.0';
   shape: DatasetShapeV1;
   confidence: 'high' | 'medium' | 'none';
@@ -332,7 +334,7 @@ export type DatasetRuntimeProvenanceV1 =
   | { version: 1; status: DatasetDetectionTerminalStatusV1; samplePlan: DatasetHeadPlanV1; terminal: DatasetDetectionTerminalV1 }
   | (DatasetResultV1 & { status: 'ready' | 'partial'; fallback?: never })
   | (DatasetResultV1 & { status: 'fallback'; fallback: {
-    code: 'unknown_shape' | 'conflicting_shapes' | 'invalid_sample' | 'sample_unavailable' | 'inspection_failed';
+    code: 'unknown_shape' | 'conflicting_shapes' | 'invalid_sample' | 'unsupported_framing' | 'sample_unavailable' | 'inspection_failed';
     candidateShapes: readonly DatasetShapeV1[];
   } });
 

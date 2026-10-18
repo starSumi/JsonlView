@@ -17,7 +17,7 @@ import {
   type FollowRecoveryProbe,
 } from './follow-recovery';
 import { getWebviewHtml } from './webview-html';
-import { RevealIntentRegistry, type RevealIntent } from '../experimental';
+import { MCP_NAVIGATION_CAPABILITY, RevealIntentRegistry, type RevealIntent } from '../experimental';
 import { SessionNavigatorTreeProvider, type NavigatorBridgeTarget } from '../experimental/session-navigator/tree-provider';
 import type { SessionPreviews } from '../experimental/session-navigator/session-previews';
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
@@ -851,6 +851,14 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('jsonlView.showOutput', () => outputChannel?.show(true)),
     vscode.commands.registerCommand('jsonlView.explainLastDiagnostic', () => handleDiagnosticAction('Explain with VS Code Chat', currentDiagnostic())),
     vscode.commands.registerCommand('jsonlView.copyLastDiagnostic', () => vscode.env.clipboard.writeText(formatDiagnosticContext(currentDiagnostic()))),
+    vscode.commands.registerCommand('jsonlView.sessionNavigator.mcpCapability', async () => {
+      appendOutputLog(outputChannel, 'mcp-capability', JSON.stringify(MCP_NAVIGATION_CAPABILITY));
+      const action = await vscode.window.showInformationMessage(
+        'MCP navigation is experimental and disabled by default. No transport, process, network, or source write is enabled.',
+        'Open JsonlView Log',
+      );
+      if (action === 'Open JsonlView Log') outputChannel?.show(true);
+    }),
   );
   appendOutputLog(outputChannel, 'activated', 'commands-and-views=registered');
 }

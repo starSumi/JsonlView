@@ -94,6 +94,23 @@ describe('session navigator source boundary', () => {
     expect(discoverDefaultSources({ env: { PI_CODING_AGENT_DIR: join(root, 'unused-pi-agent'), PI_CODING_AGENT_SESSION_DIR: customPiSessions }, homeDirectory: join(root, 'unused-home') }).find((setting) => setting.provider === 'pi')?.rootUri).toBe(pathToFileURL(customPiSessions).toString());
   });
 
+  it('discovers generic agent homes only from explicit environment roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-generic-agent-defaults-'));
+    cleanup.push(root);
+    const gemini = join(root, 'gemini');
+    const opencode = join(root, 'opencode');
+    const agentsview = join(root, 'agentsview');
+    await mkdir(join(gemini, 'sessions'), { recursive: true });
+    await mkdir(join(opencode, 'projects'), { recursive: true });
+    await mkdir(join(agentsview, 'internal'), { recursive: true });
+    const discovered = discoverDefaultSources({
+      env: { GEMINI_HOME: gemini, OPENCODE_HOME: opencode, AGENTSVIEW_HOME: agentsview },
+      homeDirectory: join(root, 'unused-home'),
+    });
+    expect(discovered.map((setting) => setting.provider)).toEqual(['gemini', 'opencode', 'agentsview']);
+    expect(discoverDefaultSources({ env: {}, homeDirectory: root }).some((setting) => ['gemini', 'opencode', 'agentsview'].includes(setting.provider))).toBe(false);
+  });
+
   it('projects pi session headers without transcript bodies and preserves fork parents', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-pi-native-'));
     cleanup.push(root);

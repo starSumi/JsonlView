@@ -3,6 +3,10 @@ import {
   GENERIC_DATASET_ADAPTER_ID,
   LLAMA_FACTORY_V1_ADAPTER_ID,
   LLAMA_FACTORY_V1_ADAPTER_VERSION,
+  SHAREGPT_V1_ADAPTER_ID,
+  SFT_MASTER_CONVERSATION_V1_ADAPTER_ID,
+  SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_ID,
+  VIRTUALHOME_V1_ADAPTER_ID,
   LlamaFactoryV1DatasetAdapter,
   inspectLlamaFactoryDataset,
   type DatasetRecordSample,
@@ -65,6 +69,87 @@ function rowWithMessages(container: (typeof messageContainers)[number], messages
 }
 
 describe('LLaMA-Factory v1 dataset adapter', () => {
+  it('recognizes sft-master conversation rows with a strategy-owned projection', () => {
+    const row = {
+      conversation_id: 1,
+      category: 'dialogue',
+      conversation: [{ human: '请提取关键词。', assistant: '关键词一;关键词二' }],
+      dataset: 'psychology',
+    };
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({ selectedAdapterId: SFT_MASTER_CONVERSATION_V1_ADAPTER_ID, shape: 'sft-master-conversation', confidence: 'high' });
+    expect(result.records[0]?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'conversation', count: 1 }),
+      expect.objectContaining({ field: 'conversation_id', count: 1 }),
+      expect.objectContaining({ field: 'dataset', count: 1 }),
+    ]));
+    expect(result.records[0]?.raw).toBe(row);
+  });
+
+  it('recognizes sft-master keyword result rows without conflating them with conversations', () => {
+    const row = { input: '抽取关键词。', predict: '关键词一;关键词二', target: '关键词一;关键词二;关键词三' };
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({ selectedAdapterId: SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_ID, shape: 'keyword-result', confidence: 'high' });
+    expect(result.records[0]?.fields).toEqual([
+      expect.objectContaining({ field: 'input', count: 1 }),
+      expect.objectContaining({ field: 'predict', count: 1 }),
+      expect.objectContaining({ field: 'target', count: 1 }),
+    ]);
+  });
+
+  it('fails closed when a recognized sft-master family has malformed required fields', () => {
+    const result = inspectLlamaFactoryDataset(samples([{ input: 'x', predict: ['wrong'], target: 'z' }]));
+
+    expect(result.detection).toMatchObject({ selectedAdapterId: GENERIC_DATASET_ADAPTER_ID, shape: 'unknown', fallback: { visible: true, code: 'unknown_shape' } });
+    expect(result.detection.reasons).toContainEqual(expect.objectContaining({ code: 'missing_required_field' }));
+  });
+
+  it('recognizes one-object-per-line ShareGPT conversations without flattening the row', () => {
+    const row = {
+      conversations: [
+        { from: 'human', value: 'Find the book.' },
+        { from: 'gpt', value: 'I will search.' },
+      ],
+      system: 'You are a household agent.',
+    };
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({ selectedAdapterId: SHAREGPT_V1_ADAPTER_ID, shape: 'sharegpt', confidence: 'high' });
+    expect(result.records[0]).toMatchObject({ physicalOrdinal: '1', rawPreserved: true, raw: row, shape: 'sharegpt' });
+    expect(result.records[0]?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'conversations', count: 2 }),
+      expect.objectContaining({ field: 'system', count: 1 }),
+    ]));
+  });
+
+  it('recognizes bounded VirtualHome task rows and projects evaluation fields', () => {
+    const row = {
+      task: 'Find dictionary', description: 'Move towards the bookshelf.',
+      action_list: ['Walk to bookshelf', 'Scan bookshelf'],
+      SuccessOrFail: [true, false], FailReasons: ['', 'Not found'],
+      revised_graph: { nodes: [] }, object_id_dict: { bookshelf: 319 },
+    };
+    const result = inspectLlamaFactoryDataset(samples([row]));
+
+    expect(result.detection).toMatchObject({ selectedAdapterId: VIRTUALHOME_V1_ADAPTER_ID, shape: 'virtualhome', confidence: 'high' });
+    expect(result.records[0]?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'task', count: 1 }),
+      expect.objectContaining({ field: 'action_list', count: 2 }),
+      expect.objectContaining({ field: 'FailReasons', count: 2 }),
+    ]));
+    expect(result.records[0]?.raw).toBe(row);
+  });
+
+  it('does not reinterpret a top-level JSON array as a dataset framing', () => {
+    const result = inspectLlamaFactoryDataset(samples([[{ conversations: [{ from: 'human', value: 'x' }] }]]));
+
+    expect(result.detection).toMatchObject({ selectedAdapterId: GENERIC_DATASET_ADAPTER_ID, shape: 'unknown' });
+    expect(result.detection.fallback).toMatchObject({ code: 'unsupported_framing', visible: true });
+    expect(result.provenance.fallback?.message).toContain('one object per physical line');
+  });
+
   it('selects SFT/messages with bounded provenance and preserves the physical row', () => {
     const result = inspectLlamaFactoryDataset(samples([sft]), {
       source: { fingerprint: 'sha256:redacted', generation: 'generation-7' },

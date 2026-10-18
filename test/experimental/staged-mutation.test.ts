@@ -7,6 +7,7 @@ import {
   type BaseEdit,
   type KnownDigest,
   type StageIntent,
+  evaluateStagedMutationOptIn,
 } from '../../experimental/staged-mutation/index';
 
 const bytes = (text: string): Uint8Array => Uint8Array.from(Buffer.from(text, 'utf8'));
@@ -47,6 +48,24 @@ async function expectCode(action: () => Promise<unknown>, code: StagedMutationEr
 }
 
 describe('phase 2 staged mutation experiment', () => {
+  it('keeps staged writes disabled until every opt-in gate is explicit', () => {
+    expect(evaluateStagedMutationOptIn({
+      enabled: false, workspaceTrusted: true, sourceAuthorized: true, userGesture: true,
+    })).toEqual({ allowed: false, reason: 'disabled' });
+    expect(evaluateStagedMutationOptIn({
+      enabled: true, workspaceTrusted: false, sourceAuthorized: true, userGesture: true,
+    })).toEqual({ allowed: false, reason: 'workspace-untrusted' });
+    expect(evaluateStagedMutationOptIn({
+      enabled: true, workspaceTrusted: true, sourceAuthorized: false, userGesture: true,
+    })).toEqual({ allowed: false, reason: 'source-not-authorized' });
+    expect(evaluateStagedMutationOptIn({
+      enabled: true, workspaceTrusted: true, sourceAuthorized: true, userGesture: false,
+    })).toEqual({ allowed: false, reason: 'user-gesture-required' });
+    expect(evaluateStagedMutationOptIn({
+      enabled: true, workspaceTrusted: true, sourceAuthorized: true, userGesture: true,
+    })).toEqual({ allowed: true });
+  });
+
   it('stages ordered base-byte deltas and keeps CRLF bytes exact', async () => {
     const session = makeSession();
     const source = session.baseBytes;

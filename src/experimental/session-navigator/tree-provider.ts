@@ -7,7 +7,7 @@ import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, so
 import type { RevealIntentRegistry } from './reveal-intents';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
 import { type SessionPreview, SessionPreviews } from './session-previews';
-import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorSortKey } from './types';
+import { DEFAULT_SESSION_NAVIGATOR_BUDGET, sessionNavigatorProviderLabel, type AuthorizedSourceSetting, type DetectedAgentProviderId, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorProviderId, type SessionNavigatorSortKey } from './types';
 import type { NavigatorBridgeResultV1 } from '../../shared/protocol/navigator-bridge';
 
 const SOURCES_SETTING = 'sessionNavigator.sources';
@@ -17,6 +17,17 @@ const PROBE_INTERVAL_MS = 30_000;
 const MAX_TRANSIENT_EMPTY_SCANS = 2;
 const MAX_INITIAL_CLAUDE_PAGES = 2;
 const EXCLUDED_SOURCES_KEY = 'sessionNavigator.excludedDefaultSources';
+
+const SOURCE_PROVIDER_CHOICES: readonly { readonly label: string; readonly value: SessionNavigatorProviderId }[] = [
+  { label: 'Codex', value: 'codex' },
+  { label: 'Claude', value: 'claude' },
+  { label: 'pi', value: 'pi' },
+  { label: 'Kimi Code', value: 'kimi' },
+  { label: 'Gemini', value: 'gemini' },
+  { label: 'OpenCode', value: 'opencode' },
+  { label: 'AgentsView', value: 'agentsview' },
+  { label: 'Generic JSONL', value: 'generic' },
+];
 
 /**
  * Host-side result for the editor's Open Navigator bridge.  The Webview must
@@ -799,7 +810,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   private async authorizeAgent(cancelled = () => this.#disposed): Promise<void> {
     if (this.#disposed || cancelled()) return;
     const provider = await vscode.window.showQuickPick(
-      [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'pi', value: 'pi' as const }, { label: 'Kimi Code', value: 'kimi' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
+      SOURCE_PROVIDER_CHOICES,
       { placeHolder: 'Choose the source format to authorize' },
     );
     if (provider === undefined || this.#disposed || cancelled()) return;
@@ -825,12 +836,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     }
   }
 
-  private async authorizeDetectedAgent(provider: 'codex' | 'claude' | 'pi' | 'kimi', signal: AbortSignal): Promise<void> {
+  private async authorizeDetectedAgent(provider: DetectedAgentProviderId, signal: AbortSignal): Promise<void> {
     if (this.#disposed || signal.aborted) return;
     const detected = discoverDefaultSources().find((setting) => setting.provider === provider);
     if (detected === undefined) {
-      const label = provider === 'codex' ? 'Codex' : provider === 'claude' ? 'Claude' : provider === 'kimi' ? 'Kimi Code' : 'pi';
-      throw new Error('No ' + label + ' home was detected. Use Files or Folder to choose a local source.');
+      throw new Error('No ' + sessionNavigatorProviderLabel(provider) + ' home was detected. Use Files or Folder to choose a local source.');
     }
     await this.authorizeSourceSetting(detected, () => this.#disposed || signal.aborted);
   }
@@ -916,7 +926,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     );
     if (action !== 'Add source' || cancelled() || this.#disposed) return;
     const provider = await vscode.window.showQuickPick(
-      [{ label: 'Codex', value: 'codex' as const }, { label: 'Claude', value: 'claude' as const }, { label: 'pi', value: 'pi' as const }, { label: 'Kimi Code', value: 'kimi' as const }, { label: 'Generic JSONL', value: 'generic' as const }],
+      SOURCE_PROVIDER_CHOICES,
       { placeHolder: 'Choose the source format to authorize' },
     );
     if (provider !== undefined && !cancelled() && !this.#disposed) await this.authorizeSourceUri(provider.value, canonical, cancelled);

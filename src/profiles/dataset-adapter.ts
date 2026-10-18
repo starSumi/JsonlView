@@ -3,6 +3,14 @@ import { isObject, own } from './utils';
 
 export const LLAMA_FACTORY_V1_ADAPTER_ID = 'llamafactory-v1';
 export const LLAMA_FACTORY_V1_ADAPTER_VERSION = '1.0.0';
+export const SHAREGPT_V1_ADAPTER_ID = 'sharegpt-v1';
+export const SHAREGPT_V1_ADAPTER_VERSION = '1.0.0';
+export const VIRTUALHOME_V1_ADAPTER_ID = 'virtualhome-v1';
+export const VIRTUALHOME_V1_ADAPTER_VERSION = '1.0.0';
+export const SFT_MASTER_CONVERSATION_V1_ADAPTER_ID = 'sft-master-conversation-v1';
+export const SFT_MASTER_CONVERSATION_V1_ADAPTER_VERSION = '1.0.0';
+export const SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_ID = 'sft-master-keyword-result-v1';
+export const SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_VERSION = '1.0.0';
 export const GENERIC_DATASET_ADAPTER_ID = 'generic-jsonl';
 export const GENERIC_DATASET_ADAPTER_VERSION = '1.0.0';
 
@@ -15,7 +23,8 @@ const MAX_REASONS = 8;
 const MAX_MESSAGES_PER_RECORD = 64;
 const MAX_BLOCKS_PER_MESSAGE = 32;
 
-export type DatasetShape = 'sft' | 'preference' | 'tool-use' | 'multimodal' | 'unknown';
+export type DatasetShape = 'sft' | 'preference' | 'tool-use' | 'multimodal' | 'sharegpt' | 'virtualhome'
+  | 'sft-master-conversation' | 'keyword-result' | 'unknown';
 export type DatasetFraming = 'jsonl';
 export type DatasetClockBasis = 'none' | 'record-order';
 export type DatasetConfidence = 'high' | 'medium' | 'none';
@@ -263,10 +272,12 @@ function detectLlamaFactory(
   const sampleShapes: DatasetShape[] = [];
   const conflictingShapes = new Set<DatasetShape>();
   let invalidSample = false;
+  let unsupportedFraming = false;
   let shapeConflict = false;
   for (const sample of samples) {
     if (!isValidSample(sample)) {
       invalidSample = true;
+      if (Array.isArray(sample.value)) unsupportedFraming = true;
       continue;
     }
     const classified = classifyRecord(sample.value);
@@ -280,7 +291,7 @@ function detectLlamaFactory(
         shapeConflict = true;
         pushReason(reasons, { tokens: [] }, 'conflict', 'A physical row matches multiple dataset shapes.');
       } else {
-        pushReason(reasons, { tokens: [] }, 'unknown', 'No reviewed LLaMA-Factory v1 shape matched this row.');
+        pushReason(reasons, { tokens: [] }, 'unknown', 'No reviewed dataset shape matched this row.');
       }
       continue;
     }
@@ -299,8 +310,10 @@ function detectLlamaFactory(
   const candidateList = [...candidates.values()].sort((left, right) => right.matchedRecords - left.matchedRecords || left.shape.localeCompare(right.shape));
   const distinctShapes = [...new Set(sampleShapes.filter((shape) => shape !== 'unknown'))];
   const hasUnknown = sampleShapes.some((shape) => shape === 'unknown');
-  const fallbackCode: DatasetFallbackCode | undefined = invalidSample || coverage.invalidRecords > 0
-    ? 'invalid_sample'
+  const fallbackCode: DatasetFallbackCode | undefined = unsupportedFraming
+    ? 'unsupported_framing'
+    : invalidSample || coverage.invalidRecords > 0
+      ? 'invalid_sample'
     : shapeConflict || distinctShapes.length > 1
       ? 'conflicting_shapes'
     : candidateList.length === 0 || hasUnknown
@@ -311,11 +324,13 @@ function detectLlamaFactory(
       ...candidateList.map((candidate) => candidate.shape),
       ...conflictingShapes,
     ])];
-    const message = fallbackCode === 'conflicting_shapes'
+    const message = fallbackCode === 'unsupported_framing'
+      ? 'Top-level JSON array framing is not supported; provide JSONL with one object per physical line. Using visible Generic JSONL fallback.'
+      : fallbackCode === 'conflicting_shapes'
       ? 'Dataset shapes conflict within the bounded sample; using visible Generic JSONL fallback.'
       : fallbackCode === 'invalid_sample'
         ? 'The bounded sample contains invalid or non-object rows; using visible Generic JSONL fallback.'
-        : 'The bounded sample does not match a reviewed LLaMA-Factory v1 shape; using visible Generic JSONL fallback.';
+        : 'The bounded sample does not match a reviewed dataset shape; using visible Generic JSONL fallback.';
     const fallback: DatasetFallbackDiagnostic = {
       visible: true,
       code: fallbackCode,
@@ -335,9 +350,10 @@ function detectLlamaFactory(
   }
   const selected = candidateList[0]!;
   const confidence: DatasetConfidence = coverage.truncated ? 'medium' : 'high';
+  const adapter = adapterForShape(selected.shape);
   return {
-    selectedAdapterId: LLAMA_FACTORY_V1_ADAPTER_ID,
-    selectedAdapterVersion: LLAMA_FACTORY_V1_ADAPTER_VERSION,
+    selectedAdapterId: adapter.id,
+    selectedAdapterVersion: adapter.version,
     shape: selected.shape,
     confidence,
     candidates: candidateList,
@@ -347,6 +363,8 @@ function detectLlamaFactory(
 
 function classifyRecord(value: unknown): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } {
   if (!isObject(value)) return { shapes: [], reasons: [] };
+  const special = classifySpecialRecord(value);
+  if (special) return special;
   const messageContainerReasons: DatasetDetectionReason[] = [];
   for (const key of ['messages', 'chosen_messages', 'rejected_messages']) {
     const reason = inspectMessageContainer(value, key);
@@ -397,6 +415,148 @@ function classifyRecord(value: unknown): { shapes: DatasetShape[]; reasons: Data
     };
   }
   return { shapes: [], reasons: [] };
+}
+
+function classifySpecialRecord(value: Record<string, unknown>): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } | undefined {
+  for (const strategy of SPECIAL_DATASET_STRATEGIES) {
+    const result = strategy.detect(value);
+    if (result !== undefined) return result;
+  }
+  return undefined;
+}
+
+function isShareGptMessage(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  const from = own(value, 'from') ?? own(value, 'role');
+  const content = own(value, 'value') ?? own(value, 'content');
+  return typeof from === 'string' && content !== undefined;
+}
+
+type SpecialDatasetStrategy = {
+  shape: DatasetShape;
+  adapterId: string;
+  adapterVersion: string;
+  detect: (value: Record<string, unknown>) => { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } | undefined;
+  projectFields: (value: Record<string, unknown>) => DatasetFieldProjection[];
+};
+
+const SPECIAL_DATASET_STRATEGIES: readonly SpecialDatasetStrategy[] = [
+  {
+    shape: 'sft-master-conversation',
+    adapterId: SFT_MASTER_CONVERSATION_V1_ADAPTER_ID,
+    adapterVersion: SFT_MASTER_CONVERSATION_V1_ADAPTER_VERSION,
+    detect: detectSftMasterConversation,
+    projectFields: projectSftMasterConversationFields,
+  },
+  {
+    shape: 'keyword-result',
+    adapterId: SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_ID,
+    adapterVersion: SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_VERSION,
+    detect: detectKeywordResult,
+    projectFields: projectKeywordResultFields,
+  },
+  {
+    shape: 'sharegpt',
+    adapterId: SHAREGPT_V1_ADAPTER_ID,
+    adapterVersion: SHAREGPT_V1_ADAPTER_VERSION,
+    detect: detectShareGpt,
+    projectFields: projectShareGptFields,
+  },
+  {
+    shape: 'virtualhome',
+    adapterId: VIRTUALHOME_V1_ADAPTER_ID,
+    adapterVersion: VIRTUALHOME_V1_ADAPTER_VERSION,
+    detect: detectVirtualHome,
+    projectFields: projectVirtualHomeFields,
+  },
+];
+
+function detectSftMasterConversation(value: Record<string, unknown>): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } | undefined {
+  const candidate = own(value, 'conversation');
+  if (candidate === undefined) return undefined;
+  const path = { tokens: [{ kind: 'key' as const, value: 'conversation' }] };
+  if (!Array.isArray(candidate) || candidate.length === 0 || candidate.length > MAX_MESSAGES_PER_RECORD
+    || candidate.some((entry) => !isSftMasterTurn(entry))) {
+    return { shapes: [], reasons: [{ path, code: 'unknown', observation: 'The conversation field is not a bounded human/assistant sequence; using visible Generic JSONL fallback.' }] };
+  }
+  return { shapes: ['sft-master-conversation'], reasons: [{ path, code: 'shape_evidence', observation: 'The row contains a bounded sft-master human/assistant conversation sequence.' }] };
+}
+
+function detectKeywordResult(value: Record<string, unknown>): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } | undefined {
+  const keys = ['input', 'predict', 'target'] as const;
+  if (!keys.some((key) => own(value, key) !== undefined)) return undefined;
+  const path = { tokens: [{ kind: 'key' as const, value: 'input' }] };
+  if (!keys.every((key) => typeof own(value, key) === 'string')) {
+    return { shapes: [], reasons: [{ path, code: 'missing_required_field', observation: 'The keyword result row must contain string input, predict, and target fields.' }] };
+  }
+  return { shapes: ['keyword-result'], reasons: [{ path, code: 'shape_evidence', observation: 'The row contains the bounded input/predict/target keyword evaluation fields.' }] };
+}
+
+function detectShareGpt(value: Record<string, unknown>): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } | undefined {
+  const conversations = own(value, 'conversations');
+  if (conversations === undefined) return undefined;
+  const path = { tokens: [{ kind: 'key' as const, value: 'conversations' }] };
+  if (!Array.isArray(conversations) || conversations.length === 0 || conversations.length > MAX_MESSAGES_PER_RECORD
+    || conversations.some((entry) => !isShareGptMessage(entry))) {
+    return { shapes: [], reasons: [{ path, code: 'unknown', observation: 'The conversations field is not a bounded ShareGPT from/value sequence; using visible Generic JSONL fallback.' }] };
+  }
+  return { shapes: ['sharegpt'], reasons: [{ path, code: 'shape_evidence', observation: 'The row contains a bounded ShareGPT conversations sequence with from/value entries.' }] };
+}
+
+function detectVirtualHome(value: Record<string, unknown>): { shapes: DatasetShape[]; reasons: DatasetDetectionReason[] } | undefined {
+  const hasTask = own(value, 'task') !== undefined;
+  const hasDescription = own(value, 'description') !== undefined;
+  const hasActionList = own(value, 'action_list') !== undefined;
+  const hasFailureReasons = own(value, 'FailReasons') !== undefined;
+  if (!hasTask && !hasDescription && !hasActionList && !hasFailureReasons) return undefined;
+  const path = { tokens: [{ kind: 'key' as const, value: 'task' }] };
+  if (typeof own(value, 'task') !== 'string'
+    || (hasDescription && typeof own(value, 'description') !== 'string')
+    || (hasActionList && !Array.isArray(own(value, 'action_list')))
+    || (hasFailureReasons && !Array.isArray(own(value, 'FailReasons')))) {
+    return { shapes: [], reasons: [{ path, code: 'unknown', observation: 'VirtualHome task rows require bounded task metadata and typed action/result fields.' }] };
+  }
+  return { shapes: ['virtualhome'], reasons: [{ path, code: 'shape_evidence', observation: 'The row contains VirtualHome task metadata and bounded action/result fields.' }] };
+}
+
+function isSftMasterTurn(value: unknown): boolean {
+  return isObject(value) && typeof own(value, 'human') === 'string' && typeof own(value, 'assistant') === 'string';
+}
+
+function projectSftMasterConversationFields(value: Record<string, unknown>): DatasetFieldProjection[] {
+  const fields: DatasetFieldProjection[] = [{ field: 'conversation', path: { tokens: [{ kind: 'key', value: 'conversation' }] }, count: arrayLength(value, 'conversation') }];
+  for (const field of ['conversation_id', 'category', 'dataset'] as const) {
+    if (own(value, field) !== undefined) fields.push({ field, path: { tokens: [{ kind: 'key', value: field }] }, count: 1 });
+  }
+  return fields;
+}
+
+function projectKeywordResultFields(value: Record<string, unknown>): DatasetFieldProjection[] {
+  return (['input', 'predict', 'target'] as const).map((field) => ({ field, path: { tokens: [{ kind: 'key', value: field }] }, count: 1 }));
+}
+
+function projectShareGptFields(value: Record<string, unknown>): DatasetFieldProjection[] {
+  const fields: DatasetFieldProjection[] = [{ field: 'conversations', path: { tokens: [{ kind: 'key', value: 'conversations' }] }, count: arrayLength(value, 'conversations') }];
+  if (own(value, 'system') !== undefined) fields.push({ field: 'system', path: { tokens: [{ kind: 'key', value: 'system' }] }, count: 1 });
+  if (own(value, 'tools') !== undefined) fields.push({ field: 'tools', path: { tokens: [{ kind: 'key', value: 'tools' }] }, count: 1 });
+  return fields;
+}
+
+function projectVirtualHomeFields(value: Record<string, unknown>): DatasetFieldProjection[] {
+  const fields: DatasetFieldProjection[] = [];
+  if (typeof own(value, 'task') === 'string') fields.push({ field: 'task', path: { tokens: [{ kind: 'key', value: 'task' }] }, count: 1 });
+  if (typeof own(value, 'description') === 'string') fields.push({ field: 'description', path: { tokens: [{ kind: 'key', value: 'description' }] }, count: 1 });
+  if (Array.isArray(own(value, 'action_list'))) fields.push({ field: 'action_list', path: { tokens: [{ kind: 'key', value: 'action_list' }] }, count: arrayLength(value, 'action_list') });
+  if (Array.isArray(own(value, 'FailReasons'))) fields.push({ field: 'FailReasons', path: { tokens: [{ kind: 'key', value: 'FailReasons' }] }, count: arrayLength(value, 'FailReasons') });
+  if (Array.isArray(own(value, 'SuccessOrFail'))) fields.push({ field: 'SuccessOrFail', path: { tokens: [{ kind: 'key', value: 'SuccessOrFail' }] }, count: arrayLength(value, 'SuccessOrFail') });
+  return fields;
+}
+
+function adapterForShape(shape: DatasetShape): { id: string; version: string } {
+  const strategy = SPECIAL_DATASET_STRATEGIES.find((candidate) => candidate.shape === shape);
+  if (strategy) return { id: strategy.adapterId, version: strategy.adapterVersion };
+
+  return { id: LLAMA_FACTORY_V1_ADAPTER_ID, version: LLAMA_FACTORY_V1_ADAPTER_VERSION };
 }
 
 function inspectMessageContainer(value: Record<string, unknown>, key: string): DatasetDetectionReason | undefined {
@@ -480,6 +640,8 @@ function contentBlocks(value: Record<string, unknown>): Record<string, unknown>[
 
 function projectFields(value: unknown, shape: DatasetShape): DatasetFieldProjection[] {
   if (!isObject(value)) return [];
+  const special = SPECIAL_DATASET_STRATEGIES.find((candidate) => candidate.shape === shape);
+  if (special) return special.projectFields(value);
   if (shape === 'preference') {
     return [
       { field: 'chosen_messages', path: { tokens: [{ kind: 'key', value: 'chosen_messages' }] }, count: arrayLength(value, 'chosen_messages') },

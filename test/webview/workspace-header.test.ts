@@ -40,6 +40,14 @@ describe('workspace header status', () => {
     expect(compactToolbarRules).not.toContain('display: none');
   });
 
+  it('keeps the query rail single-line before container breakpoints are evaluated', () => {
+    const queryRail = styles.slice(styles.indexOf('.workspace-query-controls > .table-query-toolbar'), styles.indexOf('.workspace-header-primary > .workspace-controls'));
+    expect(queryRail).toContain('flex-wrap: nowrap');
+    expect(queryRail).toContain('overflow-x: auto');
+    expect(queryRail).toContain('white-space: nowrap');
+    expect(queryRail).toContain('min-width: 120px');
+  });
+
   it('applies compact sizing to the nested query controls', () => {
     const compactRules = styles.slice(styles.indexOf('@container workspace (max-width: 720px)'), styles.indexOf('@container workspace (max-width: 520px)'));
     expect(compactRules).toContain('.workspace-query-controls .table-query-toolbar > .search-box');

@@ -92,4 +92,10 @@ describe('Session Navigator layout contract', () => {
     expect(previewItems.every((item: { when: string }) => item.when.startsWith('view == jsonlView.sessionNavigator && viewItem == jsonlView.preview.'))).toBe(true);
     expect(JSON.stringify(manifest)).not.toContain('jsonlView.recentPreviews');
   });
+
+  it('exposes an MCP capability inspection command without declaring a transport', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    expect(manifest.contributes.commands.find((command: { command: string }) => command.command === 'jsonlView.sessionNavigator.mcpCapability')).toMatchObject({ icon: '$(symbol-interface)' });
+    expect(JSON.stringify(manifest)).not.toMatch(/stdio|websocket|mcp-server/iu);
+  });
 });

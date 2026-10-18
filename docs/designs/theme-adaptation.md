@@ -251,8 +251,11 @@ filters and Columns. The right drawer retains selected-record controls.
 The temporary-source badge and Save As action stay visible in this workspace
 at every width; other views retain them in the top bar. Responsive rules may
 hide secondary metrics and decorative labels, but never these lifecycle actions
-or the Navigator entry. Tabs scroll horizontally when necessary. The Table toolbar wraps at narrow widths;
-its native disclosure popups stay inside the Table pane with a scrollable body.
+or the Navigator entry. Tabs scroll horizontally when necessary. The Table
+query toolbar stays on one horizontally scrollable rail at narrow widths; its
+native disclosure popups stay inside the Table pane with a scrollable body.
+The rail preserves visible labels and keyboard order instead of creating a
+third header row.
 Labels, focus rings, input borders and selected checkboxes use existing VS Code
 tokens in light, dark and high-contrast themes. Column groups distinguish common
 profile columns, selected record fields, short scalars and searchable Advanced

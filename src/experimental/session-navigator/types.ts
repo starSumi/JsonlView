@@ -2,7 +2,29 @@ import type { NavigationEntity, NavigationProvider, NavigationSnapshot } from '.
 
 export const SESSION_NAVIGATOR_SCHEMA_VERSION = 1 as const;
 
-export type SessionNavigatorProviderId = 'codex' | 'claude' | 'pi' | 'kimi' | 'generic';
+export type SessionNavigatorProviderId = 'codex' | 'claude' | 'pi' | 'kimi' | 'gemini' | 'opencode' | 'agentsview' | 'generic';
+
+/** Provider ids whose source is read through the bounded generic file adapter. */
+export const GENERIC_FILE_PROVIDER_IDS = ['generic', 'gemini', 'opencode', 'agentsview'] as const;
+
+export type DetectedAgentProviderId = Exclude<SessionNavigatorProviderId, 'generic'>;
+
+export function isGenericFileProvider(provider: SessionNavigatorProviderId): boolean {
+  return (GENERIC_FILE_PROVIDER_IDS as readonly string[]).includes(provider);
+}
+
+export function sessionNavigatorProviderLabel(provider: SessionNavigatorProviderId): string {
+  switch (provider) {
+    case 'codex': return 'Codex';
+    case 'claude': return 'Claude';
+    case 'pi': return 'pi';
+    case 'kimi': return 'Kimi Code';
+    case 'gemini': return 'Gemini';
+    case 'opencode': return 'OpenCode';
+    case 'agentsview': return 'AgentsView';
+    case 'generic': return 'Generic JSONL';
+  }
+}
 export type SessionNavigatorSortKey = 'activity' | 'created' | 'title';
 
 export interface AuthorizedSourceSetting {

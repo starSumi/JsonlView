@@ -124,6 +124,7 @@ they are physically stored as JSONL:
 | OpenTelemetry | log record, span record, trace/span IDs, severity, resource, attributes | one record or one file-exporter envelope |
 | Agent sessions | session, turn, message, reasoning, tool call/result, usage | one provider event envelope |
 | SWE trajectories | task, step, action, observation, patch, test, result | one trajectory event |
+| Training datasets | ShareGPT conversations, VirtualHome task/evaluation fields, or sft-master conversation/keyword-result rows | one dataset object per physical JSONL line |
 
 Detection requires multiple content signals and is bounded to a sample window.
 Ambiguous data falls back to Generic JSONL. Projection preserves unknown events

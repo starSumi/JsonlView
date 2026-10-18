@@ -5,6 +5,10 @@
 - Keep ascending row order available while reverse indexing is incomplete, expose order as a radio group, and use host semantic tokens for selected options and workspace tab indicators.
 - Match compact header rules to the nested query controls, and keep Navigator intake actions legible in forced-colors and very narrow sidebars.
 - Keep compact query controls on a single horizontally scrollable rail so Columns stays reachable without wrapping into another header row.
+- Recognize one-object-per-line ShareGPT and VirtualHome datasets with bounded detail projections while preserving the physical row and explicit top-level-array fallback.
+- Adapt the pinned `sft-master` conversation and keyword-result JSONL families through strategy-owned projections, including human/assistant, prediction, and target detail sections.
+- Add explicit read-only Gemini, OpenCode, and AgentsView source choices without home-directory scanning, and expose the disabled MCP capability for inspection.
+- Gate staged mutation behind an opt-in setting, workspace trust, source authorization, and an explicit user gesture.
 - Register the V2 four-plane architecture, Rust/native rules, and read-only MCP/audit plan with evidence-gated experiments for sparse indexes, staging, OTel, ML, and provider-neutral agent parsing.
 - Project nested provider-neutral agent envelopes through bounded message, reasoning, tool, result, usage, and media-reference views while keeping unknown data in Raw.
 - Extract detail splitter interactions, profile-query reconciliation, and Kimi event section projection into focused internal modules while preserving App composition, reducer ownership, and provider arbitration.
