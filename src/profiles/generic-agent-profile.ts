@@ -17,9 +17,6 @@ export class GenericAgentEventsProfile implements AgentProfile {
       if (entry.parseState !== undefined && entry.parseState !== 'valid') continue;
       const adapted = adaptGenericAgentEvent(entry.value);
       if (!adapted?.recognized) continue;
-      const discriminator = adapted.event?.path.tokens.at(-1);
-      const namespaced = adapted.eventName?.includes('.') || adapted.eventName?.includes(':');
-      if (discriminator === 'type' && !namespaced) continue;
       recognized += 1;
       if (adapted.semanticSignal) semantic += 1;
       if (adapted.stableIdentityCount > 0) stableIds += 1;
@@ -27,9 +24,8 @@ export class GenericAgentEventsProfile implements AgentProfile {
     }
     const denominator = Math.max(1, sample.length);
     const coverage = recognized / denominator;
-    const score = Math.min(0.95, 0.44 * Math.min(1, recognized / 3)
+    const score = Math.min(0.72, 0.44 * Math.min(1, recognized / 3)
       + 0.26 * Math.min(1, semantic / 3) + 0.2 * Math.min(1, stableIds / 2));
-    if (process.env.DEBUG_AGENT_PROFILE === '1') console.log('GENERIC DETECT', { recognized, semantic, stableIds, coverage, score, requiredEvidenceMet });
     return {
       profileId: this.id,
       profileVersion: this.version,

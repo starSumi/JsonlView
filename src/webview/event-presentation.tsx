@@ -21,6 +21,7 @@ import {
 } from './providers/codex-event-builder';
 import { buildPiEventSections, type PiEventBuilderContext } from './providers/pi-event-builder';
 import { buildKimiEventSections, type KimiEventBuilderContext } from './providers/kimi-event-builder';
+import { buildGenericAgentEventSections, type GenericEventBuilderContext } from './providers/generic-event-builder';
 import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
@@ -339,7 +340,7 @@ function hasEventEnvelopeType(value: EventObject): boolean {
 }
 
 function isGenericToolEvent(profile: AgentRowProjection | undefined, type: string | undefined): boolean {
-  return profile?.profileId === 'generic' && (
+  return (profile?.profileId === 'generic' || profile?.profileId === 'generic-agent-events') && (
     profile.eventKind === 'tool_call' || profile.eventKind === 'tool_result'
     || /tool|function[._-]?call|command[._-]?execution/i.test(type ?? '')
   );
@@ -1032,6 +1033,16 @@ const kimiEventBuilderContext: KimiEventBuilderContext = {
   addCodeCandidate,
 };
 
+const genericEventBuilderContext: GenericEventBuilderContext = {
+  objectOf,
+  own,
+  valueLabel,
+  addTextCandidate,
+  addOutputCandidate,
+  addCodeCandidate,
+  appendAgentContentBlock,
+};
+
 export function buildAgentEventPresentation(
   value: unknown,
   profile?: AgentRowProjection,
@@ -1150,7 +1161,20 @@ export function buildAgentEventPresentation(
   const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
   const piSections = buildPiEventSections(payload, profile, piEventBuilderContext);
   const kimiSections = buildKimiEventSections(payload, profile, kimiEventBuilderContext);
-  const specializedSections = claudeSections.length > 0 ? claudeSections : piSections.length > 0 ? piSections : kimiSections;
+  const genericAgentSections = buildGenericAgentEventSections(
+    envelope,
+    payload,
+    profile,
+    envelopeType,
+    genericEventBuilderContext,
+  );
+  const specializedSections = claudeSections.length > 0
+    ? claudeSections
+    : piSections.length > 0
+      ? piSections
+      : kimiSections.length > 0
+        ? kimiSections
+        : genericAgentSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
   const isPrompt = lowerKind === 'last-prompt' || lowerKind === 'prompt';

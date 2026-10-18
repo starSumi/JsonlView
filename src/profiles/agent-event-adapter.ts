@@ -274,7 +274,7 @@ function number(value: Record<string, unknown>, keys: readonly string[]): number
 
 function classifyEvent(eventName: string | undefined, candidates: readonly Candidate[]): AgentEventKind {
   const raw = eventName?.toLowerCase().replace(/[.\s-]+/g, '_');
-  if (raw && DIRECT_KINDS[raw]) return DIRECT_KINDS[raw];
+  if (raw && Object.hasOwn(DIRECT_KINDS, raw)) return DIRECT_KINDS[raw as keyof typeof DIRECT_KINDS]!;
   if (raw) {
     if (raw.includes('usage') || raw.includes('token')) return 'usage';
     if (raw.includes('error') || raw.includes('fail') || raw.includes('abort')) return 'error';
@@ -293,7 +293,7 @@ function classifyEvent(eventName: string | undefined, candidates: readonly Candi
   }
   const nestedType = locate(candidates, ['type', 'kind']);
   const nested = scalar(nestedType?.value)?.toLowerCase().replace(/[.\s-]+/g, '_');
-  if (nested && nested !== raw && DIRECT_KINDS[nested]) return DIRECT_KINDS[nested];
+  if (nested && nested !== raw && Object.hasOwn(DIRECT_KINDS, nested)) return DIRECT_KINDS[nested as keyof typeof DIRECT_KINDS]!;
   return 'other';
 }
 
