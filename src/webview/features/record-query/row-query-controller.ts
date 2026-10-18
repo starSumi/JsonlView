@@ -12,8 +12,9 @@ import {
 } from './row-query-recovery-policy';
 import { snapshotIdentityChanged } from '../../snapshot-identity';
 import { sameRecordRef } from '../../record-identity';
-import { canReadSnapshot, reconcileProfileQueryState, type ViewportMode, type WorkspaceAction, type WorkspaceState } from '../../state';
+import { canReadSnapshot, type ViewportMode, type WorkspaceAction, type WorkspaceState } from '../../state';
 import { MAX_FIELD_FILTERS, MAX_ROW_TYPES, type RowTypeSelection } from './query-selection';
+import { reconcileProfileQueryState } from './profile-query-state';
 
 export interface RowsRequestOptions extends RecoveryRowsOptions {
   readonly query?: string;
