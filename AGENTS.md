@@ -163,6 +163,13 @@ presentation, and transport contracts. Avoid a global services bucket and
 avoid premature package or workspace splitting until an independently
 buildable boundary and consumer contract exist.
 
+Within the Webview, keep App.tsx as the composition root, put record-query
+policies in features/record-query, provider-specific event projections in
+providers, and interaction lifecycles in focused hooks when they own cleanup
+and keyboard/pointer behavior. Keep reducer orchestration and provider
+arbitration at their current owners; extract pure policies without moving
+transaction boundaries or adding a second store or speculative registry.
+
 Writable team lanes use separate Git worktrees and branches. Workers edit only
 their assigned subtree and tests. Workers are not alone in the repository;
 they must preserve unrelated changes and must not reset, clean, or rewrite

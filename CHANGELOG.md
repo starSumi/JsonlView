@@ -5,6 +5,7 @@
 - Keep ascending row order available while reverse indexing is incomplete, expose order as a radio group, and use host semantic tokens for selected options and workspace tab indicators.
 - Match compact header rules to the nested query controls, and keep Navigator intake actions legible in forced-colors and very narrow sidebars.
 - Keep compact query controls on a single horizontally scrollable rail so Columns stays reachable without wrapping into another header row.
+- Extract detail splitter interactions, profile-query reconciliation, and Kimi event section projection into focused internal modules while preserving App composition, reducer ownership, and provider arbitration.
 - Return the Session Navigator Webview to idle when a diagnostic notification is dismissed, and keep duplicate requests busy until the active operation settles.
 - Add a bounded Conversation display for existing profiles, preserving physical record selection, query state and raw details. Compact the workspace controls into two rows while retaining temporary-preview Save As.
 - Adapt persisted Kimi Code messages and loop events, with hidden and encrypted content kept opaque. Discover Kimi sessions through a separately authorized, metadata-only Navigator source.
