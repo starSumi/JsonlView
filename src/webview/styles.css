@@ -314,6 +314,7 @@ select:focus-visible,
 }
 
 .row-order-option {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -328,26 +329,42 @@ select:focus-visible,
   background: transparent;
   font-size: 11px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.row-order-option[aria-pressed='true'] {
-  border: 1px solid var(--vscode-focusBorder);
-  color: var(--vscode-list-activeSelectionForeground, var(--vscode-button-foreground));
-  background: var(--vscode-list-activeSelectionBackground);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-list-activeSelectionForeground, var(--vscode-button-foreground)) 18%, transparent);
+.row-order-option input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
 }
 
-.row-order-option:hover:not(:disabled) {
+.row-order-option.is-active {
+  border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-button-foreground));
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-button-background));
+}
+
+.row-order-option:focus-within {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.row-order-option:hover:not(.is-disabled) {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
-.row-order-option[aria-pressed='true']:hover:not(:disabled) {
-  color: var(--vscode-list-activeSelectionForeground, var(--vscode-button-foreground));
-  background: var(--vscode-list-activeSelectionBackground);
+.row-order-option.is-active:hover:not(.is-disabled) {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-button-foreground));
+  background: var(--vscode-inputOption-activeBackground, var(--vscode-button-background));
 }
 
-.row-order-option:disabled {
+.row-order-option.is-disabled {
   opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .icon-button:hover:not(:disabled),
@@ -1040,10 +1057,9 @@ select:focus-visible,
 }
 
 .workspace-tabs button.is-active {
-  border-bottom-color: var(--vscode-tab-activeBorderTop, var(--vscode-focusBorder));
+  border-bottom-color: var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
   color: var(--vscode-tab-activeForeground);
   background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
-  font-weight: 600;
 }
 
 .detail-tabs button.is-active {
@@ -1053,12 +1069,22 @@ select:focus-visible,
 }
 
 @media (forced-colors: active) {
-  .workspace-tabs button.is-active,
-  .detail-tabs button.is-active {
-    border: 1px solid Highlight;
-    border-bottom-width: 2px;
+  .row-order-option.is-active {
+    border-color: Highlight;
     color: HighlightText;
     background: Highlight;
+  }
+
+  .row-order-option:focus-within {
+    outline-color: Highlight;
+  }
+
+  .workspace-tabs button.is-active,
+  .detail-tabs button.is-active {
+    border-bottom-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+    outline: 1px solid Highlight;
   }
 }
 

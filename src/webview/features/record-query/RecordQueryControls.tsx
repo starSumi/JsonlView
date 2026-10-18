@@ -76,7 +76,6 @@ export function RecordQueryControls({
   if (selectedColumn !== undefined && !displayedFields.some((column) => column.id === filterColumnId)) displayedFields.unshift(selectedColumn);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
-  const rowOrderDescription = descendingDisabled ? descendingDisabledReason : undefined;
 
   return (
     <>
@@ -108,34 +107,35 @@ export function RecordQueryControls({
         className="row-order-control"
         data-direction={sortDirection}
         aria-label="Record order"
-        title={descendingDisabled ? descendingDisabledReason : undefined}
       >
-        <button
-          type="button"
-          className="row-order-option"
-          title="Sort rows ascending; first line first"
-          aria-label="Ascending row order; first line first"
-          aria-pressed={sortDirection === 'asc'}
-          aria-description={rowOrderDescription}
-          disabled={descendingDisabled}
-          onClick={() => onSortDirectionChange('asc')}
-        >
+        <label className={`row-order-option${sortDirection === 'asc' ? ' is-active' : ''}${searchDisabled ? ' is-disabled' : ''}`} title="Sort rows ascending; first line first">
+          <input
+            type="radio"
+            name="record-order"
+            value="asc"
+            aria-label="Ascending row order; first line first"
+            checked={sortDirection === 'asc'}
+            disabled={searchDisabled}
+            onChange={() => onSortDirectionChange('asc')}
+          />
           <ArrowUpNarrowWide size={15} aria-hidden />
           <span aria-hidden="true">Asc</span>
-        </button>
-        <button
-          type="button"
-          className="row-order-option"
-          title="Sort rows descending; last line first"
-          aria-label="Descending row order; last line first"
-          aria-pressed={sortDirection === 'desc'}
-          aria-description={rowOrderDescription}
-          disabled={descendingDisabled}
-          onClick={() => onSortDirectionChange('desc')}
-        >
+        </label>
+        <label className={`row-order-option${sortDirection === 'desc' ? ' is-active' : ''}${searchDisabled || descendingDisabled ? ' is-disabled' : ''}`}
+          title={descendingDisabled ? descendingDisabledReason : 'Sort rows descending; last line first'}>
+          <input
+            type="radio"
+            name="record-order"
+            value="desc"
+            aria-label="Descending row order; last line first"
+            aria-description={descendingDisabled ? descendingDisabledReason : undefined}
+            checked={sortDirection === 'desc'}
+            disabled={searchDisabled || descendingDisabled}
+            onChange={() => onSortDirectionChange('desc')}
+          />
           <ArrowDownWideNarrow size={15} aria-hidden />
           <span aria-hidden="true">Desc</span>
-        </button>
+        </label>
       </fieldset>
       <details className="filter-menu" ref={filterMenuRef}>
         <summary className={`query-tool-button${filterActive ? ' is-active' : ''}`} title="Field filters: match all conditions" aria-label="Field filters">

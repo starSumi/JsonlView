@@ -35,14 +35,14 @@ describe('record order controls', () => {
   it('shows ascending and descending as explicit selected options', () => {
     const ascendingMarkup = render({ sortDirection: 'asc' });
     expect(ascendingMarkup).toContain('<fieldset class="row-order-control" data-direction="asc" aria-label="Record order"');
-    expect(ascendingMarkup).toContain('aria-label="Ascending row order; first line first" aria-pressed="true"');
-    expect(ascendingMarkup).toContain('aria-label="Descending row order; last line first" aria-pressed="false"');
+    expect(ascendingMarkup).toMatch(/<input type="radio"[^>]*aria-label="Ascending row order; first line first"[^>]*checked=""/);
+    expect(ascendingMarkup).toMatch(/<input type="radio"[^>]*aria-label="Descending row order; last line first"/);
     expect(ascendingMarkup).toContain('Sort rows ascending; first line first');
 
     const markup = render({ sortDirection: 'desc' });
     expect(markup).toContain('<fieldset class="row-order-control" data-direction="desc" aria-label="Record order"');
-    expect(markup).toContain('aria-label="Ascending row order; first line first" aria-pressed="false"');
-    expect(markup).toContain('aria-label="Descending row order; last line first" aria-pressed="true"');
+    expect(markup).toMatch(/<input type="radio"[^>]*aria-label="Ascending row order; first line first"/);
+    expect(markup).toMatch(/<input type="radio"[^>]*aria-label="Descending row order; last line first"[^>]*checked=""/);
     expect(markup).toContain('Sort rows descending; last line first');
   });
 
@@ -51,11 +51,19 @@ describe('record order controls', () => {
       descendingDisabled: true,
       descendingDisabledReason: 'Available when indexing completes',
     });
+    const radios = markup.match(/<input type="radio"[^>]*>/gu) ?? [];
+    const ascending = radios.find((radio) => radio.includes('Ascending row order'));
+    const descending = radios.find((radio) => radio.includes('Descending row order'));
+    expect(ascending).toBeDefined();
+    expect(ascending).not.toContain('disabled=');
+    expect(descending).toContain('disabled=""');
+    expect(descending).toContain('aria-description="Available when indexing completes"');
     expect(markup).toContain('title="Available when indexing completes"');
-    expect(markup).toContain('aria-description="Available when indexing completes" disabled=""');
-    expect(markup).toContain('aria-label="Ascending row order; first line first"');
-    expect(markup).toContain('aria-label="Descending row order; last line first"');
-    expect(markup.match(/class="row-order-option"[^>]*disabled=""/gu)).toHaveLength(2);
+  });
+
+  it('disables both row-order options when the source cannot be searched', () => {
+    const markup = render({ searchDisabled: true });
+    expect(markup.match(/<input type="radio"[^>]*disabled=""/gu)).toHaveLength(2);
   });
 
   it('preserves native details disclosure with scrollable fields and reachable actions', () => {

@@ -86,6 +86,7 @@ must remain observable.
 | Keyboard focus | `--vscode-focusBorder` | focus-visible outlines and active control affordances |
 | Hover | `--vscode-list-hoverBackground` | pointer and keyboard hover preview |
 | Active selection | `--vscode-list-activeSelectionBackground` and `--vscode-list-activeSelectionForeground` | selected row or active navigation item |
+| Active option | `--vscode-inputOption-activeBackground`, `--vscode-inputOption-activeBorder`, and `--vscode-inputOption-activeForeground` | selected choice in a compact radio group, including row order |
 | Inactive selection | `--vscode-list-inactiveSelectionBackground` and `--vscode-list-inactiveSelectionForeground` | selected row when the grid has lost focus |
 | Text selection | `--vscode-editor-selectionBackground` and `--vscode-editor-selectionForeground` | user-selected text only |
 | Scrollbar | `--vscode-scrollbarSlider-background`, `--vscode-scrollbarSlider-hoverBackground`, `--vscode-scrollbarSlider-activeBackground` | scroll thumb states |
@@ -199,6 +200,11 @@ high contrast themes, and a user theme with sparse optional tokens. It checks
 keyboard navigation, focus-visible state, text selection, reduced-motion
 behavior, 320 CSS-pixel reflow, and readable content at the smallest supported
 viewport. Color is never the only signal for selection, status, or failure.
+Compact mutually exclusive choices use native radio inputs so keyboard focus
+stays on one choice and selection remains available without a pointer. Forced
+colors preserve a visible selected state and focus outline. Workspace tabs use
+the host's tab active-border token on their bottom indicator without changing
+label weight or control geometry.
 
 ## Ownership and lifecycle
 
