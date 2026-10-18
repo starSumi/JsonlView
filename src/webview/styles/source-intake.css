@@ -1,0 +1,29 @@
+.navigator-bridge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 10px 0;
+  padding: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-focusBorder);
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.navigator-bridge strong {
+  font-size: 12px;
+}
+
+.navigator-bridge span {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.navigator-bridge small {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+}
+
+.navigator-bridge .event-section-action {
+  align-self: flex-start;
+}

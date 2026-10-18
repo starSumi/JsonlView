@@ -1,0 +1,225 @@
+@media (forced-colors: active) {
+  .row-order-option.is-active {
+    border-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+  }
+
+  .row-order-option:focus-within {
+    outline-color: Highlight;
+  }
+
+  .workspace-tabs button.is-active,
+  .detail-tabs button.is-active {
+    border-bottom-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+    outline: 1px solid Highlight;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+}
+
+@media (max-width: 900px) {
+  .workspace.has-drawer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-drawer {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(520px, 92vw);
+    box-shadow: -5px 0 16px var(--vscode-widget-shadow);
+  }
+
+  .detail-splitter {
+    display: none;
+  }
+
+}
+
+@media (max-width: 680px) {
+  .workspace-tabs {
+    overflow-x: auto;
+  }
+
+  .workspace-tabs button {
+    min-width: 68px;
+    padding: 0 7px;
+  }
+
+  .detail-drawer {
+    width: 100%;
+  }
+
+  .detail-drawer.is-modal {
+    width: 100%;
+  }
+}
+
+@container workspace (max-width: 1250px) {
+  .profile-suggestion,
+  .dataset-head-status,
+  .status-strip > .status-valid,
+  .status-strip > .progress-track {
+    display: none;
+  }
+}
+
+@container workspace (max-width: 1050px) {
+  .profile-label,
+  .status-strip > .status-bytes {
+    display: none;
+  }
+
+  .status-strip > .status-problems[data-empty='true'] {
+    display: none;
+  }
+
+  .compact-field select {
+    width: 132px;
+  }
+}
+
+@container workspace (max-width: 900px) {
+  .workspace-query-controls > .table-query-toolbar {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+    scrollbar-width: thin;
+    scroll-padding-inline: 8px;
+  }
+
+  .workspace-query-controls .table-query-toolbar > :not(.search-box) {
+    flex: 0 0 auto;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex: 0 1 220px;
+    min-width: min(160px, 100%);
+    max-width: 220px;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: var(--vscode-scrollbarSlider-background);
+    background-clip: padding-box;
+  }
+
+  .workspace-query-controls .table-query-toolbar::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground);
+    background-clip: padding-box;
+  }
+}
+
+@container workspace (max-width: 720px) {
+  .workspace-header-primary,
+  .workspace-header-secondary {
+    flex-basis: auto;
+    flex-wrap: wrap;
+    column-gap: 6px;
+    row-gap: 4px;
+    padding: 4px 8px;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex: 1 1 160px;
+    max-width: none;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .row-order-control {
+    flex: 0 0 auto;
+  }
+
+  .status-strip {
+    gap: 6px;
+  }
+
+  .status-problems .status-scope {
+    display: none;
+  }
+}
+
+@container workspace (max-width: 520px) {
+  .workspace-header-primary > .workspace-tabs {
+    flex-basis: 100%;
+  }
+
+  .workspace-header-primary > .workspace-controls {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .workspace-header-secondary.has-query {
+    align-items: flex-start;
+  }
+
+  .workspace-header-secondary.has-query .status-strip,
+  .workspace-header-secondary.has-query .workspace-query-controls {
+    flex-basis: 100%;
+  }
+
+  .toolbar {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .profile-field {
+    flex: 0 1 116px;
+  }
+
+  .profile-control,
+  .profile-control select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .follow-toggle {
+    justify-content: center;
+    min-width: 28px;
+  }
+
+  .follow-toggle span,
+  .status-phase[data-complete='true'],
+  .status-problems[data-empty='true'] {
+    display: none;
+  }
+
+  .rebuild-action-label {
+    display: none;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    min-width: 120px;
+  }
+}
+
+@container workspace (max-width: 460px) {
+  .snapshot-update-label {
+    display: none;
+  }
+
+  .snapshot-update-compact {
+    display: inline;
+  }
+}
