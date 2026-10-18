@@ -51,6 +51,50 @@ describe('dataset scene detail presentation', () => {
 });
 
 describe('Kimi persisted record presentation', () => {
+  it('renders profile binding systemPrompt strings as a dedicated text section', () => {
+    const model = buildAgentEventPresentation({
+      type: 'profile.bind',
+      systemPrompt: 'You are Kimi Code CLI, an interactive general AI agent.',
+    }, kimi);
+
+    expect(model?.sections).toEqual([expect.objectContaining({
+      title: 'System prompt',
+      text: 'You are Kimi Code CLI, an interactive general AI agent.',
+    })]);
+  });
+
+  it('renders typed snapshots, commands, results, tasks, and steered content in detail', () => {
+    const snapshot = buildAgentEventPresentation({
+      type: 'llm.tools_snapshot',
+      tools: [{ name: 'Lookup', description: 'Look up a short value.', parameters: { type: 'object' } }],
+    }, kimi);
+    expect(snapshot?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Tool description · Lookup', text: 'Look up a short value.' }),
+      expect.objectContaining({ title: 'Tool parameters · Lookup', code: expect.stringContaining('object') }),
+    ]));
+
+    const command = buildAgentEventPresentation({
+      type: 'context.append_loop_event',
+      event: { type: 'tool.call', name: 'Bash', command: 'Get-ChildItem' },
+    }, kimi);
+    expect(command?.sections).toEqual([expect.objectContaining({ title: 'Tool command · Bash', code: 'Get-ChildItem', language: 'shell' })]);
+
+    const result = buildAgentEventPresentation({
+      type: 'context.append_loop_event',
+      event: { type: 'tool.result', result: { output: [{ type: 'text', text: 'done' }], note: 'completed' } },
+    }, kimi);
+    expect(result?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Tool result 1', text: 'done' }),
+      expect.objectContaining({ title: 'Result note', text: 'completed' }),
+    ]));
+
+    const task = buildAgentEventPresentation({ type: 'task.started', info: { description: 'Index the workspace' } }, kimi);
+    expect(task?.sections).toEqual([expect.objectContaining({ title: 'Task description', text: 'Index the workspace' })]);
+
+    const steered = buildAgentEventPresentation({ type: 'prompt.steered', content: [{ type: 'text', text: 'Use the focused file.' }] }, kimi);
+    expect(steered?.sections).toEqual([expect.objectContaining({ title: 'Prompt 1', text: 'Use the focused file.' })]);
+  });
+
   it('unwraps message text and reasoning while keeping opaque parts private to Raw', () => {
     const model = buildAgentEventPresentation({ type: 'context.append_message', message: { role: 'assistant', content: [
       { type: 'think', think: 'Visible reasoning' },

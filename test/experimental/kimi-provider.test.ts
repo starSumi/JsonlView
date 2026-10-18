@@ -26,7 +26,11 @@ beforeEach(async () => {
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 async function session(id: string, state: unknown, agentIds = ['main'], legacy = false): Promise<string> {
-  const path = join(root, 'sessions', 'wd_synthetic_0123456789ab', id);
+  return sessionInWorkspace('wd_synthetic_0123456789ab', id, state, agentIds, legacy);
+}
+
+async function sessionInWorkspace(workspace: string, id: string, state: unknown, agentIds = ['main'], legacy = false): Promise<string> {
+  const path = join(root, 'sessions', workspace, id);
   const metadataPath = join(path, ...(legacy ? ['session-meta'] : []), 'state.json');
   await mkdir(dirname(metadataPath), { recursive: true });
   await writeFile(metadataPath, typeof state === 'string' ? state : JSON.stringify(state));
@@ -146,6 +150,20 @@ describe('Kimi metadata-only Navigator provider', () => {
     expect(first.nextCursor).toBeDefined();
     const second = await provider.scanPage(signal(), { ...defaults, maxFiles: 64 }, first.nextCursor);
     expect(second.snapshot.entities.map((entity) => entity.label)).toEqual(['Older 63']);
+  });
+
+  it('prioritizes recently active workspaces before the discovery budget expires', async () => {
+    const oldActivity = new Date('2020-01-01T00:00:00.000Z');
+    await Promise.all(Array.from({ length: 72 }, async (_, index) => {
+      const workspace = 'wd_old_' + String(index).padStart(2, '0');
+      const path = await sessionInWorkspace(workspace, 'session-old-' + String(index), { title: 'Older workspace ' + String(index) });
+      await setActivity(path, oldActivity.toISOString());
+    }));
+    const recentPath = await sessionInWorkspace('wd_zz_recent', 'session-latest', { title: 'Latest workspace session' });
+    await setActivity(recentPath, '2025-01-01T00:00:00.000Z');
+
+    const first = await provider.scanPage(signal(), { ...defaults, maxFiles: 1 });
+    expect(first.snapshot.entities.map((entity) => entity.label)).toEqual(['Latest workspace session']);
   });
 
   it('bounds metadata reads and preserves discoverable malformed or oversized sessions', async () => {

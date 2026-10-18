@@ -10,6 +10,7 @@ import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type Na
 const MAX_INVENTORY = 4_096;
 const MAX_DIRECTORY_ENTRIES = 16_384;
 const MAX_STATE_BYTES = 64 * 1_024;
+const KIMI_INDEX_DIRECTORIES = new Set(['.index-cache', '.index-dirty']);
 interface SessionEntry { sessionKey: string; agentId: string; relativePath: string; statePath?: string; activityMs: number; signature: string }
 interface Inventory { entries: SessionEntry[]; fingerprint: string; partial: boolean }
 interface Discovery { entries: number; partial: boolean; budget: MetadataBudget }
@@ -120,8 +121,8 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
     const discovery: Discovery = { entries: 0, partial: false, budget };
     const entries: SessionEntry[] = [];
     const sessions = join(this.rootPath, 'sessions');
-    for (const workspace of await directories(sessions, discovery)) {
-      for (const session of await directories(workspace, discovery)) {
+    for (const workspace of await directories(sessions, discovery, { sortByMtime: true, excludeNames: KIMI_INDEX_DIRECTORIES })) {
+      for (const session of await directories(workspace, discovery, { sortByMtime: true })) {
         if (!budget.check() || entries.length >= MAX_INVENTORY) { discovery.partial = true; break; }
         const statePath = await stateFile(session);
         const state = statePath === undefined ? undefined : await regularFile(statePath);
@@ -145,7 +146,12 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
   }
 }
 
-async function directories(path: string, discovery: Discovery): Promise<string[]> {
+interface DirectoryOptions {
+  readonly sortByMtime?: boolean;
+  readonly excludeNames?: ReadonlySet<string>;
+}
+
+async function directories(path: string, discovery: Discovery, options: DirectoryOptions = {}): Promise<string[]> {
   if (!discovery.budget.check() || discovery.entries >= MAX_DIRECTORY_ENTRIES) { discovery.partial = true; return []; }
   if (!(await regularDirectory(path))) return [];
   const paths: string[] = [];
@@ -153,10 +159,17 @@ async function directories(path: string, discovery: Discovery): Promise<string[]
     const directory = await opendir(path);
     for await (const entry of directory) {
       if (!discovery.budget.check() || ++discovery.entries > MAX_DIRECTORY_ENTRIES) { discovery.partial = true; break; }
+      if (options.excludeNames?.has(entry.name)) continue;
       if (entry.isDirectory() && !entry.isSymbolicLink()) paths.push(join(path, entry.name));
     }
   } catch { discovery.budget.check(); discovery.partial = true; }
-  return paths.sort();
+  if (!options.sortByMtime) return paths.sort();
+  const ranked = await Promise.all(paths.map(async (candidate) => ({
+    path: candidate,
+    mtimeMs: (await lstat(candidate).catch(() => undefined))?.mtimeMs ?? 0,
+  })));
+  return ranked.sort((left, right) => right.mtimeMs - left.mtimeMs
+    || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)).map((item) => item.path);
 }
 
 async function regularDirectory(path: string): Promise<boolean> {

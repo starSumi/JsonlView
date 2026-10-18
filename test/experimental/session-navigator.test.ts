@@ -1,10 +1,17 @@
+import * as fsPromises from 'node:fs/promises';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CatalogStore, createSessionNavigatorProvider, discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, RevealIntentRegistry, sourceIdFor } from '../../src/experimental';
-import type { AuthorizedSourceSetting } from '../../src/experimental';
+import { collectFiles } from '../../src/experimental/session-navigator/file-scan';
+import type { AuthorizedSourceSetting, SessionNavigatorProvider } from '../../src/experimental';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readdir: vi.fn(actual.readdir) };
+});
 
 const cleanup: string[] = [];
 
@@ -141,7 +148,39 @@ describe('session navigator source boundary', () => {
     expect(result.snapshot.entities).toEqual(expect.arrayContaining([
       expect.objectContaining({ nativeId: 'child', firstMessagePreview: 'private child transcript' }),
     ]));
+    expect(result.snapshot.locations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeId: 'parent', relativePath: join('sessions', '2026-10-09T00-00-00Z_parent.jsonl') }),
+    ]));
     expect(JSON.stringify(result.snapshot)).not.toContain(parent);
+  });
+
+  it('targets the Pi sessions subtree when the agent home has unrelated install trees', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-pi-agent-home-'));
+    cleanup.push(root);
+    await mkdir(join(root, 'sessions'), { recursive: true });
+    await mkdir(join(root, 'install', 'releases', 'nested'), { recursive: true });
+    await writeFile(join(root, 'install', 'releases', 'nested', 'ignored.jsonl'), '{"type":"not-a-session"}', 'utf8');
+    await writeFile(join(root, 'sessions', 'active.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'active-pi', timestamp: '2026-10-19T00:00:00.000Z', cwd: 'E:/work' }), 'utf8');
+
+    const readdirMock = vi.mocked(fsPromises.readdir);
+    const originalReaddir = readdirMock.getMockImplementation();
+    if (originalReaddir === undefined) throw new Error('readdir mock implementation is unavailable');
+    readdirMock.mockImplementation(async (directory, options) => {
+      if (String(directory).endsWith('install')) await new Promise((resolve) => setTimeout(resolve, 900));
+      return originalReaddir(directory, options);
+    });
+    const budget = { maxEntities: 10, maxRelations: 10, maxRecords: 30, maxFiles: 10, maxBytes: 100_000, maxMilliseconds: 100 } as const;
+    const broadScan = await collectFiles(root, new AbortController().signal, budget, Date.now());
+    expect(broadScan).toEqual([]);
+    let result: Awaited<ReturnType<SessionNavigatorProvider['scan']>> | undefined;
+    try {
+      result = await createSessionNavigatorProvider({ provider: 'pi', rootUri: pathToFileURL(root).toString() }).scan(new AbortController().signal, budget);
+    } finally {
+      readdirMock.mockImplementation(originalReaddir);
+    }
+    if (result === undefined) throw new Error('Pi scan did not return a result');
+    expect(result.snapshot.entities.map((entity) => entity.nativeId)).toEqual(['active-pi']);
+    expect(result.snapshot.locations[0]?.relativePath).toBe(join('sessions', 'active.jsonl'));
   });
 
   it('does not fall back to rollout rows when Codex metadata is absent', async () => {

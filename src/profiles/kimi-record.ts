@@ -6,6 +6,7 @@ export const KIMI_SOURCE_REVISION = 'ef727e517923cb312cb48d42825c49dfacd528e7';
 const MESSAGE_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 const MAX_PARTS = 16;
 const TEXT_BUDGET = 240;
+const MAX_TOOL_SNAPSHOT_ITEMS = 32;
 
 export function isKimiMetadata(value: unknown): boolean {
   const version = stringAt(value, 'protocol_version');
@@ -16,6 +17,16 @@ export function isKimiMetadata(value: unknown): boolean {
 
 export function isKimiContextRecord(value: unknown): boolean {
   switch (stringAt(value, 'type')) {
+    case 'llm.tools_snapshot':
+      return isKimiToolsSnapshot(value);
+    case 'task.started':
+      return stringAt(objectAt(value, 'info'), 'description') !== undefined
+        || stringAt(value, 'description') !== undefined;
+    case 'prompt.steered':
+      return isObject(value) && Array.isArray(own(value, 'content'));
+    case 'config.update':
+    case 'profile.bind':
+      return isObject(value) && typeof own(value, 'systemPrompt') === 'string';
     case 'context.append_message': {
       const message = objectAt(value, 'message');
       return message !== undefined && MESSAGE_ROLES.has(stringAt(message, 'role') ?? '')
@@ -33,7 +44,11 @@ export function isKimiContextRecord(value: unknown): boolean {
             && stringAt(event, 'part', 'type') !== undefined;
         case 'tool.call':
           return stringAt(event, 'stepUuid') !== undefined
-            && stringAt(event, 'toolCallId') !== undefined && stringAt(event, 'name') !== undefined;
+            && stringAt(event, 'toolCallId') !== undefined
+            && (stringAt(event, 'name') !== undefined
+              || own(event, 'command') !== undefined
+              || stringAt(event, 'display', 'command') !== undefined
+              || stringAt(event, 'args', 'command') !== undefined);
         case 'tool.result': {
           const output = objectAt(event, 'result')?.output;
           return stringAt(event, 'toolCallId') !== undefined
@@ -46,6 +61,25 @@ export function isKimiContextRecord(value: unknown): boolean {
     default:
       return false;
   }
+}
+
+/** Kimi's durable tool snapshot schema, bounded at the inspection edge. */
+export function isKimiToolsSnapshot(value: unknown): boolean {
+  if (!isObject(value) || stringAt(value, 'type') !== 'llm.tools_snapshot'
+    || stringAt(value, 'agentId') === undefined || stringAt(value, 'hash') === undefined) return false;
+  const tools = own(value, 'tools');
+  if (!Array.isArray(tools)) return false;
+  for (let index = 0; index < Math.min(tools.length, MAX_TOOL_SNAPSHOT_ITEMS); index += 1) {
+    const tool = tools[index];
+    if (!isObject(tool) || stringAt(tool, 'name') === undefined || stringAt(tool, 'description') === undefined
+      || !isObject(own(tool, 'parameters'))) return false;
+  }
+  return true;
+}
+
+export function kimiToolSnapshotCount(value: unknown): number | undefined {
+  const tools = isObject(value) ? own(value, 'tools') : undefined;
+  return isKimiToolsSnapshot(value) && Array.isArray(tools) ? tools.length : undefined;
 }
 
 /** Numeric wire timestamps are epoch milliseconds. No unit guessing or path IO. */

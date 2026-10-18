@@ -15,6 +15,14 @@ describe('Kimi persisted wire detection', () => {
     expect(registry.detect(samples(kimiWireFixture)).selectedProfileId).toBe('kimi-code-session');
     expect(registry.detect(samples(kimiWireFixture.slice(2))).selectedProfileId).toBe('kimi-code-session');
     expect(registry.detect(samples(kimiWireFixture.slice(0, 2))).selectedProfileId).toBe('kimi-code-session');
+    expect(registry.detect(samples([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1792123200000 },
+      { type: 'profile.bind', systemPrompt: 'You are Kimi.' },
+    ])).selectedProfileId).toBe('kimi-code-session');
+    expect(registry.detect(samples([
+      { type: 'metadata', protocol_version: '1.5', created_at: 1792123200000 },
+      { type: 'llm.tools_snapshot', agentId: 'main', hash: 'h', tools: [{ name: 'Lookup', description: 'Look up a value.', parameters: { type: 'object' } }] },
+    ])).selectedProfileId).toBe('kimi-code-session');
   });
 
   it('rejects singleton metadata, producer lookalikes and transport JSON-RPC envelopes', () => {
@@ -43,6 +51,45 @@ describe('Kimi persisted wire detection', () => {
 });
 
 describe('Kimi physical projections', () => {
+  it('projects Kimi profile bindings with a bounded system prompt field', () => {
+    const systemPrompt = 'You are Kimi Code CLI, an interactive general AI agent.';
+    expect(project({ type: 'profile.bind', agentId: 'main', profileName: 'agent', systemPrompt }))
+      .toMatchObject({
+        eventKind: 'session',
+        actor: 'system',
+        derivedFields: { systemPrompt },
+        evidence: expect.arrayContaining([{
+          field: 'systemPrompt',
+          path: { tokens: [{ kind: 'key', value: 'systemPrompt' }] },
+        }]),
+      });
+  });
+
+  it('projects the typed Kimi event union without flattening content into Raw', () => {
+    expect(project({ type: 'llm.tools_snapshot', agentId: 'main', hash: 'tools-hash', tools: [
+      { name: 'Lookup', description: 'Look up a short value.', parameters: { type: 'object' } },
+    ] })).toMatchObject({
+      eventKind: 'observation',
+      actor: 'system',
+      derivedFields: { toolsHash: 'tools-hash', toolsCount: 1, toolNames: 'Lookup' },
+    });
+    expect(project({ type: 'context.append_loop_event', event: {
+      type: 'content.part', stepUuid: 'step', part: { type: 'think', think: 'Inspect the source.' },
+    } })).toMatchObject({ eventKind: 'reasoning', summary: expect.stringContaining('Inspect the source') });
+    expect(project({ type: 'context.append_loop_event', event: {
+      type: 'tool.call', stepUuid: 'step', toolCallId: 'call', command: 'Get-ChildItem',
+    } })).toMatchObject({ eventKind: 'tool_call', derivedFields: { toolCommand: 'Get-ChildItem' } });
+    expect(project({ type: 'context.append_loop_event', event: {
+      type: 'tool.result', toolCallId: 'call', result: { output: 'done', note: 'completed' },
+    } })).toMatchObject({ eventKind: 'tool_result', summary: expect.stringContaining('done'), derivedFields: { resultNote: 'completed' } });
+    expect(project({ type: 'task.started', taskId: 'task', info: { description: 'Index the workspace' } })).toMatchObject({
+      eventKind: 'task', actor: 'system', derivedFields: { taskDescription: 'Index the workspace' },
+    });
+    expect(project({ type: 'prompt.steered', content: [{ type: 'text', text: 'Use the focused file.' }] })).toMatchObject({
+      eventKind: 'message', actor: 'user', derivedFields: { contentPartCount: 1 },
+    });
+  });
+
   it('maps user, assistant, thinking and tool records with source paths and millisecond clocks', () => {
     const records = kimiWireFixture.map(project);
     expect(records.map((record) => record.eventKind)).toEqual(['session', 'message', 'turn', 'reasoning', 'tool_call', 'tool_result', 'message', 'turn']);

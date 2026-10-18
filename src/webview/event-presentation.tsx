@@ -12,16 +12,17 @@ import { stringifyJsonBounded } from './json-syntax';
 import { classifyContent, inferCodeLanguage } from './content-view';
 import { formatJavaScriptForDisplay } from './code-syntax';
 import { DEFAULT_MAX_CHARS } from './code-syntax-core';
-import { buildClaudeEventSections, type ClaudeEventBuilderContext } from './providers/claude-event-builder';
+import type { ClaudeEventBuilderContext } from './providers/claude-event-builder';
 import {
   buildCodexContextSections,
   buildCodexItemSections,
   buildCodexResponseItemSections,
   type CodexEventBuilderContext,
 } from './providers/codex-event-builder';
-import { buildPiEventSections, type PiEventBuilderContext } from './providers/pi-event-builder';
-import { buildKimiEventSections, type KimiEventBuilderContext } from './providers/kimi-event-builder';
-import { buildGenericAgentEventSections, type GenericEventBuilderContext } from './providers/generic-event-builder';
+import type { PiEventBuilderContext } from './providers/pi-event-builder';
+import type { KimiEventBuilderContext } from './providers/kimi-event-builder';
+import type { GenericEventBuilderContext } from './providers/generic-event-builder';
+import { buildProviderEventSections, type PresentationStrategyContext } from './providers/presentation-strategy-registry';
 import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
@@ -1086,6 +1087,13 @@ const genericEventBuilderContext: GenericEventBuilderContext = {
   appendAgentContentBlock,
 };
 
+const presentationStrategyContext: PresentationStrategyContext = {
+  claude: claudeEventBuilderContext,
+  pi: piEventBuilderContext,
+  kimi: kimiEventBuilderContext,
+  generic: genericEventBuilderContext,
+};
+
 export function buildAgentEventPresentation(
   value: unknown,
   profile?: AgentRowProjection,
@@ -1201,23 +1209,10 @@ export function buildAgentEventPresentation(
     ?? plainText
     ?? payload.lastPrompt
     ?? payload.prompt;
-  const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
-  const piSections = buildPiEventSections(payload, profile, piEventBuilderContext);
-  const kimiSections = buildKimiEventSections(payload, profile, kimiEventBuilderContext);
-  const genericAgentSections = buildGenericAgentEventSections(
-    envelope,
-    payload,
-    profile,
-    envelopeType,
-    genericEventBuilderContext,
+  const specializedSections = buildProviderEventSections(
+    { envelope, payload, profile, envelopeType },
+    presentationStrategyContext,
   );
-  const specializedSections = claudeSections.length > 0
-    ? claudeSections
-    : piSections.length > 0
-      ? piSections
-      : kimiSections.length > 0
-        ? kimiSections
-        : genericAgentSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
   const isPrompt = lowerKind === 'last-prompt' || lowerKind === 'prompt';
