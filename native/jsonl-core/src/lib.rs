@@ -5,6 +5,7 @@ use napi_derive::napi;
 pub const ABI_VERSION: u32 = 2;
 pub const CAPABILITY_SCAN_LF: u32 = 1 << 0;
 pub const CAPABILITY_MCP_MANAGER: u32 = 1 << 1;
+pub const CAPABILITY_QUERY_RECORDS: u32 = 1 << 2;
 pub const MAX_SCAN_OFFSETS: u32 = 16 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -48,7 +49,7 @@ pub fn abi_version() -> u32 {
 
 #[napi]
 pub fn capabilities() -> u32 {
-    CAPABILITY_SCAN_LF | CAPABILITY_MCP_MANAGER
+    CAPABILITY_SCAN_LF | CAPABILITY_MCP_MANAGER | CAPABILITY_QUERY_RECORDS
 }
 
 #[napi(js_name = "mcpManagerCapability")]
@@ -142,3 +143,6 @@ mod tests {
 }
 
 mod mcp_manager;
+mod query_core;
+
+pub use query_core::{query_jsonl, query_records};

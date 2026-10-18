@@ -85,6 +85,17 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "jsonlView.queryRustPage",
+        "title": "JsonlView: Query Current Page with Rust Data Plane",
+        "icon": "$(search)",
+        "enablement": "resourceExtname == .jsonl || resourceExtname == .ndjson"
+      },
+      {
+        "command": "jsonlView.sendLastDiagnosticViaAcp",
+        "title": "JsonlView: Send Last Diagnostic via ACP",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "jsonlView.diagnoseWebview",
         "title": "JsonlView: Diagnose Webview Host Error",
         "icon": "$(question)"
@@ -448,6 +459,24 @@
           "type": "boolean",
           "default": true,
           "description": "Suggest a semantic profile when bounded samples provide sufficient evidence."
+        },
+        "jsonlView.acp.command": {
+          "type": "string",
+          "default": "",
+          "description": "Optional local ACP agent executable. It starts only when Send Last Diagnostic via ACP is invoked."
+        },
+        "jsonlView.acp.args": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Arguments passed to the explicitly configured ACP agent."
+        },
+        "jsonlView.acp.timeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Bounded timeout for each ACP handshake or prompt request."
         },
         "jsonlView.native.newlineScanner": {
           "type": "string",

@@ -38,7 +38,10 @@ summaries, timelines, and session catalog rows are disposable projections.
 - native/jsonl-core/ is an optional accelerator with a portable fallback.
 
 The runtime has no required network listener, hosted control plane, source
-mutation path, arbitrary command execution, or provider database write.
+mutation path, arbitrary command execution, or provider database write. An
+explicitly launched dist/mcp-server.cjs stdio process is an opt-in read-only
+adapter; it requires an allowlisted source environment and is never started by
+activation. ACP is similarly explicit and provider-neutral.
 Activation conflicts may publish a metadata-only diagnostic through the
 optional `jsonlView.sideAgent.receiveDiagnostic` command only after an
 explicit user action. The dispatch is provider-neutral and may include a
@@ -211,12 +214,12 @@ and keyboard/pointer behavior. Keep reducer orchestration and provider
 arbitration at their current owners; extract pure policies without moving
 transaction boundaries or adding a second store or speculative registry.
 
-The MCP navigation capability is discoverable through its disabled-by-default
-descriptor and inspection command. It must remain transport-, process-,
-network-, command-execution-, and source-mutation-free until a separate host
-transport and security review admits it. Staged mutation is similarly opt-in
-only after the setting, workspace trust, source authorization, and explicit
-user gesture gates are all satisfied.
+The MCP navigation capability remains disabled by default, while the separate
+Rust query adapter is available only through an explicit command or a client
+launch of the packaged stdio server. Source IDs are resolved by the host and
+all tool output is bounded. Staged mutation is similarly opt-in only after the
+setting, workspace trust, source authorization, and explicit user gesture gates
+are all satisfied.
 The native `McpManager` remains dormant until that explicit diagnostic action;
 it supports `2026-07-28` with `2025-11-25` and `2025-06-18` compatibility
 fallbacks while leaving transport ownership to the host.

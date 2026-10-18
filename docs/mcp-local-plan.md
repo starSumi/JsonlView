@@ -28,10 +28,12 @@ without changing the source. A commit tool is a later capability requiring
 explicit human confirmation, authority fencing, idempotency, journal intent,
 atomic replacement, readback digest, and unknown-commit reconciliation.
 
-This plan does not add an MCP server to extension startup. Transport ownership,
-Restricted Mode behavior, Workspace Trust, and source authorization remain host
-policies. The existing experimental adapter is the compatibility seam until an
-independently owned transport and security review exist.
+This plan does not add an MCP server to extension startup. A separate
+dist/mcp-server.cjs stdio entrypoint is packaged for an explicit MCP client
+launch. It requires JSONLVIEW_MCP_SOURCE_ID and JSONLVIEW_MCP_SOURCE_PATH; the
+source path is supplied by the trusted host, never by a tool argument.
+Transport ownership, Restricted Mode behavior, Workspace Trust, and source
+authorization remain host policies.
 
 The shipped inspection command only reports the frozen capability descriptor:
 
@@ -41,7 +43,10 @@ The Rust `McpManager` in `native/jsonl-core/src/mcp_manager.rs` is a
 transport-neutral lifecycle manager. It stays dormant until the user explicitly
 chooses `Send to side agent` or invokes the corresponding command. The extension
 then asks the native manager for a bounded, metadata-only request plan; the
-manager never starts a process, opens a socket, or contacts a provider.
+manager never starts a process, opens a socket, or contacts a provider. The
+separate AcpSessionManager owns an explicit ACP stdio child session and can
+attach the packaged MCP server definition to session/new for the configured
+agent.
 
 The plan includes the current MCP handshake (`2026-07-28`) and compatibility
 attempts for `2025-11-25` (the repository's existing line) and `2025-06-18`
@@ -50,7 +55,7 @@ one attempt, applies its own timeout and trust policy, and may route to any
 compatible agent. Copilot is not a required dependency. When no bridge is
 registered, JsonlView copies the bounded diagnostic prompt and leaves the user
 in control.
-experimental, disabled by default, metadata-only, and without transport,
-process, network, command execution, or source mutation. It does not construct
-a facade or read a provider. A future transport must keep the same explicit
-allowlist, generation, budget, cancellation and redaction gates.
+The Navigator inspection capability remains experimental, disabled by default,
+metadata-only, and without an activation-time transport. The Rust query server
+is a separate explicit stdio adapter and remains read-only, bounded, source
+allowlisted, cancellable, and provider-neutral.

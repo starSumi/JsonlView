@@ -63,12 +63,25 @@ const webviewOptions = {
   plugins: [identityPlugin()],
 };
 
+const mcpServerOptions = {
+  entryPoints: ['src/mcp-server.ts'],
+  bundle: true,
+  format: 'cjs',
+  platform: 'node',
+  target: 'node22',
+  outfile: resolve(outputDirectory, 'mcp-server.cjs'),
+  sourcemap: !production,
+  minify: production,
+  logLevel: 'info',
+};
+
 if (watch) {
   const extension = await context(extensionOptions);
   const webview = await context(webviewOptions);
-  await Promise.all([extension.watch(), webview.watch()]);
+  const mcpServer = await context(mcpServerOptions);
+  await Promise.all([extension.watch(), webview.watch(), mcpServer.watch()]);
   console.log('JsonlView development build is watching; output is not a frozen production pair.');
 } else {
-  await Promise.all([build(extensionOptions), build(webviewOptions)]);
+  await Promise.all([build(extensionOptions), build(webviewOptions), build(mcpServerOptions)]);
   await finalizeExecutionBuild({ rootDirectory, outputDirectory, identity: buildIdentity });
 }

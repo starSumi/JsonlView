@@ -6,6 +6,22 @@ export declare function scanLf(input: Uint8Array, start: number, limit: number):
 
 export declare function mcpManagerCapability(): number;
 
+/** Bounded, read-only JSONL page query. Offsets and cursors are decimal strings. */
+export declare function queryRecords(
+  sourcePath: string,
+  startOrdinal?: string,
+  limit?: number,
+  maxBytes?: number,
+): string;
+
+/** Compatibility alias for queryRecords. */
+export declare function queryJsonl(
+  sourcePath: string,
+  startOrdinal?: string,
+  limit?: number,
+  maxBytes?: number,
+): string;
+
 export declare class McpManager {
   constructor(maxPayloadBytes?: number);
   beginConnection(): string;

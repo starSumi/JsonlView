@@ -691,6 +691,16 @@ documents:
     evidence: []
     revisit: when Save As registration or a second catalog consumer is promoted
     rollback: disable metadata-plane callers and retain the additive migration
+  - id: adr-052-rust-query-mcp-acp-boundary
+    path: docs/decisions/052-rust-query-mcp-acp-boundary.md
+    title: Rust Query, MCP, and ACP Boundary
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [rust, query, mcp, acp, json-rpc]
+    evidence: []
+    revisit: when a second native query consumer or remote ACP transport is promoted
+    rollback: disable the native capability and omit the opt-in MCP or ACP entrypoints
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions
