@@ -355,6 +355,114 @@ describe('Session Navigator host lifecycle', () => {
     expect(tree.getTreeItem(source!).description).toBe('1 session');
   });
 
+  it('refreshes the catalog when a visible background probe detects source changes', async () => {
+    await tree.refresh();
+    host.scan.mockClear();
+    host.probe.mockReset().mockResolvedValue('changed');
+    host.scan.mockResolvedValueOnce({
+      ...snapshot, fingerprint: 'changed',
+      snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Updated session' }] },
+    });
+    host.view.visible = true;
+
+    await (tree as unknown as { probeVisibleSources: () => Promise<void> }).probeVisibleSources();
+
+    expect(host.scan).toHaveBeenCalledTimes(1);
+    const [source] = await tree.getChildren();
+    const [entity] = await tree.getChildren(source!);
+    expect(entity).toMatchObject({ nodeKind: 'entity', entity: { label: 'Updated session' } });
+    expect(tree.getTreeItem(source!).description).not.toContain('updates available');
+  });
+
+  it('queues a second refresh when a source changes after its turn in the active refresh', async () => {
+    host.roots = [
+      { provider: 'kimi', rootUri: pathToFileURL(join(root, 'kimi')).toString() },
+      { provider: 'codex', rootUri: pathToFileURL(join(root, 'codex')).toString() },
+    ];
+    await mkdir(join(root, 'kimi', 'sessions'), { recursive: true });
+    await mkdir(join(root, 'codex', 'sessions'), { recursive: true });
+    host.config.set('sessionNavigator.sources', host.roots);
+    await tree.refresh();
+    expect(await tree.getChildren()).toHaveLength(2);
+
+    host.scan.mockReset();
+    let completeCodex!: (value: SessionNavigatorScanResult) => void;
+    host.scan.mockImplementationOnce(() => new Promise<SessionNavigatorScanResult>((resolve) => { completeCodex = resolve; }));
+    host.scan.mockResolvedValueOnce({
+      ...snapshot, fingerprint: 'changed-kimi',
+      snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Updated Kimi session' }] },
+    });
+    host.probe.mockReset()
+      .mockResolvedValueOnce('stable')
+      .mockResolvedValueOnce('changed-codex')
+      .mockResolvedValueOnce('changed-kimi')
+      .mockResolvedValueOnce('changed-codex')
+      .mockResolvedValueOnce('changed-kimi')
+      .mockResolvedValue('changed-codex');
+    const refreshing = tree.refresh();
+    await vi.waitFor(() => expect(completeCodex).toBeTypeOf('function'));
+
+    host.view.visible = true;
+    const probing = (tree as unknown as { probeVisibleSources: () => Promise<void> }).probeVisibleSources();
+    await vi.waitFor(() => expect(host.probe).toHaveBeenCalledTimes(4));
+    completeCodex({
+      ...snapshot, fingerprint: 'changed-codex',
+      snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Updated Codex session' }] },
+    });
+    await Promise.all([refreshing, probing]);
+
+    expect(host.scan.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(host.probe.mock.calls.length).toBeGreaterThanOrEqual(4);
+    const sources = await tree.getChildren();
+    const kimi = sources.find((node) => node.nodeKind === 'source' && node.source.provider === 'kimi');
+    if (kimi?.nodeKind !== 'source') throw new Error('Expected the Kimi source');
+    expect(await tree.getChildren(kimi)).toMatchObject([{ nodeKind: 'entity', entity: { label: 'Updated Kimi session' } }]);
+  });
+
+  it('re-probes when a concurrent scan commits beyond an observed fingerprint baseline', async () => {
+    host.roots = [
+      { provider: 'kimi', rootUri: pathToFileURL(join(root, 'kimi')).toString() },
+      { provider: 'codex', rootUri: pathToFileURL(join(root, 'codex')).toString() },
+    ];
+    await mkdir(join(root, 'kimi', 'sessions'), { recursive: true });
+    await mkdir(join(root, 'codex', 'sessions'), { recursive: true });
+    host.config.set('sessionNavigator.sources', host.roots);
+    await tree.refresh();
+
+    let completeKimi!: (value: SessionNavigatorScanResult) => void;
+    host.scan.mockReset()
+      .mockImplementationOnce(() => new Promise<SessionNavigatorScanResult>((resolve) => { completeKimi = resolve; }))
+      .mockResolvedValueOnce({
+        ...snapshot, fingerprint: 'kimi-fingerprint-3',
+        snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Kimi version 3' }] },
+      });
+    host.probe.mockReset()
+      .mockResolvedValueOnce('kimi-fingerprint-2')
+      .mockResolvedValueOnce('kimi-fingerprint-2')
+      .mockResolvedValueOnce('stable')
+      .mockResolvedValueOnce('stable')
+      .mockResolvedValueOnce('kimi-fingerprint-3')
+      .mockResolvedValueOnce('stable');
+
+    const refreshing = tree.refresh();
+    await vi.waitFor(() => expect(completeKimi).toBeTypeOf('function'));
+    host.view.visible = true;
+    const probing = (tree as unknown as { probeVisibleSources: () => Promise<void> }).probeVisibleSources();
+    await vi.waitFor(() => expect(host.probe).toHaveBeenCalledTimes(3));
+    completeKimi({
+      ...snapshot, fingerprint: 'kimi-fingerprint-2',
+      snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Kimi version 2' }] },
+    });
+    await Promise.all([refreshing, probing]);
+
+    expect(host.scan).toHaveBeenCalledTimes(2);
+    expect(host.probe).toHaveBeenCalledTimes(6);
+    const sources = await tree.getChildren();
+    const kimi = sources.find((node) => node.nodeKind === 'source' && node.source.provider === 'kimi');
+    if (kimi?.nodeKind !== 'source') throw new Error('Expected the Kimi source');
+    expect(await tree.getChildren(kimi)).toMatchObject([{ nodeKind: 'entity', entity: { label: 'Kimi version 3' } }]);
+  });
+
   it('keeps cached rows visible while a changed source is being replaced', async () => {
     await tree.refresh();
     tree.dispose();

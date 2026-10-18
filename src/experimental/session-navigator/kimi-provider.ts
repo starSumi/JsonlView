@@ -10,7 +10,7 @@ import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type Na
 const MAX_INVENTORY = 4_096;
 const MAX_DIRECTORY_ENTRIES = 16_384;
 const MAX_STATE_BYTES = 64 * 1_024;
-interface SessionEntry { sessionKey: string; agentId: string; relativePath: string; statePath?: string; signature: string }
+interface SessionEntry { sessionKey: string; agentId: string; relativePath: string; statePath?: string; activityMs: number; signature: string }
 interface Inventory { entries: SessionEntry[]; fingerprint: string; partial: boolean }
 interface Discovery { entries: number; partial: boolean; budget: MetadataBudget }
 
@@ -94,7 +94,10 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
     const agent = isMetadataRecord(agentValue) ? agentValue : {};
     const parent = safeAgentId(agent.parentAgentId);
     const parentNativeId = !main && parent !== undefined && parent !== entry.agentId ? nativeId(entry.sessionKey, parent) : undefined;
-    const title = main ? boundedText(state.title ?? state.customTitle, 160) : undefined;
+    const currentTitle = main ? boundedText(state.title, 160) : undefined;
+    const replaceablePlaceholder = currentTitle?.toLowerCase() === 'new session'
+      && (state.titleKind === 'replaceable' || (state.titleKind === undefined && state.isCustomTitle !== true));
+    const title = main ? (replaceablePlaceholder ? undefined : currentTitle) ?? boundedText(state.customTitle, 160) : undefined;
     const preview = main ? boundedText(state.lastPrompt, 240) : undefined;
     const startedAt = timestamp(state.createdAt);
     const activityAt = timestamp(state.updatedAt);
@@ -131,12 +134,13 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
           const wire = await regularFile(wirePath);
           if (wire === undefined) continue;
           const relativePath = relative(this.rootPath, wirePath).replaceAll('\\', '/');
-          entries.push({ sessionKey, agentId, relativePath, ...(statePath === undefined ? {} : { statePath }),
+          entries.push({ sessionKey, agentId, relativePath, ...(statePath === undefined ? {} : { statePath }), activityMs: Math.max(wire.mtimeMs, state?.mtimeMs ?? 0),
             signature: relativePath + '\0' + String(wire.size) + '\0' + String(wire.mtimeMs) + '\0' + (statePath === undefined ? '' : relative(this.rootPath, statePath)) + '\0' + String(state?.size) + '\0' + String(state?.mtimeMs) });
         }
       }
     }
-    entries.sort((left, right) => left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0);
+    entries.sort((left, right) => right.activityMs - left.activityMs
+      || (left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0));
     return { entries, partial: discovery.partial || budget.truncated, fingerprint: digest(this.sourceId + '\n' + entries.map((entry) => entry.signature).join('\n')) };
   }
 }

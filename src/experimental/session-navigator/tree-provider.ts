@@ -80,6 +80,7 @@ interface PreviewTreeNode {
 }
 
 interface SourceStatus { phase: 'loading' | 'error'; detail?: string }
+interface ObservedFingerprint { readonly baseline: string; readonly fingerprint: string }
 
 export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode | CatalogPageTreeNode | CatalogErrorTreeNode | PreviewGroupTreeNode | PreviewTreeNode;
 
@@ -96,6 +97,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #refreshing: Promise<void> | undefined;
   #scanController: AbortController | undefined;
   #refreshAgain = false;
+  readonly #observedFingerprints = new Map<string, ObservedFingerprint>();
   readonly #pageFlights = new Map<string, Promise<void>>();
   readonly #pageControllers = new Map<string, AbortController>();
   readonly #childrenFlights = new Map<string, Promise<SessionNavigatorTreeNode[]>>();
@@ -473,6 +475,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       for (const id of this.#sourceStatus.keys()) if (!activeSourceIds.has(id)) this.#sourceStatus.delete(id);
       for (const id of this.#providers.keys()) if (!activeSourceIds.has(id)) this.#providers.delete(id);
       for (const id of this.#transientEmptyScans.keys()) if (!activeSourceIds.has(id)) this.#transientEmptyScans.delete(id);
+      for (const id of this.#observedFingerprints.keys()) if (!activeSourceIds.has(id)) this.#observedFingerprints.delete(id);
       for (const setting of settings) this.#sourceStatus.set(sourceIdFor(setting), { phase: 'loading' });
       this.#changed.fire(undefined);
       const failures: string[] = [];
@@ -488,7 +491,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
           // succeeds; the loading status communicates that refresh is pending.
           const cachedFingerprint = store.getFingerprint(sourceId);
           if (cachedFingerprint !== undefined) {
-            const currentFingerprint = await provider.probe(signal);
+            const observed = this.#observedFingerprints.get(sourceId);
+            this.#observedFingerprints.delete(sourceId);
+            const currentFingerprint = observed !== undefined && observed.baseline === cachedFingerprint
+              ? observed.fingerprint
+              : await provider.probe(signal);
             if (signal.aborted || this.#disposed || !this.isEnabled()) return;
             if (currentFingerprint === cachedFingerprint) {
               store.markUpdateAvailable(sourceId, false);
@@ -1096,6 +1103,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (this.#disposed || !this.#treeView?.visible || !this.isEnabled()) return;
     try {
       const store = await this.ensureStore();
+      let detectedChange = false;
       for (const setting of this.settings()) {
         const sourceId = sourceIdFor(setting);
         const provider = this.providerFor(setting);
@@ -1103,12 +1111,22 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
           const fingerprint = await provider.probe(new AbortController().signal);
           if (this.#disposed || !this.isEnabled() || !this.#treeView?.visible) return;
           const previous = store.getFingerprint(sourceId);
-          if (previous !== undefined) store.markUpdateAvailable(sourceId, fingerprint !== previous);
+          if (previous !== undefined) {
+            const changed = fingerprint !== previous;
+            store.markUpdateAvailable(sourceId, changed);
+            detectedChange ||= changed;
+            if (changed) this.#observedFingerprints.set(sourceId, { baseline: previous, fingerprint });
+            else this.#observedFingerprints.delete(sourceId);
+          }
         } catch {
-          // Background hints are advisory; explicit refresh remains authoritative.
+          // Keep the current catalog on probe failure; a later probe or manual refresh can retry.
         }
       }
       this.#changed.fire(undefined);
+      if (detectedChange && !this.#disposed && this.#treeView?.visible && this.isEnabled()) {
+        if (this.#refreshing !== undefined) this.#refreshAgain = true;
+        else await this.refresh();
+      }
     } catch {
       // A background hint must never surface an unhandled timer rejection.
     }

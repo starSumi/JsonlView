@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -38,6 +38,14 @@ async function session(id: string, state: unknown, agentIds = ['main'], legacy =
   return path;
 }
 
+async function setActivity(path: string, timestamp: string): Promise<void> {
+  const activity = new Date(timestamp);
+  await Promise.all([
+    utimes(join(path, 'state.json'), activity, activity),
+    utimes(join(path, 'agents', 'main', 'wire.jsonl'), activity, activity),
+  ]);
+}
+
 describe('Kimi metadata-only Navigator provider', () => {
   it('constructs lazily and dispatches only after an explicit setting', () => {
     expect(vi.mocked(open)).not.toHaveBeenCalled();
@@ -75,14 +83,25 @@ describe('Kimi metadata-only Navigator provider', () => {
     expect(result.snapshot.truncated).toBe(false);
   });
 
+  it('uses the latest prompt instead of a replaceable New Session title', async () => {
+    await session('replaceable', { title: 'New Session', titleKind: 'replaceable', lastPrompt: 'A recent prompt preview' });
+    const result = await provider.scan(signal(), defaults);
+
+    expect(result.snapshot.entities[0]).toMatchObject({
+      label: 'A recent prompt preview', titleSource: 'first-message', firstMessagePreview: 'A recent prompt preview',
+    });
+    expect(result.snapshot.entities[0]).not.toHaveProperty('vendorTitle');
+  });
+
   it('keeps malformed status metadata from aborting discovery of a healthy sibling', async () => {
     await session('a-malformed-status', { title: 'Malformed status', lastTurnReason: { toString: 0 } });
     await session('b-healthy', { title: 'Healthy sibling', lastTurnReason: 'completed' });
     const result = await provider.scan(signal(), defaults);
     expect(result.snapshot.entities).toHaveLength(2);
-    expect(result.snapshot.entities[0]).toMatchObject({ label: 'Malformed status' });
-    expect(result.snapshot.entities[0]).not.toHaveProperty('status');
-    expect(result.snapshot.entities[1]).toMatchObject({ label: 'Healthy sibling', status: 'completed' });
+    const malformed = result.snapshot.entities.find((entity) => entity.label === 'Malformed status');
+    const healthy = result.snapshot.entities.find((entity) => entity.label === 'Healthy sibling');
+    expect(malformed).not.toHaveProperty('status');
+    expect(healthy).toMatchObject({ status: 'completed' });
     expect(result.snapshot.truncated).toBe(false);
   });
 
@@ -95,17 +114,38 @@ describe('Kimi metadata-only Navigator provider', () => {
   });
 
   it('binds continuation to inventory identity and advances stable bounded pages', async () => {
-    for (const id of ['c', 'a', 'b']) await session(id, { title: id });
+    for (const [id, time] of [['c', '2020-01-01T00:00:00.000Z'], ['a', '2021-01-01T00:00:00.000Z'], ['b', '2022-01-01T00:00:00.000Z']] as const) {
+      const path = await session(id, { title: id });
+      await setActivity(path, time);
+    }
     const first = await provider.scanPage(signal(), { ...defaults, maxFiles: 1 });
     const second = await provider.scanPage(signal(), { ...defaults, maxFiles: 1 }, first.nextCursor);
     const third = await provider.scanPage(signal(), { ...defaults, maxFiles: 1 }, second.nextCursor);
-    expect([first, second, third].map((page) => page.snapshot.entities[0]!.label)).toEqual(['a', 'b', 'c']);
+    expect([first, second, third].map((page) => page.snapshot.entities[0]!.label)).toEqual(['b', 'a', 'c']);
     expect(new Set([first, second, third].map((page) => page.snapshot.entities[0]!.nativeId)).size).toBe(3);
     expect(third.nextCursor).toBeUndefined();
     expect(await provider.probe(signal())).toBe(first.fingerprint);
     await expect(provider.scanPage(signal(), defaults, 'arbitrary')).rejects.toThrow('invalid or stale');
     await session('d', { title: 'd' });
     await expect(provider.scanPage(signal(), defaults, first.nextCursor)).rejects.toThrow('invalid or stale');
+  });
+
+  it('places recently active Kimi sessions on the first bounded page', async () => {
+    const oldActivity = new Date('2020-01-01T00:00:00.000Z');
+    await Promise.all(Array.from({ length: 64 }, async (_, index) => {
+      const id = 'session-' + String(index).padStart(2, '0');
+      const path = await session(id, { title: 'Older ' + String(index) });
+      await setActivity(path, oldActivity.toISOString());
+    }));
+    const recentPath = await session('session-zz-recent', { title: 'Recent Kimi session' });
+    const recentActivity = new Date('2025-01-01T00:00:00.000Z');
+    await setActivity(recentPath, recentActivity.toISOString());
+
+    const first = await provider.scanPage(signal(), { ...defaults, maxFiles: 64 });
+    expect(first.snapshot.entities.map((entity) => entity.label)).toContain('Recent Kimi session');
+    expect(first.nextCursor).toBeDefined();
+    const second = await provider.scanPage(signal(), { ...defaults, maxFiles: 64 }, first.nextCursor);
+    expect(second.snapshot.entities.map((entity) => entity.label)).toEqual(['Older 63']);
   });
 
   it('bounds metadata reads and preserves discoverable malformed or oversized sessions', async () => {
@@ -125,7 +165,9 @@ describe('Kimi metadata-only Navigator provider', () => {
   });
 
   it('stops record-limited pages without skipping the next session', async () => {
-    for (const id of ['a', 'b', 'c']) await session(id, { title: id });
+    for (const [id, time] of [['a', '2022-01-01T00:00:00.000Z'], ['b', '2021-01-01T00:00:00.000Z'], ['c', '2020-01-01T00:00:00.000Z']] as const) {
+      await setActivity(await session(id, { title: id }), time);
+    }
     const first = await provider.scanPage(signal(), { ...defaults, maxRecords: 1 });
     expect(first.snapshot.entities.map((entity) => entity.label)).toEqual(['a']);
     const second = await provider.scanPage(signal(), { ...defaults, maxRecords: 1 }, first.nextCursor);
