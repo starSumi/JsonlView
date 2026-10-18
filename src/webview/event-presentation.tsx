@@ -20,6 +20,7 @@ import {
   type CodexEventBuilderContext,
 } from './providers/codex-event-builder';
 import { buildPiEventSections, type PiEventBuilderContext } from './providers/pi-event-builder';
+import { buildKimiEventSections, type KimiEventBuilderContext } from './providers/kimi-event-builder';
 import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
 export type { AgentEventPresentationProps } from './features/event-presentation/AgentEventPresentation';
@@ -1023,69 +1024,13 @@ const piEventBuilderContext: PiEventBuilderContext = {
   appendAgentContentBlock,
 };
 
-function appendKimiPart(sections: EventPresentationSection[], value: unknown, title: string, role?: string): void {
-  const part = objectOf(value);
-  if (!part) { addTextCandidate(sections, title, value, role === 'assistant'); return; }
-  const type = own(part, 'type');
-  if (type === 'text') addTextCandidate(sections, title, own(part, 'text'), role === 'assistant');
-  else if (type === 'think') {
-    if (own(part, 'hidden') === true || own(part, 'encrypted') !== undefined) addCodeCandidate(sections, 'Opaque reasoning · source flag', { type: 'think', opaque: true }, 'json');
-    else addTextCandidate(sections, 'Reasoning', own(part, 'think'));
-  } else addCodeCandidate(sections, `${title} · reference or structured content`, part, 'json');
-}
-
-function appendKimiContent(sections: EventPresentationSection[], content: unknown, title: string, role?: string): void {
-  if (!Array.isArray(content)) { appendKimiPart(sections, content, title, role); return; }
-  const visible = Math.min(content.length, MAX_DATASET_MESSAGES);
-  for (let index = 0; index < visible; index += 1) appendKimiPart(sections, content[index], `${title} ${index + 1}`, role);
-  if (visible < content.length) sections.push({
-    title: 'Additional content · available in Raw', code: JSON.stringify({ omittedBlocks: content.length - visible }),
-    language: 'json', truncated: true, previewOnly: true,
-  });
-}
-
-/** Persisted Kimi context records are read independently; no context replay or media fetch. */
-function kimiEventSections(payload: EventObject, profile?: AgentRowProjection): EventPresentationSection[] {
-  if (profile?.profileId !== 'kimi-code-session') return [];
-  const sections: EventPresentationSection[] = [];
-  if (payload.type === 'context.append_message') {
-    const message = objectOf(own(payload, 'message'));
-    if (!message) return sections;
-    const role = valueLabel(own(message, 'role'));
-    appendKimiContent(sections, own(message, 'content'), 'Message', role);
-    const calls = own(message, 'toolCalls');
-    if (Array.isArray(calls)) {
-      const visible = Math.min(calls.length, MAX_DATASET_MESSAGES);
-      for (let index = 0; index < visible; index += 1) {
-        const call = objectOf(calls[index]);
-        if (!call) continue;
-        const source = objectOf(own(call, 'function')) ?? call;
-        const name = valueLabel(own(source, 'name'));
-        const title = calls.length > 1 ? `Tool call ${index + 1}` : 'Tool call';
-        addCodeCandidate(sections, name ? `${title} · ${name}` : title, own(source, 'arguments'), 'json');
-      }
-      if (visible < calls.length) sections.push({
-        title: 'Additional tool calls · available in Raw', code: JSON.stringify({ omittedCalls: calls.length - visible }),
-        language: 'json', truncated: true, previewOnly: true,
-      });
-    }
-  } else if (payload.type === 'context.append_loop_event') {
-    const event = objectOf(own(payload, 'event'));
-    if (!event) return sections;
-    if (event.type === 'content.part') appendKimiPart(sections, own(event, 'part'), 'Content', 'assistant');
-    else if (event.type === 'tool.call') {
-      const name = valueLabel(own(event, 'name'));
-      addCodeCandidate(sections, name ? `Tool call · ${name}` : 'Tool call', own(event, 'args'), 'json');
-    } else if (event.type === 'tool.result') {
-      const result = objectOf(own(event, 'result'));
-      if (result) {
-        appendKimiContent(sections, own(result, 'output'), 'Tool result', 'tool');
-        addTextCandidate(sections, 'Result note', own(result, 'note'));
-      }
-    }
-  }
-  return sections;
-}
+const kimiEventBuilderContext: KimiEventBuilderContext = {
+  objectOf,
+  own,
+  valueLabel,
+  addTextCandidate,
+  addCodeCandidate,
+};
 
 export function buildAgentEventPresentation(
   value: unknown,
@@ -1204,7 +1149,7 @@ export function buildAgentEventPresentation(
     ?? payload.prompt;
   const claudeSections = buildClaudeEventSections(payload, profile, claudeEventBuilderContext);
   const piSections = buildPiEventSections(payload, profile, piEventBuilderContext);
-  const kimiSections = kimiEventSections(payload, profile);
+  const kimiSections = buildKimiEventSections(payload, profile, kimiEventBuilderContext);
   const specializedSections = claudeSections.length > 0 ? claudeSections : piSections.length > 0 ? piSections : kimiSections;
   const messageText = specializedSections.length > 0 ? {} : textSection(content);
   const lowerKind = kind.toLowerCase();
