@@ -18,3 +18,4 @@ export type { ProblemPageReader, ProblemPageRequest } from './ports/problem-page
 export { LoadProblemPage } from './use-cases/load-problem-page';
 export * from './catalog/catalog-model';
 export * from './catalog/catalog-port';
+export * from './catalog/catalog-identity';

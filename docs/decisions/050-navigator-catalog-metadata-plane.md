@@ -1,6 +1,6 @@
 # ADR-050: Navigator Catalog Metadata Plane
 
-Status: experimental
+Status: accepted
 
 ## Pressure
 
@@ -18,10 +18,11 @@ catalog, and a disabled Navigator never triggers an entity scan.
 
 ## Owner
 
-`src/application/catalog/` owns the database-free model and port. The
-compatibility adapter remains in `src/experimental/session-navigator/` until
-the source lifecycle and protocol lanes promote the boundary. A future SQLite
-adapter belongs under `src/infrastructure/navigator/`.
+`src/application/catalog/` owns the database-free model, complete
+`SessionCatalogPort`, and stable source identity vocabulary. The SQLite adapter
+belongs in `src/infrastructure/navigator/`; the old experimental import path
+is a compatibility re-export. Provider discovery, scan strategy, and tree
+projection remain in `src/experimental/session-navigator/`.
 
 ## Alternatives
 
@@ -37,25 +38,36 @@ adapter belongs under `src/infrastructure/navigator/`.
 
 Open a new and a legacy catalog, reconcile an exact `.jsonl` source while the
 Navigator is disabled, reopen the database, and verify metadata/checkpoint
-readback without the source body. Then run the existing generation, paging,
-stale-cursor, cancellation and lifecycle tests.
+readback without the source body. Verify bounded child pages, generation and
+fingerprint compare-and-swap for appends and cursor invalidation, cancellation,
+and transaction rollback. The compatibility re-export must keep the existing
+Navigator call sites buildable during migration.
 
 ## Decision
 
 Add `source_registry` and `index_checkpoint` as an additive migration. The
-legacy tables and `CatalogStore` API remain intact. `CatalogStore` implements
-the application catalog port for metadata reconciliation and checkpoint
-readback. `reconcileSourceMetadata` can register an exact personal file with
+legacy tables and `CatalogStore` API remain intact. The infrastructure adapter
+implements the complete application port for source metadata, bounded entity
+queries, location lookup, snapshot publication, update hints, and catalog
+lifecycle. `reconcileSourceMetadata` can register an exact personal file with
 `entity_scan_state=disabled`; enabling the Navigator changes only the scan
 state and does not widen an exact file to its parent directory. A committed
 snapshot updates the entity checkpoint and source fingerprint in the same
-SQLite transaction as the legacy generation switch.
+SQLite transaction as the legacy generation switch. Continuation invalidation
+uses a generation, cursor, and fingerprint compare-and-swap and only clears the
+matching cursor, preserving the committed generation and rows.
 
 ## Evidence
 
-The focused Session Navigator test suite and metadata-plane test pass at the
-candidate revision. Full host behavior, provider discovery and Save As source
-registration remain owned by the source lifecycle integration task.
+The adapter migration keeps the same SQLite schema and public call surface. The
+legacy database fixture proves the additive migration preserves readable rows;
+the focused catalog suite covers paging, guarded invalidation and rollback.
+The SQLite transaction remains the single publication boundary for replace
+and append. Moving this projection to Rust is deferred until a representative
+benchmark establishes catalog materiality and a Rust persistence contract can
+preserve that transaction boundary. Full host behavior, provider discovery and
+Save As source registration remain owned by the source lifecycle integration
+task.
 
 ## Boundary
 
@@ -65,14 +77,16 @@ does not replace the source lifecycle coordinator or claim real-host evidence.
 
 ## Revisit Trigger
 
-Revisit when Save As registration, configuration revision propagation, or a
-second catalog consumer is promoted; then move the adapter to
-`src/infrastructure/navigator/` and retire the compatibility tables only after
-readback and rollback evidence.
+Revisit Rust projection only when representative source inventories and
+concurrent Navigator workloads show material CPU, memory, or latency cost, and
+the proposed implementation has differential tests plus transaction-failure
+and rollback evidence. Retire legacy tables only after readback and rollback
+evidence.
 
 ## Rollback
 
 Disable metadata-plane callers and retain the additive tables for inspection,
-or restore the prior product revision. The original JSONL files and legacy
-catalog rows remain untouched; dropping the new tables is a reviewed migration
-only after dependent checkpoints are retired.
+or restore the prior product revision. The legacy import path remains a thin
+re-export, so callers can be redirected without changing the on-disk schema.
+The original JSONL files and catalog rows remain untouched; dropping metadata
+tables is a reviewed migration only after dependent checkpoints are retired.

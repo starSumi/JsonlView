@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CatalogStore, createSessionNavigatorProvider, discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, RevealIntentRegistry, sourceIdFor } from '../../src/experimental';
+import { CatalogStore as CatalogStoreCompatibilityPath } from '../../src/experimental/session-navigator/catalog-store';
 import { collectFiles } from '../../src/experimental/session-navigator/file-scan';
 import type { AuthorizedSourceSetting, SessionNavigatorProvider } from '../../src/experimental';
 
@@ -244,6 +245,26 @@ describe('session navigator source boundary', () => {
     reopened.close();
   });
 
+  it('opens a legacy catalog through the compatibility path and preserves its snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-legacy-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const { DatabaseSync } = await import('node:sqlite');
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec("CREATE TABLE catalog_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL); INSERT INTO catalog_meta VALUES ('schema_version', '2'); CREATE TABLE sources (source_id TEXT PRIMARY KEY NOT NULL, provider TEXT NOT NULL, label TEXT NOT NULL, root_uri TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, captured_at TEXT, fingerprint TEXT, update_available INTEGER NOT NULL DEFAULT 0); CREATE TABLE entities (source_id TEXT NOT NULL, generation TEXT NOT NULL, native_id TEXT NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL, parent_native_id TEXT, updated_at TEXT, status TEXT, confidence TEXT NOT NULL, opaque_ref TEXT, PRIMARY KEY (source_id, generation, native_id)); CREATE TABLE entity_labels (source_id TEXT NOT NULL, native_id TEXT NOT NULL, product_title TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (source_id, native_id)); CREATE TABLE relations (source_id TEXT NOT NULL, generation TEXT NOT NULL, from_native_id TEXT NOT NULL, to_native_id TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (source_id, generation, from_native_id, to_native_id, kind)); CREATE TABLE locations (source_id TEXT NOT NULL, generation TEXT NOT NULL, native_id TEXT NOT NULL, relative_path TEXT NOT NULL, row_ordinal TEXT NOT NULL, PRIMARY KEY (source_id, generation, native_id)); INSERT INTO sources(source_id, provider, label, root_uri, generation, captured_at, fingerprint) VALUES ('legacy-source', 'generic', 'generic: archive', 'file:///synthetic/archive', 1, '2026-10-01T00:00:00.000Z', 'legacy-fingerprint'); INSERT INTO entities(source_id, generation, native_id, kind, label, confidence) VALUES ('legacy-source', 'g-1', 'legacy-session', 'session', 'Legacy session', 'source'); INSERT INTO locations(source_id, generation, native_id, relative_path, row_ordinal) VALUES ('legacy-source', 'g-1', 'legacy-session', 'archive.jsonl', '7');");
+    legacy.close();
+
+    const reopened = await CatalogStoreCompatibilityPath.open(dbPath);
+    expect(reopened.listSources()).toMatchObject([{ sourceId: 'legacy-source', generation: 'g-1', entityCount: 1 }]);
+    expect(reopened.getChildrenPage('legacy-source', undefined, 'activity', { limit: 1 }).entities).toMatchObject([
+      { nativeId: 'legacy-session', label: 'Legacy session', generation: 'g-1', provider: 'generic' },
+    ]);
+    expect(reopened.getLocation({ sourceId: 'legacy-source', generation: 'g-1', nativeId: 'legacy-session' })).toEqual({
+      nativeId: 'legacy-session', relativePath: 'archive.jsonl', rowOrdinal: '7',
+    });
+    reopened.close();
+  });
+
   it('keeps exact personal files in the metadata plane while Navigator scanning is disabled', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-metadata-'));
     cleanup.push(root);
@@ -359,6 +380,37 @@ describe('session navigator source boundary', () => {
     expect(() => store.appendSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-2', snapshotId: 'scan-2', capturedAt: '2026-10-08T00:01:00.000Z', redaction: 'metadata-only', truncated: false, entities: [], relations: [], locations: [] }, 'fingerprint-1', { expectedGeneration: 'g-1', expectedCursor: 'cursor-1', expectedFingerprint: 'fingerprint-1', signal: cancelled.signal })).toThrow('cancelled');
     expect(() => store.appendSnapshot(sourceId, { schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-2', snapshotId: 'scan-2', capturedAt: '2026-10-08T00:01:00.000Z', redaction: 'metadata-only', truncated: false, entities: [], relations: [], locations: [] }, 'fingerprint-1', { expectedGeneration: 'g-0', expectedCursor: 'cursor-1', expectedFingerprint: 'fingerprint-1' })).toThrow('stale');
     expect(store.getSourcePageState(sourceId)).toMatchObject({ generation: 'g-1', nextCursor: 'cursor-1' });
+    store.close();
+  });
+
+  it('invalidates only the expected stale continuation and keeps the committed snapshot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-invalidate-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const store = await CatalogStore.open(dbPath);
+    store.syncSources([setting]);
+    store.replaceSnapshot(sourceId, {
+      schemaVersion: 1, provider: 'generic', sourceId, sourceGeneration: 'scan-1', snapshotId: 'scan-1',
+      capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only', truncated: true, nextCursor: 'cursor-1',
+      entities: [{ sourceId, nativeId: 'kept', kind: 'session', label: 'Kept', confidence: 'source' }], relations: [],
+      locations: [{ nativeId: 'kept', relativePath: 'kept.jsonl', rowOrdinal: '2' }],
+    }, 'fingerprint-1');
+
+    expect(store.invalidateContinuationIfCurrent(sourceId, { generation: 'g-0', cursor: 'cursor-1', fingerprint: 'fingerprint-1' })).toBe(false);
+    expect(store.invalidateContinuationIfCurrent(sourceId, { generation: 'g-1', cursor: 'other-cursor', fingerprint: 'fingerprint-1' })).toBe(false);
+    expect(store.invalidateContinuationIfCurrent(sourceId, { generation: 'g-1', cursor: 'cursor-1', fingerprint: 'other-fingerprint' })).toBe(false);
+    expect(store.getSourcePageState(sourceId)).toMatchObject({ generation: 'g-1', nextCursor: 'cursor-1' });
+
+    expect(store.invalidateContinuationIfCurrent(sourceId, { generation: 'g-1', cursor: 'cursor-1', fingerprint: 'fingerprint-1' })).toBe(true);
+    expect(store.getSourcePageState(sourceId)).toMatchObject({ generation: 'g-1', fingerprint: 'fingerprint-1' });
+    expect(store.getSourcePageState(sourceId)?.nextCursor).toBeUndefined();
+    expect(store.listSources()[0]).toMatchObject({ generation: 'g-1', entityCount: 1, updateAvailable: false, truncated: true });
+    expect(store.getSnapshot(sourceId)).toMatchObject({
+      sourceGeneration: 'g-1', truncated: true, entities: [{ nativeId: 'kept' }],
+      locations: [{ nativeId: 'kept', relativePath: 'kept.jsonl', rowOrdinal: '2' }],
+    });
     store.close();
   });
 

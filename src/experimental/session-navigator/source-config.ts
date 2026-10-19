@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import { readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { catalogSourceId, catalogSourceLabel } from '../../application/catalog/catalog-identity';
 import { isGenericFileProvider, type AuthorizedSourceSetting, type SessionNavigatorProviderId } from './types';
 
 const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'kimi', 'gemini', 'opencode', 'agentsview', 'generic']);
@@ -95,19 +95,11 @@ export function mergeSourceSettings(
 }
 
 export function sourceIdFor(setting: AuthorizedSourceSetting): string {
-  const digest = createHash('sha256').update(setting.provider + '\0' + canonicalUriKey(setting.rootUri) + '\0' + canonicalUriKey(setting.stateRootUri ?? setting.rootUri), 'utf8').digest('hex');
-  return `${setting.provider}-${digest.slice(0, 24)}`;
+  return catalogSourceId(setting);
 }
 
 export function sourceLabelFor(setting: AuthorizedSourceSetting): string {
-  try {
-    const parsed = new URL(setting.rootUri);
-    const path = decodeURIComponent(parsed.pathname).replace(/\/+$/u, '');
-    const name = path.split('/').filter(Boolean).at(-1);
-    return name && name.length > 0 ? `${setting.provider}: ${name}` : `${setting.provider} source`;
-  } catch {
-    return `${setting.provider} source`;
-  }
+  return catalogSourceLabel(setting);
 }
 
 function isFileUri(value: string): boolean {
