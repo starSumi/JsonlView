@@ -119,6 +119,13 @@ export interface CatalogAppendGuard {
   readonly signal?: AbortSignal;
 }
 
+export interface CatalogReplaceGuard {
+  readonly expectedGeneration: string;
+  readonly expectedCursor?: string;
+  readonly expectedFingerprint?: string;
+  readonly signal?: AbortSignal;
+}
+
 export interface CatalogContinuationExpectation {
   readonly generation: string;
   readonly cursor: string;

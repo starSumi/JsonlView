@@ -14,7 +14,7 @@ const host = vi.hoisted(() => ({
   configuration: undefined as undefined | ((event: { affectsConfiguration: (key: string) => boolean }) => void),
   visibility: undefined as undefined | ((event: { visible: boolean }) => void),
   view: { visible: false, message: undefined as string | undefined, dispose() {}, onDidChangeVisibility: vi.fn() },
-  progress: vi.fn(), intake: vi.fn(), probe: vi.fn(), execute: vi.fn(), persist: vi.fn(), info: vi.fn(), updates: vi.fn(), overridden: false,
+  progress: vi.fn(), intake: vi.fn(), probe: vi.fn(), execute: vi.fn(), persist: vi.fn(), info: vi.fn(), warning: vi.fn(), updates: vi.fn(), overridden: false,
 }));
 vi.mock('vscode', () => ({
   EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} },
@@ -27,7 +27,7 @@ vi.mock('vscode', () => ({
     parse: (value: string) => ({ scheme: new URL(value).protocol.replace(':', ''), fsPath: fileURLToPath(value), toString: () => value }),
   },
   ConfigurationTarget: { Global: 1 },
-  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showSaveDialog: host.dialog, showInformationMessage: host.info, showWarningMessage: vi.fn(), showErrorMessage: vi.fn() },
+  window: { createTreeView: () => host.view, registerWebviewViewProvider: () => ({ dispose() {} }), withProgress: host.progress, showQuickPick: host.picker, showOpenDialog: host.dialog, showSaveDialog: host.dialog, showInformationMessage: host.info, showWarningMessage: host.warning, showErrorMessage: vi.fn() },
   workspace: {
     fs: { createDirectory: async ({ fsPath }: { fsPath: string }) => { const { mkdir } = await import('node:fs/promises'); await mkdir(fsPath, { recursive: true }); } },
     getConfiguration: () => ({
@@ -48,7 +48,12 @@ vi.mock('../../src/experimental/session-navigator/source-config', async (origina
   const actual = await original<typeof import('../../src/experimental/session-navigator/source-config')>();
   return { ...actual, discoverDefaultSources: () => host.roots, mergeSourceSettings: (configured: AuthorizedSourceSetting[], discovered: AuthorizedSourceSetting[] = host.roots) => actual.mergeSourceSettings(configured, discovered) };
 });
-vi.mock('../../src/experimental/session-navigator/provider-factory', () => ({ createSessionNavigatorProvider: () => ({ scan: host.scan, scanPage: host.scanPage, probe: host.probe }) }));
+vi.mock('../../src/experimental/session-navigator/provider-factory', () => ({ createSessionNavigatorProvider: (setting: AuthorizedSourceSetting) => ({
+  provider: setting.provider, sourceId: setting.provider, rootUri: setting.rootUri,
+  scan: (signal: AbortSignal, budget: unknown) => host.scan(signal, budget, setting.provider),
+  scanPage: (signal: AbortSignal, budget: unknown, cursor?: string) => host.scanPage(signal, budget, cursor, setting.provider),
+  probe: (signal: AbortSignal) => host.probe(signal, setting.provider),
+}) }));
 vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class { show() { host.intake(); } async dispose() {} } }));
 import { SessionNavigatorTreeProvider } from '../../src/experimental/session-navigator/tree-provider';
 import { RevealIntentRegistry } from '../../src/experimental/session-navigator/reveal-intents';
@@ -79,7 +84,7 @@ beforeEach(async () => {
   host.scan.mockReset().mockResolvedValue(snapshot); host.scanPage.mockReset(); host.dialog.mockReset(); host.picker.mockReset(); host.intake.mockReset();
   host.probe.mockReset().mockResolvedValue('stable'); host.execute.mockReset().mockResolvedValue(undefined);
   host.persist.mockReset().mockResolvedValue(undefined);
-  host.info.mockReset().mockResolvedValue(undefined); host.updates.mockReset(); host.overridden = false;
+  host.info.mockReset().mockResolvedValue(undefined); host.warning.mockReset().mockResolvedValue(undefined); host.updates.mockReset(); host.overridden = false;
   host.view.visible = false;
   host.view.message = undefined;
   host.progress.mockReset().mockImplementation(async (_options: unknown, callback: () => Promise<void>) => callback());
@@ -436,19 +441,17 @@ describe('Session Navigator host lifecycle', () => {
         ...snapshot, fingerprint: 'kimi-fingerprint-3',
         snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Kimi version 3' }] },
       });
-    host.probe.mockReset()
-      .mockResolvedValueOnce('kimi-fingerprint-2')
-      .mockResolvedValueOnce('kimi-fingerprint-2')
-      .mockResolvedValueOnce('stable')
-      .mockResolvedValueOnce('stable')
-      .mockResolvedValueOnce('kimi-fingerprint-3')
-      .mockResolvedValueOnce('stable');
+    const fingerprints = new Map<string, string[]>([
+      ['kimi', ['kimi-fingerprint-2', 'kimi-fingerprint-2', 'kimi-fingerprint-3']],
+      ['codex', ['stable', 'stable', 'stable']],
+    ]);
+    host.probe.mockReset().mockImplementation((_signal: AbortSignal, provider: string) => fingerprints.get(provider)?.shift() ?? 'stable');
 
     const refreshing = tree.refresh();
     await vi.waitFor(() => expect(completeKimi).toBeTypeOf('function'));
     host.view.visible = true;
     const probing = (tree as unknown as { probeVisibleSources: () => Promise<void> }).probeVisibleSources();
-    await vi.waitFor(() => expect(host.probe).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(host.probe).toHaveBeenCalledTimes(4));
     completeKimi({
       ...snapshot, fingerprint: 'kimi-fingerprint-2',
       snapshot: { ...snapshot.snapshot, entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Kimi version 2' }] },
@@ -461,6 +464,40 @@ describe('Session Navigator host lifecycle', () => {
     const kimi = sources.find((node) => node.nodeKind === 'source' && node.source.provider === 'kimi');
     if (kimi?.nodeKind !== 'source') throw new Error('Expected the Kimi source');
     expect(await tree.getChildren(kimi)).toMatchObject([{ nodeKind: 'entity', entity: { label: 'Kimi version 3' } }]);
+  });
+
+  it('starts Kimi within the bounded refresh window even when it is listed last', async () => {
+    host.roots = [
+      { provider: 'codex', rootUri: pathToFileURL(join(root, 'codex')).toString() },
+      { provider: 'claude', rootUri: pathToFileURL(join(root, 'claude')).toString() },
+      { provider: 'pi', rootUri: pathToFileURL(join(root, 'pi')).toString() },
+      { provider: 'kimi', rootUri: pathToFileURL(join(root, 'kimi')).toString() },
+    ];
+    host.config.set('sessionNavigator.sources', host.roots);
+    let active = 0;
+    let maximumActive = 0;
+    const completions = new Map<string, (value: SessionNavigatorScanResult) => void>();
+    const resultFor = (provider: string): SessionNavigatorScanResult => ({
+      ...snapshot,
+      snapshot: { ...snapshot.snapshot, provider: provider as 'codex' | 'claude' | 'pi' | 'kimi' },
+    });
+    host.scan.mockReset().mockImplementation((_signal: AbortSignal, _budget: unknown, provider: string) => new Promise<SessionNavigatorScanResult>((resolve) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      completions.set(provider, (result) => { active -= 1; resolve(result); });
+    }));
+
+    const refreshing = tree.refresh();
+    await vi.waitFor(() => expect(host.scan).toHaveBeenCalledTimes(3));
+    expect(host.scan.mock.calls.map((call) => call[2])).toEqual(['kimi', 'codex', 'claude']);
+    expect(completions.has('pi')).toBe(false);
+    completions.get('claude')?.(resultFor('claude'));
+    await vi.waitFor(() => expect(host.scan).toHaveBeenCalledTimes(4));
+    expect(maximumActive).toBe(3);
+    completions.get('kimi')?.(resultFor('kimi'));
+    completions.get('codex')?.(resultFor('codex'));
+    completions.get('pi')?.(resultFor('pi'));
+    await refreshing;
   });
 
   it('keeps cached rows visible while a changed source is being replaced', async () => {
@@ -522,17 +559,107 @@ describe('Session Navigator host lifecycle', () => {
       snapshot: { ...snapshot.snapshot, provider: 'claude', truncated: true, entities: [child], relations: [{ sourceId: 'fixture', fromNativeId: 'child', toNativeId: 'parent', kind: 'parent' }], locations: [{ nativeId: 'child', relativePath: 'child.jsonl', rowOrdinal: '0' }] },
     });
     host.scanPage.mockResolvedValueOnce({
-      fingerprint: 'page-2',
+      fingerprint: 'page-1',
       snapshot: { ...snapshot.snapshot, provider: 'claude', truncated: false, entities: [parent], relations: [], locations: [{ nativeId: 'parent', relativePath: 'parent.jsonl', rowOrdinal: '0' }] },
     });
 
     await tree.refresh();
 
-    expect(host.scanPage).toHaveBeenCalledWith(expect.any(AbortSignal), expect.any(Object), 'page-2');
+    expect(host.scanPage).toHaveBeenCalledWith(expect.any(AbortSignal), expect.any(Object), 'page-2', 'claude');
     const [source] = await tree.getChildren();
     const roots = await tree.getChildren(source);
     expect(roots.map((node) => node.nodeKind === 'entity' ? node.entity.nativeId : '')).toEqual(['parent']);
     expect((await tree.getChildren(roots[0]!)).map((node) => node.nodeKind === 'entity' ? node.entity.nativeId : '')).toEqual(['child']);
+  });
+
+  it('keeps committed Claude rows when a live write invalidates the eager continuation', async () => {
+    host.roots = [{ ...host.roots[0]!, provider: 'claude' }];
+    host.config.set('sessionNavigator.sources', host.roots);
+    host.scan.mockResolvedValueOnce({
+      ...snapshot, fingerprint: 'claude-page-1', nextCursor: 'claude-page-2',
+      snapshot: { ...snapshot.snapshot, provider: 'claude', truncated: true },
+    });
+    host.scanPage.mockRejectedValueOnce(Object.assign(new Error('Session source changed while loading a page. Refresh the source before loading more.'), { code: 'SESSION_SOURCE_CHANGED' }));
+
+    await tree.refresh();
+
+    const [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected the Claude source');
+    expect(source.source.updateAvailable).toBe(true);
+    expect(await tree.getChildren(source)).toMatchObject([{ nodeKind: 'entity', entity: { nativeId: 'thread-1' } }]);
+    expect(host.warning).not.toHaveBeenCalled();
+  });
+
+  it.each(['generic', 'kimi'] as const)('invalidates a stale %s manual continuation while retaining cached sessions', async (provider) => {
+    host.roots = [{ ...host.roots[0]!, provider }];
+    host.config.set('sessionNavigator.sources', host.roots);
+    host.scan.mockResolvedValueOnce({
+      ...snapshot, fingerprint: 'generic-page-1', nextCursor: 'generic-page-2',
+      snapshot: { ...snapshot.snapshot, provider, truncated: true },
+    });
+    host.scanPage.mockRejectedValueOnce(Object.assign(new Error('Session source changed while loading a page. Refresh the source before loading more.'), { code: 'SESSION_SOURCE_CHANGED' }));
+
+    await tree.refresh();
+    let [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected the generic source');
+    expect(source.source.nextCursor).toBe('generic-page-2');
+
+    await tree.loadMore(source);
+
+    [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected the generic source');
+    expect(source.source.nextCursor).toBeUndefined();
+    expect(source.source.updateAvailable).toBe(true);
+    expect(await tree.getChildren(source)).toMatchObject([{ nodeKind: 'entity', entity: { nativeId: 'thread-1' } }]);
+    expect(tree.getTreeItem(source).description).toContain('updates available');
+    expect(host.warning).not.toHaveBeenCalled();
+  });
+
+  it('keeps a retry status visible when a manual continuation fails for another reason', async () => {
+    host.roots = [{ ...host.roots[0]!, provider: 'generic' }];
+    host.config.set('sessionNavigator.sources', host.roots);
+    host.scan.mockResolvedValueOnce({
+      ...snapshot, fingerprint: 'generic-page-1', nextCursor: 'generic-page-2',
+      snapshot: { ...snapshot.snapshot, provider: 'generic', truncated: true },
+    });
+    host.scanPage.mockRejectedValueOnce(new Error('temporary page read failure'));
+
+    await tree.refresh();
+    const [source] = await tree.getChildren();
+    if (source?.nodeKind !== 'source') throw new Error('Expected the generic source');
+    await tree.loadMore(source);
+
+    expect(tree.getTreeItem(source).description).toContain('Retry');
+  });
+
+  it('publishes a fast source while an earlier Kimi scan is still running', async () => {
+    host.roots = [
+      { provider: 'kimi', rootUri: pathToFileURL(join(root, 'kimi')).toString() },
+      { provider: 'codex', rootUri: pathToFileURL(join(root, 'codex')).toString() },
+    ];
+    host.config.set('sessionNavigator.sources', host.roots);
+    let finishKimi!: (value: SessionNavigatorScanResult) => void;
+    host.scan.mockReset()
+      .mockImplementationOnce(() => new Promise<SessionNavigatorScanResult>((resolve) => { finishKimi = resolve; }))
+      .mockResolvedValueOnce({
+        ...snapshot,
+        snapshot: { ...snapshot.snapshot, provider: 'codex', entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Fast Codex session' }] },
+      });
+
+    const refreshing = tree.refresh();
+    await vi.waitFor(() => expect(host.scan).toHaveBeenCalledTimes(2));
+    const sources = await tree.getChildren();
+    const codex = sources.find((node) => node.nodeKind === 'source' && node.source.provider === 'codex');
+    const kimi = sources.find((node) => node.nodeKind === 'source' && node.source.provider === 'kimi');
+    if (codex?.nodeKind !== 'source' || kimi?.nodeKind !== 'source') throw new Error('Expected both provider sources');
+    await vi.waitFor(async () => expect(await tree.getChildren(codex)).toMatchObject([{ nodeKind: 'entity', entity: { label: 'Fast Codex session' } }]));
+    expect(await tree.getChildren(kimi)).toEqual([]);
+
+    finishKimi({
+      ...snapshot,
+      snapshot: { ...snapshot.snapshot, provider: 'kimi', entities: [{ ...snapshot.snapshot.entities[0]!, label: 'Kimi session' }] },
+    });
+    await refreshing;
   });
 
   it('keeps source-level progress and marks partial counts', async () => {

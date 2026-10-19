@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, open, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, opendir, open, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,7 +10,7 @@ import { DEFAULT_SESSION_NAVIGATOR_BUDGET as defaults } from '../../src/experime
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...original, open: vi.fn(original.open) };
+  return { ...original, open: vi.fn(original.open), opendir: vi.fn(original.opendir) };
 });
 
 const signal = (): AbortSignal => new AbortController().signal;
@@ -129,9 +129,30 @@ describe('Kimi metadata-only Navigator provider', () => {
     expect(new Set([first, second, third].map((page) => page.snapshot.entities[0]!.nativeId)).size).toBe(3);
     expect(third.nextCursor).toBeUndefined();
     expect(await provider.probe(signal())).toBe(first.fingerprint);
-    await expect(provider.scanPage(signal(), defaults, 'arbitrary')).rejects.toThrow('invalid or stale');
+    await expect(provider.scanPage(signal(), defaults, 'arbitrary')).rejects.toThrow('malformed');
     await session('d', { title: 'd' });
-    await expect(provider.scanPage(signal(), defaults, first.nextCursor)).rejects.toThrow('invalid or stale');
+    await expect(provider.scanPage(signal(), defaults, first.nextCursor)).rejects.toMatchObject({ code: 'SESSION_SOURCE_CHANGED' });
+  });
+
+  it('reuses a just-probed inventory for the changed-source first scan', async () => {
+    await session('reuse-probe', { title: 'Reuse after probe' });
+    vi.mocked(opendir).mockClear();
+
+    const fingerprint = await provider.probe(signal());
+    const directoryReadsAfterProbe = vi.mocked(opendir).mock.calls.length;
+    const page = await provider.scanPage(signal(), defaults);
+
+    expect(page.fingerprint).toBe(fingerprint);
+    expect(vi.mocked(opendir)).toHaveBeenCalledTimes(directoryReadsAfterProbe);
+  });
+
+  it('does not consume a probed inventory when the caller fingerprint no longer matches', async () => {
+    await session('fingerprint-bound', { title: 'Before change' });
+    const probed = await provider.probe(signal());
+    await session('fingerprint-changed', { title: 'After change' });
+    const page = await provider.scanPage(signal(), defaults, undefined, 'different-' + probed);
+    expect(page.fingerprint).not.toBe(probed);
+    expect(page.snapshot.entities.map((entity) => entity.label)).toEqual(expect.arrayContaining(['After change']));
   });
 
   it('places recently active Kimi sessions on the first bounded page', async () => {

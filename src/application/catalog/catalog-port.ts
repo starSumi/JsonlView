@@ -4,6 +4,7 @@ import type {
   CatalogChildrenPageOptions,
   CatalogCheckpoint,
   CatalogContinuationExpectation,
+  CatalogReplaceGuard,
   CatalogEntity,
   CatalogNavigatorSourceSetting,
   CatalogProviderId,
@@ -54,7 +55,7 @@ export interface SessionCatalogPort extends CatalogPort {
   } | undefined;
   getSnapshot(sourceId: string): CatalogStoredSnapshot | undefined;
   appendSnapshot(sourceId: string, page: CatalogSnapshot, fingerprint: string, guard?: CatalogAppendGuard): CatalogStoredSnapshot;
-  replaceSnapshot(sourceId: string, snapshot: CatalogSnapshot, fingerprint: string): CatalogStoredSnapshot;
+  replaceSnapshot(sourceId: string, snapshot: CatalogSnapshot, fingerprint: string, guard?: CatalogReplaceGuard): CatalogStoredSnapshot;
   markUpdateAvailable(sourceId: string, available: boolean): void;
   invalidateContinuationIfCurrent(sourceId: string, expected: CatalogContinuationExpectation): boolean;
   close(): void;

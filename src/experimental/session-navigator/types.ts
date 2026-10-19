@@ -100,8 +100,8 @@ export interface SessionNavigatorScanResult {
 export interface SessionNavigatorProvider extends NavigationProvider {
   readonly provider: SessionNavigatorProviderId;
   readonly rootUri: string;
-  scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult>;
+  scan(signal: AbortSignal, budget: SessionNavigatorBudget, expectedFingerprint?: string): Promise<SessionNavigatorScanResult>;
   /** Read one bounded page after `cursor`; callers may persist and resume it later. */
-  scanPage?(signal: AbortSignal, budget: SessionNavigatorBudget, cursor?: string): Promise<SessionNavigatorScanResult>;
+  scanPage?(signal: AbortSignal, budget: SessionNavigatorBudget, cursor?: string, expectedFingerprint?: string): Promise<SessionNavigatorScanResult>;
   probe(signal: AbortSignal): Promise<string>;
 }

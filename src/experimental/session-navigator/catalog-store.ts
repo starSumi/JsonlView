@@ -4,4 +4,5 @@ export type {
   CatalogChildrenPage,
   CatalogChildrenPageOptions,
   CatalogContinuationExpectation,
+  CatalogReplaceGuard,
 } from '../../application/catalog/catalog-model';

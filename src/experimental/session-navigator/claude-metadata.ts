@@ -17,6 +17,8 @@ interface ClaudeAgentSidecar {
 }
 
 const MAX_AGENT_SIDECAR_BYTES = 32 * 1024;
+// Keep the discovery boundary above the largest supported page offset.
+const MAX_CLAUDE_DISCOVERY_ENTRIES = 32_768;
 export interface ClaudeCollectionOptions { readonly readSidecars?: boolean }
 
 /** Restrict discovery to provider transcript layouts; history/telemetry are not sessions. */
@@ -29,7 +31,7 @@ export async function collectClaudeFiles(rootPath: string, budget: MetadataBudge
   let truncated = false;
   const offset = Math.max(0, Math.floor(pageOffset));
   const pageEnd = offset + Math.max(1, budget.limits.maxFiles);
-  const maxEntries = Math.min(32_768, Math.max(2_048, pageEnd * 128));
+  const maxEntries = MAX_CLAUDE_DISCOVERY_ENTRIES;
   const accept = async (path: string, parentSessionId?: string, parentSessionExists?: boolean): Promise<void> => {
     if (!/\.(?:jsonl|ndjson)$/iu.test(path) || /\.orphaned-/iu.test(basename(path)) || ['history.jsonl', 'session_index.jsonl'].includes(basename(path))) return;
     const fileInfo = await optionalInfo(path);

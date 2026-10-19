@@ -56,6 +56,9 @@ snapshot updates the entity checkpoint and source fingerprint in the same
 SQLite transaction as the legacy generation switch. Continuation invalidation
 uses a generation, cursor, and fingerprint compare-and-swap and only clears the
 matching cursor, preserving the committed generation and rows.
+`syncSources` publishes the metadata registry and legacy source projection in
+one `BEGIN IMMEDIATE` transaction, so a restart cannot observe a half-applied
+source configuration.
 
 ## Evidence
 

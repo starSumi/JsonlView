@@ -7,16 +7,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CatalogStore, createSessionNavigatorProvider, discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, RevealIntentRegistry, sourceIdFor } from '../../src/experimental';
 import { CatalogStore as CatalogStoreCompatibilityPath } from '../../src/experimental/session-navigator/catalog-store';
 import { collectFiles } from '../../src/experimental/session-navigator/file-scan';
+import { claudeFingerprint, collectClaudeFiles } from '../../src/experimental/session-navigator/claude-metadata';
+import { MetadataBudget } from '../../src/experimental/session-navigator/provider-metadata';
+import { DEFAULT_SESSION_NAVIGATOR_BUDGET } from '../../src/experimental/session-navigator/types';
+import { SourceControllerRegistry } from '../../src/experimental/session-navigator/source-controller-registry';
 import type { AuthorizedSourceSetting, SessionNavigatorProvider } from '../../src/experimental';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, readdir: vi.fn(actual.readdir) };
+  return { ...actual, lstat: vi.fn(actual.lstat), readdir: vi.fn(actual.readdir) };
 });
 
 const cleanup: string[] = [];
+const originalLstat = vi.mocked(fsPromises.lstat).getMockImplementation()!;
+const originalReaddir = vi.mocked(fsPromises.readdir).getMockImplementation()!;
 
 afterEach(async () => {
+  vi.mocked(fsPromises.lstat).mockImplementation(originalLstat);
+  vi.mocked(fsPromises.readdir).mockImplementation(originalReaddir);
   while (cleanup.length > 0) {
     const path = cleanup.pop();
     if (path !== undefined) await rm(path, { recursive: true, force: true });
@@ -46,6 +54,37 @@ describe('session navigator source boundary', () => {
     registry.set('file:///synthetic/other.jsonl', intent);
     registry.clear('file:///synthetic/other.jsonl');
     expect(registry.take('file:///synthetic/other.jsonl')).toBeUndefined();
+  });
+
+  it('bounds pending reveal intents by TTL and least-recent insertion order', () => {
+    let now = 0;
+    const registry = new RevealIntentRegistry({ maxPending: 2, ttlMs: 10, now: () => now });
+    const first = { sourceId: 'source-1', catalogGeneration: 'g-1', nativeId: 'first', anchorOrdinal: '0' } as const;
+    const second = { ...first, nativeId: 'second' } as const;
+    const third = { ...first, nativeId: 'third' } as const;
+    registry.set('file:///synthetic/first.jsonl', first);
+    registry.set('file:///synthetic/second.jsonl', second);
+    registry.set('file:///synthetic/third.jsonl', third);
+
+    expect(registry.take('file:///synthetic/first.jsonl')).toBeUndefined();
+    expect(registry.take('file:///synthetic/second.jsonl')).toEqual(second);
+    now = 10;
+    expect(registry.take('file:///synthetic/third.jsonl')).toBeUndefined();
+  });
+
+  it('aborts only controllers owned by the invalidated source', () => {
+    const registry = new SourceControllerRegistry();
+    const first = new AbortController();
+    const second = new AbortController();
+    registry.add('source-a', first);
+    registry.add('source-b', second);
+
+    registry.abortSource('source-a');
+
+    expect(first.signal.aborted).toBe(true);
+    expect(second.signal.aborted).toBe(false);
+    registry.delete('source-a', first);
+    expect(registry.sourceIds()).toEqual(['source-b']);
   });
 
   it('accepts only explicit file URI settings and derives opaque source ids', () => {
@@ -688,5 +727,53 @@ describe('session navigator source boundary', () => {
     expect(second.snapshot.entities).toHaveLength(1);
     expect([...first.snapshot.entities, ...second.snapshot.entities].map((entity) => entity.nativeId)).toHaveLength(3);
     expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('keeps Claude page fingerprints stable when the source exceeds the discovery cap', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-claude-large-pages-'));
+    cleanup.push(root);
+    const rootInfo = await fsPromises.lstat(root);
+    const fileInfo = {
+      isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false,
+      size: 1, mtimeMs: 1_700_000_000_000,
+    } as unknown as Awaited<ReturnType<typeof fsPromises.lstat>>;
+    const entries = Array.from({ length: 8_193 }, (_, index) => ({
+      name: 'session-' + String(index).padStart(5, '0') + '.jsonl',
+      isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false,
+    })) as unknown as Awaited<ReturnType<typeof fsPromises.readdir>>;
+    vi.mocked(fsPromises.lstat).mockImplementation(async (path) => String(path) === root ? rootInfo : fileInfo);
+    vi.mocked(fsPromises.readdir).mockResolvedValue(entries);
+    const limits = { ...DEFAULT_SESSION_NAVIGATOR_BUDGET, maxMilliseconds: 30_000 };
+    const first = await collectClaudeFiles(root, new MetadataBudget(limits, new AbortController().signal));
+    const second = await collectClaudeFiles(root, new MetadataBudget(limits, new AbortController().signal), 64);
+    const terminal = await collectClaudeFiles(root, new MetadataBudget(limits, new AbortController().signal), 8_192);
+
+    expect(first.allFiles).toHaveLength(second.allFiles.length);
+    expect(claudeFingerprint(first.allFiles)).toBe(claudeFingerprint(second.allFiles));
+    expect(terminal.files).toHaveLength(1);
+    expect(terminal.hasMore).toBe(false);
+  });
+
+  it('rejects a replacement based on an older generation after another catalog writer commits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jsonlview-session-catalog-replace-cas-'));
+    cleanup.push(root);
+    const dbPath = join(root, 'catalog.sqlite');
+    const setting: AuthorizedSourceSetting = { provider: 'generic', rootUri: pathToFileURL(root).toString() };
+    const sourceId = sourceIdFor(setting);
+    const first = await CatalogStore.open(dbPath);
+    const second = await CatalogStore.open(dbPath);
+    first.syncSources([setting]);
+    const snapshot = (label: string) => ({
+      schemaVersion: 1 as const, provider: 'generic' as const, sourceId, sourceGeneration: label, snapshotId: label,
+      capturedAt: '2026-10-08T00:00:00.000Z', redaction: 'metadata-only' as const, truncated: false,
+      entities: [{ sourceId, nativeId: label, kind: 'session' as const, label, confidence: 'source' as const }], relations: [], locations: [],
+    });
+    const initial = first.getSourcePageState(sourceId);
+    if (initial === undefined) throw new Error('expected source state');
+    second.replaceSnapshot(sourceId, snapshot('newer'), 'fingerprint-newer', { expectedGeneration: initial.generation });
+    expect(() => first.replaceSnapshot(sourceId, snapshot('stale'), 'fingerprint-stale', { expectedGeneration: initial.generation })).toThrow('stale');
+    expect(first.getSnapshot(sourceId)?.entities.map((entity) => entity.nativeId)).toEqual(['newer']);
+    first.close();
+    second.close();
   });
 });

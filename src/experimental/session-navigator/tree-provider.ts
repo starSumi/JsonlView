@@ -1,10 +1,14 @@
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { lstat, realpath } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { CatalogStore, DEFAULT_CATALOG_PAGE_LIMIT, type CatalogAppendGuard } from './catalog-store';
+import type { SessionCatalogPort } from '../../application';
 import { createSessionNavigatorProvider } from './provider-factory';
 import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources, sourceIdFor, sourceLabelFor } from './source-config';
 import type { RevealIntentRegistry } from './reveal-intents';
+import { SourceControllerRegistry } from './source-controller-registry';
+import { getSessionCatalogStrategy } from './session-catalog-strategy';
+import { isSessionSourceChangedError } from './provider-errors';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
 import { type SessionPreview, SessionPreviews } from './session-previews';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, sessionNavigatorProviderLabel, type AuthorizedSourceSetting, type DetectedAgentProviderId, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorProviderId, type SessionNavigatorSortKey } from './types';
@@ -14,8 +18,7 @@ const SOURCES_SETTING = 'sessionNavigator.sources';
 const ENABLED_SETTING = 'sessionNavigator.enabled';
 const SORT_SETTING = 'sessionNavigator.sort';
 const PROBE_INTERVAL_MS = 30_000;
-const MAX_TRANSIENT_EMPTY_SCANS = 2;
-const MAX_INITIAL_CLAUDE_PAGES = 2;
+const SOURCE_SCAN_CONCURRENCY = 3;
 const EXCLUDED_SOURCES_KEY = 'sessionNavigator.excludedDefaultSources';
 
 const SOURCE_PROVIDER_CHOICES: readonly { readonly label: string; readonly value: SessionNavigatorProviderId }[] = [
@@ -81,6 +84,8 @@ interface PreviewTreeNode {
 
 interface SourceStatus { phase: 'loading' | 'error'; detail?: string }
 interface ObservedFingerprint { readonly baseline: string; readonly fingerprint: string }
+type SessionCatalogOpener = (path: string) => Promise<SessionCatalogPort>;
+const defaultCatalogOpener: SessionCatalogOpener = (path) => CatalogStore.open(path);
 
 export type SessionNavigatorTreeNode = SourceTreeNode | EntityTreeNode | CatalogPageTreeNode | CatalogErrorTreeNode | PreviewGroupTreeNode | PreviewTreeNode;
 
@@ -90,10 +95,11 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   readonly #changed = new vscode.EventEmitter<SessionNavigatorTreeNode | undefined | null | void>();
   readonly #providers = new Map<string, SessionNavigatorProvider>();
   readonly #sourceStatus = new Map<string, SourceStatus>();
+  readonly #sourceControllers = new SourceControllerRegistry();
   readonly #intake: SourceIntakePanel;
   readonly #previewRegistration: vscode.Disposable;
-  #store: CatalogStore | undefined;
-  #openingStore: Promise<CatalogStore> | undefined;
+  #store: SessionCatalogPort | undefined;
+  #openingStore: Promise<SessionCatalogPort> | undefined;
   #refreshing: Promise<void> | undefined;
   #scanController: AbortController | undefined;
   #refreshAgain = false;
@@ -117,7 +123,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
   public readonly onDidChangeTreeData = this.#changed.event;
 
-  public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry, public readonly previews = new SessionPreviews()) {
+  public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry, public readonly previews = new SessionPreviews(), private readonly catalogOpener: SessionCatalogOpener = defaultCatalogOpener) {
     this.#context = context;
     this.#revealRegistry = revealRegistry;
     this.#intake = new SourceIntakePanel(
@@ -318,7 +324,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return [{ nodeKind: 'catalog-error', sourceId, pageId, detail }];
   }
 
-  private catalogChildren(store: CatalogStore, sourceId: string, parentNativeId?: string, continuation?: CatalogPageTreeNode): Promise<SessionNavigatorTreeNode[]> {
+  private catalogChildren(store: SessionCatalogPort, sourceId: string, parentNativeId?: string, continuation?: CatalogPageTreeNode): Promise<SessionNavigatorTreeNode[]> {
     const generation = store.getSourcePageState(sourceId)?.generation;
     if (generation === undefined) return Promise.resolve([]);
     const epoch = this.sourceEpoch(sourceId);
@@ -333,6 +339,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     if (existing !== undefined) return existing;
     const controller = new AbortController();
     this.#pageControllers.set(key, controller);
+    this.#sourceControllers.add(sourceId, controller);
     const current = () => !controller.signal.aborted && !this.#disposed && this.isEnabled() && this.sourceEpoch(sourceId) === epoch
       && this.sortKey() === sortKey && this.settings().some((setting) => sourceIdFor(setting) === sourceId);
     // Keep only active reads. Expanded branches belong to VS Code; the provider
@@ -351,6 +358,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     }).catch((error: unknown) => current() ? this.catalogPageError(sourceId, error instanceof Error ? error.message : 'Catalog children page could not load.', key) : [])
       .finally(() => {
         if (this.#pageControllers.get(key) === controller) this.#pageControllers.delete(key);
+        this.#sourceControllers.delete(sourceId, controller);
         if (this.#childrenFlights.get(key) === flight) this.#childrenFlights.delete(key);
       });
     this.#childrenFlights.set(key, flight);
@@ -392,12 +400,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     const epoch = this.sourceEpoch(sourceId);
     const controller = new AbortController();
     this.#pageControllers.set(key, controller);
+    this.#sourceControllers.add(sourceId, controller);
     const flight = this.runLoadMorePage(store, setting, sourceId, state.generation, state.fingerprint, cursor, epoch, controller, key);
     this.#pageFlights.set(key, flight);
     return flight;
   }
 
-  private async runLoadMorePage(store: CatalogStore, setting: AuthorizedSourceSetting, sourceId: string, generation: string, fingerprint: string, cursor: string, epoch: number, controller: AbortController, key: string): Promise<void> {
+  private async runLoadMorePage(store: SessionCatalogPort, setting: AuthorizedSourceSetting, sourceId: string, generation: string, fingerprint: string, cursor: string, epoch: number, controller: AbortController, key: string): Promise<void> {
     this.#sourceStatus.set(sourceId, { phase: 'loading' });
     this.#changed.fire(undefined);
     try {
@@ -420,12 +429,21 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       store.appendSnapshot(sourceId, snapshot, page.fingerprint, guard);
     } catch (error) {
       if (!this.#disposed && !controller.signal.aborted && this.sourceEpoch(sourceId) === epoch) {
+        if (isSessionSourceChangedError(error)) {
+          if (store.invalidateContinuationIfCurrent(sourceId, { generation, cursor, fingerprint })) {
+            store.markUpdateAvailable(sourceId, true);
+          }
+          this.#sourceStatus.delete(sourceId);
+          this.#changed.fire(undefined);
+          return;
+        }
         this.#sourceStatus.set(sourceId, { phase: 'error', detail: error instanceof Error ? error.message : String(error) });
       }
     } finally {
       if (this.#pageControllers.get(key) === controller) this.#pageControllers.delete(key);
+      this.#sourceControllers.delete(sourceId, controller);
       if (this.#pageFlights.get(key) !== undefined) this.#pageFlights.delete(key);
-      this.#sourceStatus.delete(sourceId);
+      if (this.#sourceStatus.get(sourceId)?.phase === 'loading') this.#sourceStatus.delete(sourceId);
       this.#changed.fire(undefined);
     }
   }
@@ -434,7 +452,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     return this.#sourceEpochs.get(sourceId) ?? 0;
   }
 
-  private canCommitPage(store: CatalogStore, sourceId: string, generation: string, fingerprint: string, cursor: string, epoch: number, signal: AbortSignal): boolean {
+  private canCommitPage(store: SessionCatalogPort, sourceId: string, generation: string, fingerprint: string, cursor: string, epoch: number, signal: AbortSignal): boolean {
     if (signal.aborted || this.#disposed || !this.isEnabled() || this.sourceEpoch(sourceId) !== epoch) return false;
     if (!this.settings().some((setting) => sourceIdFor(setting) === sourceId)) return false;
     const state = store.getSourcePageState(sourceId);
@@ -443,14 +461,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
 
   private invalidateSource(sourceId: string): void {
     this.#sourceEpochs.set(sourceId, this.sourceEpoch(sourceId) + 1);
-    const prefix = sourceId + '\u0000';
-    for (const [key, controller] of this.#pageControllers) if (key.startsWith(prefix)) controller.abort();
+    this.#sourceControllers.abortSource(sourceId);
   }
 
   private invalidateAllSources(): void {
     const sourceIds = new Set<string>([
       ...this.#sourceEpochs.keys(),
-      ...[...this.#pageControllers.keys()].map((key) => key.split('\u0000', 1)[0] ?? ''),
+      ...this.#sourceControllers.sourceIds(),
     ]);
     for (const sourceId of sourceIds) if (sourceId.length > 0) this.invalidateSource(sourceId);
   }
@@ -478,12 +495,14 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       for (const id of this.#observedFingerprints.keys()) if (!activeSourceIds.has(id)) this.#observedFingerprints.delete(id);
       for (const setting of settings) this.#sourceStatus.set(sourceIdFor(setting), { phase: 'loading' });
       this.#changed.fire(undefined);
-      const failures: string[] = [];
-      for (const setting of settings) {
+      const failureDetails = new Map<string, string>();
+      const scanOrder = [...settings].sort((left, right) => getSessionCatalogStrategy(left.provider).refreshPriority - getSessionCatalogStrategy(right.provider).refreshPriority);
+      await forEachBounded(scanOrder, SOURCE_SCAN_CONCURRENCY, async (setting) => {
         if (signal.aborted || this.#disposed || !this.isEnabled()) return;
         const sourceId = sourceIdFor(setting);
         try {
           const provider = this.providerFor(setting);
+          let expectedFingerprint: string | undefined;
           // The catalog is durable and already contains the last coherent
           // projection. Probe it before scanning so reopening the view is a
           // read-only fingerprint check when the provider has not changed.
@@ -496,28 +515,31 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
             const currentFingerprint = observed !== undefined && observed.baseline === cachedFingerprint
               ? observed.fingerprint
               : await provider.probe(signal);
+            expectedFingerprint = currentFingerprint;
             if (signal.aborted || this.#disposed || !this.isEnabled()) return;
             if (currentFingerprint === cachedFingerprint) {
               store.markUpdateAvailable(sourceId, false);
               this.#sourceStatus.delete(sourceId);
               this.#transientEmptyScans.delete(sourceId);
               this.#changed.fire(undefined);
-              continue;
+              return;
             }
             store.markUpdateAvailable(sourceId, true);
             this.#changed.fire(undefined);
           }
-          const scan = await provider.scan(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET);
+          const scan = await provider.scan(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET, expectedFingerprint);
           if (signal.aborted || this.#disposed || !this.isEnabled()) return;
-          if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) continue;
-          if (setting.provider === 'claude' && scan.snapshot.entities.length === 0 && scan.snapshot.truncated) {
+          if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) return;
+          const strategy = getSessionCatalogStrategy(setting.provider);
+          const emptyRetry = strategy.initialLoad.emptyTruncatedRetry;
+          if (emptyRetry !== undefined && strategy.isRetryableEmptyScan(scan)) {
             const attempts = this.#transientEmptyScans.get(sourceId) ?? 0;
-            if (attempts < MAX_TRANSIENT_EMPTY_SCANS) {
+            if (attempts < emptyRetry.maxAttempts) {
               this.#transientEmptyScans.set(sourceId, attempts + 1);
-              this.#sourceStatus.set(sourceId, { phase: 'loading', detail: 'Waiting for Claude metadata…' });
+              this.#sourceStatus.set(sourceId, { phase: 'loading', detail: emptyRetry.statusDetail });
               this.#refreshAgain = true;
               this.#changed.fire(undefined);
-              continue;
+              return;
             }
           }
           this.#transientEmptyScans.delete(sourceId);
@@ -526,25 +548,48 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
             entities: scan.snapshot.entities.map((entity) => ({ ...entity, sourceId })),
             relations: scan.snapshot.relations.map((relation) => ({ ...relation, sourceId })),
           };
-          store.replaceSnapshot(sourceId, { ...snapshot, ...(scan.nextCursor === undefined ? {} : { nextCursor: scan.nextCursor }) }, scan.fingerprint);
-          // Claude stores child transcripts under parent-specific directories.
-          // The activity order can place a child on page one and its parent on
-          // page two; eagerly consume one continuation so the normal catalog
-          // reconciliation can attach that child before the first render.
-          if (setting.provider === 'claude' && provider.scanPage !== undefined) {
-            let continuation = scan.nextCursor;
+          const expectedPageState = store.getSourcePageState(sourceId);
+          const committed = store.replaceSnapshot(sourceId, { ...snapshot, ...(scan.nextCursor === undefined ? {} : { nextCursor: scan.nextCursor }) }, scan.fingerprint, expectedPageState === undefined ? undefined : {
+            expectedGeneration: expectedPageState.generation,
+            ...(expectedPageState.nextCursor === undefined ? {} : { expectedCursor: expectedPageState.nextCursor }),
+            ...(expectedPageState.fingerprint === undefined ? {} : { expectedFingerprint: expectedPageState.fingerprint }),
+            signal,
+          });
+          if (provider.scanPage !== undefined && strategy.initialLoad.maximumPages > 1) {
+            let continuation = scan.nextCursor ?? scan.snapshot.nextCursor;
             let pages = 1;
-            while (continuation !== undefined && pages < MAX_INITIAL_CLAUDE_PAGES) {
-              const page = await provider.scanPage(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET, continuation);
+            let generation = committed.sourceGeneration;
+            let currentFingerprint = scan.fingerprint;
+            while (continuation !== undefined && pages < strategy.initialLoad.maximumPages) {
+              let page: Awaited<ReturnType<NonNullable<SessionNavigatorProvider['scanPage']>>>;
+              try { page = await provider.scanPage(signal, DEFAULT_SESSION_NAVIGATOR_BUDGET, continuation); }
+              catch (error) {
+                if (signal.aborted || this.#disposed || !this.isEnabled()) return;
+                if (isSessionSourceChangedError(error)) {
+                  if (store.invalidateContinuationIfCurrent(sourceId, { generation, cursor: continuation, fingerprint: currentFingerprint })) {
+                    store.markUpdateAvailable(sourceId, true);
+                  }
+                  this.#changed.fire(undefined);
+                  break;
+                }
+                throw error;
+              }
               if (signal.aborted || this.#disposed || !this.isEnabled()) return;
-              if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) break;
+              if (!this.settings().some((current) => sourceIdFor(current) === sourceId)) return;
               const pageSnapshot = {
                 ...page.snapshot,
                 entities: page.snapshot.entities.map((entity) => ({ ...entity, sourceId })),
                 relations: page.snapshot.relations.map((relation) => ({ ...relation, sourceId })),
               };
-              store.appendSnapshot(sourceId, { ...pageSnapshot, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }, page.fingerprint);
-              continuation = page.nextCursor;
+              const appended = store.appendSnapshot(sourceId, { ...pageSnapshot, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }, page.fingerprint, {
+                expectedGeneration: generation,
+                expectedCursor: continuation,
+                expectedFingerprint: currentFingerprint,
+                signal,
+              });
+              generation = appended.sourceGeneration;
+              currentFingerprint = page.fingerprint;
+              continuation = page.nextCursor ?? page.snapshot.nextCursor;
               pages += 1;
             }
           }
@@ -553,11 +598,19 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
         } catch (error) {
           if (signal.aborted || this.#disposed) return;
           const detail = error instanceof Error ? error.message : String(error);
+          if (detail === 'Catalog snapshot is stale.') {
+            this.#refreshAgain = true;
+            return;
+          }
           this.#sourceStatus.set(sourceId, { phase: 'error', detail });
           this.#changed.fire(undefined);
-          failures.push(sourceLabelFor(setting) + ': ' + detail);
+          failureDetails.set(sourceId, detail);
         }
-      }
+      });
+      const failures = settings.flatMap((setting) => {
+        const detail = failureDetails.get(sourceIdFor(setting));
+        return detail === undefined ? [] : [sourceLabelFor(setting) + ': ' + detail];
+      });
       if (failures.length > 0) {
         void vscode.window.showWarningMessage('Session Navigator refresh incomplete. ' + failures.join(' | '));
       }
@@ -600,8 +653,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       const currentFingerprint = await this.providerFor(setting).probe(new AbortController().signal);
       if (this.#disposed || !this.isEnabled()) return;
       if (currentFingerprint !== store.getFingerprint(node.entity.sourceId)) {
-        const sessionStart = (setting.provider === 'codex' || setting.provider === 'claude' || setting.provider === 'pi' || setting.provider === 'kimi') && location.rowOrdinal === '0';
-        if (!sessionStart) {
+        if (!getSessionCatalogStrategy(setting.provider).allowsStaleLocation(location)) {
           void vscode.window.showWarningMessage('This navigation entry is stale. Refresh the Session Navigator.');
           return;
         }
@@ -613,9 +665,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       return;
     }
     const configuredRoot = vscode.Uri.parse(rootUriString);
-    const root = setting.provider === 'codex' && /state(?:_\d+)?\.sqlite$/iu.test(basename(configuredRoot.fsPath))
-      ? vscode.Uri.file(dirname(configuredRoot.fsPath))
-      : configuredRoot;
+    const rootPath = getSessionCatalogStrategy(setting.provider).resolveLocationRoot(configuredRoot.fsPath);
+    const root = rootPath === configuredRoot.fsPath ? configuredRoot : vscode.Uri.file(rootPath);
     const rootIsFile = await isRegularFile(root.fsPath);
     if (rootIsFile && basename(root.fsPath) !== location.relativePath) {
       void vscode.window.showWarningMessage('This navigation entry is stale. Refresh the Session Navigator.');
@@ -664,9 +715,8 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       || /^[A-Za-z]:/u.test(location.relativePath) || location.relativePath.startsWith('/') || location.relativePath.startsWith('\\')
       || location.relativePath.split(/[\\/]+/u).includes('..')) return undefined;
     const configuredRoot = vscode.Uri.parse(rootUriString);
-    const root = node.entity.provider === 'codex' && /state(?:_\d+)?\.sqlite$/iu.test(basename(configuredRoot.fsPath))
-      ? vscode.Uri.file(dirname(configuredRoot.fsPath))
-      : configuredRoot;
+    const rootPath = getSessionCatalogStrategy(node.entity.provider).resolveLocationRoot(configuredRoot.fsPath);
+    const root = rootPath === configuredRoot.fsPath ? configuredRoot : vscode.Uri.file(rootPath);
     if (await isRegularFile(root.fsPath)) return basename(root.fsPath) === location.relativePath ? root : undefined;
     const target = vscode.Uri.joinPath(root, ...location.relativePath.split(/[\\/]+/u));
     const [canonicalRoot, canonicalTarget] = await Promise.all([realpath(root.fsPath).catch(() => undefined), realpath(target.fsPath).catch(() => undefined)]);
@@ -762,7 +812,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     this.#changed.dispose();
   }
 
-  private async ensureStore(): Promise<CatalogStore> {
+  private async ensureStore(): Promise<SessionCatalogPort> {
     if (this.#store !== undefined) return this.#store;
     if (this.#openingStore !== undefined) return this.#openingStore;
     this.#openingStore = this.openStore();
@@ -770,10 +820,10 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     finally { this.#openingStore = undefined; }
   }
 
-  private async openStore(): Promise<CatalogStore> {
+  private async openStore(): Promise<SessionCatalogPort> {
     const directory = vscode.Uri.joinPath(this.#context.globalStorageUri, 'session-navigator');
     await vscode.workspace.fs.createDirectory(directory);
-    const store = await CatalogStore.open(vscode.Uri.joinPath(directory, 'catalog.sqlite').fsPath);
+    const store = await this.catalogOpener(vscode.Uri.joinPath(directory, 'catalog.sqlite').fsPath);
     if (this.#disposed) { store.close(); throw new Error('Session Navigator is disposed.'); }
     this.#store = store;
     if (this.isEnabled()) this.#store.syncSources(this.settings());
@@ -1148,6 +1198,17 @@ function isContainedFile(rootPath: string, targetPath: string): boolean {
 async function isRegularFile(path: string): Promise<boolean> {
   try { return (await lstat(path)).isFile(); } catch { return false; }
 }
+
+async function forEachBounded<T>(values: readonly T[], concurrency: number, action: (value: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(values.length, concurrency) }, async () => {
+    while (next < values.length) {
+      const index = next++;
+      await action(values[index]!);
+    }
+  }));
+}
+
 function pageFlightKey(sourceId: string, generation: string, cursor: string): string {
   return sourceId + '\u0000' + generation + '\u0000' + cursor;
 }

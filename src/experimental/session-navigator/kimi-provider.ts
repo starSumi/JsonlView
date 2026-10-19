@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { NavigationBudget, NavigationEntity, NavigationRelation } from '../navigation-contract';
 import { isMetadataRecord, MetadataBudget, metadataText } from './provider-metadata';
 import { sourceIdFor } from './source-config';
+import { SessionSourceChangedError } from './provider-errors';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, type AuthorizedSourceSetting, type NavigatorLocation, type NavigatorSnapshot, type SessionNavigatorBudget, type SessionNavigatorProvider, type SessionNavigatorScanResult } from './types';
 
 const MAX_INVENTORY = 4_096;
@@ -21,6 +22,8 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
   public readonly sourceId: string;
   public readonly rootUri: string;
   private readonly rootPath: string;
+  #probedInventory: Inventory | undefined;
+  #probeFlight: Promise<Inventory> | undefined;
 
   public constructor(setting: AuthorizedSourceSetting) {
     const root = new URL(setting.rootUri);
@@ -31,21 +34,30 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
   }
 
   public async probe(signal: AbortSignal): Promise<string> {
-    return (await this.inventory(new MetadataBudget(DEFAULT_SESSION_NAVIGATOR_BUDGET, signal))).fingerprint;
+    const flight = this.#probeFlight ?? this.inventory(new MetadataBudget(DEFAULT_SESSION_NAVIGATOR_BUDGET, signal));
+    this.#probeFlight = flight;
+    let inventory: Inventory;
+    try { inventory = await flight; }
+    finally { if (this.#probeFlight === flight) this.#probeFlight = undefined; }
+    this.#probedInventory = inventory;
+    return inventory.fingerprint;
   }
 
-  public async scan(signal: AbortSignal, budget: SessionNavigatorBudget): Promise<SessionNavigatorScanResult> {
-    return this.scanPage(signal, budget);
+  public async scan(signal: AbortSignal, budget: SessionNavigatorBudget, expectedFingerprint?: string): Promise<SessionNavigatorScanResult> {
+    return this.scanPage(signal, budget, undefined, expectedFingerprint);
   }
 
   public async readSnapshot(signal: AbortSignal, budget: Required<NavigationBudget>): Promise<NavigatorSnapshot> {
     return (await this.scan(signal, { ...DEFAULT_SESSION_NAVIGATOR_BUDGET, ...budget })).snapshot;
   }
 
-  public async scanPage(signal: AbortSignal, limits: SessionNavigatorBudget, cursor?: string): Promise<SessionNavigatorScanResult> {
+  public async scanPage(signal: AbortSignal, limits: SessionNavigatorBudget, cursor?: string, expectedFingerprint?: string): Promise<SessionNavigatorScanResult> {
     const started = Date.now();
     const budget = new MetadataBudget(limits, signal);
-    const inventory = await this.inventory(budget);
+    const probedInventory = cursor === undefined && (expectedFingerprint === undefined || this.#probedInventory?.fingerprint === expectedFingerprint)
+      ? this.#probedInventory : undefined;
+    if (cursor === undefined) this.#probedInventory = undefined;
+    const inventory = probedInventory ?? await this.inventory(budget);
     const offset = decodeCursor(cursor, inventory.fingerprint);
     if (offset > inventory.entries.length) throw new Error('Kimi navigator continuation is out of range.');
     const entities: NavigationEntity[] = [];
@@ -224,6 +236,7 @@ function timestamp(value: unknown): string | undefined {
 function decodeCursor(cursor: string | undefined, fingerprint: string): number {
   if (cursor === undefined) return 0;
   const match = /^kimi-v1:([a-f0-9]{64}):(0|[1-9][0-9]{0,5})$/u.exec(cursor);
-  if (match === null || match[1] !== fingerprint) throw new Error('Kimi navigator continuation is invalid or stale.');
+  if (match === null) throw new Error('Kimi navigator continuation is malformed.');
+  if (match[1] !== fingerprint) throw new SessionSourceChangedError();
   return Number(match[2]);
 }

@@ -7,6 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { NavigationEntity, NavigationRelation } from '../navigation-contract';
 import { collectFiles, type FileEntry } from './file-scan';
 import { FileSessionNavigatorProvider } from './generic-provider';
+import { SessionSourceChangedError } from './provider-errors';
 import { sourceIdFor } from './source-config';
 import { claudeFingerprint, collectClaudeFiles, readClaudeMetadata, type ClaudeMetadata } from './claude-metadata';
 import { MetadataBudget, readMetadataRecords, userMessagePreview } from './provider-metadata';
@@ -439,7 +440,7 @@ function decodePageCursor(cursor: string | undefined): PageCursor {
   return match === null || match[1] === undefined ? { offset: 0 } : { offset: Math.min(Number(match[2]), Number.MAX_SAFE_INTEGER), fingerprint: match[1] };
 }
 function assertCursorFingerprint(cursor: PageCursor, fingerprint: string): void {
-  if (cursor.fingerprint !== undefined && cursor.fingerprint !== fingerprint) throw new Error('Session source changed while loading a page. Refresh the source before loading more.');
+  if (cursor.fingerprint !== undefined && cursor.fingerprint !== fingerprint) throw new SessionSourceChangedError();
 }
 
 async function readCodexTitles(path: string, budget: MetadataBudget): Promise<ReadonlyMap<string, string>> {

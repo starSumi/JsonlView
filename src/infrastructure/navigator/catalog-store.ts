@@ -8,6 +8,7 @@ import type {
   CatalogChildrenPageOptions,
   CatalogCheckpoint,
   CatalogContinuationExpectation,
+  CatalogReplaceGuard,
   CatalogEntity,
   CatalogLocation,
   CatalogNavigatorSourceSetting,
@@ -77,6 +78,7 @@ interface LocationRow {
 export class CatalogStore implements SessionCatalogPort {
   readonly #db: DatabaseSync;
   readonly #path: string;
+  #syncingSources = false;
 
   private constructor(path: string, db: DatabaseSync) {
     this.#path = path;
@@ -175,7 +177,8 @@ export class CatalogStore implements SessionCatalogPort {
   public reconcileSourceMetadata(inputs: readonly CatalogSourceInput[], navigatorEnabled: boolean): void {
     const now = new Date().toISOString();
     const active = new Set(inputs.map((input) => input.sourceId));
-    this.#db.exec('BEGIN IMMEDIATE');
+    const ownsTransaction = !this.#syncingSources;
+    if (ownsTransaction) this.#db.exec('BEGIN IMMEDIATE');
     try {
       const upsert = this.#db.prepare(`INSERT INTO source_registry(
         source_id, provider_id, source_kind, canonical_uri, display_label, config_revision,
@@ -217,9 +220,9 @@ export class CatalogStore implements SessionCatalogPort {
       const rows = this.#db.prepare('SELECT source_id FROM source_registry').all() as Array<{ source_id: string }>;
       const remove = this.#db.prepare('DELETE FROM source_registry WHERE source_id = ?');
       for (const row of rows) if (!active.has(row.source_id)) remove.run(row.source_id);
-      this.#db.exec('COMMIT');
+      if (ownsTransaction) this.#db.exec('COMMIT');
     } catch (error) {
-      this.#db.exec('ROLLBACK');
+      if (ownsTransaction) this.#db.exec('ROLLBACK');
       throw error;
     }
   }
@@ -240,7 +243,10 @@ export class CatalogStore implements SessionCatalogPort {
   }
 
   public syncSources(settings: readonly CatalogNavigatorSourceSetting[]): void {
-    this.reconcileSourceMetadata(settings.map((setting) => ({
+    this.#db.exec('BEGIN IMMEDIATE');
+    this.#syncingSources = true;
+    try {
+      this.reconcileSourceMetadata(settings.map((setting) => ({
       sourceId: catalogSourceId(setting),
       providerId: setting.provider,
       sourceKind: catalogSourceKind(setting),
@@ -249,10 +255,8 @@ export class CatalogStore implements SessionCatalogPort {
       configRevision: 'legacy-sync',
       authorizationState: 'authorized',
       availabilityState: 'unknown',
-    })), true);
+      })), true);
     const active = new Set(settings.map(catalogSourceId));
-    this.#db.exec('BEGIN IMMEDIATE');
-    try {
       const upsert = this.#db.prepare(`INSERT INTO sources(source_id, provider, label, root_uri) VALUES (?, ?, ?, ?)
         ON CONFLICT(source_id) DO UPDATE SET provider = excluded.provider, label = excluded.label, root_uri = excluded.root_uri`);
       for (const setting of settings) {
@@ -265,6 +269,8 @@ export class CatalogStore implements SessionCatalogPort {
     } catch (error) {
       this.#db.exec('ROLLBACK');
       throw error;
+    } finally {
+      this.#syncingSources = false;
     }
   }
 
@@ -398,7 +404,10 @@ export class CatalogStore implements SessionCatalogPort {
     const source = this.#sourceRow(sourceId);
     if (source === undefined) throw new Error('Navigation source is not configured.');
     assertAppendGuard(source, fingerprint, guard);
-    if (source.generation < 1) return this.replaceSnapshot(sourceId, page, fingerprint);
+    if (source.generation < 1) {
+      if (guard !== undefined) throw new Error('Catalog append requires an existing snapshot.');
+      return this.replaceSnapshot(sourceId, page, fingerprint);
+    }
 
     const previousGeneration = generationText(source.generation);
     const nextGenerationNumber = source.generation + 1;
@@ -479,20 +488,23 @@ export class CatalogStore implements SessionCatalogPort {
     return Object.freeze({ ...committed, snapshotId: snapshotId(sourceId, generation, committed), locations: Object.freeze(committed.locations.map((location) => Object.freeze({ ...location }))) });
   }
 
-  public replaceSnapshot(sourceId: string, snapshot: CatalogSnapshot, fingerprint: string): CatalogStoredSnapshot {
+  public replaceSnapshot(sourceId: string, snapshot: CatalogSnapshot, fingerprint: string, guard?: CatalogReplaceGuard): CatalogStoredSnapshot {
     const source = this.#sourceRow(sourceId);
     if (source === undefined) throw new Error('Navigation source is not configured.');
-    const nextGeneration = source.generation + 1;
-    const generation = generationText(nextGeneration);
-    const nextSnapshot: CatalogStoredSnapshot = Object.freeze({
-      ...snapshot,
-      sourceGeneration: generation,
-      snapshotId: snapshotId(sourceId, generation, snapshot),
-      entities: Object.freeze(snapshot.entities.map((entity) => Object.freeze({ ...entity, generation, provider: snapshot.provider }))),
-      locations: Object.freeze(snapshot.locations.map((location) => Object.freeze({ ...location }))),
-    });
+    if (guard?.signal?.aborted) throw new Error('Catalog snapshot commit cancelled.');
     this.#db.exec('BEGIN IMMEDIATE');
     try {
+      const lockedSource = this.#sourceRow(sourceId);
+      assertReplaceGuard(lockedSource, fingerprint, guard);
+      const nextGeneration = lockedSource!.generation + 1;
+      const generation = generationText(nextGeneration);
+      const nextSnapshot: CatalogStoredSnapshot = Object.freeze({
+        ...snapshot,
+        sourceGeneration: generation,
+        snapshotId: snapshotId(sourceId, generation, snapshot),
+        entities: Object.freeze(snapshot.entities.map((entity) => Object.freeze({ ...entity, generation, provider: snapshot.provider }))),
+        locations: Object.freeze(snapshot.locations.map((location) => Object.freeze({ ...location }))),
+      });
       this.#db.prepare('DELETE FROM entities WHERE source_id = ?').run(sourceId);
       this.#db.prepare('DELETE FROM relations WHERE source_id = ?').run(sourceId);
       this.#db.prepare('DELETE FROM locations WHERE source_id = ?').run(sourceId);
@@ -518,11 +530,11 @@ export class CatalogStore implements SessionCatalogPort {
         SELECT source_id, 'entity', ?, config_revision, 'ready', ?, ? FROM source_registry WHERE source_id = ?
         ON CONFLICT(source_id, plane, scan_epoch) DO UPDATE SET state = 'ready', fingerprint = excluded.fingerprint, terminal_code = NULL, committed_at = excluded.committed_at`).run(generation, fingerprint, nextSnapshot.capturedAt, sourceId);
       this.#db.exec('COMMIT');
+      return nextSnapshot;
     } catch (error) {
       this.#db.exec('ROLLBACK');
       throw error;
     }
-    return nextSnapshot;
   }
 
   public markUpdateAvailable(sourceId: string, available: boolean): void {
@@ -551,6 +563,16 @@ function generationNumber(value: string): number | undefined {
   if (match === null) return undefined;
   const generation = Number(match[1]);
   return Number.isSafeInteger(generation) ? generation : undefined;
+}
+
+function assertReplaceGuard(source: SourceRow | undefined, fingerprint: string, guard: CatalogReplaceGuard | undefined): void {
+  if (guard?.signal?.aborted) throw new Error('Catalog snapshot commit cancelled.');
+  if (guard === undefined) return;
+  if (source === undefined || generationText(source.generation) !== guard.expectedGeneration
+    || (guard.expectedCursor !== undefined && source.next_cursor !== guard.expectedCursor)
+    || (guard.expectedFingerprint !== undefined && source.fingerprint !== guard.expectedFingerprint)) {
+    throw new Error('Catalog snapshot is stale.');
+  }
 }
 
 interface ChildrenCursor {
