@@ -1,6 +1,8 @@
 import type { AgentRowProjection, FieldPath } from '../shared/types';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import { isKimiContextRecord, isKimiMetadata, isKimiToolsSnapshot, kimiContentPreview, kimiTimestamp, kimiToolSnapshotCount, kimiUsage } from './kimi-record';
+import { decodeKimiServerEvent, isKimiServerDetectionEvent, isKimiServerHeader } from './kimi-server-record';
+import { projectKimiServerEvent, projectKimiServerHeader } from './kimi-server-projection';
 import { actorFromRole, boundedSummary, createProjection, evidence, indexedPath, isObject, keyPath, numberAt, objectAt, own, pushReason, setActor, setDerivedField as setRawDerivedField, setStringField as setRawStringField, stringAt } from './utils';
 
 const CONTROL_TYPES = new Set(['context.clear', 'context.undo', 'context.undone', 'context.apply_compaction',
@@ -10,16 +12,29 @@ const CONTROL_TYPES = new Set(['context.clear', 'context.undo', 'context.undone'
 export class KimiCodeProfile implements AgentProfile {
   public readonly id = 'kimi-code-session';
   public readonly displayName = 'Kimi Code';
-  public readonly version = '2';
+  public readonly version = '3';
 
   public detect(samples: readonly GenericRecordSample[]): DetectionResult {
     let headers = 0;
     let contextRecords = 0;
+    let serverHeaders = 0;
+    let serverRecords = 0;
+    let serverSpecificRecords = 0;
     const signatures = new Set<string>();
+    const serverSignatures = new Set<string>();
     const reasons: DetectionResult['reasons'] = [];
     for (const sample of samples) {
       if (sample.parseState !== undefined && sample.parseState !== 'valid') continue;
-      if (isKimiMetadata(sample.value)) {
+      const serverEvent = decodeKimiServerEvent(sample.value);
+      if (isKimiServerHeader(sample.value)) {
+        serverHeaders++;
+        pushReason(reasons, keyPath('version'), 'Kimi persisted server journal v1 header');
+      } else if (serverEvent && isKimiServerDetectionEvent(serverEvent)) {
+        serverRecords++;
+        serverSignatures.add(serverEvent.type);
+        if (serverEvent.type !== 'error' && serverEvent.type !== 'warning') serverSpecificRecords++;
+        pushReason(reasons, keyPath('envelope', 'type'), 'Kimi server journal event: ' + serverEvent.type);
+      } else if (isKimiMetadata(sample.value)) {
         headers++;
         pushReason(reasons, keyPath('protocol_version'), 'Kimi persisted wire metadata with a 1.x protocol version and creation clock');
       } else if (isKimiContextRecord(sample.value)) {
@@ -29,16 +44,21 @@ export class KimiCodeProfile implements AgentProfile {
         pushReason(reasons, keyPath('type'), 'Kimi persisted context journal event: ' + type);
       }
     }
-    const coverage = (headers + contextRecords) / Math.max(1, samples.length);
-    const corroborated = (headers > 0 && contextRecords > 0) || (contextRecords >= 3 && signatures.size >= 2);
+    const coverage = (headers + contextRecords + serverHeaders + serverRecords) / Math.max(1, samples.length);
+    const corroborated = (headers > 0 && contextRecords > 0) || (contextRecords >= 3 && signatures.size >= 2)
+      || (serverHeaders > 0 && serverRecords > 0)
+      || (serverRecords >= 3 && serverSignatures.size >= 2 && serverSpecificRecords > 0);
     const requiredEvidenceMet = corroborated && coverage >= 0.6;
-    const score = requiredEvidenceMet ? Math.min(0.99, 0.78 + 0.12 * coverage + (headers > 0 ? 0.08 : 0)) : Math.min(0.6, coverage * 0.6);
+    const score = requiredEvidenceMet ? Math.min(0.99, 0.78 + 0.12 * coverage + (headers + serverHeaders > 0 ? 0.08 : 0)) : Math.min(0.6, coverage * 0.6);
     return { profileId: this.id, profileVersion: this.version, score, reasons, requiredEvidenceMet, sampledRecords: samples.length };
   }
 
   public project(record: HydratedRecord, _context: ProjectionContext): AgentRowProjection {
     const value = record.value;
     if (!isObject(value)) return createProjection(this.id, 'other', 'Kimi unrecognized record', undefined, keyPath());
+    const serverEvent = decodeKimiServerEvent(value);
+    if (serverEvent) return projectKimiServerEvent(serverEvent);
+    if (isKimiServerHeader(value)) return projectKimiServerHeader(value);
     const type = stringAt(value, 'type');
     let projection: AgentRowProjection;
     if (type === 'metadata') {
