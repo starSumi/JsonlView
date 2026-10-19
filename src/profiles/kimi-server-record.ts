@@ -41,16 +41,23 @@ export function isKimiServerHeader(value: unknown): boolean {
 
 /** Decode only the journal boundary; unknown event bodies remain available in Raw. */
 export function decodeKimiServerEvent(value: unknown): KimiServerEvent | undefined {
-  if (!isObject(value) || own(value, 'kind') !== 'event' || !validSequence(numberAt(value, 'seq'), 1)) return undefined;
+  if (!isObject(value) || own(value, 'kind') !== 'event') return undefined;
+  const journalSequence = numberAt(value, 'seq');
+  if (!validSequence(journalSequence, 1)) return undefined;
   const envelope = objectAt(value, 'envelope');
   const payload = objectAt(envelope, 'payload');
   const type = stringAt(envelope, 'type');
-  if (!envelope || !payload || !type || !validSequence(numberAt(envelope, 'seq'), 0)
+  const envelopeSequence = numberAt(envelope, 'seq');
+  if (!envelope || !payload || !type || !validSequence(envelopeSequence, 1)
+    || envelopeSequence !== journalSequence
     || stringAt(envelope, 'timestamp') === undefined) return undefined;
   const payloadType = own(payload, 'type');
   if (payloadType !== undefined && payloadType !== type) return undefined;
   if (own(envelope, 'epoch') !== undefined && typeof own(envelope, 'epoch') !== 'string') return undefined;
   if (own(envelope, 'session_id') !== undefined && typeof own(envelope, 'session_id') !== 'string') return undefined;
+  if (own(envelope, 'volatile') !== undefined && typeof own(envelope, 'volatile') !== 'boolean') return undefined;
+  const offset = own(envelope, 'offset');
+  if (offset !== undefined && (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0)) return undefined;
   return { envelope, payload, type };
 }
 

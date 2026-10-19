@@ -4,6 +4,7 @@
 
 - Move the Session Navigator SQLite catalog behind a complete application port, centralize provider loading and reveal policies, bound reveal intents, and invalidate stale continuations while retaining cached sessions.
 - Bind Kimi probe handoffs to their observed fingerprint, close replacement generations inside SQLite transactions, and preserve Claude terminal pages.
+- Adapt Kimi KAP server v1 journals alongside persisted wire sessions, merge matching session identities in authorized homes, and project server events with bounded metadata and exact source evidence.
 - Add bounded Rust JSONL record queries to the product command and expose the
   same read-only data plane through an opt-in MCP stdio server and configured
   ACP agent sessions. Keep source paths host-owned and transport connections

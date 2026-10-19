@@ -21,6 +21,10 @@ describe('Kimi persisted server journal boundary', () => {
     }
     const value = event('prompt.submitted', { content: [] });
     expect(decodeKimiServerEvent(value)).toEqual({ envelope: value.envelope, payload: value.envelope.payload, type: 'prompt.submitted' });
+    expect(decodeKimiServerEvent({ ...value, envelope: { ...value.envelope, volatile: false, offset: 0 } })?.type)
+      .toBe('prompt.submitted');
+    expect(decodeKimiServerEvent({ ...value, envelope: { ...value.envelope, volatile: true, offset: 5 } })?.type)
+      .toBe('prompt.submitted');
     const { type: _type, ...payload } = value.envelope.payload;
     expect(decodeKimiServerEvent({ ...value, envelope: { ...value.envelope, payload } })?.type).toBe('prompt.submitted');
     expect(new Set(KIMI_SERVER_EVENT_TYPES).size).toBe(KIMI_SERVER_EVENT_TYPES.length);
@@ -31,11 +35,22 @@ describe('Kimi persisted server journal boundary', () => {
     const valid = event('prompt.submitted');
     for (const value of [null, [], {}, { jsonrpc: '2.0', method: 'event', params: valid },
       { ...valid, kind: 'message' }, { ...valid, seq: 0 },
+      { ...valid, envelope: { ...valid.envelope, seq: 0 } },
+      { ...valid, envelope: { ...valid.envelope, seq: 2 } },
       { ...valid, envelope: { ...valid.envelope, seq: '1' } },
       { ...valid, envelope: { ...valid.envelope, timestamp: 1792123200000 } },
       { ...valid, envelope: { ...valid.envelope, payload: null } },
       { ...valid, envelope: { ...valid.envelope, payload: { type: 'error' } } }]) {
       expect(decodeKimiServerEvent(value)).toBeUndefined();
+    }
+    for (const envelope of [
+      { ...valid.envelope, volatile: 'true' },
+      { ...valid.envelope, offset: '0' },
+      { ...valid.envelope, offset: -1 },
+      { ...valid.envelope, offset: 0.5 },
+      { ...valid.envelope, offset: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expect(decodeKimiServerEvent({ ...valid, envelope })).toBeUndefined();
     }
     expect(decodeKimiServerEvent(event('future.kimi.event', { text: 'stay in Raw' }))?.type).toBe('future.kimi.event');
   });

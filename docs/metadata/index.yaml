@@ -51,6 +51,16 @@ documents:
     evidence: []
     revisit: when the upstream Kimi wire storage contract changes
     rollback: remove the Kimi registration and retain Generic access
+  - id: kimi-server-journal-adapter
+    path: docs/decisions/053-kimi-kap-server-journal-adapter.md
+    title: Kimi KAP server journal adapter
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [kimi, jsonl, profiles, session-navigator, read-only]
+    evidence: []
+    revisit: when the pinned KAP server journal contract changes
+    rollback: disable the KAP server layout while retaining wire and Generic profiles
   - id: docs-index
     path: docs/README.md
     title: Product Documentation

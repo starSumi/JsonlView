@@ -75,6 +75,7 @@ Read these before changing a shared boundary:
 51. [ADR-050 Navigator catalog metadata plane](050-navigator-catalog-metadata-plane.md)
 52. [ADR-051 V2 plane boundaries and engineering gates](051-v2-plane-boundaries-and-engineering-gates.md)
 53. [ADR-052 Rust query, MCP, and ACP boundary](052-rust-query-mcp-acp-boundary.md)
+54. [ADR-053 Kimi KAP server journal adapter](053-kimi-kap-server-journal-adapter.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

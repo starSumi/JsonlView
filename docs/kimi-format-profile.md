@@ -22,6 +22,26 @@ It does not promise complete replay compatibility for every 1.x record, future
 major versions, legacy Python `context.jsonl`, or live JSON-RPC/WebSocket
 envelopes. Unknown records remain visible and retain their raw source.
 
+Kimi Code also persists KAP server v1 journals under
+`server/events/<sessionId>.jsonl`. This is a distinct physical envelope, not a
+wire-protocol version: the first record is a `journal_header`; event records
+use outer `kind: "event"`, a positive sequence, and an `envelope` containing
+`type`, matching `seq`, ISO timestamp text, and opaque `payload`. `epoch` and
+`session_id` are optional envelope fields. When present, `payload.type` must
+agree with `envelope.type`; dispatch uses the envelope type. Server event
+projection preserves the physical envelope and points evidence at its original
+`envelope.*` or `envelope.payload.*` path. It does not recursively search
+payload keys. Unknown event types remain `other` and their complete values stay
+available in Raw.
+
+The KAP server contract is pinned to MoonshotAI/kimi-code revision
+`4a82a07f08d0b135c4349c20aae53a2d51e5c3fa`:
+[sessionEventJournal.ts](https://github.com/MoonshotAI/kimi-code/blob/4a82a07f08d0b135c4349c20aae53a2d51e5c3fa/packages/kap-server/src/transport/ws/v1/sessionEventJournal.ts)
+defines the journal header, envelope and append/recovery behavior, while
+[events.ts](https://github.com/MoonshotAI/kimi-code/blob/4a82a07f08d0b135c4349c20aae53a2d51e5c3fa/packages/kap-server/src/transport/ws/v1/events.ts)
+defines the server event union. The server v1 projection is a bounded semantic
+view, not a transcript replay or a live server connection.
+
 ## Detection
 
 Detection uses the registry's bounded physical sample (default maximum 96 rows).
@@ -104,6 +124,20 @@ or the default `~/.kimi-code`, as a candidate; it does not authorize or scan it.
 Navigator enablement remains a separate user choice. The Add Source panel's
 Connect Kimi Code action follows the same native source consent flow.
 
+An authorized Kimi home may contain both persisted wire sessions and the KAP
+server journal. The Navigator keeps matching main-session identity stable,
+prefers the server journal location and latest metadata for that session, and
+retains legacy subagent entries. Unmatched server journals remain discoverable.
+An explicitly authorized server or `events` root is also supported on its own.
+Server metadata reads are bounded head/tail samples under the Navigator's shared
+file, record, byte and time budgets. They project only title, last-prompt
+preview, status and clocks. Journal recovery headers start a new metadata
+epoch; earlier epochs are not merged into the current projection.
+
+The server adapter opens only regular `events/session_*.jsonl` files. It skips
+the global journal and never reads `instances`, server credentials or logs,
+connects to the local Kimi server, or follows paths carried by event payloads.
+
 The pinned upstream [data locations](https://github.com/MoonshotAI/kimi-code/blob/ef727e517923cb312cb48d42825c49dfacd528e7/docs/en/configuration/data-locations.md)
 define `sessions/<workDirKey>/<sessionId>/state.json` and
 `agents/<agentId>/wire.jsonl`. Upstream's
@@ -112,7 +146,7 @@ provides title, bounded last-prompt preview, clocks and declared agent parent ID
 The [index source](https://github.com/MoonshotAI/kimi-code/blob/ef727e517923cb312cb48d42825c49dfacd528e7/packages/agent-core-v2/src/app/sessionIndex/sessionIndexSource.ts)
 also recognizes legacy `session-meta/state.json`; this fallback is supported.
 
-Catalog scans read only those state files and stat the corresponding wire files.
+Legacy catalog scans read only those state files and stat the corresponding wire files.
 They do not open wire bodies, login credentials, logs, user history, task output,
 or `session_index.jsonl`; arbitrary `sessionDir`, agent `homedir`, media and tool
 references are never followed. Provider-home and child directory links are
@@ -123,7 +157,7 @@ missing or unsupported parent relationships remain orphaned. Fork replay and
 cross-session fork lineage are not inferred.
 
 Discovery examines at most 16,384 directory entries and retains at most 4,096
-wire entries per inventory, under the caller's deadline. State files are limited
+entries per inventory, under the caller's deadline. State files are limited
 to 64 KiB each and share the existing byte and record budgets. Oversized, missing
 or malformed metadata keeps a discoverable wire entry with an ID label and marks
 the result partial. Metadata reads check file identity and change indicators.
