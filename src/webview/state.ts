@@ -56,7 +56,9 @@ export interface WorkspaceState {
   summary?: DocumentSummary | undefined;
   rows: RowProjection[];
   columns: ColumnSpec[];
-  page?: Pick<RowPage, 'anchorOrdinal' | 'hasBefore' | 'hasAfter' | 'sort' | 'sortOffset' | 'sortNextOffset' | 'matchedRecords' | 'scan'> | undefined;
+  page?: Pick<RowPage, 'anchorOrdinal' | 'hasBefore' | 'hasAfter' | 'sort' | 'sortOffset' | 'sortNextOffset' | 'matchedRecords' | 'scan' | 'projection'> | undefined;
+  /** Profile used to interpret a retained legacy page without capability metadata. */
+  pageProjectionProfileId?: string | undefined;
   problems?: ProblemPage | undefined;
   selectedOrdinal?: string | undefined;
   /** Complete identity for the selected physical record. */
@@ -390,6 +392,8 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
         rows: snapshotChanged && !preserveRecoveryViewport ? [] : state.rows,
         columns: snapshotChanged && !preserveRecoveryViewport ? [] : state.columns,
         page: snapshotChanged && !preserveRecoveryViewport ? undefined : state.page,
+        pageProjectionProfileId: snapshotChanged && !preserveRecoveryViewport
+          ? undefined : state.pageProjectionProfileId,
         problems: snapshotChanged ? undefined : state.problems,
         selectedOrdinal: preserveRebuildDetail
           ? state.rebuildDetail?.ref.ordinal
@@ -471,7 +475,9 @@ function receiveMessage(state: WorkspaceState, message: ExtensionMessage): Works
           ...(message.payload.sortNextOffset === undefined ? {} : { sortNextOffset: message.payload.sortNextOffset }),
           ...(message.payload.matchedRecords === undefined ? {} : { matchedRecords: message.payload.matchedRecords }),
           ...(message.payload.scan === undefined ? {} : { scan: message.payload.scan }),
+          ...(message.payload.projection === undefined ? {} : { projection: message.payload.projection }),
         },
+        pageProjectionProfileId: message.payload.projection === undefined ? state.summary?.profileId : undefined,
         selectedOrdinal,
         selectedRef,
         detail: selectedDetailMatches ? state.detail : undefined,

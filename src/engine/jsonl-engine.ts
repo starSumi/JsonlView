@@ -20,11 +20,13 @@ import type {
   RecordRef,
   RowPage,
   RowProjection,
+  RowProjectionPlan,
   RowScanBudget,
   RowSort,
   ScanTruncationReason,
   SnapshotIdentity,
 } from '../shared/types';
+import { resolveRowProjectionPlan } from '../shared/row-projection';
 import { MAX_TABLE_COLUMNS } from '../shared/types';
 import { JsonlEngineError, isAbortError } from './errors';
 import { createNewlineScanner } from './newline-scanner';
@@ -127,11 +129,18 @@ export interface GetRowsOptions extends JsonlOperationContext {
   /** Zero-based logical offset used only when sort is present. */
   sortOffset?: string | bigint;
   columns?: ColumnSpec[];
+  /** Omitted by legacy callers to retain the historical full scene projection. */
+  projection?: RowProjectionPlan;
   enricher?: RowEnricher;
   /** Receives each hydrated record without retaining it in the returned page. */
   onHydrated?: (record: { value?: unknown; ref: RecordRef; parseState: ParseState }) => void;
   scanBudget?: RowScanBudget;
 }
+
+export type InspectRowsOptions = Pick<GetRowsOptions,
+  'anchorOrdinal' | 'direction' | 'generation' | 'limit' | 'onHydrated' | 'scanBudget' | 'signal'>;
+
+export type RowInspectionPage = Omit<RowPage, 'rows' | 'columns' | 'projection'>;
 
 export interface GetProblemsOptions extends JsonlOperationContext {
   anchorOrdinal?: string | bigint;
@@ -462,6 +471,14 @@ export class JsonlFileEngine {
   }
 
   getRows(options: GetRowsOptions = {}): Promise<RowPage> {
+    return this.queryRows(options, true);
+  }
+
+  inspectRows(options: InspectRowsOptions = {}): Promise<RowInspectionPage> {
+    return this.queryRows(options, false).then(({ rows: _rows, columns: _columns, projection: _projection, ...page }) => page);
+  }
+
+  private queryRows(options: GetRowsOptions, materializeRows: boolean): Promise<RowPage> {
     return this.enqueue(async () => {
       const guard = this.makeGuard(options);
       guard();
@@ -470,6 +487,7 @@ export class JsonlFileEngine {
       const direction = options.direction ?? 'forward';
       const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
       const sort = normalizeRowSort(options.sort);
+      const projection = resolveRowProjectionPlan(options.projection, options.enricher?.profileId);
       const physicalCursor = options.anchorOrdinal !== undefined || options.direction !== undefined;
       if (sort !== undefined) {
         if (physicalCursor && (!isOrdinalSort(sort) || options.sortOffset !== undefined)) {
@@ -479,9 +497,9 @@ export class JsonlFileEngine {
           );
         }
         if (isOrdinalSort(sort) && !physicalCursor) {
-          return this.getOrdinalSortedRows(options, guard, limit, sort);
+          return this.getOrdinalSortedRows(options, guard, limit, sort, materializeRows, projection);
         }
-        if (!isOrdinalSort(sort)) return this.getSortedRows(options, guard, limit, sort);
+        if (!isOrdinalSort(sort)) return this.getSortedRows(options, guard, limit, sort, materializeRows, projection);
       }
       const anchor = options.anchorOrdinal === undefined
         ? undefined
@@ -623,10 +641,14 @@ export class JsonlFileEngine {
       }
       let selected = collected.slice(0, limit);
       if (direction === 'backward') selected = selected.reverse();
-      const columns = options.columns === undefined
-        ? this.defaultColumns(options.enricher?.columns)
-        : options.columns.slice(0, MAX_TABLE_COLUMNS);
-      const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId));
+      const columns = materializeRows
+        ? options.columns === undefined
+          ? this.defaultColumns(options.enricher?.columns)
+          : options.columns.slice(0, MAX_TABLE_COLUMNS)
+        : [];
+      const rows = materializeRows
+        ? selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId, projection))
+        : [];
       const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
       const lastOrdinal = selected[selected.length - 1]?.hydrated.internal.ordinal;
       // When the bounded probe collected one extra matching row, keep the
@@ -657,6 +679,7 @@ export class JsonlFileEngine {
       return {
         rows,
         columns,
+        ...(options.projection === undefined ? {} : { projection }),
         anchorOrdinal: direction === 'forward'
           ? (lastOrdinal ?? anchor ?? 0n).toString()
           : (firstOrdinal ?? anchor ?? 0n).toString(),
@@ -687,6 +710,8 @@ export class JsonlFileEngine {
     guard: () => void,
     limit: number,
     sort: RowSort,
+    materializeRows: boolean,
+    projection: RowProjectionPlan,
   ): Promise<RowPage> {
     const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
     const direction = sort.direction === 'desc' ? 'backward' : 'forward';
@@ -786,10 +811,14 @@ export class JsonlFileEngine {
     }
 
     // Hydration observes schema fields needed by a cold page's default columns.
-    const columns = options.columns === undefined
-      ? this.defaultColumns(options.enricher?.columns)
-      : options.columns.slice(0, MAX_TABLE_COLUMNS);
-    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId));
+    const columns = materializeRows
+      ? options.columns === undefined
+        ? this.defaultColumns(options.enricher?.columns)
+        : options.columns.slice(0, MAX_TABLE_COLUMNS)
+      : [];
+    const rows = materializeRows
+      ? selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId, projection))
+      : [];
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
     const lastOrdinal = selected.at(-1)?.hydrated.internal.ordinal;
     const hasMoreMatches = options.predicate === undefined
@@ -803,6 +832,7 @@ export class JsonlFileEngine {
     return {
       rows,
       columns,
+      ...(options.projection === undefined ? {} : { projection }),
       anchorOrdinal: (lastOrdinal ?? firstOrdinal ?? 0n).toString(),
       hasBefore: offset > 0n,
       hasAfter,
@@ -835,6 +865,8 @@ export class JsonlFileEngine {
     guard: () => void,
     limit: number,
     sort: RowSort,
+    materializeRows: boolean,
+    projection: RowProjectionPlan,
   ): Promise<RowPage> {
     const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
     const windowEnd = offset + BigInt(limit);
@@ -931,7 +963,9 @@ export class JsonlFileEngine {
       selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
       retainedBytes += candidate.internal.contentByteLength;
     }
-    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId));
+    const rows = materializeRows
+      ? selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile, options.enricher?.profileId, projection))
+      : [];
     const hasMoreRetainedMatches = candidates.length > Number(windowEnd);
     const hasAfter = hydrationTruncated || hasMoreRetainedMatches;
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
@@ -947,6 +981,7 @@ export class JsonlFileEngine {
     return {
       rows,
       columns,
+      ...(options.projection === undefined ? {} : { projection }),
       // Keep a physical anchor for detail/rebuild diagnostics. Sorted paging
       // itself uses sortOffset and never interprets this as a logical rank.
       anchorOrdinal: (lastOrdinal ?? firstOrdinal ?? 0n).toString(),
@@ -1606,6 +1641,7 @@ export class JsonlFileEngine {
     columns: ColumnSpec[],
     profile?: AgentRowProjection,
     selectedProfileId?: string,
+    projection: RowProjectionPlan = resolveRowProjectionPlan(undefined, selectedProfileId),
   ): RowProjection {
     const genericSummary = summaryForRecord(hydrated, this.options.rowPreviewCharacters);
     const cells = columns.flatMap((column): CellProjection[] => {
@@ -1643,8 +1679,8 @@ export class JsonlFileEngine {
       ...(hydrated.value === undefined ? {} : { kind: jsonKindOf(hydrated.value) }),
       cells,
       genericSummary,
-      conversation: projectConversation(hydrated.value, profile),
-      ...(selectedProfileId === undefined || selectedProfileId === 'generic'
+      ...(projection.conversation ? { conversation: projectConversation(hydrated.value, profile) } : {}),
+      ...(projection.dataset
         ? { dataset: summarizeDatasetRecord(hydrated.value, hydrated.ref.parseState) } : {}),
       ...(profile === undefined ? {} : { profile }),
       ...(hydrated.problems.length === 0 ? {} : { problems: hydrated.problems }),

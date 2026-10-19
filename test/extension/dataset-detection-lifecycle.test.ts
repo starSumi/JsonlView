@@ -48,10 +48,10 @@ describe('bounded dataset detection lifecycle', () => {
   it('publishes failed rather than swallowing a rejected head, and keeps Generic rows usable', async () => {
     const receipts: DatasetDetectionReceipt[] = [];
     const session = await fixture({ onDatasetDetection: (receipt) => receipts.push(receipt) });
-    const getRows = JsonlFileEngine.prototype.getRows;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
       if (request?.onHydrated !== undefined) return Promise.reject(new Error('private path and body'));
-      return getRows.call(this, request);
+      return inspectRows.call(this, request);
     });
     await start(session);
     expect(session.getSummary().datasetProvenance).toMatchObject({
@@ -68,12 +68,12 @@ describe('bounded dataset detection lifecycle', () => {
   it.each(['resolve', 'reject'] as const)('times out a non-cooperating read and ignores its late %s exactly once', async (late) => {
     const receipts: DatasetDetectionReceipt[] = [];
     const session = await fixture({ profileDetectionMaxMilliseconds: 10, onDatasetDetection: (receipt) => receipts.push(receipt) });
-    const held = deferred<Awaited<ReturnType<JsonlFileEngine['getRows']>>>();
-    const getRows = JsonlFileEngine.prototype.getRows;
+    const held = deferred<Awaited<ReturnType<JsonlFileEngine['inspectRows']>>>();
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
     let signal: AbortSignal | undefined;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
       if (request?.onHydrated !== undefined) { signal = request.signal; return held.promise; }
-      return getRows.call(this, request);
+      return inspectRows.call(this, request);
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await start(session);
@@ -84,7 +84,7 @@ describe('bounded dataset detection lifecycle', () => {
     expect(after.datasetProvenance).toMatchObject({ status: 'timeout', terminal: { stage: 'head-hydration', code: 'deadline_exceeded', action: 'reload' } });
     expect(receipts).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
-    if (late === 'resolve') held.resolve({ rows: [], columns: [], hasBefore: false, hasAfter: false, anchorOrdinal: '0', indexedRecords: '0' });
+    if (late === 'resolve') held.resolve({ hasBefore: false, hasAfter: false, anchorOrdinal: '0', indexedRecords: '0' });
     else held.reject(new Error('late private error'));
     await vi.advanceTimersByTimeAsync(1);
     expect(session.getSummary().profileEpoch).toBe(after.profileEpoch);
@@ -95,9 +95,9 @@ describe('bounded dataset detection lifecycle', () => {
   it('cancels a pending operation on dispose without publishing or retaining its timer', async () => {
     const receipts: DatasetDetectionReceipt[] = [];
     const session = await fixture({ onDatasetDetection: (receipt) => receipts.push(receipt) });
-    const getRows = JsonlFileEngine.prototype.getRows;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
-      return request?.onHydrated === undefined ? getRows.call(this, request) : new Promise(() => undefined);
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
+      return request?.onHydrated === undefined ? inspectRows.call(this, request) : new Promise(() => undefined);
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await start(session);
@@ -114,16 +114,16 @@ describe('bounded dataset detection lifecycle', () => {
   it('stops sampling after a timed-out tail settles late', async () => {
     const receipts: DatasetDetectionReceipt[] = [];
     const session = await fixture({ profileDetectionMaxMilliseconds: 1000, onDatasetDetection: (receipt) => receipts.push(receipt) }, undefined, [...records, ...records]);
-    const held = deferred<Awaited<ReturnType<JsonlFileEngine['getRows']>>>();
+    const held = deferred<Awaited<ReturnType<JsonlFileEngine['inspectRows']>>>();
     const sampled = deferred<void>();
-    const getRows = JsonlFileEngine.prototype.getRows;
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
     let detectionReads = 0;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
       if (request?.onHydrated !== undefined) {
         detectionReads += 1;
         if (request.direction === 'backward') { sampled.resolve(); return held.promise; }
       }
-      return getRows.call(this, request);
+      return inspectRows.call(this, request);
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await start(session, 2);
@@ -131,7 +131,7 @@ describe('bounded dataset detection lifecycle', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(session.getSummary().datasetProvenance).toMatchObject({ status: 'timeout', terminal: { stage: 'profile-sampling' } });
     expect(detectionReads).toBe(2);
-    held.resolve({ rows: [], columns: [], hasBefore: false, hasAfter: false, anchorOrdinal: '0', indexedRecords: '1' });
+    held.resolve({ hasBefore: false, hasAfter: false, anchorOrdinal: '0', indexedRecords: '1' });
     await vi.advanceTimersByTimeAsync(1);
     expect(detectionReads).toBe(2);
     expect(receipts).toHaveLength(1);
@@ -155,10 +155,10 @@ describe('bounded dataset detection lifecycle', () => {
   it('cancels a non-deferred opening even when its sampling read never settles', async () => {
     const receipts: DatasetDetectionReceipt[] = [];
     const sampled = deferred<void>();
-    const getRows = JsonlFileEngine.prototype.getRows;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
       if (request?.onHydrated !== undefined) { sampled.resolve(); return new Promise(() => undefined); }
-      return getRows.call(this, request);
+      return inspectRows.call(this, request);
     });
     const controller = new AbortController();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -176,12 +176,12 @@ describe('bounded dataset detection lifecycle', () => {
     const receipts: DatasetDetectionReceipt[] = [];
     const session = await fixture({ deferProfileDetection: false, onDatasetDetection: (receipt) => receipts.push(receipt) });
     const before = session.getSummary();
-    const held = deferred<Awaited<ReturnType<JsonlFileEngine['getRows']>>>();
+    const held = deferred<Awaited<ReturnType<JsonlFileEngine['inspectRows']>>>();
     const sampled = deferred<void>();
-    const getRows = JsonlFileEngine.prototype.getRows;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
       if (request?.onHydrated !== undefined) { sampled.resolve(); return held.promise; }
-      return getRows.call(this, request);
+      return inspectRows.call(this, request);
     });
     const controller = new AbortController();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -203,7 +203,7 @@ describe('bounded dataset detection lifecycle', () => {
 
   it('publishes disabled without any sampling read', async () => {
     const receipts: DatasetDetectionReceipt[] = [];
-    const reads = vi.spyOn(JsonlFileEngine.prototype, 'getRows');
+    const reads = vi.spyOn(JsonlFileEngine.prototype, 'inspectRows');
     const session = await fixture({ autoDetectProfiles: false, onDatasetDetection: (receipt) => receipts.push(receipt) });
     expect(reads).not.toHaveBeenCalled();
     expect(session.getSummary().datasetProvenance).toMatchObject({ status: 'disabled', terminal: { stage: 'not-started', retryable: false, action: 'enable-auto-detection' } });
@@ -217,15 +217,15 @@ describe('bounded dataset detection lifecycle', () => {
     session.onProgress((summary) => {
       if (summary.datasetProvenance?.status === 'ready') committed.resolve();
     });
-    const held = deferred<Awaited<ReturnType<JsonlFileEngine['getRows']>>>();
-    const getRows = JsonlFileEngine.prototype.getRows;
+    const held = deferred<Awaited<ReturnType<JsonlFileEngine['inspectRows']>>>();
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
     let heads = 0;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
       if (request?.onHydrated !== undefined && request.anchorOrdinal === undefined && request.direction !== 'backward') {
         heads += 1;
         if (heads === 1) return held.promise;
       }
-      return getRows.call(this, request);
+      return inspectRows.call(this, request);
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await start(session);
@@ -243,9 +243,9 @@ describe('bounded dataset detection lifecycle', () => {
   });
 
   it('bounds non-deferred detection failure and isolates a throwing receipt sink', async () => {
-    const getRows = JsonlFileEngine.prototype.getRows;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(function (this: JsonlFileEngine, request) {
-      return request?.onHydrated === undefined ? getRows.call(this, request) : Promise.reject(new Error('read failed'));
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(function (this: JsonlFileEngine, request) {
+      return request?.onHydrated === undefined ? inspectRows.call(this, request) : Promise.reject(new Error('read failed'));
     });
     const session = await fixture({ deferProfileDetection: false, onDatasetDetection: () => { throw new Error('sink failed'); } });
     expect(session.getSummary().profileId).toBe('generic');

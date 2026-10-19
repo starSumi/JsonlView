@@ -208,14 +208,14 @@ describe('IntegratedJsonlSession', () => {
 
   it('drops an in-flight deferred result after epoch saturation, then resets on rebuild', async () => {
     const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
-    const getRows = JsonlFileEngine.prototype.getRows;
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
     let release!: () => void;
     let entered!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { entered = resolve; });
     let heads = 0;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(async function (this: JsonlFileEngine, request) {
-      const result = await getRows.call(this, request);
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(async function (this: JsonlFileEngine, request) {
+      const result = await inspectRows.call(this, request);
       if (request?.onHydrated !== undefined && request.direction !== 'backward' && request.anchorOrdinal === undefined) {
         heads += 1;
         if (heads === 1) { entered(); await held; }
@@ -241,14 +241,14 @@ describe('IntegratedJsonlSession', () => {
 
   it('drops a deferred A-to-B-to-A result and retries the current publication epoch', async () => {
     const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
-    const getRows = JsonlFileEngine.prototype.getRows;
+    const inspectRows = JsonlFileEngine.prototype.inspectRows;
     let release!: () => void;
     let entered!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { entered = resolve; });
     let heads = 0;
-    vi.spyOn(JsonlFileEngine.prototype, 'getRows').mockImplementation(async function (this: JsonlFileEngine, request) {
-      const result = await getRows.call(this, request);
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectRows').mockImplementation(async function (this: JsonlFileEngine, request) {
+      const result = await inspectRows.call(this, request);
       if (request?.onHydrated !== undefined && request.direction !== 'backward' && request.anchorOrdinal === undefined) {
         heads += 1;
         if (heads === 1) { entered(); await held; }

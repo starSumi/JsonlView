@@ -36,7 +36,11 @@ summaries, timelines, and session catalog rows are disposable projections.
   never a second query or source identity. Preserve physical records, reading
   anchors and exact selected-record details across display modes. Dataset
   aggregates state sample scope and inspection limits; declared token counts
-  and observed array lengths remain separate. See ADR-048.
+  and observed array lengths remain separate. Row projection capability is
+  orthogonal to physical query identity; view changes reuse the existing query
+  controller and preserve viewport state. Legacy callers retain default scene
+  projections, while metadata-only inspection skips display-row materialization.
+  See ADR-048.
 - native/jsonl-core/ is an optional accelerator with a portable fallback.
 
 The runtime has no required network listener, hosted control plane, source

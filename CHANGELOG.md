@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Request conversation and dataset row scenes only for views that consume them, reuse the physical query viewport on view changes, and inspect detection samples without materializing display rows.
 - Collapse workspace tab labels only on narrow workspace panes while preserving accessible names, keep Follow identifiable, and reflect either visible Navigator child view in the header glyph.
 - Move the Session Navigator SQLite catalog behind a complete application port, centralize provider loading and reveal policies, bound reveal intents, and invalidate stale continuations while retaining cached sessions.
 - Bind Kimi probe handoffs to their observed fingerprint, close replacement generations inside SQLite transactions, and preserve Claude terminal pages.

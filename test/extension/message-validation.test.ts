@@ -19,6 +19,21 @@ describe('webview message validation', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts an explicit row projection plan and rejects malformed plans', () => {
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      projection: { conversation: false, dataset: true },
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      projection: { conversation: 'false', dataset: true },
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      projection: { conversation: false },
+    })).ok).toBe(false);
+  });
+
   it('accepts the explicit Navigator focus action without a data payload', () => {
     expect(validateWebviewRequest(envelope('OPEN_SESSION_NAVIGATOR', {})).ok).toBe(true);
     expect(validateWebviewRequest(envelope('SAVE_PREVIEW_AS', {})).ok).toBe(true);

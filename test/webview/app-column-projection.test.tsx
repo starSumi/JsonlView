@@ -326,6 +326,70 @@ describe('App column presentation and projection boundary', () => {
     expect(props(DatasetInsights).summary.scenes).toEqual({ pretraining: 20 });
   });
 
+  it('reprojects the same logical page when Insights first needs dataset scenes', () => {
+    commit();
+    deliver('OPENED', { ...summary, profileVersion: '1' }, last('READY'));
+    const first = { ...page([prompt]), projection: { conversation: false, dataset: false } };
+    deliver('ROWS', first, last('GET_ROWS'));
+    const initial = last('GET_ROWS');
+
+    chooseWorkspaceTab('Insights');
+
+    const projectionRequest = last('GET_ROWS');
+    expect(projectionRequest.requestId).not.toBe(initial.requestId);
+    expect(projectionRequest.payload.projection).toEqual({ conversation: false, dataset: true });
+    expect(projectionRequest.payload).toMatchObject({ limit: initial.payload.limit });
+    expect(projectionRequest.payload.anchorOrdinal).toBe(initial.payload.anchorOrdinal);
+    expect(projectionRequest.payload.predicate).toEqual(initial.payload.predicate);
+    expect(() => props(DatasetInsights)).toThrow('App child missing');
+
+    const projected = { ...page([prompt]), projection: { conversation: false, dataset: true } };
+    projected.rows.forEach((row) => { row.dataset = summarizeDatasetRecord({ question: 'q', answer: 'a' }); });
+    deliver('ROWS', projected, projectionRequest);
+    expect(props(DatasetInsights).summary).toMatchObject({ scope: 'visible-page', scenes: { qa: 20 } });
+  });
+
+  it('does not present missing dataset scenes as empty and retries only after a new view intent', () => {
+    commit();
+    deliver('OPENED', { ...summary, profileVersion: '1' }, last('READY'));
+    deliver('ROWS', { ...page([prompt]), projection: { conversation: false, dataset: false } }, last('GET_ROWS'));
+    chooseWorkspaceTab('Insights');
+
+    const failedProjectionRequest = last('GET_ROWS');
+    const countAfterRequest = rowRequests().length;
+    deliver('ERROR', { code: 'REQUEST_FAILED', message: 'Synthetic projection failure', recoverable: true }, failedProjectionRequest);
+
+    expect(rowRequests()).toHaveLength(countAfterRequest);
+    expect(() => props(DatasetInsights)).toThrow('App child missing');
+
+    chooseWorkspaceTab('Table');
+    chooseWorkspaceTab('Insights');
+    expect(rowRequests()).toHaveLength(countAfterRequest + 1);
+    expect(last('GET_ROWS').payload.projection).toEqual({ conversation: false, dataset: true });
+  });
+
+  it('keeps legacy page capability bound to its profile when a profile refresh fails', () => {
+    const providerSummary = { ...summary, profileId: 'kimi-code', profileVersion: '1', profileEpoch: 1 };
+    commit();
+    deliver('OPENED', providerSummary, last('READY'));
+    deliver('ROWS', page([prompt]), last('GET_ROWS'));
+    chooseWorkspaceTab('Insights');
+
+    deliverBroadcast('PROFILE_CHANGED', {
+      profileId: 'generic', profileVersion: '2', profileEpoch: 2, columns: [prompt],
+    });
+    let refreshed = last('GET_ROWS');
+    expect(refreshed.payload.projection?.dataset).toBe(true);
+    const requestCount = rowRequests().length;
+    deliver('ERROR', { code: 'REQUEST_FAILED', message: 'Synthetic projection failure', recoverable: true }, refreshed);
+
+    expect(rowRequests()).toHaveLength(requestCount);
+    expect(() => props(DatasetInsights)).toThrow('App child missing');
+    chooseWorkspaceTab('Table');
+    chooseWorkspaceTab('Insights');
+    expect(rowRequests()).toHaveLength(requestCount + 1);
+  });
+
   it('keeps the supported table display while conversation projection is temporarily unavailable', () => {
     boot();
     props(RecordQueryControls).onSearchChange('keep');

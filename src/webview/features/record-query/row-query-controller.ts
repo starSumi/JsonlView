@@ -1,4 +1,4 @@
-import type { ColumnSpec, ExtensionMessage, RecordRef, RowFilter, RowPage, RowProjection, RowScanBudget, RowSort, SortDirection } from '../../../shared/types';
+import type { ColumnSpec, ExtensionMessage, RecordRef, RowFilter, RowPage, RowProjection, RowProjectionPlan, RowScanBudget, RowSort, SortDirection } from '../../../shared/types';
 import { buildRecordQueryRequest, canRequestSortedPage, columnsAfterProfileChange, createFilterScanBudget, isPhysicalOrdinalSort, selectedRecordColumns } from './model';
 import {
   advanceSortPage, anchorForPage, normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage,
@@ -15,11 +15,13 @@ import { sameRecordRef } from '../../record-identity';
 import { canReadSnapshot, type ViewportMode, type WorkspaceAction, type WorkspaceState } from '../../state';
 import { MAX_FIELD_FILTERS, MAX_ROW_TYPES, type RowTypeSelection } from './query-selection';
 import { reconcileProfileQueryState } from './profile-query-state';
+import { rowProjectionPlanForView } from './row-projection-policy';
 
 export interface RowsRequestOptions extends RecoveryRowsOptions {
   readonly query?: string;
   readonly filterColumns?: readonly ColumnSpec[];
   readonly columns?: readonly ColumnSpec[];
+  readonly projection?: RowProjectionPlan;
 }
 
 export interface RowsRequestMetadata {
@@ -366,6 +368,7 @@ export class RowQueryController {
       ...(sort === undefined ? {} : { sort }),
       ...(sortOffset === undefined ? {} : { sortOffset }),
       ...(scanBudget === undefined ? {} : { scanBudget }),
+      projection: options?.projection ?? rowProjectionPlanForView(state.activeTab, state.displayMode, state.summary?.profileId),
     });
     const request = this.#ports.client.send('GET_ROWS', payload);
     if (metadata.pageInputSubmission === true) this.#pageInputRequestId = request.id;
@@ -779,7 +782,9 @@ export class RowQueryController {
         : preservesOrdinalWindow ? this.currentViewportOptions()
           : rowsOptionsAfterRebuild(this.#viewport?.windowFirstOrdinal ?? this.#viewport?.firstVisibleOrdinal,
             this.#followsSourceTail(), this.#viewport?.sortDirection ?? 'asc');
-      return () => this.requestRows({ ...refresh, ...(this.#query.trim() ? { query: this.#query } : {}),
+      return () => this.requestRows({ ...refresh,
+        projection: rowProjectionPlanForView(context.workspace.activeTab, context.workspace.displayMode, message.payload.profileId),
+        ...(this.#query.trim() ? { query: this.#query } : {}),
         filterColumns: message.payload.columns,
         ...(profile.sort === undefined || preservesSort || preservesOrdinalWindow ? {} : { sortOffset: '0' }) },
       pendingRestore ? { preserveOnRebuild: true, restoreAfterRebuild: true,

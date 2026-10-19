@@ -2,9 +2,11 @@ import type {
   ColumnSpec,
   Predicate,
   RowPage,
+  RowProjectionPlan,
   RowScanBudget,
   RowSort,
 } from '../../shared/types';
+import { isRowProjectionPlan } from '../../shared/row-projection';
 
 export const RECORD_PAGE_MAX_LIMIT = 500;
 export const RECORD_PAGE_MAX_SORT_WINDOW = 2_048n;
@@ -19,6 +21,7 @@ export interface RecordPageRequest {
   limit: number;
   predicate?: Predicate;
   columns?: ColumnSpec[];
+  projection?: RowProjectionPlan;
   sort?: RowSort;
   sortOffset?: string;
   scanBudget?: RowScanBudget;
@@ -66,6 +69,9 @@ export function assertRecordPageRequest(request: RecordPageRequest): void {
   }
   if (request.columns !== undefined && !isColumns(request.columns)) {
     fail('Record page columns are invalid or over budget.');
+  }
+  if (request.projection !== undefined && !isRowProjectionPlan(request.projection)) {
+    fail('Record page projection plan is invalid.');
   }
   if (request.scanBudget !== undefined && !isScanBudget(request.scanBudget)) {
     fail('Record page scan budget is invalid or over budget.');

@@ -9,6 +9,8 @@ export {
   type GetDetailOptions,
   type GetProblemsOptions,
   type GetRowsOptions,
+  type InspectRowsOptions,
+  type RowInspectionPage,
   type IndexMoreOptions,
   type JsonlEngineOptions,
   type NativeNewlineScannerSetting,

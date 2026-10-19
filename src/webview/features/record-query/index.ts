@@ -25,5 +25,6 @@ export * from './row-query-recovery-policy';
 export * from './query-selection';
 export * from './column-catalog';
 export * from './query-condition';
+export * from './row-projection-policy';
 export { ColumnChooser } from './ColumnChooser';
 export { RowTypeChooser } from './RowTypeChooser';

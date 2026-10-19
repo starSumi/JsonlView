@@ -985,6 +985,8 @@ describe('JsonlFileEngine querying and pagination', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(engine.getRows({ signal: controller.signal })).rejects.toMatchObject({ code: 'ABORTED' });
+    await expect(engine.inspectRows({ generation: 'stale' })).rejects.toMatchObject({ code: 'STALE_GENERATION' });
+    await expect(engine.inspectRows({ signal: controller.signal })).rejects.toMatchObject({ code: 'ABORTED' });
   });
 
   it('rejects work beyond the configured owner-queue bound', async () => {

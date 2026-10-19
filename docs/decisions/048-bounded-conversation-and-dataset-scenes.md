@@ -71,6 +71,23 @@ stays hidden while a replacement page is pending and remains separate from
 the independently requested file or filtered-view aggregate. Missing summaries
 reduce coverage; they do not count as observations of an empty dataset.
 
+The projection plan is orthogonal to physical query identity. New Webview row
+requests state whether the current presentation needs conversation and dataset
+scenes, and the engine echoes the page's available capabilities. Table pages
+omit both scenes, Conversation pages request only conversation scenes, and
+Generic Insights pages request dataset scenes. A display switch reissues the
+current bounded viewport through the existing query controller, preserving its
+anchor, predicate, filters, row types, sort and pagination state. It does not
+create a second query owner. Engine callers that omit the plan retain the
+historical projection defaults; pages from that contract without capability
+metadata are interpreted using those defaults.
+
+If a projection refresh fails, the physical page and selected record remain
+usable, missing dataset scenes stay hidden rather than appearing as zero
+observations, and the same failed intent is not retried in a render loop. A
+new view intent can retry through the existing correlated request lifecycle.
+The metadata is additive and does not require a protocol version change.
+
 The compact workspace uses a primary row for tabs, status and profile controls
 and a second row for query and projection controls. Temporary provenance and
 Save As remain accessible at narrow widths. Host theme tokens own color and
@@ -101,6 +118,9 @@ workloads justify an explicit independently budgeted aggregation operation.
 
 ## Rollback
 
-Remove optional projections and the display toggle together, retaining the
-physical table, generic fallback, row identity and full selected-record detail.
-Discard disposable analysis projections; source files are never modified.
+Remove the request capability and page metadata together, restore legacy
+projection defaults for all row requests, and retain the physical table,
+generic fallback, row identity and full selected-record detail. The
+metadata-only inspection path can remain independently if its own measurements
+and tests continue to justify it. Discard disposable analysis projections;
+source files are never modified.

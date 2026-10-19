@@ -38,6 +38,11 @@ function page(ordinals: string[], generation = 'g1', overrides: Partial<RowPage>
     totalRecords: '1000', ...overrides };
 }
 
+function logicalRowsPayload(request: Extract<WebviewRequest, { type: 'GET_ROWS' }>): Omit<typeof request.payload, 'projection'> {
+  const { projection: _projection, ...payload } = request.payload;
+  return payload;
+}
+
 function wire<T extends ExtensionMessage['type']>(type: T,
   payload: Extract<ExtensionMessage, { type: T }>['payload'], identity: Readonly<ProtocolSession>, requestId = ''):
   Extract<ExtensionMessage, { type: T }> {
@@ -312,21 +317,21 @@ describe('row query controller with real client and reducer', () => {
       test.delayCommits();
       navigate(test.controller);
       const explicit = test.last('GET_ROWS');
-      expect(explicit.payload).toEqual({ limit: 100, ...cursor });
+      expect(logicalRowsPayload(explicit)).toEqual({ limit: 100, ...cursor });
       expect(test.controller.viewportMode).toBe('reading');
       if (arrival === 'after') expect(test.rows(explicit, page(ordinals))).toBe(true);
       test.opened('g2', 2, true, '1001');
       const recovery = test.last('GET_ROWS');
       const recoveryCursor = arrival === 'before' ? cursor
         : ordinals[0] === '0' ? {} : { anchorOrdinal: (BigInt(ordinals[0]!) - 1n).toString(), direction: 'forward' };
-      expect(recovery.payload).toEqual({ limit: 100, ...recoveryCursor });
+      expect(logicalRowsPayload(recovery)).toEqual({ limit: 100, ...recoveryCursor });
       const requests = test.count('GET_ROWS');
       test.opened('g2', 2, true, '1001');
       test.controller.requestFollowRows();
       expect(test.count('GET_ROWS')).toBe(requests);
       test.opened('g3', 3, true, '1002');
       const latest = test.last('GET_ROWS');
-      expect(latest.payload).toEqual({ limit: 100, ...recoveryCursor });
+      expect(logicalRowsPayload(latest)).toEqual({ limit: 100, ...recoveryCursor });
       expect(test.rows(recovery, page(ordinals, 'g2'))).toBe(false);
       if (arrival === 'before') expect(test.rows(explicit, page(ordinals))).toBe(false);
       expect(test.rows(latest, page(ordinals, 'g3', { indexedRecords: '1002', totalRecords: '1002' }))).toBe(true);
@@ -350,16 +355,16 @@ describe('row query controller with real client and reducer', () => {
     const explicit = test.last('GET_ROWS');
     test.opened('g2', 2, true, '1001');
     const recovery = test.last('GET_ROWS');
-    expect(recovery.payload).toEqual({ limit: 100, ...cursor });
+    expect(logicalRowsPayload(recovery)).toEqual({ limit: 100, ...cursor });
     test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
     const projected = test.last('GET_ROWS');
     expect(projected.requestId).not.toBe(recovery.requestId);
-    expect(projected.payload).toEqual({ limit: 100, ...cursor });
+    expect(logicalRowsPayload(projected)).toEqual({ limit: 100, ...cursor });
     expect(test.rows(explicit, page(ordinals))).toBe(false);
     expect(test.rows(recovery, page(ordinals, 'g2'))).toBe(false);
     test.opened('g3', 3, true, '1002');
     const latest = test.last('GET_ROWS');
-    expect(latest.payload).toEqual({ limit: 100, ...cursor });
+    expect(logicalRowsPayload(latest)).toEqual({ limit: 100, ...cursor });
     expect(test.rows(projected, page(ordinals, 'g2'))).toBe(false);
     expect(test.rows(latest, page(ordinals, 'g3', { indexedRecords: '1002', totalRecords: '1002' }))).toBe(true);
     test.commit();
@@ -376,24 +381,24 @@ describe('row query controller with real client and reducer', () => {
     test.delayCommits();
     test.controller.nextPage();
     const explicit = test.last('GET_ROWS');
-    expect(explicit.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
+    expect(logicalRowsPayload(explicit)).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     test.opened('g2', 2, true, '1001');
     const recovery = test.last('GET_ROWS');
-    expect(recovery.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
+    expect(logicalRowsPayload(recovery)).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
     const projected = test.last('GET_ROWS');
-    expect(projected.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
+    expect(logicalRowsPayload(projected)).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     expect(test.controller.sortPage).toBe('1');
     expect(test.controller.sortOffsetHistory).toEqual([]);
     test.opened('g3', 3, true, '1002');
     const latest = test.last('GET_ROWS');
-    expect(latest.payload).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
+    expect(logicalRowsPayload(latest)).toEqual({ limit: 100, sort, anchorOrdinal: '997', direction: 'backward' });
     expect(test.rows(explicit, page(['996', '995']))).toBe(false);
     expect(test.rows(recovery, page(['996', '995'], 'g2'))).toBe(false);
     expect(test.rows(projected, page(['996', '995'], 'g2'))).toBe(false);
     expect(test.rows(latest, page(['996', '995'], 'g3', { sort }))).toBe(true);
     test.controller.previousPage();
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, anchorOrdinal: '996', direction: 'forward' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, sort, anchorOrdinal: '996', direction: 'forward' });
     test.commit();
     expect(test.state.viewportMode).toBe('reading');
     expect(test.state.followMode).toBe(true);
@@ -403,16 +408,16 @@ describe('row query controller with real client and reducer', () => {
     const sort = { columnId: '__ordinal', direction: 'desc' as const };
     const test = harness({ sortDirection: 'desc' });
     test.boot();
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, sort, sortOffset: '0' });
     test.rows(test.last('GET_ROWS'), page(['224', '125'], 'g1', { sort, hasBefore: false, hasAfter: true }));
 
     test.controller.nextPage();
-    expect(test.last('GET_ROWS').payload).toEqual({
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({
       limit: 100, sort, anchorOrdinal: '125', direction: 'backward',
     });
     test.rows(test.last('GET_ROWS'), page(['124', '25'], 'g1', { sort, hasBefore: true, hasAfter: true }));
     test.controller.nextPage();
-    expect(test.last('GET_ROWS').payload).toEqual({
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({
       limit: 100, sort, anchorOrdinal: '25', direction: 'backward',
     });
     test.rows(test.last('GET_ROWS'), page(['24', '0'], 'g1', { sort, hasBefore: true, hasAfter: false }));
@@ -421,12 +426,12 @@ describe('row query controller with real client and reducer', () => {
     expect(test.count('GET_ROWS')).toBe(atEnd);
 
     test.controller.previousPage();
-    expect(test.last('GET_ROWS').payload).toEqual({
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({
       limit: 100, sort, anchorOrdinal: '24', direction: 'forward',
     });
     test.rows(test.last('GET_ROWS'), page(['124', '25'], 'g1', { sort, hasBefore: true, hasAfter: true }));
     test.controller.previousPage();
-    expect(test.last('GET_ROWS').payload).toEqual({
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({
       limit: 100, sort, anchorOrdinal: '124', direction: 'forward',
     });
   });
@@ -442,7 +447,7 @@ describe('row query controller with real client and reducer', () => {
 
     test.opened('g2', 2, true, '226');
     const recovery = test.last('GET_ROWS');
-    expect(recovery.payload).toEqual({
+    expect(logicalRowsPayload(recovery)).toEqual({
       limit: 100, sort, anchorOrdinal: '25', direction: 'backward',
     });
     expect(test.rows(recovery, page(['24', '0'], 'g2', {
@@ -460,12 +465,12 @@ describe('row query controller with real client and reducer', () => {
     test.controller.focusPageInput(true);
     test.controller.editPageInput('3');
     test.controller.submitPageInput();
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '200' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, sort, sortOffset: '200' });
     test.rows(test.last('GET_ROWS'), page(['799', '700'], 'g1', { sort, sortOffset: '200' }));
 
     test.controller.editPageInput('1');
     test.controller.submitPageInput();
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, sort, sortOffset: '0' });
   });
 
   it('requires an explicit physical intent before sending sorted cursor fields', () => {
@@ -475,7 +480,7 @@ describe('row query controller with real client and reducer', () => {
 
     test.controller.requestRows({ anchorOrdinal: '900', direction: 'backward' });
 
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '0' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, sort, sortOffset: '0' });
   });
 
   it('converts a descending Navigator reveal to a logical rank', () => {
@@ -485,7 +490,7 @@ describe('row query controller with real client and reducer', () => {
 
     test.controller.revealOrdinal('900');
 
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, sort, sortOffset: '99' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, sort, sortOffset: '99' });
   });
 
   it('replays the original sparse descending scan window after append', () => {
@@ -765,7 +770,7 @@ describe('row query controller with real client and reducer', () => {
     const columns: ColumnSpec[] = [{ id: JSON.stringify(keyPath('id').tokens), label: 'ID', source: 'record', path: keyPath('id') }];
     test.controller.requestRows({ ...test.controller.currentViewportOptions(), columns }, { preserveOnRebuild: true });
     const projection = test.last('GET_ROWS');
-    expect(projection.payload).toEqual({ ...pending.payload, columns,
+    expect(logicalRowsPayload(projection)).toEqual({ ...logicalRowsPayload(pending), columns,
       ...(navigation === 'physical' ? { scanBudget: { ...pending.payload.scanBudget, deadlineEpochMs: expect.any(Number) } } : {}) });
     expect(test.rows(pending, page(['1'], 'g1', { sort }))).toBe(false);
   });
@@ -801,7 +806,7 @@ describe('row query controller with real client and reducer', () => {
     const recovery = test.last('GET_ROWS');
     test.deliver(wire('PROFILE_CHANGED', { profileId: 'generic', columns: [] }, test.client.session));
     const projected = test.last('GET_ROWS');
-    expect(projected.payload).toEqual({ limit: 100, ...cursor });
+    expect(logicalRowsPayload(projected)).toEqual({ limit: 100, ...cursor });
     const partial: RowPage = { rows: [], columns: [], anchorOrdinal: '0', hasBefore: true,
       hasAfter: false, indexedRecords: '100' };
     expect(test.rows(projected, partial)).toBe(true);
@@ -811,7 +816,7 @@ describe('row query controller with real client and reducer', () => {
     const needsClamp = name === 'Previous' || name === 'Next';
     expect(test.count('GET_ROWS')).toBe(requests + (needsClamp ? 1 : 0));
     if (needsClamp) {
-      expect(retry.payload).toEqual({ limit: 100, anchorOrdinal: '199', direction: 'forward' });
+      expect(logicalRowsPayload(retry)).toEqual({ limit: 100, anchorOrdinal: '199', direction: 'forward' });
       expect(test.rows(retry, page(['200', '249'], 'g2', { totalRecords: '250', indexedRecords: '250' }))).toBe(true);
       expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['200', '249']);
     }
@@ -851,7 +856,7 @@ describe('row query controller with real client and reducer', () => {
     test.opened('g2', 2, true, '1001');
 
     const recovery = test.last('GET_ROWS');
-    expect(recovery.payload).toEqual({ limit: 100, anchorOrdinal: '949', direction: 'forward' });
+    expect(logicalRowsPayload(recovery)).toEqual({ limit: 100, anchorOrdinal: '949', direction: 'forward' });
     const refreshed = page(['900', '950', '999'], 'g2', {
       hasBefore: true, hasAfter: true, indexedRecords: '1001', totalRecords: '1001',
     });
@@ -927,7 +932,7 @@ describe('row query controller with real client and reducer', () => {
     test.controller.returnToLatest();
     expect(test.controller.viewportMode).toBe('following');
     expect(test.controller.query).toBe('');
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, direction: 'backward' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, direction: 'backward' });
     test.commit();
     expect(test.state.query).toBe('');
     expect(test.state.filter).toBeUndefined();
@@ -973,7 +978,7 @@ describe('row query controller with real client and reducer', () => {
     expect(test.state.unseenActivity).toBe(false);
     test.deliver(wire('INDEX_PROGRESS', summary('g1', 1, true, '1002'), test.client.session));
     expect(test.count('GET_ROWS')).toBe(requests + 1);
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, direction: 'backward' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, direction: 'backward' });
   });
 
   it.each([
@@ -1071,7 +1076,7 @@ describe('row query controller with real client and reducer', () => {
     test.boot(false);
     test.controller.pauseFollowing();
     test.controller.returnToLatest();
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100, direction: 'backward' });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100, direction: 'backward' });
     expect(test.controller.sort).toBeUndefined();
     expect(test.controller.sortDirection).toBe('desc');
   });
@@ -1156,7 +1161,7 @@ describe('row query controller with real client and reducer', () => {
     test.controller.rebuild();
     expect(test.last('CANCEL').payload.targetRequestId).toBe(pageOne.requestId);
     test.opened('g2', 2, true, '1000', test.last('REBUILD_INDEX').requestId);
-    expect(test.last('GET_ROWS').payload).toEqual({ limit: 100 });
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({ limit: 100 });
     expect(test.controller.pageInputDirty).toBe(false);
     expect(test.rows(pageOne, page(['0']))).toBe(false);
     test.rows(test.last('GET_ROWS'), page(['0', '99'], 'g2'));
@@ -1447,7 +1452,7 @@ describe('row query controller with real client and reducer', () => {
       .toEqual(['MESSAGE_RECEIVED', 'SET_SORT_DIRECTION', 'SET_SORT', 'REQUEST_SENT']);
     expect(test.controller.sortDirection).toBe('desc');
     expect(toPersistedState(test.state).sortDirection).toBe('desc');
-    expect(test.last('GET_ROWS').payload).toEqual({
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({
       limit: 100,
       sort: { columnId: '__ordinal', direction: 'desc' },
       sortOffset: '0',

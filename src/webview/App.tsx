@@ -48,6 +48,8 @@ import {
   selectedRecordColumns,
 } from './features/record-query';
 import { configuredRecordColumns } from './features/record-query/model';
+import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '../shared/row-projection';
+import { rowProjectionPlanForView } from './features/record-query/row-projection-policy';
 import type { ViewportIdentity } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
 import { RowQueryController, type RowsRequestMetadata, type RowsRequestOptions } from './row-query-controller';
@@ -84,6 +86,25 @@ function navigatorUiState(result: NavigatorBridgeResultV1): NavigatorBridgeState
     case 'unknown': return 'failed';
     case 'disabled': return 'disabled';
   }
+}
+
+function projectionIntentKey(state: WorkspaceState, required: { conversation: boolean; dataset: boolean }): string {
+  const summary = state.summary;
+  return [
+    summary?.snapshot.generation ?? '',
+    summary?.profileId ?? '',
+    summary?.profileVersion ?? '',
+    summary?.profileEpoch ?? '',
+    state.activeTab,
+    state.displayMode,
+    state.page?.anchorOrdinal ?? '',
+    state.page?.sortOffset ?? '',
+    state.query,
+    JSON.stringify(state.filters),
+    JSON.stringify(state.rowTypes),
+    JSON.stringify(state.sort),
+    JSON.stringify(required),
+  ].join('|');
 }
 
 function datasetProvenanceTooltip(provenance: DatasetRuntimeProvenanceV1): string {
@@ -228,6 +249,7 @@ export function App(): React.JSX.Element {
   const sourceUpdateRetryRef = useRef<{ generation: string; attempts: number }>({ generation: '', attempts: 0 });
   const schemaRequestKeyRef = useRef('');
   const schemaRequestIdRef = useRef('');
+  const projectionRefreshAttemptRef = useRef('');
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
   const openNavigator = useCallback((): void => {
     // Route through the correlated client so NAVIGATOR_STATUS is accepted by
@@ -472,6 +494,22 @@ export function App(): React.JSX.Element {
       if (message.type === 'PREVIEW_STATUS') { setPreviewStatus(message.payload); return; }
       if (message.type === 'NAVIGATOR_VISIBILITY') { setNavigatorVisible(message.payload.visible); return; }
       if (message.type === 'NAVIGATOR_STATUS') setNavigatorBridgeState(navigatorUiState(message.payload));
+      if (message.type === 'ERROR' && stateRef.current.pending.rows?.id === message.requestId) {
+        const failedState = stateRef.current;
+        if (failedState.page !== undefined && failedState.summary !== undefined) {
+          const required = rowProjectionPlanForView(
+            failedState.activeTab,
+            failedState.displayMode,
+            failedState.summary.profileId,
+          );
+          const available = failedState.page.projection ?? legacyRowProjectionPlan(
+            failedState.pageProjectionProfileId ?? failedState.summary.profileId,
+          );
+          if (!rowProjectionPlanCovers(available, required)) {
+            projectionRefreshAttemptRef.current = projectionIntentKey(failedState, required);
+          }
+        }
+      }
       if (message.type === 'ERROR' && acceptedSessionRef.current === undefined
         && startupReadyIdsRef.current.has(message.requestId)) {
         startupErrorRef.current = true;
@@ -594,6 +632,26 @@ export function App(): React.JSX.Element {
     requestRows({ ...viewport, columns: selected }, { preserveOnRebuild: true });
   }, [requestRows, state.columnVisibility, state.columns, state.invalidationReason,
     state.page, state.pending.rows, state.schema, state.summary, queryController.currentViewportOptions]);
+
+  useEffect(() => {
+    if (!state.page || state.pending.rows || !state.summary
+      || !canReadSnapshot(state.invalidationReason)
+      || state.summary.snapshot.generation !== clientRef.current.session.generation) return;
+    const required = rowProjectionPlanForView(state.activeTab, state.displayMode, state.summary.profileId);
+    const available = state.page.projection ?? legacyRowProjectionPlan(
+      state.pageProjectionProfileId ?? state.summary.profileId,
+    );
+    if (rowProjectionPlanCovers(available, required)) {
+      projectionRefreshAttemptRef.current = '';
+      return;
+    }
+    const intent = projectionIntentKey(state, required);
+    if (projectionRefreshAttemptRef.current === intent) return;
+    projectionRefreshAttemptRef.current = intent;
+    requestRows(queryController.currentViewportOptions(), { preserveOnRebuild: true });
+  }, [requestRows, state.activeTab, state.displayMode, state.filters, state.invalidationReason,
+    state.page, state.pageProjectionProfileId, state.pending.rows, state.query, state.rowTypes, state.sort, state.summary,
+    queryController.currentViewportOptions, state]);
 
   useEffect(() => {
     if (state.pending.insights && state.analysisIntent === undefined) {
@@ -833,6 +891,10 @@ export function App(): React.JSX.Element {
   const datasetSummary = useMemo(
     () => summarizeVisibleDatasetRows(state.rows, partialScan),
     [state.rows, partialScan],
+  );
+  const datasetProjectionAvailable = state.page !== undefined && rowProjectionPlanCovers(
+    state.page.projection ?? legacyRowProjectionPlan(state.pageProjectionProfileId ?? state.summary?.profileId),
+    { conversation: false, dataset: true },
   );
   const hasPartialContinuation = partialScan
     && (state.sort !== undefined || state.page?.scan?.cursorOrdinal !== undefined);
@@ -1168,7 +1230,7 @@ export function App(): React.JSX.Element {
                 }}
                 onRefresh={() => requestInsights()}
               />
-              {datasetSummary !== undefined && !state.pending.rows
+              {datasetSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
                 ? <DatasetInsights summary={datasetSummary} /> : null}
               <InsightsView
                 categories={state.insights?.categories ?? []}

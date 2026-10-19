@@ -218,6 +218,8 @@ export const MAX_TABLE_COLUMNS = 64;
 export interface RowPage {
   rows: RowProjection[];
   columns: ColumnSpec[];
+  /** Effective optional scene coverage when the caller requested an explicit projection plan. */
+  projection?: RowProjectionPlan;
   anchorOrdinal: string;
   hasBefore: boolean;
   hasAfter: boolean;
@@ -232,6 +234,12 @@ export interface RowPage {
   /** Number of records matching the predicate in the bounded scan result. */
   matchedRecords?: string;
   scan?: RowScanStats;
+}
+
+/** Optional row scenes requested by a bounded page consumer. */
+export interface RowProjectionPlan {
+  conversation: boolean;
+  dataset: boolean;
 }
 
 /** A bounded page of individual problem entries, independent of visible rows. */
@@ -446,6 +454,8 @@ export type WebviewRequest =
     predicate?: Predicate;
     /** Bounded record fields requested for the table projection. */
     columns?: ColumnSpec[];
+    /** Optional scene fields required by the current page consumer. */
+    projection?: RowProjectionPlan;
     sort?: RowSort;
     sortOffset?: string;
     scanBudget?: RowScanBudget;

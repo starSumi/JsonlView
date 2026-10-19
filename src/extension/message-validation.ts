@@ -8,6 +8,7 @@ import {
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
 import { MAX_PROTOCOL_REQUEST_ID_LENGTH, validateProtocolEnvelope } from '../shared/transport';
+import { isRowProjectionPlan } from '../shared/row-projection';
 
 const MAX_QUERY_DEPTH = 16;
 const MAX_QUERY_NODES = 256;
@@ -96,6 +97,9 @@ export function validateWebviewRequest(rawValue: unknown): ValidationResult {
       }
       if (value.payload.columns !== undefined && !isRecordColumns(value.payload.columns)) {
         return failure('Invalid or over-budget table columns.');
+      }
+      if (value.payload.projection !== undefined && !isRowProjectionPlan(value.payload.projection)) {
+        return failure('Invalid row projection plan.');
       }
       break;
     }

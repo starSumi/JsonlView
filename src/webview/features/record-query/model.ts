@@ -7,6 +7,7 @@ import type {
   RowFilterOperator,
   RowScanBudget,
   RowSort,
+  RowProjectionPlan,
   ScanTruncationReason,
   WebviewRequest,
 } from '../../../shared/types';
@@ -38,6 +39,7 @@ export interface RecordQueryRequestOptions {
   sort?: RowSort;
   sortOffset?: string;
   scanBudget?: RowScanBudget;
+  projection?: RowProjectionPlan;
   now?: number;
 }
 
@@ -195,6 +197,7 @@ export function buildRecordQueryRequest(options: RecordQueryRequestOptions): Row
       ? predicate ? { scanBudget: createFilterScanBudget(options.now) } : {}
       : { scanBudget: options.scanBudget }),
     ...(options.columns === undefined ? {} : { columns: [...options.columns] }),
+    ...(options.projection === undefined ? {} : { projection: { ...options.projection } }),
     ...(sort === undefined ? {} : { sort }),
     ...(sort === undefined || physicalCursor || options.sortOffset === undefined ? {} : { sortOffset: options.sortOffset }),
   };

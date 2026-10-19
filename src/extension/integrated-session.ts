@@ -196,6 +196,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
       ...(request.columns === undefined ? {} : {
         columns: mergeRequestedColumns(enricher.columns ?? [], request.columns),
       }),
+      ...(request.projection === undefined ? {} : { projection: request.projection }),
       enricher,
       generation: this.engine.snapshot.generation,
       signal,
@@ -568,9 +569,8 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     const samples: GenericRecordSample[] = [];
     const datasetHead = new DatasetHeadInspection();
     const sampledOrdinals = new Set<string>();
-    const headPage = await engine.getRows({
+    const headPage = await engine.inspectRows({
       limit: DETECTION_HEAD_SAMPLE_LIMIT,
-      columns: [],
       generation: engine.snapshot.generation,
       onHydrated: (record) => {
         if (signal.aborted) return;
@@ -594,7 +594,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     // sample cap and confidence rules.
     if (options.includeTail === true && engine.getSummary().indexingComplete) {
       setStage('profile-sampling');
-      await engine.getRows({
+      await engine.inspectRows({
         direction: 'backward',
         limit: DETECTION_TAIL_SAMPLE_LIMIT,
         scanBudget: {
@@ -602,7 +602,6 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
           maxExaminedBytes: String(8 * 1024 * 1024),
           deadlineEpochMs: Date.now() + 2_000,
         },
-        columns: [],
         generation: engine.snapshot.generation,
         onHydrated: (record) => {
           if (signal.aborted) return;
@@ -625,7 +624,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
         if (totalRecords < 2n) break;
         const center = (totalRecords * percentage) / 100n;
         const anchor = center > 0n ? center - 1n : undefined;
-        await engine.getRows({
+        await engine.inspectRows({
           ...(anchor === undefined ? {} : { anchorOrdinal: anchor.toString() }),
           direction: 'forward',
           limit: DETECTION_STRATUM_SAMPLE_LIMIT,
@@ -634,7 +633,6 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
             maxExaminedBytes: String(2 * 1024 * 1024),
             deadlineEpochMs: Date.now() + 500,
           },
-          columns: [],
           generation: engine.snapshot.generation,
           onHydrated: (record) => {
             if (signal.aborted) return;
