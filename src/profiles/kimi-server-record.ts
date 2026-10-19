@@ -53,7 +53,8 @@ export function decodeKimiServerEvent(value: unknown): KimiServerEvent | undefin
     || stringAt(envelope, 'timestamp') === undefined) return undefined;
   const payloadType = own(payload, 'type');
   if (payloadType !== undefined && payloadType !== type) return undefined;
-  if (own(envelope, 'epoch') !== undefined && typeof own(envelope, 'epoch') !== 'string') return undefined;
+  const epoch = own(envelope, 'epoch');
+  if (epoch !== undefined && (typeof epoch !== 'string' || epoch.length === 0)) return undefined;
   if (own(envelope, 'session_id') !== undefined && typeof own(envelope, 'session_id') !== 'string') return undefined;
   if (own(envelope, 'volatile') !== undefined && typeof own(envelope, 'volatile') !== 'boolean') return undefined;
   const offset = own(envelope, 'offset');

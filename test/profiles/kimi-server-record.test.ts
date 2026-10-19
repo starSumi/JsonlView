@@ -38,6 +38,7 @@ describe('Kimi persisted server journal boundary', () => {
       { ...valid, envelope: { ...valid.envelope, seq: 0 } },
       { ...valid, envelope: { ...valid.envelope, seq: 2 } },
       { ...valid, envelope: { ...valid.envelope, seq: '1' } },
+      { ...valid, envelope: { ...valid.envelope, epoch: '' } },
       { ...valid, envelope: { ...valid.envelope, timestamp: 1792123200000 } },
       { ...valid, envelope: { ...valid.envelope, payload: null } },
       { ...valid, envelope: { ...valid.envelope, payload: { type: 'error' } } }]) {
