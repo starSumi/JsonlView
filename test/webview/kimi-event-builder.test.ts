@@ -10,6 +10,7 @@ import {
   kimiEventStrategyRegistry,
 } from '../../src/webview/providers/kimi-event-strategies';
 import type { EventPresentationSection } from '../../src/webview/features/event-presentation/model';
+import { buildAgentEventPresentation } from '../../src/webview/event-presentation';
 
 const kimiProfile = { profileId: 'kimi-code-session' } as never;
 
@@ -29,6 +30,21 @@ function context(): KimiEventBuilderContext {
     sections.push({ title, code: typeof value === 'string' ? value : JSON.stringify(value), ...(language ? { language } : {}) });
   };
   return { objectOf, own, valueLabel, addTextCandidate, addCodeCandidate };
+}
+
+function serverRecord(type: string, payload: Record<string, unknown>): KimiEventObject {
+  return {
+    kind: 'event',
+    seq: 1,
+    envelope: {
+      type,
+      seq: 1,
+      epoch: 'epoch-1',
+      session_id: 'session-1',
+      timestamp: '2026-10-19T02:00:00.000Z',
+      payload,
+    },
+  };
 }
 
 describe('Kimi event builder', () => {
@@ -284,5 +300,82 @@ describe('Kimi event builder', () => {
 
   it('does not project Kimi sections for a different provider profile', () => {
     expect(buildKimiEventSections({ type: 'context.append_message', message: { content: 'text' } }, { profileId: 'generic' } as never, context())).toEqual([]);
+  });
+
+  it('renders Kimi server journal events through a separate typed dispatch', () => {
+    const cases: Array<{ type: string; payload: Record<string, unknown>; title: string; text?: string }> = [
+      { type: 'prompt.submitted', payload: { content: [{ type: 'text', text: 'Inspect this source' }], promptId: 'p1' }, title: 'Prompt', text: 'Inspect this source' },
+      { type: 'event.session.created', payload: { session: { id: 'session-1', title: 'Kimi task', status: 'idle' } }, title: 'Session title', text: 'Kimi task' },
+      { type: 'event.session.status_changed', payload: { previous_status: 'idle', current_status: 'running' }, title: 'Session status', text: 'running' },
+      { type: 'session.meta.updated', payload: { patch: { title: 'Renamed session', lastPrompt: 'last prompt' } }, title: 'Session title', text: 'Renamed session' },
+      { type: 'prompt.completed', payload: { reason: 'completed' }, title: 'Prompt result', text: 'completed' },
+      { type: 'turn.started', payload: { turnId: 'turn-2', origin: { kind: 'user' } }, title: 'Turn', text: 'turn-2' },
+      { type: 'turn.step.started', payload: { turnId: 'turn-2', step: 'llm', stepId: 'step-1' }, title: 'Step', text: 'llm' },
+      { type: 'turn.step.completed', payload: { turnId: 'turn-2', step: 'llm', finishReason: 'stop', usage: { input: 3, output: 2 } }, title: 'Usage' },
+      { type: 'turn.step.retrying', payload: { failedAttempt: 1, nextAttempt: 2, errorMessage: 'temporary failure' }, title: 'Retry error', text: 'temporary failure' },
+      { type: 'turn.step.interrupted', payload: { reason: 'cancelled', message: 'Stopped by user' }, title: 'Interruption', text: 'Stopped by user' },
+      { type: 'turn.ended', payload: { reason: 'error', durationMs: 50, error: { message: 'request failed' } }, title: 'Turn error', text: 'request failed' },
+      { type: 'context.spliced', payload: { start: 0, deleteCount: 0, messages: [{ role: 'assistant', content: [{ type: 'text', text: 'replayed message' }] }] }, title: 'Context message 1 · assistant', text: 'replayed message' },
+      { type: 'error', payload: { code: 'request_failed', message: 'safe diagnostic', retryable: true }, title: 'Error', text: 'safe diagnostic' },
+      { type: 'tool.list.updated', payload: { serverName: 'filesystem', reason: 'connected' }, title: 'MCP server', text: 'filesystem' },
+      { type: 'mcp.server.status', payload: { server: { name: 'filesystem', status: 'ready', toolCount: 4 } }, title: 'MCP status', text: 'ready' },
+      { type: 'event.config.warning', payload: { warnings: ['Using default model'] }, title: 'Configuration warning 1', text: 'Using default model' },
+    ];
+
+    for (const testCase of cases) {
+      const sections = buildKimiEventSections(serverRecord(testCase.type, testCase.payload), kimiProfile, context());
+      expect(sections, testCase.type).toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: testCase.title, ...(testCase.text ? { text: testCase.text } : {}) }),
+      ]));
+    }
+  });
+
+  it('keeps server envelope identity authoritative, strict to the physical journal boundary, and bounded', () => {
+    const value = serverRecord('prompt.submitted', {
+      type: 'prompt.submitted',
+      content: [
+        { type: 'text', text: 'visible prompt' },
+        { type: 'thinking', thinking: 'hidden secret', hidden: true },
+      ],
+    });
+    const sections = buildKimiEventSections(value, kimiProfile, context());
+    expect(sections).toEqual(expect.arrayContaining([expect.objectContaining({ title: 'Prompt', text: 'visible prompt [hidden content omitted]' })]));
+    expect(JSON.stringify(sections)).not.toContain('hidden secret');
+
+    const unknown = serverRecord('future.server.event', { note: 'bounded future event', command: 'must stay raw-only' });
+    const fallback = buildKimiEventSections(unknown, kimiProfile, context());
+    expect(fallback).toEqual([expect.objectContaining({ title: 'Kimi server raw fallback · future.server.event', code: expect.stringContaining('bounded future event') })]);
+
+    const legacyLike = { type: 'prompt.submitted', content: [{ type: 'text', text: 'legacy-shaped' }] };
+    expect(buildKimiEventSections(legacyLike, kimiProfile, context())).toEqual([
+      expect.objectContaining({ title: 'Kimi raw fallback · unknown event' }),
+    ]);
+
+    const conflicting = serverRecord('prompt.submitted', {
+      type: 'turn.started',
+      content: [{ type: 'text', text: 'must not be trusted' }],
+    });
+    expect(buildKimiEventSections(conflicting, kimiProfile, context())).toEqual([
+      expect.objectContaining({ title: 'Kimi server raw fallback · malformed journal event' }),
+    ]);
+  });
+
+  it('shows server session, turn, status, and severity in selected-record metadata', () => {
+    const value = serverRecord('turn.step.retrying', {
+      sessionId: 'session-1',
+      turnId: 'turn-2',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      errorName: 'NetworkError',
+      errorMessage: 'retrying',
+    });
+    const presentation = buildAgentEventPresentation(value, kimiProfile);
+    expect(presentation?.kind).toBe('turn.step.retrying');
+    expect(presentation?.metadata).toEqual(expect.arrayContaining([
+      { label: 'session', value: 'session-1' },
+      { label: 'turn', value: 'turn-2' },
+      { label: 'status', value: 'retrying' },
+      { label: 'severity', value: 'warning' },
+    ]));
   });
 });

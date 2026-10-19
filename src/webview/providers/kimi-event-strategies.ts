@@ -1,5 +1,10 @@
 import type { AgentRowProjection } from '../../shared/types';
 import { KIMI_SOURCE_REVISION } from '../../profiles/kimi-record';
+import {
+  decodeKimiServerEvent,
+  type KimiServerEvent,
+  type KimiServerEventType,
+} from '../../profiles/kimi-server-record';
 import { assertNever } from '../exhaustiveness';
 import type { EventPresentationSection } from '../features/event-presentation/model';
 import type { KimiEventBuilderContext, KimiEventObject } from './kimi-event-builder';
@@ -303,6 +308,340 @@ function messageCandidates(payload: KimiPayloadOf<'context.append_message'>): Ki
   return result;
 }
 
+type KimiServerPresentationType = Extract<KimiServerEventType,
+  | 'event.session.created'
+  | 'event.session.status_changed'
+  | 'session.meta.updated'
+  | 'prompt.submitted'
+  | 'prompt.completed'
+  | 'turn.started'
+  | 'turn.step.started'
+  | 'turn.step.completed'
+  | 'turn.step.retrying'
+  | 'turn.step.interrupted'
+  | 'turn.ended'
+  | 'context.spliced'
+  | 'error'
+  | 'tool.list.updated'
+  | 'mcp.server.status'
+  | 'event.config.warning'
+>;
+
+type KimiServerEventOf<K extends KimiServerPresentationType> = KimiServerEvent & { type: K };
+type KimiServerHandler<K extends KimiServerPresentationType> = (event: KimiServerEventOf<K>) => readonly KimiCandidate[];
+type KimiServerHandlerTable = { [K in KimiServerPresentationType]: (event: KimiServerEvent) => readonly KimiCandidate[] };
+
+function adaptKimiServerHandler<K extends KimiServerPresentationType>(
+  handler: KimiServerHandler<K>,
+): (event: KimiServerEvent) => readonly KimiCandidate[] {
+  return (event) => handler(event as KimiServerEventOf<K>);
+}
+
+function serverPayload(event: KimiServerEvent): KimiEventObject {
+  return event.payload;
+}
+
+function serverText(payload: KimiEventObject, key: string, title: string): KimiCandidate[] {
+  const value = own(payload, key);
+  if (value === undefined || value === null) return [];
+  if (typeof value === 'string') return [text(title, value.slice(0, 8_000))];
+  if (typeof value === 'number' || typeof value === 'boolean') return [text(title, value)];
+  return [code(title + ' · structured value', safeServerRaw(value))];
+}
+
+function serverContent(value: unknown, title: string): KimiCandidate[] {
+  const preview = serverContentPreview(value);
+  return preview ? [text(title, preview)] : [];
+}
+
+function serverContentPreview(value: unknown): string {
+  if (typeof value === 'string') return value.slice(0, 240);
+  if (!Array.isArray(value)) return '';
+  const parts: string[] = [];
+  let length = 0;
+  const append = (part: string): void => {
+    const prefix = parts.length === 0 ? '' : ' ';
+    const available = 240 - length - prefix.length;
+    if (available <= 0) return;
+    const bounded = part.slice(0, available);
+    parts.push(prefix + bounded);
+    length += prefix.length + bounded.length;
+  };
+  for (let index = 0; index < Math.min(value.length, 16) && length < 240; index += 1) {
+    const item = objectOf(value[index]);
+    if (!item) continue;
+    if (own(item, 'hidden') === true || own(item, 'opaque') === true
+      || own(item, 'encrypted') !== undefined || own(item, 'signature') !== undefined) {
+      append('[hidden content omitted]');
+      continue;
+    }
+    const type = label(own(item, 'type'));
+    let part: string | undefined;
+    if (type === 'text') {
+      const body = own(item, 'text');
+      if (typeof body === 'string') part = body;
+    } else if (type === 'thinking' || type === 'think') {
+      const body = own(item, type);
+      if (typeof body === 'string') part = body;
+    } else if (type === 'image' || type === 'video' || type === 'file' || type === 'tool_use' || type === 'tool_result'
+      || type === 'image_url' || type === 'audio_url' || type === 'video_url') {
+      part = `[${type} reference]`;
+    }
+    if (part) append(part);
+  }
+  return parts.join('');
+}
+
+function serverStatusCandidates(session: KimiEventObject): KimiCandidate[] {
+  return serverText(session, 'status', 'Session status');
+}
+
+function serverSessionCreated(event: KimiServerEventOf<'event.session.created'>): readonly KimiCandidate[] {
+  const session = objectOf(own(serverPayload(event), 'session'));
+  if (!session) return [];
+  return [
+    ...serverText(session, 'title', 'Session title'),
+    ...serverText(session, 'id', 'Session id'),
+    ...serverStatusCandidates(session),
+    ...serverText(session, 'last_prompt', 'Last prompt'),
+  ];
+}
+
+function serverSessionUpdated(event: KimiServerEventOf<'session.meta.updated'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  const patch = objectOf(own(payload, 'patch'));
+  return [
+    ...serverText(payload, 'title', 'Session title'),
+    ...(patch ? serverText(patch, 'title', 'Session title') : []),
+    ...(patch ? serverText(patch, 'lastPrompt', 'Last prompt') : []),
+    ...(patch ? serverText(patch, 'status', 'Session status') : []),
+  ];
+}
+
+function serverSessionStatusChanged(event: KimiServerEventOf<'event.session.status_changed'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'previous_status', 'Previous session status'),
+    ...serverText(payload, 'current_status', 'Session status'),
+    ...serverText(payload, 'current_prompt_id', 'Current prompt'),
+  ];
+}
+
+function serverPromptSubmitted(event: KimiServerEventOf<'prompt.submitted'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverContent(own(payload, 'content'), 'Prompt'),
+    ...serverText(payload, 'promptId', 'Prompt id'),
+    ...serverText(payload, 'status', 'Prompt status'),
+  ];
+}
+
+function serverPromptCompleted(event: KimiServerEventOf<'prompt.completed'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'reason', 'Prompt result'),
+    ...serverText(payload, 'promptId', 'Prompt id'),
+    ...serverText(payload, 'finishedAt', 'Finished at'),
+  ];
+}
+
+function serverTurnStarted(event: KimiServerEventOf<'turn.started'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  const origin = objectOf(own(payload, 'origin'));
+  return [
+    ...serverText(payload, 'turnId', 'Turn'),
+    ...(origin ? serverText(origin, 'kind', 'Turn origin') : []),
+  ];
+}
+
+function serverStepStarted(event: KimiServerEventOf<'turn.step.started'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'turnId', 'Turn'),
+    ...serverText(payload, 'step', 'Step'),
+    ...serverText(payload, 'stepId', 'Step id'),
+  ];
+}
+
+function serverStepCompleted(event: KimiServerEventOf<'turn.step.completed'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'step', 'Step'),
+    ...serverText(payload, 'finishReason', 'Finish reason'),
+    ...(own(payload, 'usage') === undefined ? [] : [code('Usage', safeServerRaw(own(payload, 'usage')))]),
+    ...['llmFirstTokenLatencyMs', 'llmStreamDurationMs', 'llmRequestBuildMs', 'llmServerFirstTokenMs', 'llmServerDecodeMs', 'llmClientConsumeMs']
+      .flatMap((key) => serverText(payload, key, key)),
+  ];
+}
+
+function serverStepRetrying(event: KimiServerEventOf<'turn.step.retrying'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'step', 'Step'),
+    ...serverText(payload, 'failedAttempt', 'Failed attempt'),
+    ...serverText(payload, 'nextAttempt', 'Next attempt'),
+    ...serverText(payload, 'maxAttempts', 'Maximum attempts'),
+    ...serverText(payload, 'delayMs', 'Retry delay (ms)'),
+    ...serverText(payload, 'errorName', 'Retry error name'),
+    ...serverText(payload, 'errorMessage', 'Retry error'),
+    ...serverText(payload, 'statusCode', 'Status code'),
+  ];
+}
+
+function serverStepInterrupted(event: KimiServerEventOf<'turn.step.interrupted'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'step', 'Step'),
+    ...serverText(payload, 'reason', 'Interruption reason'),
+    ...serverText(payload, 'message', 'Interruption'),
+  ];
+}
+
+function serverTurnEnded(event: KimiServerEventOf<'turn.ended'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  const error = objectOf(own(payload, 'error'));
+  return [
+    ...serverText(payload, 'reason', 'Turn result'),
+    ...serverText(payload, 'durationMs', 'Duration (ms)'),
+    ...(error ? serverText(error, 'message', 'Turn error') : []),
+    ...(error ? serverText(error, 'name', 'Error name') : []),
+    ...(error ? serverText(error, 'code', 'Error code') : []),
+  ];
+}
+
+function serverContextSpliced(event: KimiServerEventOf<'context.spliced'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  const messages = own(payload, 'messages');
+  const candidates: KimiCandidate[] = [
+    ...serverText(payload, 'start', 'Splice start'),
+    ...serverText(payload, 'deleteCount', 'Deleted messages'),
+  ];
+  if (!Array.isArray(messages)) return candidates;
+  const count = Math.min(messages.length, MAX_ITEMS);
+  for (let index = 0; index < count; index += 1) {
+    const message = objectOf(messages[index]);
+    if (!message) continue;
+    const role = label(own(message, 'role'));
+    const preview = serverContentPreview(own(message, 'content'));
+    if (preview) candidates.push(text(`Context message ${index + 1}${role ? ` · ${role}` : ''}`, preview));
+  }
+  if (count < messages.length) candidates.push(omitted('Additional context messages · available in Raw', messages.length - count));
+  return candidates;
+}
+
+function serverError(event: KimiServerEventOf<'error'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'code', 'Error code'),
+    ...serverText(payload, 'name', 'Error name'),
+    ...serverText(payload, 'message', 'Error'),
+    ...serverText(payload, 'retryable', 'Retryable'),
+  ];
+}
+
+function serverToolListUpdated(event: KimiServerEventOf<'tool.list.updated'>): readonly KimiCandidate[] {
+  const payload = serverPayload(event);
+  return [
+    ...serverText(payload, 'serverName', 'MCP server'),
+    ...serverText(payload, 'reason', 'Tool list update'),
+  ];
+}
+
+function serverMcpStatus(event: KimiServerEventOf<'mcp.server.status'>): readonly KimiCandidate[] {
+  const server = own(serverPayload(event), 'server');
+  const record = objectOf(server);
+  if (!record) return server === undefined ? [] : [text('MCP status', server)];
+  return [
+    ...serverText(record, 'name', 'MCP server'),
+    ...serverText(record, 'status', 'MCP status'),
+    ...serverText(record, 'toolCount', 'MCP tool count'),
+    ...serverText(record, 'message', 'MCP detail'),
+  ];
+}
+
+function serverConfigWarning(event: KimiServerEventOf<'event.config.warning'>): readonly KimiCandidate[] {
+  const warnings = own(serverPayload(event), 'warnings');
+  if (!Array.isArray(warnings)) return warnings === undefined ? [] : [text('Configuration warning', warnings)];
+  const count = Math.min(warnings.length, MAX_ITEMS);
+  const candidates = warnings.slice(0, count).flatMap((warning, index): KimiCandidate[] => {
+    const record = objectOf(warning);
+    const message = record ? own(record, 'message') : warning;
+    return message === undefined ? [] : [text(`Configuration warning ${index + 1}`, message)];
+  });
+  if (count < warnings.length) candidates.push(omitted('Additional warnings · available in Raw', warnings.length - count));
+  return candidates;
+}
+
+/** Unknown server events stay inspectable, but opaque content is never copied into the detail pane. */
+function safeServerRaw(value: unknown, depth = 0, budget = { remaining: 128 }): unknown {
+  if (depth > 5 || budget.remaining <= 0) return '[bounded]';
+  if (typeof value === 'string') return value.slice(0, 512);
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) {
+    const count = Math.min(value.length, MAX_ITEMS, budget.remaining);
+    const items: unknown[] = [];
+    for (let index = 0; index < count; index += 1) {
+      budget.remaining -= 1;
+      items.push(safeServerRaw(value[index], depth + 1, budget));
+    }
+    if (count < value.length) items.push(`[${value.length - count} more items]`);
+    return items;
+  }
+  const record = objectOf(value);
+  if (!record) return '[unsupported]';
+  if (own(record, 'hidden') === true || own(record, 'opaque') === true
+    || own(record, 'encrypted') !== undefined || own(record, 'signature') !== undefined
+    || own(record, 'type') === 'opaque') return '[opaque content omitted]';
+  const result: Record<string, unknown> = {};
+  let fieldCount = 0;
+  let omittedFields = 0;
+  for (const key in record) {
+    if (!Object.hasOwn(record, key)) continue;
+    if (fieldCount >= MAX_ITEMS) {
+      omittedFields += 1;
+      break;
+    }
+    if (budget.remaining <= 0) break;
+    fieldCount += 1;
+    const item = record[key];
+    const safeKey = key.slice(0, 80);
+    if (key === 'data' || key === 'base64' || key === 'bytes') {
+      result[safeKey] = '[binary content omitted]';
+      continue;
+    }
+    budget.remaining -= 1;
+    result[safeKey] = safeServerRaw(item, depth + 1, budget);
+  }
+  if (omittedFields > 0) result.omittedFields = 'additional fields omitted';
+  return result;
+}
+
+const kimiServerEventHandlers = {
+  'event.session.created': adaptKimiServerHandler(serverSessionCreated),
+  'event.session.status_changed': adaptKimiServerHandler(serverSessionStatusChanged),
+  'session.meta.updated': adaptKimiServerHandler(serverSessionUpdated),
+  'prompt.submitted': adaptKimiServerHandler(serverPromptSubmitted),
+  'prompt.completed': adaptKimiServerHandler(serverPromptCompleted),
+  'turn.started': adaptKimiServerHandler(serverTurnStarted),
+  'turn.step.started': adaptKimiServerHandler(serverStepStarted),
+  'turn.step.completed': adaptKimiServerHandler(serverStepCompleted),
+  'turn.step.retrying': adaptKimiServerHandler(serverStepRetrying),
+  'turn.step.interrupted': adaptKimiServerHandler(serverStepInterrupted),
+  'turn.ended': adaptKimiServerHandler(serverTurnEnded),
+  'context.spliced': adaptKimiServerHandler(serverContextSpliced),
+  error: adaptKimiServerHandler(serverError),
+  'tool.list.updated': adaptKimiServerHandler(serverToolListUpdated),
+  'mcp.server.status': adaptKimiServerHandler(serverMcpStatus),
+  'event.config.warning': adaptKimiServerHandler(serverConfigWarning),
+} satisfies KimiServerHandlerTable;
+
+function collectKimiServerEvent(event: KimiServerEvent): readonly KimiCandidate[] {
+  const handler = kimiServerEventHandlers[event.type as KimiServerPresentationType];
+  // The checked journal envelope supplies the discriminant; payload.type is not used for dispatch.
+  if (handler) return handler(event);
+  return [code('Kimi server raw fallback · ' + event.type, safeServerRaw(event.payload))];
+}
+
 function systemPromptCandidates(payload: KimiPayloadOf<'config.update' | 'profile.bind' | 'llm.request'>): KimiCandidate[] {
   return own(payload, 'systemPrompt') === undefined ? [] : [text('System prompt', own(payload, 'systemPrompt'))];
 }
@@ -471,6 +810,17 @@ export function presentKimiEvent(
   context: KimiEventBuilderContext,
 ): EventPresentationSection[] {
   if (profile?.profileId !== 'kimi-code-session') return [];
+  const serverEvent = decodeKimiServerEvent(payload);
+  if (serverEvent) return renderKimiCandidates(collectKimiServerEvent(serverEvent), context);
+  // A physical Kimi server journal record must never fall through to the legacy
+  // agent-core wire decoder when the server envelope is malformed.
+  if (own(payload, 'kind') === 'event') {
+    return renderKimiCandidates([code('Kimi server raw fallback · malformed journal event', {
+      provider: 'kimi-code-server',
+      reason: 'invalid journal envelope',
+      source: 'Raw',
+    })], context);
+  }
   const decoded = decodeKimiEvent(payload);
   if (decoded.kind !== 'known') return renderUnknown(decoded, context);
   return renderKimiCandidates(collectKnown(decoded.payload), context);

@@ -8,6 +8,7 @@ import {
   classifyCodexItem,
   normalizeCodexItemType,
 } from '../profiles/codex-item-strategy';
+import { decodeKimiServerEvent } from '../profiles/kimi-server-record';
 import { stringifyJsonBounded } from './json-syntax';
 import { classifyContent, inferCodeLanguage } from './content-view';
 import { formatJavaScriptForDisplay } from './code-syntax';
@@ -1100,6 +1101,8 @@ export function buildAgentEventPresentation(
 ): AgentEventPresentationModel | undefined {
   const envelope = objectOf(value);
   if (!envelope || !isEventEnvelope(envelope, profile)) return undefined;
+  const kimiServerEvent = profile?.profileId === 'kimi-code-session' ? decodeKimiServerEvent(envelope) : undefined;
+  const kimiServerPayload = kimiServerEvent?.payload;
   const envelopeType = valueLabel(envelope.type);
   // A dataset's ordinary payload column cannot replace its top-level fields.
   // Only an explicit event/tool envelope or a semantic profile owns unwrapping.
@@ -1134,7 +1137,7 @@ export function buildAgentEventPresentation(
   const normalizedItemType = codexItem?.normalizedType
     ?? normalizeCodexItemType(typeof codexItemSource?.type === 'string' ? codexItemSource.type : undefined);
   const kimiEvent = profile?.profileId === 'kimi-code-session' ? objectOf(own(payload, 'event')) : undefined;
-  const kind = genericDatasetKey ?? valueLabel(kimiEvent?.type) ?? itemType ?? envelopeType ?? profile?.eventKind ?? 'event';
+  const kind = kimiServerEvent?.type ?? genericDatasetKey ?? valueLabel(kimiEvent?.type) ?? itemType ?? envelopeType ?? profile?.eventKind ?? 'event';
   const customToolName = normalizedItemType === 'custom_tool_call' ? valueLabel(own(codexItemSource ?? payload, 'name')) : undefined;
   const displayKind = customToolName === 'exec'
     ? 'Code Mode · exec'
@@ -1150,18 +1153,47 @@ export function buildAgentEventPresentation(
       metadata.push({ label, value });
     }
   };
+  const serverSession = objectOf(kimiServerPayload ? own(kimiServerPayload, 'session') : undefined);
+  const serverPatch = objectOf(kimiServerPayload ? own(kimiServerPayload, 'patch') : undefined);
+  const serverSessionId = kimiServerPayload
+    ? valueLabel(own(kimiServerPayload, 'sessionId'))
+      ?? valueLabel(own(kimiServerEvent?.envelope ?? {}, 'session_id'))
+      ?? valueLabel(serverSession?.id)
+    : undefined;
+  const serverStatus = (() => {
+    if (!kimiServerEvent || !kimiServerPayload) return undefined;
+    switch (kimiServerEvent.type) {
+      case 'event.session.created': return valueLabel(serverSession?.status);
+      case 'event.session.status_changed': return valueLabel(own(kimiServerPayload, 'current_status'))
+        ?? valueLabel(own(kimiServerPayload, 'status'));
+      case 'session.meta.updated': return valueLabel(serverPatch?.status);
+      case 'turn.started':
+      case 'turn.step.started': return 'running';
+      case 'turn.step.completed': return 'completed';
+      case 'turn.step.retrying': return 'retrying';
+      case 'turn.step.interrupted': return 'interrupted';
+      case 'turn.ended': return valueLabel(own(kimiServerPayload, 'reason')) ?? 'ended';
+      case 'prompt.completed': return valueLabel(own(kimiServerPayload, 'reason')) ?? 'completed';
+      default: return valueLabel(own(kimiServerPayload, 'status'));
+    }
+  })();
+  const serverSeverity = kimiServerEvent && kimiServerPayload
+    ? kimiServerEvent.type === 'error' ? 'error'
+      : kimiServerEvent.type === 'warning' || kimiServerEvent.type === 'event.config.warning' || kimiServerEvent.type === 'turn.step.retrying' ? 'warning'
+        : valueLabel(own(kimiServerPayload, 'severity'))
+    : undefined;
   const sources = completedItem ? [completedItem, payload, envelope] : [payload, envelope];
   if (datasetRoot && (own(payload, 'token_count') !== undefined || own(payload, 'num_tokens') !== undefined)) {
     addMetadata('token count basis', 'declared by source');
   }
   addMetadata('role', profile?.actor ?? firstString(sources, ['role', 'actor']));
-  addMetadata('status', profile?.status ?? firstString(sources, ['status', 'state', 'kind']));
-  addMetadata('session', profile?.sessionId ?? firstString(sources, ['session_id', 'sessionId']));
-  addMetadata('turn', profile?.turnId ?? firstString(sources, ['turn_id', 'turnId']));
+  addMetadata('status', serverStatus ?? profile?.status ?? firstString(sources, ['status', 'state', 'kind']));
+  addMetadata('session', serverSessionId ?? profile?.sessionId ?? firstString(sources, ['session_id', 'sessionId']));
+  addMetadata('turn', (kimiServerPayload ? valueLabel(own(kimiServerPayload, 'turnId')) : undefined) ?? profile?.turnId ?? firstString(sources, ['turn_id', 'turnId']));
   addMetadata('thread', firstString(sources, ['thread_id', 'threadId', 'agent_thread_id']));
   addMetadata('model', profile?.model ?? firstString(sources, ['model', 'model_provider']));
   addMetadata('tool', firstString(sources, ['name', 'tool_name', 'tool', 'server']));
-  addMetadata('severity', profile?.severity ?? firstString(sources, ['severity', 'level']));
+  addMetadata('severity', profile?.severity ?? serverSeverity ?? firstString(sources, ['severity', 'level']));
   addMetadata('project', firstString(sources, ['project']));
   if (profile?.profileId === 'kimi-code-session') {
     const message = objectOf(own(payload, 'message'));
