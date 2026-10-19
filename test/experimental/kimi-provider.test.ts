@@ -76,6 +76,50 @@ describe('Kimi server journal Navigator provider', () => {
     expect(discoverDefaultSources({ env: { KIMI_CODE_HOME: root }, homeDirectory: root }).filter((source) => source.provider === 'kimi')).toEqual([home]);
   });
 
+  it('does not classify empty or unrelated events directories as Kimi server roots', async () => {
+    const server = join(root, 'server');
+    const events = join(server, 'events');
+    await mkdir(events, { recursive: true });
+    const discoverKimi = (path: string) => discoverDefaultSources({ env: { KIMI_CODE_HOME: path }, homeDirectory: root }).filter((source) => source.provider === 'kimi');
+    expect(discoverKimi(server)).toEqual([]);
+    await writeFile(join(events, 'unrelated.jsonl'), 'DO_NOT_READ');
+    await writeFile(join(events, 'session_.jsonl'), 'DO_NOT_READ');
+    expect(discoverKimi(server)).toEqual([]);
+    vi.mocked(open).mockClear();
+    await writeFile(join(events, 'session_detected.jsonl'), 'DO_NOT_READ');
+    expect(discoverKimi(server)).toEqual([{ provider: 'kimi', rootUri: pathToFileURL(server).toString() }]);
+    expect(discoverKimi(events)).toEqual([{ provider: 'kimi', rootUri: pathToFileURL(events).toString() }]);
+    expect(vi.mocked(open)).not.toHaveBeenCalled();
+  });
+
+  it('merges the home server layout by exact session id while retaining legacy subagents and paging', async () => {
+    await sessionInWorkspace('wd_synthetic_0123456789ab', 'session_match-123', {
+      title: 'Legacy title', agents: { main: {}, worker: { parentAgentId: 'main' } },
+    }, ['main', 'worker']);
+    await serverJournal('match-123', [journalEvent('session.meta.updated', { patch: { title: 'Server title', lastPrompt: 'Latest server prompt' } })]);
+    await serverJournal('server-only', [journalEvent('session.meta.updated', { patch: { title: 'Server-only session' } })]);
+
+    const pages = [];
+    let page = await provider.scanPage(signal(), { ...defaults, maxFiles: 1 });
+    pages.push(page);
+    while (page.nextCursor !== undefined) {
+      page = await provider.scanPage(signal(), { ...defaults, maxFiles: 1 }, page.nextCursor);
+      pages.push(page);
+    }
+    const entities = pages.flatMap((result) => result.snapshot.entities);
+    const main = entities.find((entity) => entity.vendorTitle === 'Server title')!;
+    const child = entities.find((entity) => entity.kind === 'subagent')!;
+    expect(entities).toHaveLength(3);
+    expect(main.nativeId).toBe(child.parentNativeId);
+    expect(main.firstMessagePreview).toBe('Latest server prompt');
+    expect(entities.map((entity) => entity.label)).toContain('Server-only session');
+    expect(pages.flatMap((result) => result.snapshot.locations).find((location) => location.nativeId === main.nativeId)?.relativePath)
+      .toBe('server/events/session_match-123.jsonl');
+    expect(pages.flatMap((result) => result.snapshot.locations).find((location) => location.nativeId === child.nativeId)?.relativePath)
+      .toBe('sessions/wd_synthetic_0123456789ab/session_match-123/agents/worker/wire.jsonl');
+    expect(pages.flatMap((result) => result.snapshot.relations)).toContainEqual(expect.objectContaining({ fromNativeId: main.nativeId, toNativeId: child.nativeId }));
+  });
+
   it('projects only bounded metadata from server journals without optional envelope identity fields', async () => {
     const path = await serverJournal('metadata', [
       journalEvent('event.session.created', { session: { title: 'Old title', created_at: '2025-01-01T00:00:00.000Z', updated_at: '2025-01-02T00:00:00.000Z', last_prompt: 'Old prompt', metadata: { secret: 'DO_NOT_PROJECT' } } }),
@@ -204,11 +248,41 @@ describe('Kimi server journal Navigator provider', () => {
     const invalid = await serverJournal('invalid', [journalEvent('session.meta.updated', { patch: { title: 'DO_NOT_PROJECT' } })]);
     await writeFile(invalid, JSON.stringify({ kind: 'journal_header', version: 2, epoch: 'ep_future' }) + '\n' + JSON.stringify(journalEvent('session.meta.updated', { patch: { title: 'DO_NOT_PROJECT' } })) + '\n');
     const mismatched = await serverJournal('mismatch', [{ kind: 'event', seq: 1, envelope: { type: 'session.meta.updated', seq: 1, session_id: 'session_other', timestamp: 'invalid', payload: { patch: { title: 'DO_NOT_PROJECT' } } } }]);
+    const sequenceMismatch = await serverJournal('sequence-mismatch', [
+      { kind: 'event', seq: 1, envelope: { type: 'session.meta.updated', seq: 2, timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'DO_NOT_PROJECT' } } } },
+      { kind: 'event', seq: 2, envelope: { type: 'session.meta.updated', seq: Number.MAX_SAFE_INTEGER + 1, timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'DO_NOT_PROJECT' } } } },
+      { kind: 'event', seq: 3, envelope: { type: 'session.meta.updated', timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'DO_NOT_PROJECT' } } } },
+    ]);
     const result = await serverProvider().scan(signal(), defaults);
-    expect(result.snapshot.entities).toHaveLength(2);
+    expect(result.snapshot.entities).toHaveLength(3);
     expect(result.snapshot.truncated).toBe(true);
     expect(JSON.stringify(result.snapshot)).not.toContain('DO_NOT_PROJECT');
-    expect(result.snapshot.locations.map((location) => location.relativePath)).toEqual(expect.arrayContaining(['events/' + invalid.split(/[\\/]/).at(-1), 'events/' + mismatched.split(/[\\/]/).at(-1)]));
+    expect(result.snapshot.locations.map((location) => location.relativePath)).toEqual(expect.arrayContaining(['events/' + invalid.split(/[\\/]/).at(-1), 'events/' + mismatched.split(/[\\/]/).at(-1), 'events/' + sequenceMismatch.split(/[\\/]/).at(-1)]));
+  });
+
+  it('uses the latest valid header as the recovery epoch boundary', async () => {
+    const path = await serverJournal('recovered', [journalEvent('session.meta.updated', { patch: { title: 'Old epoch title' } })]);
+    const oldHeader = JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_old', created_at: 1_700_000_000_000 });
+    const newHeader = JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_new', created_at: 1_800_000_000_000 });
+    const oldEvent = JSON.stringify(journalEvent('session.meta.updated', { patch: { title: 'Must not cross epoch' } }, 1));
+    const newEvent = JSON.stringify(journalEvent('session.meta.updated', { patch: { title: 'Recovered latest epoch' } }, 1));
+    await writeFile(path, ['corrupt prefix', oldHeader, oldEvent, 'still corrupt', newHeader, newEvent].join('\n') + '\n');
+    const result = await serverProvider().scan(signal(), defaults);
+    expect(result.snapshot.entities[0]).toMatchObject({ label: 'Recovered latest epoch', startedAt: '2027-01-15T08:00:00.000Z' });
+    expect(JSON.stringify(result.snapshot)).not.toContain('Must not cross epoch');
+  });
+
+  it('validates optional volatile and offset envelope fields without rejecting valid annotations', async () => {
+    await serverJournal('volatile-shape', [
+      { kind: 'event', seq: 1, envelope: { type: 'session.meta.updated', seq: 1, volatile: true, offset: 0, timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'Valid annotation' } } } },
+      { kind: 'event', seq: 2, envelope: { type: 'session.meta.updated', seq: 2, volatile: 'true', timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'DO_NOT_PROJECT' } } } },
+      { kind: 'event', seq: 3, envelope: { type: 'session.meta.updated', seq: 3, offset: -1, timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'DO_NOT_PROJECT' } } } },
+      { kind: 'event', seq: 4, envelope: { type: 'session.meta.updated', seq: 4, offset: 1.5, timestamp: '2026-01-02T00:00:00.000Z', payload: { patch: { title: 'DO_NOT_PROJECT' } } } },
+    ]);
+    const result = await serverProvider().scan(signal(), defaults);
+    expect(result.snapshot.entities[0]?.label).toBe('Valid annotation');
+    expect(result.snapshot.truncated).toBe(true);
+    expect(JSON.stringify(result.snapshot)).not.toContain('DO_NOT_PROJECT');
   });
 
   it('does not follow journal links or linked events directories', async () => {

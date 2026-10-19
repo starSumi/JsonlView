@@ -70,12 +70,13 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
     let partial = inventory.partial;
     for (const entry of inventory.entries.slice(offset, offset + Math.max(0, Math.min(limits.maxFiles, limits.maxEntities)))) {
       if (!budget.check()) break;
-      let state = states.get(entry.sessionKey);
+      const stateKey = entry.kind === 'server' ? 'server\0' + entry.journalPath : 'wire\0' + (entry.statePath ?? entry.sessionKey);
+      let state = states.get(stateKey);
       if (state === undefined) {
         if (!budget.available()) break;
         const result = entry.kind === 'server' ? await readKimiServerMetadata(entry, budget) : await readState(entry.statePath, budget);
         state = result.state;
-        states.set(entry.sessionKey, state);
+        states.set(stateKey, state);
         partial ||= result.partial;
       }
       if (!budget.check()) break;
@@ -133,8 +134,9 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
   private async inventory(budget: MetadataBudget): Promise<Inventory> {
     budget.check();
     if (!(await regularDirectory(this.rootPath))) throw new Error('Kimi navigator home must be a regular directory.');
-    const serverEvents = await resolveKimiServerEvents(this.rootPath);
-    if (serverEvents !== undefined) {
+    const hasHomeSessions = await regularDirectory(join(this.rootPath, 'sessions'));
+    const serverEvents = await resolveKimiServerEvents(this.rootPath, hasHomeSessions);
+    if (serverEvents !== undefined && !hasHomeSessions) {
       const inventory = await inventoryKimiServerJournals(this.rootPath, serverEvents, budget);
       inventory.entries.sort(compareEntries);
       return { ...inventory, fingerprint: digest(this.sourceId + '\nserver\n' + inventory.entries.map((entry) => entry.signature).join('\n')) };
@@ -161,9 +163,42 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
         }
       }
     }
+    if (serverEvents !== undefined) {
+      const journals = await inventoryKimiServerJournals(this.rootPath, serverEvents, budget);
+      mergeServerJournals(entries, journals.entries);
+      discovery.partial ||= journals.partial;
+    }
     entries.sort(compareEntries);
     return { entries, partial: discovery.partial || budget.truncated, fingerprint: digest(this.sourceId + '\n' + entries.map((entry) => entry.signature).join('\n')) };
   }
+}
+
+function mergeServerJournals(entries: SessionEntry[], journals: readonly KimiServerJournalEntry[]): void {
+  const legacyMainIndexes = new Map<string, number>();
+  for (const [index, entry] of entries.entries()) {
+    if (entry.kind !== 'wire' || entry.agentId !== 'main') continue;
+    const sessionId = legacySessionId(entry.sessionKey);
+    if (sessionId !== undefined && !legacyMainIndexes.has(sessionId)) legacyMainIndexes.set(sessionId, index);
+  }
+  for (const journal of journals) {
+    const index = legacyMainIndexes.get(journal.journalSessionId);
+    if (index === undefined) {
+      entries.push(journal);
+      continue;
+    }
+    const legacy = entries[index]!;
+    entries[index] = { ...journal, sessionKey: legacy.sessionKey, signature: journal.signature + '\0canonical:' + legacy.sessionKey };
+  }
+}
+
+function legacySessionId(sessionKey: string): string | undefined {
+  const segment = sessionKey.slice(sessionKey.lastIndexOf('/') + 1);
+  if (!segment.startsWith('session_') || segment.length <= 'session_'.length) return undefined;
+  for (const character of segment.slice('session_'.length)) {
+    const code = character.charCodeAt(0);
+    if (!((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || character === '_' || character === '-')) return undefined;
+  }
+  return segment;
 }
 
 function compareEntries(left: SessionEntry, right: SessionEntry): number { return right.activityMs - left.activityMs

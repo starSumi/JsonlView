@@ -1,4 +1,4 @@
-import { lstatSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import type { Stats } from 'node:fs';
 import { lstat, open, opendir } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
@@ -15,6 +15,7 @@ const SESSION_STATUSES = new Set(['idle', 'running', 'awaiting_approval', 'await
 export interface KimiServerJournalEntry {
   readonly kind: 'server';
   readonly sessionKey: string;
+  readonly journalSessionId: string;
   readonly agentId: 'main';
   readonly relativePath: string;
   readonly journalPath: string;
@@ -27,11 +28,19 @@ export function isKimiServerSourceRoot(path: string): boolean {
   const regular = (candidate: string): boolean => {
     try { const value = lstatSync(candidate); return value.isDirectory() && !value.isSymbolicLink(); } catch { return false; }
   };
-  return regular(path) && (regular(join(path, 'events')) || (basename(path).toLowerCase() === 'events' && basename(join(path, '..')).toLowerCase() === 'server'));
+  if (!regular(path)) return false;
+  const child = join(path, 'events');
+  if (regular(child) && hasSessionJournal(child)) return true;
+  const parent = join(path, '..');
+  return basename(path).toLowerCase() === 'events' && basename(parent).toLowerCase() === 'server' && regular(parent) && hasSessionJournal(path);
 }
 
-export async function resolveKimiServerEvents(root: string): Promise<string | undefined> {
-  if (await regularDirectory(join(root, 'sessions'))) return undefined;
+export async function resolveKimiServerEvents(root: string, includeHomeLayout = false): Promise<string | undefined> {
+  if (await regularDirectory(join(root, 'sessions'))) {
+    if (!includeHomeLayout) return undefined;
+    const homeServerEvents = join(root, 'server', 'events');
+    return await regularDirectory(homeServerEvents) ? homeServerEvents : undefined;
+  }
   const child = join(root, 'events');
   if (await regularDirectory(child)) return child;
   return basename(root).toLowerCase() === 'events' && basename(join(root, '..')).toLowerCase() === 'server' ? root : undefined;
@@ -53,7 +62,8 @@ export async function inventoryKimiServerJournals(root: string, events: string, 
       const identity = await regularFile(journalPath);
       if (identity === undefined) { partial = true; continue; }
       const relativePath = relative(root, journalPath).replaceAll('\\', '/');
-      entries.push({ kind: 'server', sessionKey: basename(item.name, '.jsonl'), agentId: 'main', relativePath, journalPath, activityMs: identity.mtimeMs, identity,
+      const journalSessionId = basename(item.name, '.jsonl');
+      entries.push({ kind: 'server', sessionKey: journalSessionId, journalSessionId, agentId: 'main', relativePath, journalPath, activityMs: identity.mtimeMs, identity,
         signature: 'server\0' + relativePath + '\0' + identityKey(identity) });
     }
   } catch { budget.check(); partial = true; }
@@ -77,7 +87,7 @@ export async function readKimiServerMetadata(entry: KimiServerJournalEntry, budg
     const total = Math.min(before.size, PREFIX_BYTES + TAIL_BYTES, remainingBytes);
     const prefix = before.size <= total ? total : Math.min(PREFIX_BYTES, Math.ceil(total / 4));
     const ranges = [{ offset: 0, length: prefix }, ...(before.size > total && total > prefix ? [{ offset: before.size - (total - prefix), length: total - prefix }] : [])];
-    const lines: Array<{ text: string; header: boolean }> = [];
+    const lines: string[] = [];
     for (const range of ranges) {
       if (!budget.check() || range.length === 0) break;
       const buffer = Buffer.alloc(range.length);
@@ -86,7 +96,7 @@ export async function readKimiServerMetadata(entry: KimiServerJournalEntry, budg
       let text = buffer.subarray(0, bytesRead).toString('utf8');
       if (range.offset > 0) text = text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1);
       if (range.offset + bytesRead < before.size) text = text.slice(0, Math.max(0, text.lastIndexOf('\n')));
-      for (const [index, line] of text.split('\n').entries()) if (line.trim().length > 0) lines.push({ text: line, header: range.offset === 0 && index === 0 });
+      for (const line of text.split('\n')) if (line.trim().length > 0) lines.push(line);
     }
     const after = await file.stat();
     const pathAfter = await regularFile(entry.journalPath);
@@ -94,21 +104,27 @@ export async function readKimiServerMetadata(entry: KimiServerJournalEntry, budg
     const allowance = Math.max(0, budget.limits.maxRecords - budget.records);
     const selected = lines.length <= allowance ? lines : allowance === 0 ? [] : [lines[0]!, ...(allowance > 1 ? lines.slice(-(allowance - 1)) : [])];
     const state: Record<string, unknown> = {};
-    let validHeader = false;
+    const parsed: Array<Record<string, unknown> | undefined> = [];
+    let latestHeaderIndex = -1;
     let partial = total < before.size || selected.length < lines.length;
     for (const line of selected) {
       if (!budget.check()) { partial = true; break; }
       budget.records += 1;
       let value: unknown;
-      try { value = JSON.parse(line.text); } catch { partial = true; continue; }
-      if (!isMetadataRecord(value)) { partial = true; continue; }
-      if (line.header) {
-        validHeader = value.kind === 'journal_header' && value.version === 1 && typeof value.epoch === 'string' && value.epoch.length > 0;
-        if (validHeader && validClock(value.created_at) !== undefined) state.createdAt = value.created_at;
-        continue;
+      try { value = JSON.parse(line); } catch { partial = true; parsed.push(undefined); continue; }
+      if (!isMetadataRecord(value)) { partial = true; parsed.push(undefined); continue; }
+      parsed.push(value);
+      if (isJournalHeader(value)) latestHeaderIndex = parsed.length - 1;
+    }
+    const validHeader = latestHeaderIndex >= 0;
+    if (validHeader) {
+      const header = parsed[latestHeaderIndex]!;
+      if (validClock(header.created_at) !== undefined) state.createdAt = header.created_at;
+      for (let index = latestHeaderIndex + 1; index < parsed.length; index += 1) {
+        const record = parsed[index];
+        if (record === undefined) continue;
+        if (!applyJournalMetadata(state, record, entry.journalSessionId)) partial = true;
       }
-      if (!validHeader) continue;
-      if (!applyJournalMetadata(state, value, entry.sessionKey)) partial = true;
     }
     return { state, partial: partial || !validHeader || budget.truncated };
   } finally { await file.close(); }
@@ -116,7 +132,10 @@ export async function readKimiServerMetadata(entry: KimiServerJournalEntry, budg
 
 function applyJournalMetadata(state: Record<string, unknown>, record: Record<string, unknown>, sessionKey: string): boolean {
   const envelope = isMetadataRecord(record.envelope) ? record.envelope : undefined;
-  if (record.kind !== 'event' || typeof record.seq !== 'number' || !Number.isSafeInteger(record.seq) || record.seq <= 0 || envelope === undefined || typeof envelope.type !== 'string') return false;
+  if (record.kind !== 'event' || typeof record.seq !== 'number' || !Number.isSafeInteger(record.seq) || record.seq <= 0 || envelope === undefined
+      || typeof envelope.seq !== 'number' || !Number.isSafeInteger(envelope.seq) || envelope.seq <= 0 || envelope.seq !== record.seq || typeof envelope.type !== 'string') return false;
+  if (envelope.volatile !== undefined && typeof envelope.volatile !== 'boolean') return false;
+  if (envelope.offset !== undefined && (typeof envelope.offset !== 'number' || !Number.isSafeInteger(envelope.offset) || envelope.offset < 0)) return false;
   if (envelope.session_id !== undefined && envelope.session_id !== sessionKey) return false;
   const clock = validClock(envelope.timestamp);
   if (clock !== undefined) state.updatedAt = clock;
@@ -157,6 +176,10 @@ function applyJournalMetadata(state: Record<string, unknown>, record: Record<str
   return true;
 }
 
+function isJournalHeader(value: Record<string, unknown>): boolean {
+  return value.kind === 'journal_header' && value.version === 1 && typeof value.epoch === 'string' && value.epoch.length > 0;
+}
+
 function promptPreview(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
   let text = '';
@@ -175,5 +198,11 @@ function validClock(value: unknown): string | undefined {
 }
 function identityKey(value: Stats): string { return [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join('\0'); }
 function sameIdentity(left: Stats, right: Stats): boolean { return identityKey(left) === identityKey(right); }
+function hasSessionJournal(events: string): boolean {
+  try {
+    return readdirSync(events, { withFileTypes: true }).some((entry) => entry.isFile() && !entry.isSymbolicLink()
+      && entry.name.startsWith('session_') && entry.name.endsWith('.jsonl') && entry.name.length > 'session_.jsonl'.length);
+  } catch { return false; }
+}
 async function regularDirectory(path: string): Promise<boolean> { const value = await lstat(path).catch(() => undefined); return value?.isDirectory() === true && !value.isSymbolicLink(); }
 async function regularFile(path: string): Promise<Stats | undefined> { const value = await lstat(path).catch(() => undefined); return value?.isFile() === true && !value.isSymbolicLink() ? value : undefined; }
