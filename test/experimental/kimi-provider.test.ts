@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, opendir, open, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, opendir, open, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KimiSessionNavigatorProvider } from '../../src/experimental/session-navigator/kimi-provider';
 import { createSessionNavigatorProvider } from '../../src/experimental/session-navigator/provider-factory';
-import { discoverDefaultSources, parseAuthorizedSources } from '../../src/experimental/session-navigator/source-config';
+import { discoverDefaultSources, mergeSourceSettings, parseAuthorizedSources } from '../../src/experimental/session-navigator/source-config';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET as defaults } from '../../src/experimental/session-navigator/types';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -49,6 +49,178 @@ async function setActivity(path: string, timestamp: string): Promise<void> {
     utimes(join(path, 'agents', 'main', 'wire.jsonl'), activity, activity),
   ]);
 }
+
+function journalEvent(type: string, payload: Record<string, unknown>, seq = 1): unknown {
+  return { kind: 'event', seq, envelope: { type, seq, timestamp: '2026-01-02T00:00:00.000Z', payload } };
+}
+
+async function serverJournal(id: string, records: readonly unknown[] = []): Promise<string> {
+  const path = join(root, 'server', 'events', 'session_' + id + '.jsonl');
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, [JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_synthetic', created_at: 1_700_000_000_000 }), ...records.map((value) => JSON.stringify(value))].join('\n') + '\n');
+  return path;
+}
+
+function serverProvider(events = false): KimiSessionNavigatorProvider {
+  return new KimiSessionNavigatorProvider({ provider: 'kimi', rootUri: pathToFileURL(join(root, 'server', ...(events ? ['events'] : []))).toString() });
+}
+
+describe('Kimi server journal Navigator provider', () => {
+  it('keeps explicitly configured server and events roots beside the detected home', async () => {
+    await serverJournal('explicit');
+    const home = { provider: 'kimi' as const, rootUri: pathToFileURL(root).toString() };
+    const configured = [home, ...[join(root, 'server'), join(root, 'server', 'events')].map((path) => ({ provider: 'kimi' as const, rootUri: pathToFileURL(path).toString() }))];
+    expect(mergeSourceSettings(configured, [home])).toEqual(configured);
+    await rm(join(root, 'server'), { recursive: true });
+    expect(mergeSourceSettings(configured, [home])).toEqual(configured);
+    expect(discoverDefaultSources({ env: { KIMI_CODE_HOME: root }, homeDirectory: root }).filter((source) => source.provider === 'kimi')).toEqual([home]);
+  });
+
+  it('projects only bounded metadata from server journals without optional envelope identity fields', async () => {
+    const path = await serverJournal('metadata', [
+      journalEvent('event.session.created', { session: { title: 'Old title', created_at: '2025-01-01T00:00:00.000Z', updated_at: '2025-01-02T00:00:00.000Z', last_prompt: 'Old prompt', metadata: { secret: 'DO_NOT_PROJECT' } } }),
+      journalEvent('session.meta.updated', { type: 'misleading.type', patch: { title: 'Latest title', lastPrompt: 'Latest prompt', secret: 'DO_NOT_PROJECT' } }, 2),
+      journalEvent('event.session.status_changed', { status: 'running' }, 3),
+      journalEvent('tool.result', { output: 'PRIVATE_TOOL_OUTPUT', command: 'DO_NOT_EXECUTE' }, 4),
+    ]);
+    await writeFile(join(root, 'server', 'events', '__global__.jsonl'), 'DO_NOT_READ');
+    await mkdir(join(root, 'server', 'instances'));
+    await writeFile(join(root, 'server', 'instances', 'instance.json'), 'DO_NOT_READ');
+    await writeFile(join(root, 'server', 'server.token'), 'DO_NOT_READ');
+    await writeFile(join(root, 'server', 'server.log'), 'DO_NOT_READ');
+    const result = await serverProvider().scan(signal(), defaults);
+    expect(result.snapshot.entities).toHaveLength(1);
+    expect(result.snapshot.entities[0]).toMatchObject({ label: 'Latest title', firstMessagePreview: 'Latest prompt', status: 'running', startedAt: '2025-01-01T00:00:00.000Z', activityAt: '2026-01-02T00:00:00.000Z' });
+    expect(result.snapshot.locations).toEqual([{ nativeId: result.snapshot.entities[0]!.nativeId, relativePath: 'events/session_metadata.jsonl', rowOrdinal: '0' }]);
+    expect(vi.mocked(open).mock.calls.map((call) => call[0])).toEqual([path]);
+    expect(JSON.stringify(result.snapshot)).not.toMatch(/PRIVATE_|DO_NOT_|misleading/);
+    expect((await serverProvider(true).scan(signal(), defaults)).snapshot.locations[0]?.relativePath).toBe('session_metadata.jsonl');
+  });
+
+  it('samples both ends for current metadata and keeps directory pagination resumable', async () => {
+    const filler = Array.from({ length: 30 }, (_, index) => journalEvent('tool.result', { output: 'PRIVATE_' + 'x'.repeat(5_000) }, index + 2));
+    const first = await serverJournal('sampled', [journalEvent('event.session.created', { session: { title: 'Old title' } }), ...filler, journalEvent('session.meta.updated', { patch: { title: 'Tail title', lastPrompt: 'Tail prompt' } }, 33)]);
+    const second = await serverJournal('next', [journalEvent('event.session.created', { session: { title: 'Next page' } })]);
+    await utimes(first, new Date('2026-01-02'), new Date('2026-01-02'));
+    await utimes(second, new Date('2026-01-01'), new Date('2026-01-01'));
+    const current = serverProvider();
+    const page = await current.scanPage(signal(), { ...defaults, maxFiles: 1 });
+    expect(page.snapshot.entities[0]).toMatchObject({ label: 'Tail title', firstMessagePreview: 'Tail prompt' });
+    expect(page.snapshot.truncated).toBe(true);
+    expect(page.nextCursor).toBeDefined();
+    const next = await current.scanPage(signal(), { ...defaults, maxFiles: 1 }, page.nextCursor);
+    expect(next.snapshot.entities[0]?.label).toBe('Next page');
+    expect(next.nextCursor).toBeUndefined();
+  });
+
+  it('invalidates server continuations after an append without reusing a stale probe', async () => {
+    const path = await serverJournal('changed', [journalEvent('event.session.created', { session: { title: 'Before append' } })]);
+    await serverJournal('other');
+    const current = serverProvider();
+    const page = await current.scanPage(signal(), { ...defaults, maxFiles: 1 });
+    await appendFile(path, JSON.stringify(journalEvent('session.meta.updated', { patch: { title: 'After append' } }, 2)) + '\n');
+    await expect(current.scanPage(signal(), defaults, page.nextCursor)).rejects.toMatchObject({ code: 'SESSION_SOURCE_CHANGED' });
+    expect((await current.scan(signal(), defaults)).snapshot.entities.map((entity) => entity.label)).toContain('After append');
+  });
+
+  it('honors byte, record, file, entity, cancellation and deadline budgets', async () => {
+    await serverJournal('a', [journalEvent('session.meta.updated', { patch: { title: 'A' } })]);
+    await serverJournal('b', [journalEvent('session.meta.updated', { patch: { title: 'B' } })]);
+    const current = serverProvider();
+    for (const limits of [{ maxBytes: 0 }, { maxRecords: 0 }, { maxFiles: 0 }, { maxEntities: 0 }, { maxMilliseconds: 0 }]) {
+      vi.mocked(open).mockClear();
+      const page = await current.scan(signal(), { ...defaults, ...limits });
+      expect(page.snapshot.entities).toEqual([]);
+      expect(page.snapshot.truncated).toBe(true);
+      expect(vi.mocked(open)).not.toHaveBeenCalled();
+    }
+    const limited = await current.scanPage(signal(), { ...defaults, maxRecords: 1 });
+    expect(limited.snapshot.entities).toHaveLength(1);
+    expect(limited.nextCursor).toBeDefined();
+    const cancelled = new AbortController(); cancelled.abort();
+    await expect(current.scan(cancelled.signal, defaults)).rejects.toThrow('cancelled');
+  });
+
+  it('reserves bounded record inspection for tail metadata even in a small file', async () => {
+    await serverJournal('record-tail', [
+      journalEvent('event.session.created', { session: { title: 'Old title' } }),
+      ...Array.from({ length: 20 }, (_, index) => journalEvent('tool.result', { output: 'inert' }, index + 2)),
+      journalEvent('session.meta.updated', { patch: { title: 'Tail under record limit' } }, 22),
+    ]);
+    const result = await serverProvider().scan(signal(), { ...defaults, maxRecords: 2 });
+    expect(result.snapshot.entities[0]?.label).toBe('Tail under record limit');
+    expect(result.snapshot.truncated).toBe(true);
+  });
+
+  it('splits a constrained byte budget between header and current tail metadata', async () => {
+    await serverJournal('byte-tail', [
+      journalEvent('event.session.created', { session: { title: 'Old title' } }),
+      journalEvent('tool.result', { output: 'PRIVATE_' + 'x'.repeat(100_000) }, 2),
+      journalEvent('session.meta.updated', { patch: { title: 'Latest within bytes' } }, 3),
+    ]);
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    let bytesRead = 0;
+    vi.mocked(open).mockImplementationOnce(async (path, flags) => {
+      const handle = await actual.open(path, flags);
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, 'read').mockImplementation(async (...args: Parameters<typeof handle.read>) => {
+        const result = await read(...args); bytesRead += result.bytesRead; return result;
+      });
+      return handle;
+    });
+    const result = await serverProvider().scan(signal(), { ...defaults, maxBytes: 8_192 });
+    expect(bytesRead).toBe(8_192);
+    expect(result.snapshot.entities[0]?.label).toBe('Latest within bytes');
+    expect(result.snapshot.truncated).toBe(true);
+    expect(JSON.stringify(result.snapshot)).not.toContain('PRIVATE_');
+  });
+
+  it('isolates unreadable metadata and continues to healthy sibling journals', async () => {
+    const unreadable = await serverJournal('unreadable');
+    await serverJournal('healthy', [journalEvent('session.meta.updated', { patch: { title: 'Healthy journal' } })]);
+    await utimes(unreadable, new Date('2030-01-01'), new Date('2030-01-01'));
+    vi.mocked(open).mockRejectedValueOnce(Object.assign(new Error('access denied'), { code: 'EACCES' }));
+    const result = await serverProvider().scan(signal(), defaults);
+    expect(result.snapshot.entities).toHaveLength(2);
+    expect(result.snapshot.truncated).toBe(true);
+    expect(result.snapshot.entities.map((entity) => entity.label)).toContain('Healthy journal');
+  });
+
+  it('rejects a journal replaced between inventory and open before reading bytes', async () => {
+    await serverJournal('replaced');
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const reads = vi.fn();
+    vi.mocked(open).mockImplementationOnce(async (path, flags) => {
+      await writeFile(path, 'REPLACED_BODY_NOT_READ');
+      const handle = await actual.open(path, flags);
+      vi.spyOn(handle, 'read').mockImplementation(reads);
+      return handle;
+    });
+    await expect(serverProvider().scan(signal(), defaults)).rejects.toMatchObject({ code: 'SESSION_SOURCE_CHANGED' });
+    expect(reads).not.toHaveBeenCalled();
+  });
+
+  it('preserves malformed or unsupported journals without treating their payload as metadata', async () => {
+    const invalid = await serverJournal('invalid', [journalEvent('session.meta.updated', { patch: { title: 'DO_NOT_PROJECT' } })]);
+    await writeFile(invalid, JSON.stringify({ kind: 'journal_header', version: 2, epoch: 'ep_future' }) + '\n' + JSON.stringify(journalEvent('session.meta.updated', { patch: { title: 'DO_NOT_PROJECT' } })) + '\n');
+    const mismatched = await serverJournal('mismatch', [{ kind: 'event', seq: 1, envelope: { type: 'session.meta.updated', seq: 1, session_id: 'session_other', timestamp: 'invalid', payload: { patch: { title: 'DO_NOT_PROJECT' } } } }]);
+    const result = await serverProvider().scan(signal(), defaults);
+    expect(result.snapshot.entities).toHaveLength(2);
+    expect(result.snapshot.truncated).toBe(true);
+    expect(JSON.stringify(result.snapshot)).not.toContain('DO_NOT_PROJECT');
+    expect(result.snapshot.locations.map((location) => location.relativePath)).toEqual(expect.arrayContaining(['events/' + invalid.split(/[\\/]/).at(-1), 'events/' + mismatched.split(/[\\/]/).at(-1)]));
+  });
+
+  it('does not follow journal links or linked events directories', async () => {
+    const path = await serverJournal('actual');
+    await symlink(path, join(dirname(path), 'session_linked.jsonl'), process.platform === 'win32' ? 'file' : 'file');
+    expect((await serverProvider().scan(signal(), defaults)).snapshot.entities).toHaveLength(1);
+    const linkedRoot = join(root, 'linked-server');
+    await mkdir(linkedRoot);
+    await symlink(dirname(path), join(linkedRoot, 'events'), process.platform === 'win32' ? 'junction' : 'dir');
+    expect((await new KimiSessionNavigatorProvider({ provider: 'kimi', rootUri: pathToFileURL(linkedRoot).toString() }).scan(signal(), defaults)).snapshot.entities).toEqual([]);
+  });
+});
 
 describe('Kimi metadata-only Navigator provider', () => {
   it('constructs lazily and dispatches only after an explicit setting', () => {

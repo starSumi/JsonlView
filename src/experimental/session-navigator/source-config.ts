@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { catalogSourceId, catalogSourceLabel } from '../../application/catalog/catalog-identity';
+import { isKimiServerSourceRoot } from './kimi-server-journal';
 import { isGenericFileProvider, type AuthorizedSourceSetting, type SessionNavigatorProviderId } from './types';
 
 const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'kimi', 'gemini', 'opencode', 'agentsview', 'generic']);
@@ -83,7 +84,8 @@ export function mergeSourceSettings(
     candidate.provider === setting.provider && candidate.stateRootUri !== undefined && canonicalUriKey(candidate.rootUri) === canonicalUriKey(setting.rootUri),
   ) ?? setting);
   const candidates = [...defaults, ...configured.filter((setting) => !discovered.some((candidate) =>
-    candidate.provider === setting.provider && isUnderRoot(canonicalUriKey(setting.rootUri), canonicalUriKey(candidate.rootUri)),
+    candidate.provider === setting.provider && isUnderRoot(canonicalUriKey(setting.rootUri), canonicalUriKey(candidate.rootUri))
+      && !(setting.provider === 'kimi' && isIndependentKimiServerRoot(setting.rootUri, candidate.rootUri)),
   ))];
   for (const setting of candidates) {
     const key = setting.provider + '\0' + canonicalUriKey(setting.rootUri) + '\0' + canonicalUriKey(setting.stateRootUri ?? setting.rootUri);
@@ -112,7 +114,7 @@ function isFileUri(value: string): boolean {
 function isProviderRoot(provider: SessionNavigatorProviderId, path: string): boolean {
   try {
     if (!statSync(path).isDirectory()) return false;
-    if (provider === 'kimi') return statSync(join(path, 'sessions')).isDirectory();
+    if (provider === 'kimi') return isKimiServerSourceRoot(path) || statSync(join(path, 'sessions')).isDirectory();
     const names = new Set(readdirSync(path, { encoding: 'utf8' }));
     if (provider === 'codex') {
       return [...names].some((name) => /^state(?:_\d+)?\.sqlite$/iu.test(name)) || names.has('sessions') || names.has('archived_sessions');
@@ -144,6 +146,12 @@ function canonicalUriKey(uri: string): string {
 function isUnderRoot(candidate: string, root: string): boolean {
   const suffix = relative(root, candidate);
   return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..' + sep));
+}
+
+function isIndependentKimiServerRoot(candidateUri: string, homeUri: string): boolean {
+  const candidate = canonicalUriKey(candidateUri);
+  const withinHome = relative(canonicalUriKey(homeUri), candidate).split(sep).join('/').toLowerCase();
+  return withinHome === 'server' || withinHome === 'server/events' || isKimiServerSourceRoot(fileURLToPath(candidateUri));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
