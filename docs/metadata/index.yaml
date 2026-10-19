@@ -701,16 +701,6 @@ documents:
     evidence: []
     revisit: when a second native query consumer or remote ACP transport is promoted
     rollback: disable the native capability and omit the opt-in MCP or ACP entrypoints
-  - id: adr-053-gemini-observe-evidence-gates
-    path: docs/decisions/053-gemini-observe-evidence-gates.md
-    title: Observation And Evidence Gates
-    kind: decision
-    status: accepted
-    owner: product
-    tags: [observability, evidence, rust, sqlite, navigator]
-    evidence: []
-    revisit: when a measured workload identifies a native or telemetry bottleneck
-    rollback: remove the deferred observer proposal and retain the bounded host projection
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions
