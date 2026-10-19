@@ -75,7 +75,7 @@ export { GENERIC_PROFILE_ID, GenericProfile } from './generic-profile';
 export { OpenTelemetryProfile } from './opentelemetry-profile';
 export { PiCodingAgentProfile, isPiMessageEntry, isPiSessionHeader } from './pi-profile';
 export { KimiCodeProfile } from './kimi-profile';
-export { KIMI_SOURCE_REVISION, isKimiContextRecord, isKimiMetadata } from './kimi-record';
+export { KIMI_SOURCE_REVISION, isKimiAgentCoreRecord, isKimiContextRecord, isKimiMetadata } from './kimi-record';
 export { AgentProfileRegistry } from './profile-registry';
 export { SoftwareEngineeringAgentProfile } from './software-engineering-agent-profile';
 export { StructuredApplicationLogProfile } from './structured-application-log-profile';

@@ -169,6 +169,17 @@ describe('VS Code message client', () => {
     expect(shouldAcceptMessage(stale, { documentId: 'doc', generation: 'g2' }, new Map())).toBe(false);
   });
 
+  it('accepts Navigator visibility only as an unsolicited current-generation host state', () => {
+    const client = new VsCodeMessageClient({ postMessage() {} }, { documentId: 'doc', generation: 'g2', epoch: 3 });
+    const visibility = { protocolVersion: PROTOCOL_VERSION, direction: 'host-to-webview',
+      type: 'NAVIGATOR_VISIBILITY', documentId: 'doc', generation: 'g2', epoch: 3, requestId: '',
+      payload: { visible: true } };
+
+    expect(client.accept(visibility)).toEqual(visibility);
+    expect(client.accept({ ...visibility, generation: 'g1' })).toBeUndefined();
+    expect(client.accept({ ...visibility, requestId: 'unexpected-request' })).toBeUndefined();
+  });
+
   it('completes a follow request when its correlated progress arrives', () => {
     const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
       documentId: 'doc',

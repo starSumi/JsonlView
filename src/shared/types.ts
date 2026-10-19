@@ -483,6 +483,7 @@ export type ExtensionMessage =
   | ProtocolEnvelope<'SOURCE_INVALIDATED', { reason: 'append' | 'truncate' | 'replace' | 'delete' | 'unknown' }>
   | ProtocolEnvelope<'ERROR', { code: string; message: string; recoverable: boolean }>
   | ProtocolEnvelope<'NAVIGATOR_STATUS', NavigatorBridgeResultV1>
+  | ProtocolEnvelope<'NAVIGATOR_VISIBILITY', { visible: boolean }>
   | ProtocolEnvelope<'SOURCE_REGISTRATION_RESULT', SourceRegistrationFactsV1>;
 
 export function isProtocolDirection(value: unknown): value is ProtocolDirection {

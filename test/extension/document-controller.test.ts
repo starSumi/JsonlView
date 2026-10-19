@@ -364,6 +364,18 @@ describe('document controller', () => {
     expect(messages[0]?.type).toBe('OPENED');
   });
 
+  it('publishes current Navigator visibility only after the editor accepts OPENED', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { getNavigatorVisibility: () => true });
+
+    await controller.handleMessage(request('READY'));
+
+    expect(messages.map((message) => message.type)).toEqual(['OPENED', 'NAVIGATOR_VISIBILITY']);
+    expect(messages[1]).toMatchObject({ documentId: 'document', generation: 'generation', requestId: '', payload: { visible: true } });
+  });
+
   it('reports a failed OPENED delivery and does not run post-handshake actions', async () => {
     const deliveries: boolean[] = [];
     let readyActions = 0;

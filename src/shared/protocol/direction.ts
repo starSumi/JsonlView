@@ -14,7 +14,7 @@ const WEBVIEW_REQUEST_TYPES: ReadonlySet<string> = new Set<WebviewRequestType>([
 const EXTENSION_MESSAGE_TYPES: ReadonlySet<string> = new Set<ExtensionMessageType>([
   'OPENED', 'PREVIEW_STATUS', 'ROWS', 'PROBLEMS', 'DETAIL', 'SCHEMA', 'INSIGHTS',
   'INDEX_PROGRESS', 'PROFILE_CHANGED', 'ROW_ORDER_CHANGED', 'REVEAL',
-  'SOURCE_INVALIDATED', 'ERROR', 'NAVIGATOR_STATUS', 'SOURCE_REGISTRATION_RESULT',
+  'SOURCE_INVALIDATED', 'ERROR', 'NAVIGATOR_STATUS', 'NAVIGATOR_VISIBILITY', 'SOURCE_REGISTRATION_RESULT',
 ]);
 
 export function isWebviewRequestType(value: unknown): value is WebviewRequestType {

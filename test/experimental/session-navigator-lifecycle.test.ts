@@ -13,11 +13,17 @@ const host = vi.hoisted(() => ({
   roots: [] as AuthorizedSourceSetting[], scan: vi.fn(), scanPage: vi.fn(), picker: vi.fn(), dialog: vi.fn(),
   configuration: undefined as undefined | ((event: { affectsConfiguration: (key: string) => boolean }) => void),
   visibility: undefined as undefined | ((event: { visible: boolean }) => void),
+  sourceDropVisibilityListeners: new Set<(visible: boolean) => void>(),
   view: { visible: false, message: undefined as string | undefined, dispose() {}, onDidChangeVisibility: vi.fn() },
   progress: vi.fn(), intake: vi.fn(), probe: vi.fn(), execute: vi.fn(), persist: vi.fn(), info: vi.fn(), warning: vi.fn(), updates: vi.fn(), overridden: false,
 }));
 vi.mock('vscode', () => ({
-  EventEmitter: class { event = () => ({ dispose() {} }); fire() {} dispose() {} },
+  EventEmitter: class {
+    readonly listeners = new Set<(value: unknown) => void>();
+    event = (listener: (value: unknown) => void) => { this.listeners.add(listener); return { dispose: () => this.listeners.delete(listener) }; };
+    fire(value: unknown) { for (const listener of this.listeners) listener(value); }
+    dispose() { this.listeners.clear(); }
+  },
   TreeItem: class { constructor(public label: string, public collapsibleState: number) {} },
   TreeItemCollapsibleState: { None: 0, Collapsed: 1 },
   ThemeIcon: class { constructor(public id: string) {} },
@@ -54,7 +60,11 @@ vi.mock('../../src/experimental/session-navigator/provider-factory', () => ({ cr
   scanPage: (signal: AbortSignal, budget: unknown, cursor?: string) => host.scanPage(signal, budget, cursor, setting.provider),
   probe: (signal: AbortSignal) => host.probe(signal, setting.provider),
 }) }));
-vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class { show() { host.intake(); } async dispose() {} } }));
+vi.mock('../../src/experimental/session-navigator/source-intake', () => ({ SourceIntakePanel: class {
+  onDidChangeVisibility = (listener: (visible: boolean) => void) => { host.sourceDropVisibilityListeners.add(listener); return { dispose: () => host.sourceDropVisibilityListeners.delete(listener) }; };
+  show() { host.intake(); }
+  async dispose() {}
+} }));
 import { SessionNavigatorTreeProvider } from '../../src/experimental/session-navigator/tree-provider';
 import { RevealIntentRegistry } from '../../src/experimental/session-navigator/reveal-intents';
 import { CatalogStore, type CatalogChildrenPage } from '../../src/experimental/session-navigator/catalog-store';
@@ -78,6 +88,7 @@ const snapshot: SessionNavigatorScanResult = {
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'jsonlview-navigator-lifecycle-'));
   host.config.clear(); host.state.clear(); host.commands.clear();
+  host.sourceDropVisibilityListeners.clear();
   host.config.set('sessionNavigator.enabled', true);
   host.roots = [{ provider: 'codex', rootUri: pathToFileURL(join(root, 'provider')).toString() }];
   host.config.set('sessionNavigator.sources', host.roots);
@@ -95,6 +106,37 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); tree.dispose(); await rm(root, { recursive: true, force: true }); });
 
 describe('Session Navigator host lifecycle', () => {
+  it('aggregates visible child views without coupling Add Source visibility to Sessions scanning', async () => {
+    const values: boolean[] = [];
+    const registration = tree.onDidChangeVisibility((visible) => values.push(visible));
+    for (const listener of host.sourceDropVisibilityListeners) listener(true);
+
+    expect(values).toEqual([true]);
+    expect(host.scan).not.toHaveBeenCalled();
+
+    host.visibility?.({ visible: true });
+    for (const listener of host.sourceDropVisibilityListeners) listener(false);
+    expect(values).toEqual([true]);
+    await vi.waitFor(() => expect(host.scan).toHaveBeenCalled());
+
+    host.visibility?.({ visible: false });
+    expect(values).toEqual([true, false]);
+    registration.dispose();
+  });
+
+  it('publishes only actual TreeView visibility transitions', () => {
+    host.config.set('sessionNavigator.enabled', false);
+    const values: boolean[] = [];
+    const registration = tree.onDidChangeVisibility((visible) => values.push(visible));
+
+    host.visibility?.({ visible: true });
+    host.visibility?.({ visible: true });
+    host.visibility?.({ visible: false });
+
+    expect(values).toEqual([true, false]);
+    registration.dispose();
+  });
+
   it.each(['Cancel', undefined, 'Settings'])('does no scan, persistence, or catalog IO when disabled and choosing %s', async (choice) => {
     host.config.set('sessionNavigator.enabled', false); host.info.mockResolvedValue(choice);
     const opening = vi.spyOn(CatalogStore, 'open');

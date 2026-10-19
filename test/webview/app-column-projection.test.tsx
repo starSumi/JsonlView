@@ -162,6 +162,11 @@ function deliver<Type extends ExtensionMessage['type']>(type: Type,
   browser.dispatchEvent(new MessageEvent('message', { data: message }));
   commit();
 }
+function deliverBroadcast(type: string, payload: unknown): void {
+  browser.dispatchEvent(new MessageEvent('message', { data: { protocolVersion: PROTOCOL_VERSION, type,
+    documentId: 'doc', generation: 'g1', requestId: '', payload } }));
+  commit();
+}
 const recordColumn = (name: string): ColumnSpec => recordColumnForPath(keyPath(name))!;
 const status = recordColumn('status');
 const prompt = recordColumn('prompt');
@@ -192,7 +197,10 @@ function chooseWorkspaceTab(label: string): void {
   const visit = (node: ReactNode): boolean => {
     if (Array.isArray(node)) return node.some(visit);
     if (!React.isValidElement<{ children?: ReactNode; onClick?: () => void; role?: string }>(node)) return false;
-    if (node.type === 'button' && node.props.role === 'tab' && React.Children.toArray(node.props.children).includes(label)) {
+    if (node.type === 'button' && node.props.role === 'tab'
+      && React.Children.toArray(node.props.children).some((child) =>
+        React.isValidElement<{ className?: string; children?: ReactNode }>(child)
+          && child.props.className === 'workspace-tab-label' && child.props.children === label)) {
       node.props.onClick?.(); return true;
     }
     return visit(node.props.children);
@@ -277,6 +285,24 @@ describe('App column presentation and projection boundary', () => {
       sourceId: 'source-1',
       targetDocumentId: 'doc',
     }, request);
+  });
+
+  it('tracks host Navigator visibility and gives compact tabs explicit accessible names', () => {
+    commit();
+    const header = (): Record<string, unknown> => props(WorkspaceHeader) as unknown as Record<string, unknown>;
+    expect(header().navigatorVisible).toBe(false);
+    deliver('OPENED', summary, last('READY'));
+
+    deliverBroadcast('NAVIGATOR_VISIBILITY', { visible: true });
+    expect(header().navigatorVisible).toBe(true);
+
+    const navigation = header().navigation as ReactElement<{ children?: ReactNode }>;
+    const tabs = React.Children.toArray(navigation.props.children) as Array<ReactElement<{
+      'aria-label'?: string; children?: ReactNode;
+    }>>;
+    expect(tabs[0]?.props['aria-label']).toBe('Table');
+    expect(React.Children.toArray(tabs[0]?.props.children).some((child) =>
+      React.isValidElement<{ className?: string }>(child) && child.props.className === 'workspace-tab-label')).toBe(true);
   });
 
   it('shows only current-page dataset observations and hides them during a new page request', () => {

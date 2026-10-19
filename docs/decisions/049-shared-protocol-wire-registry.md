@@ -93,6 +93,14 @@ and result message cases while retaining the existing envelope and transport
 validators. Consumer implementations must stop emitting the new result types
 before that rollback.
 
+## Navigator visibility state
+
+NAVIGATOR_VISIBILITY is a bounded { visible: boolean } host broadcast,
+separate from Navigator authorization and open-result status. It uses an empty
+request ID with the current document generation and epoch, so normal stale
+message gates apply without completing a pending request. Each editor receives
+the latest value after READY and on later TreeView visibility changes.
+
 ## Revisit trigger
 
 Revisit when a second wire consumer needs a new direction, when a source or

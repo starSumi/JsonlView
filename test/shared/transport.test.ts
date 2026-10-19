@@ -63,6 +63,15 @@ describe('shared transport boundary', () => {
     expect(validateProtocolEnvelope(value)).toMatchObject({ ok: true });
   });
 
+  it('validates host Navigator visibility broadcasts as a bounded boolean state', () => {
+    const message = { protocolVersion: PROTOCOL_VERSION, direction: 'host-to-webview',
+      type: 'NAVIGATOR_VISIBILITY', documentId: 'document', generation: 'generation', requestId: '',
+      payload: { visible: true } };
+    expect(isExtensionMessage(message)).toBe(true);
+    expect(isExtensionMessage({ ...message, payload: { visible: 'true' } })).toBe(false);
+    expect(isExtensionMessage({ ...message, payload: { visible: true, extra: 'ignored' } })).toBe(false);
+  });
+
   it('rejects unsupported versions and oversized transport identities', () => {
     expect(validateProtocolEnvelope({
       protocolVersion: PROTOCOL_VERSION + 1,

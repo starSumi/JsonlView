@@ -303,7 +303,8 @@ function samePhysicalRecord(left: RecordRef, right: RecordRef): boolean {
 function receiveMessage(state: WorkspaceState, message: ExtensionMessage): WorkspaceState {
   const pending = completeRequest(state.pending, message.requestId);
   switch (message.type) {
-    case 'PREVIEW_STATUS': return state;
+    case 'PREVIEW_STATUS':
+    case 'NAVIGATOR_VISIBILITY': return state;
     case 'OPENED': {
       if (state.summary !== undefined
         && !snapshotIdentityChanged(state.summary.snapshot, message.payload.snapshot)

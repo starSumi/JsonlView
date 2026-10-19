@@ -89,12 +89,17 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   readonly #onDetectedAgent: DetectedAgentHandler | undefined;
   readonly #onConnect: ConnectSourceHandler | undefined;
   readonly #lifetime = new AbortController();
+  readonly #visibilityChanged = new vscode.EventEmitter<boolean>();
   #panel: vscode.WebviewPanel | undefined;
   #view: vscode.WebviewView | undefined;
+  #viewVisibilityListener: vscode.Disposable | undefined;
+  #reportedViewVisibility = false;
   #panelLifetime: AbortController | undefined;
   #viewLifetime: AbortController | undefined;
   #pending: Promise<void> | undefined;
   #disposal: Promise<void> | undefined;
+
+  public readonly onDidChangeVisibility = this.#visibilityChanged.event;
 
   public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, public readonly previews = new SessionPreviews(), onConnect?: ConnectSourceHandler) {
     this.#onSource = onSource;
@@ -104,11 +109,20 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
 
   public resolveWebviewView(view: vscode.WebviewView): void {
     if (this.#lifetime.signal.aborted) return;
+    const previousView = this.#view;
+    if (previousView !== undefined && previousView !== view) {
+      this.reportViewVisibility(previousView, false);
+      this.#viewVisibilityListener?.dispose();
+    }
     this.#view = view;
+    this.reportViewVisibility(view, view.visible);
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = getSourceDropHtml();
     const controller = new AbortController();
     this.#viewLifetime = controller;
+    const visibilityListener = view.onDidChangeVisibility(() => this.reportViewVisibility(view, view.visible));
+    this.#viewVisibilityListener = visibilityListener;
+    this.reportViewVisibility(view, view.visible);
     const listener = view.webview.onDidReceiveMessage((message: unknown) => {
       if (controller.signal.aborted) return;
       if (this.#pending !== undefined) {
@@ -120,8 +134,12 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       void operation.finally(() => { if (this.#pending === operation) this.#pending = undefined; });
     });
     view.onDidDispose(() => {
-      controller.abort(); listener.dispose();
-      if (this.#view === view) { this.#view = undefined; this.#viewLifetime = undefined; }
+      controller.abort(); listener.dispose(); visibilityListener.dispose();
+      if (this.#view === view) {
+        this.reportViewVisibility(view, false);
+        this.#view = undefined; this.#viewLifetime = undefined;
+        if (this.#viewVisibilityListener === visibilityListener) this.#viewVisibilityListener = undefined;
+      }
     });
   }
 
@@ -153,9 +171,19 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
 
   public dispose(): Promise<void> {
     if (this.#disposal !== undefined) return this.#disposal;
+    if (this.#view !== undefined) this.reportViewVisibility(this.#view, false);
+    this.#viewVisibilityListener?.dispose();
+    this.#viewVisibilityListener = undefined;
     this.#lifetime.abort(); this.#panelLifetime?.abort(); this.#viewLifetime?.abort(); this.#panel?.dispose();
+    this.#visibilityChanged.dispose();
     this.#disposal = this.cleanup();
     return this.#disposal;
+  }
+
+  private reportViewVisibility(view: vscode.WebviewView, visible: boolean): void {
+    if (this.#view !== view || this.#reportedViewVisibility === visible) return;
+    this.#reportedViewVisibility = visible;
+    this.#visibilityChanged.fire(visible);
   }
 
   private async receive(raw: unknown, webview: vscode.Webview, signal: AbortSignal): Promise<void> {

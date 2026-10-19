@@ -1,9 +1,10 @@
 import type { AgentRowProjection, FieldPath } from '../shared/types';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
-import { isKimiContextRecord, isKimiMetadata, isKimiToolsSnapshot, kimiContentPreview, kimiTimestamp, kimiToolSnapshotCount, kimiUsage } from './kimi-record';
+import { projectKimiAgentCoreEvent, projectKimiMessage } from './kimi-agent-core-projection';
+import { isKimiAgentCoreRecord, isKimiMetadata, isKimiToolsSnapshot, kimiContentPreview, kimiTimestamp, kimiToolSnapshotCount, kimiUsage } from './kimi-record';
 import { decodeKimiServerEvent, isKimiServerDetectionEvent, isKimiServerHeader } from './kimi-server-record';
 import { projectKimiServerEvent, projectKimiServerHeader } from './kimi-server-projection';
-import { actorFromRole, boundedSummary, createProjection, evidence, indexedPath, isObject, keyPath, numberAt, objectAt, own, pushReason, setActor, setDerivedField as setRawDerivedField, setStringField as setRawStringField, stringAt } from './utils';
+import { boundedSummary, createProjection, evidence, indexedPath, isObject, keyPath, numberAt, objectAt, own, pushReason, setActor, setDerivedField as setRawDerivedField, setStringField as setRawStringField, stringAt } from './utils';
 
 const CONTROL_TYPES = new Set(['context.clear', 'context.undo', 'context.undone', 'context.apply_compaction',
   'full_compaction.begin', 'full_compaction.cancel', 'full_compaction.complete']);
@@ -12,11 +13,11 @@ const CONTROL_TYPES = new Set(['context.clear', 'context.undo', 'context.undone'
 export class KimiCodeProfile implements AgentProfile {
   public readonly id = 'kimi-code-session';
   public readonly displayName = 'Kimi Code';
-  public readonly version = '3';
+  public readonly version = '5';
 
   public detect(samples: readonly GenericRecordSample[]): DetectionResult {
     let headers = 0;
-    let contextRecords = 0;
+    let agentCoreRecords = 0;
     let serverHeaders = 0;
     let serverRecords = 0;
     let serverSpecificRecords = 0;
@@ -37,15 +38,15 @@ export class KimiCodeProfile implements AgentProfile {
       } else if (isKimiMetadata(sample.value)) {
         headers++;
         pushReason(reasons, keyPath('protocol_version'), 'Kimi persisted wire metadata with a 1.x protocol version and creation clock');
-      } else if (isKimiContextRecord(sample.value)) {
-        contextRecords++;
+      } else if (isKimiAgentCoreRecord(sample.value)) {
+        agentCoreRecords++;
         const type = stringAt(sample.value, 'type')!;
         signatures.add(type === 'context.append_loop_event' ? `${type}/${stringAt(sample.value, 'event', 'type')}` : type);
-        pushReason(reasons, keyPath('type'), 'Kimi persisted context journal event: ' + type);
+        pushReason(reasons, keyPath('type'), 'Kimi agent-core wire event: ' + type);
       }
     }
-    const coverage = (headers + contextRecords + serverHeaders + serverRecords) / Math.max(1, samples.length);
-    const corroborated = (headers > 0 && contextRecords > 0) || (contextRecords >= 3 && signatures.size >= 2)
+    const coverage = (headers + agentCoreRecords + serverHeaders + serverRecords) / Math.max(1, samples.length);
+    const corroborated = (headers > 0 && agentCoreRecords > 0) || (agentCoreRecords >= 3 && signatures.size >= 2)
       || (serverHeaders > 0 && serverRecords > 0)
       || (serverRecords >= 3 && serverSignatures.size >= 2 && serverSpecificRecords > 0);
     const requiredEvidenceMet = corroborated && coverage >= 0.6;
@@ -59,6 +60,8 @@ export class KimiCodeProfile implements AgentProfile {
     const serverEvent = decodeKimiServerEvent(value);
     if (serverEvent) return projectKimiServerEvent(serverEvent);
     if (isKimiServerHeader(value)) return projectKimiServerHeader(value);
+    const coreProjection = projectKimiAgentCoreEvent(value, this.id);
+    if (coreProjection) return finalizeProjection(coreProjection, value);
     const type = stringAt(value, 'type');
     let projection: AgentRowProjection;
     if (type === 'metadata') {
@@ -75,14 +78,45 @@ export class KimiCodeProfile implements AgentProfile {
       setDerivedField(projection, 'toolsCount', count, keyPath('tools'));
       if (Array.isArray(tools)) {
         const names = tools.slice(0, 32).map((tool) => stringAt(tool, 'name')).filter((name): name is string => name !== undefined).join(', ');
+        const descriptions = tools.slice(0, 32).map((tool) => {
+          const name = stringAt(tool, 'name');
+          const description = stringAt(tool, 'description');
+          return name && description ? `${name}: ${description}` : undefined;
+        }).filter((value): value is string => value !== undefined).join(' | ');
         setDerivedField(projection, 'toolNames', names || undefined, keyPath('tools'));
+        setDerivedField(projection, 'toolDescriptions', descriptions || undefined, keyPath('tools'));
       }
-    } else if (type === 'config.update' || type === 'profile.bind') {
+    } else if ((type === 'config.update' || type === 'profile.bind') && isKimiAgentCoreRecord(value)) {
       projection = createProjection(this.id, 'session', boundedSummary(type, 'Kimi'), keyPath('type'));
       setActor(projection, 'system', keyPath('type'));
       setDerivedField(projection, 'systemPrompt', stringAt(value, 'systemPrompt'), keyPath('systemPrompt'));
+      setDerivedField(projection, 'modelAlias', stringAt(value, 'modelAlias'), keyPath('modelAlias'));
+      setDerivedField(projection, 'profileName', stringAt(value, 'profileName'), keyPath('profileName'));
+      const effortKey = stringAt(value, 'thinkingEffort') !== undefined ? 'thinkingEffort' : 'thinkingLevel';
+      setDerivedField(projection, 'thinkingEffort', stringAt(value, effortKey), keyPath(effortKey));
+    } else if (type === 'mcp.tools_discovered' && isKimiAgentCoreRecord(value)) {
+      const tools = own(value, 'tools') as unknown[];
+      const enabledNames = own(value, 'enabledNames') as unknown[];
+      const serverName = stringAt(value, 'serverName')!;
+      const toolNames = tools.slice(0, 32).map((tool) => stringAt(tool, 'name')).filter((name): name is string => name !== undefined);
+      const enabledToolNames = enabledNames.slice(0, 32).filter((name): name is string => typeof name === 'string');
+      projection = createProjection(this.id, 'observation', boundedSummary(`${tools.length} tools from ${serverName}`, 'Kimi MCP discovery'), keyPath('type'), keyPath('tools'));
+      setActor(projection, 'system', keyPath('type'));
+      setDerivedField(projection, 'serverName', serverName, keyPath('serverName'));
+      setDerivedField(projection, 'toolsHash', stringAt(value, 'hash'), keyPath('hash'));
+      setDerivedField(projection, 'toolsCount', tools.length, keyPath('tools'));
+      setDerivedField(projection, 'toolNames', toolNames.join(', ') || undefined, keyPath('tools'));
+      setDerivedField(projection, 'enabledToolCount', enabledNames.length, keyPath('enabledNames'));
+      setDerivedField(projection, 'enabledToolNames', enabledToolNames.join(', ') || undefined, keyPath('enabledNames'));
+    } else if (type === 'tools.set_active_tools' && isKimiAgentCoreRecord(value)) {
+      const names = own(value, 'names') as unknown[];
+      const activeNames = names.slice(0, 32).filter((name): name is string => typeof name === 'string');
+      projection = createProjection(this.id, 'observation', boundedSummary(activeNames.join(', ') || names.length, 'Kimi active tools'), keyPath('type'), keyPath('names'));
+      setActor(projection, 'system', keyPath('type'));
+      setDerivedField(projection, 'activeToolCount', names.length, keyPath('names'));
+      setDerivedField(projection, 'activeToolNames', activeNames.join(', ') || undefined, keyPath('names'));
     } else if (type === 'context.append_message' && objectAt(value, 'message')) {
-      projection = this.message(objectAt(value, 'message')!);
+      projection = projectKimiMessage(objectAt(value, 'message')!, this.id);
     } else if (type === 'context.append_loop_event' && objectAt(value, 'event')) {
       projection = this.loopEvent(objectAt(value, 'event')!);
     } else if (type && CONTROL_TYPES.has(type)) {
@@ -124,40 +158,16 @@ export class KimiCodeProfile implements AgentProfile {
       setTurn(projection, own(value, 'turnId'), keyPath('turnId'));
       setDerivedField(projection, 'stepId', stringAt(value, 'stepId'), keyPath('stepId'));
       setDerivedField(projection, 'reason', stringAt(value, 'reason'), keyPath('reason'));
-    } else if (type === 'prompt.completed' || type === 'prompt.aborted') {
+    } else if (type === 'prompt.aborted') {
       projection = createProjection(this.id, 'turn', boundedSummary(stringAt(value, 'reason')?.slice(0, 240) ?? type, 'Kimi prompt'), keyPath('type'));
       setActor(projection, 'system', keyPath('type'));
-      setStringField(projection, 'status', type === 'prompt.aborted' ? 'aborted' : stringAt(value, 'reason'), type === 'prompt.aborted' ? keyPath('type') : keyPath('reason'));
+      setStringField(projection, 'status', 'aborted', keyPath('type'));
       setDerivedField(projection, 'promptId', stringAt(value, 'promptId'), keyPath('promptId'));
     } else {
       // No recursive rendering of unknown structures or transport-shaped payloads.
       projection = createProjection(this.id, 'other', boundedSummary(type?.slice(0, 240) ?? 'unrecognized record', 'Kimi'), type ? keyPath('type') : undefined);
     }
-    setDerivedField(projection, 'agentId', stringAt(value, 'agentId'), keyPath('agentId'));
-    setStringField(projection, 'timestamp', kimiTimestamp(numberAt(value, 'time')), keyPath('time'));
-    return projection;
-  }
-
-  private message(message: Record<string, unknown>): AgentRowProjection {
-    const role = stringAt(message, 'role');
-    const calls = Array.isArray(own(message, 'toolCalls')) ? own(message, 'toolCalls') as unknown[] : [];
-    const tool = calls[0];
-    const toolName = stringAt(tool, 'name') ?? stringAt(tool, 'function', 'name');
-    const content = kimiContentPreview(own(message, 'content'));
-    const kind = role === 'tool' ? 'tool_result' : role === 'assistant' && calls.length > 0 ? 'tool_call' : 'message';
-    const projection = createProjection(this.id, kind, boundedSummary(content || toolName?.slice(0, 240) || role?.slice(0, 40) || 'message', 'Kimi ' + (role?.slice(0, 40) ?? 'message')), keyPath('message', 'role'), content ? keyPath('message', 'content') : toolName ? indexedPath(['message', 'toolCalls'], 0) : keyPath('message', 'role'));
-    setActor(projection, actorFromRole(role?.slice(0, 40)), keyPath('message', 'role'));
-    setIdentity(projection, 'messageId', stringAt(message, 'id'), keyPath('message', 'id'));
-    setIdentity(projection, 'toolCallId', stringAt(message, 'toolCallId'), keyPath('message', 'toolCallId'));
-    if (calls.length === 1) setIdentity(projection, 'toolCallId', stringAt(tool, 'id'), indexedPath(['message', 'toolCalls'], 0, 'id'));
-    if (calls.length > 0) {
-      setDerivedField(projection, 'toolCallCount', calls.length, keyPath('message', 'toolCalls'));
-      setDerivedField(projection, 'toolName', toolName, indexedPath(['message', 'toolCalls'], 0, stringAt(tool, 'name') ? 'name' : 'function', ...(stringAt(tool, 'name') ? [] : ['name'])));
-    }
-    setDerivedField(projection, 'origin', stringAt(message, 'origin', 'kind'), keyPath('message', 'origin', 'kind'));
-    if (typeof own(message, 'isError') === 'boolean') setErrorStatus(projection, own(message, 'isError') === true, keyPath('message', 'isError'));
-    this.usage(projection, own(message, 'usage'), keyPath('message', 'usage'));
-    return projection;
+    return finalizeProjection(projection, value);
   }
 
   private loopEvent(event: Record<string, unknown>): AgentRowProjection {
@@ -212,6 +222,7 @@ export class KimiCodeProfile implements AgentProfile {
     projection.usage = usage;
     projection.evidence.push(evidence('usage', path));
   }
+
 }
 
 function setIdentity(projection: AgentRowProjection, field: 'messageId' | 'toolCallId' | 'parentId' | 'turnId', value: string | undefined, path: FieldPath): void {
@@ -239,4 +250,10 @@ function setDerivedField(projection: AgentRowProjection, field: string, value: s
 
 function setStringField<K extends keyof AgentRowProjection>(projection: AgentRowProjection, field: K, value: string | undefined, path: FieldPath): void {
   setRawStringField(projection, field, field === 'status' ? value?.slice(0, 240) : value, path);
+}
+
+function finalizeProjection(projection: AgentRowProjection, value: Record<string, unknown>): AgentRowProjection {
+  setDerivedField(projection, 'agentId', stringAt(value, 'agentId'), keyPath('agentId'));
+  setStringField(projection, 'timestamp', kimiTimestamp(numberAt(value, 'time')), keyPath('time'));
+  return projection;
 }

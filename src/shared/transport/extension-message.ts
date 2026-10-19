@@ -96,6 +96,10 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
         && typeof envelope.envelope.payload.recoverable === 'boolean';
     case 'NAVIGATOR_STATUS':
       return isNavigatorBridgeResult(envelope.envelope.payload);
+    case 'NAVIGATOR_VISIBILITY':
+      return isObject(envelope.envelope.payload)
+        && Object.keys(envelope.envelope.payload).length === 1
+        && typeof envelope.envelope.payload.visible === 'boolean';
     case 'SOURCE_REGISTRATION_RESULT':
       return isSourceRegistrationFacts(envelope.envelope.payload);
     default:

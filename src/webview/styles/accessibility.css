@@ -1,4 +1,13 @@
 @media (forced-colors: active) {
+  .navigator-action[aria-expanded='true'] {
+    outline: 1px solid Highlight;
+  }
+
+  .navigator-action[aria-expanded='true'] .navigator-glyph::before {
+    background: Highlight;
+    opacity: 1;
+  }
+
   .row-order-option.is-active {
     border-color: Highlight;
     color: HighlightText;
@@ -63,7 +72,23 @@
   }
 }
 
-@container workspace (max-width: 1250px) {
+@container workspace (max-width: 700px) {
+  .workspace-header-primary > .workspace-tabs .workspace-tab-label,
+  .workspace-header-primary > .workspace-tabs .tab-count-unit {
+    display: none;
+  }
+
+  .workspace-header-primary > .workspace-tabs button {
+    justify-content: center;
+    gap: 4px;
+    min-width: 32px;
+    padding-inline: 7px;
+  }
+
+  .workspace-header-primary > .workspace-tabs {
+    scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+  }
+
   .profile-suggestion,
   .dataset-head-status,
   .status-strip > .status-valid,
@@ -137,6 +162,10 @@
 }
 
 @container workspace (max-width: 720px) {
+  .workspace-header-primary {
+    flex: 0 0 auto;
+  }
+
   .workspace-header-primary,
   .workspace-header-secondary {
     flex-basis: auto;
@@ -166,7 +195,7 @@
 
 @container workspace (max-width: 520px) {
   .workspace-header-primary > .workspace-tabs {
-    flex-basis: 100%;
+    flex-basis: calc(100% - 34px);
   }
 
   .workspace-header-primary > .workspace-controls {

@@ -57,15 +57,23 @@ starts with the Session Navigator action at the far left, followed by the
 existing workspace view tabs and file context, then Profile, Follow, and the
 refresh or rebuild action. Profile keeps a short explanatory tooltip so the
 profile selector does not need a second help panel for its basic meaning.
+The half-filled Navigator glyph reflects whether either Sessions or Add Source
+is visible and expanded. VS Code exposes visibility per view, so a container
+with both child views collapsed is reported as not visible.
 
 The secondary row separates telemetry from query controls: bounded rows, bytes,
 valid/problem observations, phase, and progress stay in the left group; search,
 order, field filters, row types, and Columns stay in the right group. The query
-input has a bounded width. At workspace widths of 900px or less, query controls
-stay on one horizontal rail; when they do not fit, that rail scrolls with a thin
+input has a bounded width. At workspace widths of 700px or less, view tabs use
+their icons and compact counts; each tab keeps an explicit accessible name and
+tooltip. At 1050px or less, Profile and secondary status labels collapse while
+the Follow label remains visible. At workspace widths of 900px or less, query
+controls stay on one horizontal rail; when they do not fit, that rail scrolls with a thin
 host-token scrollbar. The search input shrinks before the other controls, while
-labels and keyboard tab order remain available. This inner rail must not create
-an outer horizontal scrollbar or displace the telemetry status.
+keyboard tab order and accessible labels remain available. This inner rail must
+not create an outer horizontal scrollbar or displace telemetry status.
+Below 520px, Navigator and the icon tabs share the first primary row; Profile,
+Follow, and Rebuild use the next row without clipping.
 
 The header and its controls use host semantic tokens and the same focus, hover,
 active, and disabled states as the existing VS Code-native controls. The
@@ -187,8 +195,8 @@ new interpretation of truncation.
   format surfaces. Text may wrap or reflow; labels must never overlap adjacent
   controls.
 - At narrow widths, controls reflow within the Webview container. Search,
-  rebuild, profile, and status affordances remain operable; none is hidden as a
-  substitute for responsive layout.
+  rebuild, profile, and status affordances remain operable. Visible text may
+  collapse only when an icon and accessible name preserve the control identity.
 
 ## Fallback and accessibility
 
@@ -210,8 +218,9 @@ the host's tab active-border token on their bottom indicator without changing
 label weight or control geometry.
 Secondary source actions use the host's secondary-button border token, with a
 two-column layout below 240 CSS pixels and forced-colors system colors. Narrow
-header rules target the nested query toolbar in the rendered DOM; controls keep
-their visible labels and may wrap as a group when the host pane is narrow.
+header rules target the nested query toolbar in the rendered DOM. View tabs
+retain accessible names and tooltips in icon-only mode; Search, Profile, Follow,
+and Rebuild remain available as the host pane narrows.
 
 ## Ownership and lifecycle
 

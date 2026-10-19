@@ -10,12 +10,20 @@ const host = vi.hoisted(() => ({
   dialog: vi.fn(), create: vi.fn(), info: vi.fn(), open: vi.fn(), post: vi.fn(), reveal: vi.fn(),
   receive: undefined as undefined | ((message: unknown) => void),
   close: undefined as undefined | (() => void),
+  viewVisibility: undefined as undefined | (() => void),
+  viewDispose: undefined as undefined | (() => void),
   html: '',
 }));
 function fileUri(path: string): vscode.Uri {
   return { scheme: 'file', authority: '', query: '', fragment: '', fsPath: path, toString: () => pathToFileURL(path).toString() } as vscode.Uri;
 }
 vi.mock('vscode', () => ({
+  EventEmitter: class<T> {
+    readonly #listeners = new Set<(value: T) => void>();
+    event = (listener: (value: T) => void) => { this.#listeners.add(listener); return { dispose: () => this.#listeners.delete(listener) }; };
+    fire(value: T) { for (const listener of this.#listeners) listener(value); }
+    dispose() { this.#listeners.clear(); }
+  },
   Uri: {
     file: (path: string) => fileUri(path),
     parse: (value: string) => {
@@ -126,6 +134,53 @@ describe('bounded source intake validation', () => {
 });
 
 describe('Add Source panel host lifecycle', () => {
+  it('reports the resolved WebviewView visibility, transitions, and disposal', () => {
+    const visibility: boolean[] = [];
+    intake.onDidChangeVisibility((visible) => visibility.push(visible));
+    const view = {
+      visible: true,
+      webview: { options: {}, html: '', onDidReceiveMessage: (listener: typeof host.receive) => { host.receive = listener; return { dispose() {} }; } },
+      onDidChangeVisibility: (listener: () => void) => { host.viewVisibility = listener; return { dispose() {} }; },
+      onDidDispose: (listener: typeof host.viewDispose) => { host.viewDispose = listener; return { dispose() {} }; },
+    };
+
+    intake.resolveWebviewView(view as unknown as vscode.WebviewView);
+    expect(visibility).toEqual([true]);
+
+    view.visible = false;
+    host.viewVisibility?.();
+    expect(visibility).toEqual([true, false]);
+
+    view.visible = true;
+    host.viewVisibility?.();
+    host.viewDispose?.();
+    expect(visibility).toEqual([true, false, true, false]);
+  });
+
+  it('ignores visibility events from a replaced WebviewView', () => {
+    const visibility: boolean[] = [];
+    const oldViewEvents: Array<() => void> = [];
+    const currentViewEvents: Array<() => void> = [];
+    intake.onDidChangeVisibility((visible) => visibility.push(visible));
+    const createView = (events: Array<() => void>, visible: boolean) => ({
+      visible,
+      webview: { options: {}, html: '', onDidReceiveMessage: () => ({ dispose() {} }) },
+      onDidChangeVisibility: (listener: () => void) => { events.push(listener); return { dispose() {} }; },
+      onDidDispose: () => ({ dispose() {} }),
+    });
+    const oldView = createView(oldViewEvents, true);
+    const currentView = createView(currentViewEvents, false);
+
+    intake.resolveWebviewView(oldView as unknown as vscode.WebviewView);
+    intake.resolveWebviewView(currentView as unknown as vscode.WebviewView);
+    oldView.visible = true;
+    oldViewEvents[0]?.();
+    currentView.visible = true;
+    currentViewEvents[0]?.();
+
+    expect(visibility).toEqual([true, false, true]);
+  });
+
   it('returns the Webview to idle when the diagnostic notification is dismissed', async () => {
     intake.show();
     await send({ type: 'webview-diagnostic', name: 'Error', message: 'The source view could not initialize.' });
@@ -301,7 +356,12 @@ describe('persistent sidebar source drop view', () => {
       postMessage: host.post,
       onDidReceiveMessage: (listener: (message: unknown) => void) => { receive = listener; return { dispose() {} }; },
     };
-    const view = { webview, onDidDispose: (listener: () => void) => { dispose = listener; return { dispose() {} }; } } as unknown as vscode.WebviewView;
+    const view = {
+      webview,
+      visible: true,
+      onDidChangeVisibility: () => ({ dispose() {} }),
+      onDidDispose: (listener: () => void) => { dispose = listener; return { dispose() {} }; },
+    } as unknown as vscode.WebviewView;
     intake.resolveWebviewView(view);
     expect(webview.options).toEqual({ enableScripts: true, localResourceRoots: [] });
     expect(html).toContain('Drop JSONL here');

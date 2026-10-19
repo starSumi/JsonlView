@@ -26,7 +26,9 @@ summaries, timelines, and session catalog rows are disposable projections.
   query execution. It never writes the source file.
 - src/profiles/ owns additive Agent and dataset semantics. Profiles preserve
   unknown records and expose evidence paths for derived fields; bounded dataset
-  adapters keep JSONL physical rows and raw values authoritative.
+  adapters keep JSONL physical rows and raw values authoritative. Keep producer
+  schema recognition separate from bounded semantic projection within this
+  owner, and preserve unknown or malformed records for generic inspection.
 - src/webview/ owns bounded UI state and rendering. It never receives or
   retains the complete source file.
 - src/shared/ owns versioned contracts and typed transport messages.

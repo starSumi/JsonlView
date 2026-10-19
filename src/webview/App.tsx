@@ -188,6 +188,7 @@ export function App(): React.JSX.Element {
   // for this document lifecycle before the detail can show an authorized
   // Navigator handoff again.
   const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>('disabled');
+  const [navigatorVisible, setNavigatorVisible] = React.useState(false);
   const stateRef = useRef(state);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
@@ -469,6 +470,7 @@ export function App(): React.JSX.Element {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
       if (message.type === 'PREVIEW_STATUS') { setPreviewStatus(message.payload); return; }
+      if (message.type === 'NAVIGATOR_VISIBILITY') { setNavigatorVisible(message.payload.visible); return; }
       if (message.type === 'NAVIGATOR_STATUS') setNavigatorBridgeState(navigatorUiState(message.payload));
       if (message.type === 'ERROR' && acceptedSessionRef.current === undefined
         && startupReadyIdsRef.current.has(message.requestId)) {
@@ -970,6 +972,7 @@ export function App(): React.JSX.Element {
         appendPending={state.invalidationReason === 'append'}
           rebuildAvailable={state.invalidationReason !== undefined}
         rebuildBusy={Boolean(state.pending.rebuild)}
+        navigatorVisible={navigatorVisible}
         onRebuild={rebuild}
         onOpenNavigator={openNavigator}
         navigation={
@@ -978,9 +981,11 @@ export function App(): React.JSX.Element {
               const count = id === 'timeline' ? timelineRows.length : id === 'problems' ? problemEntries.length : undefined;
               return (
                 <button type="button" className={state.activeTab === id ? 'is-active' : ''}
+                  aria-label={label + (count === undefined ? '' : ', ' + String(count) + (id === 'problems' ? ' entries' : ''))}
+                  title={label}
                   {...workspaceTabs.getTabProps(id)} key={id}>
-                  <Icon size={14} aria-hidden />{label}
-                  {count !== undefined ? <span className="tab-count"
+                  <Icon size={14} aria-hidden /><span className="workspace-tab-label">{label}</span>
+                  {count !== undefined ? <span className="tab-count" aria-hidden="true"
                     title={id === 'problems' ? 'Problem entries in the current scan page; the status strip counts distinct problem records observed so far' : undefined}>
                     {count}{id === 'problems' ? <span className="tab-count-unit">entries</span> : null}
                   </span> : null}

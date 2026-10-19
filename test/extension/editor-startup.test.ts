@@ -263,7 +263,8 @@ describe('editor startup', () => {
     expect(fixture.document.flushPendingReveal).not.toHaveBeenCalled();
     expect(fixture.output.some((line) => line.includes('[startup-outcome]'))).toBe(false);
     await vi.advanceTimersByTimeAsync(2_500);
-    expect(fixture.postMessage).toHaveBeenCalledTimes(2);
+    expect(fixture.postMessage.mock.calls.map(([message]) => message.type))
+      .toEqual(['OPENED', 'OPENED', 'NAVIGATOR_VISIBILITY']);
     expect(fixture.document.flushPendingReveal).toHaveBeenCalledOnce();
     expect(fixture.output.some((line) => line.includes('type=OPENED delivered=true'))).toBe(true);
     // Host acceptance remains separate from a Webview commit receipt.

@@ -16,6 +16,7 @@ export interface WorkspaceHeaderProps {
   appendPending: boolean;
   rebuildAvailable: boolean;
   rebuildBusy: boolean;
+  navigatorVisible: boolean;
   onRebuild: () => void;
   onOpenNavigator: () => void;
 }
@@ -30,8 +31,9 @@ export function WorkspaceHeader({ children, navigation, secondary, ...status }: 
   return (
     <header className="workspace-header">
       <div className="workspace-header-primary">
-        <button type="button" className="icon-button navigator-action" title="Open Navigator" aria-label="Open Navigator" onClick={status.onOpenNavigator}>
-          <PanelLeft size={15} aria-hidden />
+        <button type="button" className="icon-button navigator-action" title={status.navigatorVisible ? 'Session Navigator is open' : 'Open Session Navigator'}
+          aria-label="Session Navigator" aria-expanded={status.navigatorVisible} onClick={status.onOpenNavigator}>
+          <span className="navigator-glyph" aria-hidden="true"><PanelLeft size={16} /></span>
         </button>
         {navigation}
         <div className="toolbar workspace-controls">

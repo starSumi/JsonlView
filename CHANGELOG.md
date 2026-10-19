@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+- Collapse workspace tab labels only on narrow workspace panes while preserving accessible names, keep Follow identifiable, and reflect either visible Navigator child view in the header glyph.
 - Move the Session Navigator SQLite catalog behind a complete application port, centralize provider loading and reveal policies, bound reveal intents, and invalidate stale continuations while retaining cached sessions.
 - Bind Kimi probe handoffs to their observed fingerprint, close replacement generations inside SQLite transactions, and preserve Claude terminal pages.
 - Adapt Kimi KAP server v1 journals alongside persisted wire sessions, merge matching session identities in authorized homes, and project server events with bounded metadata and exact source evidence.
+- Detect metadata-anchored Kimi agent-core wire files across the bounded sample, including human-domain message and turn events, and project their session, message, request, usage, token, and task semantics without exposing request prompts or task output tails.
 - Add bounded Rust JSONL record queries to the product command and expose the
   same read-only data plane through an opt-in MCP stdio server and configured
   ACP agent sessions. Keep source paths host-owned and transport connections

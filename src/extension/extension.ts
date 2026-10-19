@@ -176,6 +176,10 @@ export class JsonlViewDocument implements vscode.CustomDocument {
     this.recovery.reset();
   }
 
+  public publishNavigatorVisibility(visible: boolean): Promise<boolean> {
+    return this.broadcast(this.session.getSummary().snapshot, 'NAVIGATOR_VISIBILITY', { visible });
+  }
+
   /** Schedule the same bounded recovery used by watcher hints. */
   public async notifyTransientSourceChange(): Promise<boolean> {
     if (this.disposed) return false;
@@ -486,6 +490,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
   private nextTraceId = 0;
   private nextStartupId = 0;
   private lastResolvedDocument: JsonlViewDocument | undefined;
+  private navigatorVisible = false;
   private rowOrderWrite: Promise<void> = Promise.resolve();
 
   public constructor(
@@ -496,6 +501,16 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     private readonly runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
     private readonly previews?: SessionPreviews,
   ) {}
+
+  public setNavigatorVisibility(visible: boolean): void {
+    if (this.navigatorVisible === visible) return;
+    this.navigatorVisible = visible;
+    for (const document of this.resolvedDocuments) {
+      void document.publishNavigatorVisibility(visible).catch((error: unknown) => {
+        logLifecycleFailure(this.output, 'webview_delivery', error);
+      });
+    }
+  }
 
   public async openCustomDocument(
     uri: vscode.Uri,
@@ -609,6 +624,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
         return this.rowOrderWrite;
       },
       onReady: () => document.flushPendingReveal(),
+      getNavigatorVisibility: () => this.navigatorVisible,
       onReadyReceived: () => {
         lastStage = 'ready-received';
         appendOutputLog(this.output, 'webview-ready', 'trace=' + traceId + ' received=true startup=' + startupId);
@@ -991,6 +1007,7 @@ export function activate(context: vscode.ExtensionContext): void {
   activeNavigator = navigator;
   const provider = new JsonlViewProvider(context, revealRegistry, (target) => navigator.open(target), outputChannel, runtimeIdentity, navigator.previews);
   context.subscriptions.push(
+    navigator.onDidChangeVisibility((visible) => provider.setNavigatorVisibility(visible)),
     ...navigator.register(),
     navigator,
     vscode.window.registerCustomEditorProvider('jsonlView.editor', provider, {

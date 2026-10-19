@@ -20,6 +20,7 @@ const status: WorkspaceHeaderProps = {
   appendPending: false,
   rebuildAvailable: false,
   rebuildBusy: false,
+  navigatorVisible: false,
   onRebuild: () => undefined,
   onOpenNavigator: () => undefined,
 };
@@ -40,6 +41,34 @@ describe('workspace header status', () => {
     expect(compactToolbarRules).not.toContain('display: none');
   });
 
+  it('uses icon-only workspace tabs at narrow widths while retaining their accessible labels', () => {
+    const compactHeaderRules = styles.slice(styles.indexOf('@container workspace (max-width: 700px)'), styles.indexOf('@container workspace (max-width: 520px)'));
+
+    expect(compactHeaderRules).toContain('.workspace-tab-label');
+    expect(compactHeaderRules).toContain('display: none');
+    expect(compactHeaderRules).toContain('.workspace-tabs button');
+    expect(compactHeaderRules).toContain('scrollbar-color: var(--vscode-scrollbarSlider-background) transparent');
+    expect(styles).not.toContain('.follow-toggle > span');
+  });
+
+  it('allows a second primary row instead of clipping controls at the smallest workspace widths', () => {
+    const wrapRules = styles.slice(styles.indexOf('@container workspace (max-width: 720px)'), styles.indexOf('@container workspace (max-width: 460px)'));
+
+    expect(wrapRules).toContain('.workspace-header-primary {');
+    expect(wrapRules).toContain('flex: 0 0 auto');
+    expect(wrapRules).toContain('flex-basis: calc(100% - 34px)');
+  });
+
+  it('renders Navigator visibility as an expanded state with a separate half-panel glyph', () => {
+    const closed = render();
+    const open = render({ navigatorVisible: true });
+
+    expect(closed).toContain('aria-label="Session Navigator"');
+    expect(closed).toContain('aria-expanded="false"');
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('class="navigator-glyph"');
+  });
+
   it('keeps the query rail single-line before container breakpoints are evaluated', () => {
     const queryRail = styles.slice(styles.indexOf('.workspace-query-controls > .table-query-toolbar'), styles.indexOf('.workspace-header-primary > .workspace-controls'));
     expect(queryRail).toContain('flex-wrap: nowrap');
@@ -57,9 +86,9 @@ describe('workspace header status', () => {
 
   it('places workspace tabs in the same header while preserving the Navigator action', () => {
     const markup = render({ navigation: React.createElement('nav', { 'aria-label': 'Workspace views' }, 'Table') });
-    expect(markup.indexOf('aria-label="Open Navigator"')).toBeLessThan(markup.indexOf('<nav'));
+    expect(markup.indexOf('aria-label="Session Navigator"')).toBeLessThan(markup.indexOf('<nav'));
     expect(markup.indexOf('<nav')).toBeLessThan(markup.indexOf('<div class="status-strip"'));
-    expect(markup).toContain('aria-label="Open Navigator"');
+    expect(markup).toContain('aria-label="Session Navigator"');
     expect(markup).toContain('lucide-panel-left');
   });
 
@@ -72,7 +101,7 @@ describe('workspace header status', () => {
       ),
     });
 
-    const navigatorIndex = markup.indexOf('aria-label="Open Navigator"');
+    const navigatorIndex = markup.indexOf('aria-label="Session Navigator"');
     const tabsIndex = markup.indexOf('aria-label="Workspace views"');
     const optionsIndex = markup.indexOf('class="toolbar workspace-controls"');
     const profileIndex = markup.indexOf('class="profile-field"');
@@ -99,7 +128,7 @@ describe('workspace header status', () => {
     const markup = render();
 
     expect(markup).toContain('<header class="workspace-header"');
-    expect(markup).toContain('aria-label="Open Navigator"');
+    expect(markup).toContain('aria-label="Session Navigator"');
     expect(markup).toContain('24 rows');
     expect(markup).toContain('512 B / 1.0 KB');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');

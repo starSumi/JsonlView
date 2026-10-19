@@ -63,7 +63,7 @@ describe('Kimi persisted server journal boundary', () => {
     const detect = (values: unknown[]) => new AgentProfileRegistry().detect(values.map((value) => ({ value })));
     expect(detect([header, submitted]).selectedProfileId).toBe('kimi-code-session');
     expect(detect([submitted, started, completed]).selectedProfileId).toBe('kimi-code-session');
-    expect(profile.version).toBe('3');
+    expect(profile.version).toBe('5');
     for (const records of [[header], [submitted], [event('error', { code: 'internal', message: 'Synthetic failure', retryable: false })],
       [event('error'), event('error'), event('error')],
       [event('future.kimi.event'), event('future.kimi.event'), event('future.kimi.event')]]) {

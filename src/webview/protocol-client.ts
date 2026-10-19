@@ -89,6 +89,7 @@ export function shouldAcceptMessage(
     return message.requestId.length === 0 || request?.generation === session.generation;
   }
   if (message.type === 'PREVIEW_STATUS') return true;
+  if (message.type === 'NAVIGATOR_VISIBILITY') return message.requestId === '';
   if (message.type === 'NAVIGATOR_STATUS') {
     return request?.kind === 'ready' && request.generation === session.generation;
   }

@@ -76,6 +76,8 @@ export interface DocumentControllerHooks {
   onRowOrderChanged?: (direction: RowSort['direction']) => Promise<void>;
   /** Deliver host-owned positioning intents only after the Webview handshake. */
   onReady?: () => Promise<void> | void;
+  /** Read the host TreeView state for an editor that missed earlier visibility events. */
+  getNavigatorVisibility?: () => boolean;
   onReadyReceived?: () => void;
   /** Observe whether the Webview host accepted the initial summary post. */
   onOpenedDelivery?: (delivered: boolean) => void;
@@ -177,6 +179,10 @@ export class DocumentController {
           if (await this.postIfCurrent(request, acceptedIdentity, 'OPENED', summary)) {
             this.hooks.onOpenedDelivery?.(true);
             await this.publishPreviewStatus(request.requestId);
+            const visible = this.hooks.getNavigatorVisibility?.();
+            if (visible !== undefined) {
+              await this.postIfCurrent({ requestId: '' }, acceptedIdentity, 'NAVIGATOR_VISIBILITY', { visible });
+            }
             await this.hooks.onReady?.();
           } else {
             this.hooks.onOpenedDelivery?.(false);

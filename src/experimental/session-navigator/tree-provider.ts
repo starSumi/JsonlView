@@ -93,10 +93,12 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   readonly #context: vscode.ExtensionContext;
   readonly #revealRegistry: RevealIntentRegistry;
   readonly #changed = new vscode.EventEmitter<SessionNavigatorTreeNode | undefined | null | void>();
+  readonly #visibilityChanged = new vscode.EventEmitter<boolean>();
   readonly #providers = new Map<string, SessionNavigatorProvider>();
   readonly #sourceStatus = new Map<string, SourceStatus>();
   readonly #sourceControllers = new SourceControllerRegistry();
   readonly #intake: SourceIntakePanel;
+  readonly #intakeVisibilityRegistration: vscode.Disposable;
   readonly #previewRegistration: vscode.Disposable;
   #store: SessionCatalogPort | undefined;
   #openingStore: Promise<SessionCatalogPort> | undefined;
@@ -117,11 +119,16 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   readonly #transientEmptyScans = new Map<string, number>();
   #initialized = false;
   #treeView: vscode.TreeView<SessionNavigatorTreeNode> | undefined;
+  #sessionViewVisible = false;
+  #sourceDropVisible = false;
+  #reportedNavigatorVisibility: boolean | undefined;
   #probeTimer: NodeJS.Timeout | undefined;
   #disposed = false;
   #opening: Promise<NavigatorBridgeResult> | undefined;
 
   public readonly onDidChangeTreeData = this.#changed.event;
+  /** Fires while either the Sessions or Add Source Navigator view is visible and expanded. */
+  public readonly onDidChangeVisibility = this.#visibilityChanged.event;
 
   public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry, public readonly previews = new SessionPreviews(), private readonly catalogOpener: SessionCatalogOpener = defaultCatalogOpener) {
     this.#context = context;
@@ -132,6 +139,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       previews,
       (signal) => this.authorizeAgent(() => this.#disposed || signal.aborted),
     );
+    this.#intakeVisibilityRegistration = this.#intake.onDidChangeVisibility((visible) => this.handleSourceDropVisibility(visible));
     this.#previewRegistration = previews.onDidChange(() => this.#changed.fire(undefined));
   }
 
@@ -173,7 +181,7 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       vscode.commands.registerCommand('jsonlView.sessionNavigator.copyRelativePath', (node: SessionNavigatorTreeNode) => this.copyRelativePath(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.openTimeline', (node: SessionNavigatorTreeNode) => this.openTimeline(node)),
       vscode.commands.registerCommand('jsonlView.sessionNavigator.copySessionId', (node: SessionNavigatorTreeNode) => this.copySessionId(node)),
-      this.#treeView.onDidChangeVisibility((event) => this.handleVisibility(event.visible)),
+      this.#treeView.onDidChangeVisibility((event) => this.handleSessionVisibility(event.visible)),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('jsonlView.sessionNavigator')) {
           this.invalidateAllSources();
@@ -182,13 +190,13 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
             this.#refreshAgain = true;
             this.#initialized = false;
             if (!this.isEnabled() && this.#treeView !== undefined) this.#treeView.message = '';
-            this.handleVisibility(this.#treeView?.visible ?? false);
+            this.handleSessionVisibility(this.#treeView?.visible ?? false);
           }
           this.#changed.fire(undefined);
         }
       }),
     ];
-    this.handleVisibility(this.#treeView.visible);
+    this.handleSessionVisibility(this.#treeView.visible);
     return subscriptions;
   }
 
@@ -806,10 +814,12 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     this.#store?.close();
     this.#store = undefined;
     this.#providers.clear();
+    this.#intakeVisibilityRegistration.dispose();
     void this.#intake.dispose().catch(() => { /* Preserve any preview whose cleanup could not be verified. */ });
     this.#previewRegistration.dispose();
     void this.previews.dispose().catch(() => {});
     this.#changed.dispose();
+    this.#visibilityChanged.dispose();
   }
 
   private async ensureStore(): Promise<SessionCatalogPort> {
@@ -1009,7 +1019,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
     this.#changed.fire(undefined);
   }
 
-  private handleVisibility(visible: boolean): void {
+  private handleSessionVisibility(visible: boolean): void {
+    this.#sessionViewVisible = visible;
+    this.publishNavigatorVisibility();
     if (visible && this.isEnabled()) {
       if (this.#probeTimer === undefined) this.#probeTimer = setInterval(() => { void this.probeVisibleSources(); }, PROBE_INTERVAL_MS);
       if (!this.#initialized) {
@@ -1024,6 +1036,18 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       if (this.#probeTimer !== undefined) clearInterval(this.#probeTimer);
       this.#probeTimer = undefined;
     }
+  }
+
+  private handleSourceDropVisibility(visible: boolean): void {
+    this.#sourceDropVisible = visible;
+    this.publishNavigatorVisibility();
+  }
+
+  private publishNavigatorVisibility(): void {
+    const visible = this.#sessionViewVisible || this.#sourceDropVisible;
+    if (this.#reportedNavigatorVisibility === visible) return;
+    this.#reportedNavigatorVisibility = visible;
+    this.#visibilityChanged.fire(visible);
   }
 
   private sortKey(): SessionNavigatorSortKey {
