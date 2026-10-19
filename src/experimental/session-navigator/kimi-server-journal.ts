@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, opendirSync } from 'node:fs';
 import type { Stats } from 'node:fs';
 import { lstat, open, opendir } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
@@ -16,6 +16,7 @@ export interface KimiServerJournalEntry {
   readonly kind: 'server';
   readonly sessionKey: string;
   readonly journalSessionId: string;
+  readonly fallbackStatePath?: string;
   readonly agentId: 'main';
   readonly relativePath: string;
   readonly journalPath: string;
@@ -87,8 +88,8 @@ export async function readKimiServerMetadata(entry: KimiServerJournalEntry, budg
     const total = Math.min(before.size, PREFIX_BYTES + TAIL_BYTES, remainingBytes);
     const prefix = before.size <= total ? total : Math.min(PREFIX_BYTES, Math.ceil(total / 4));
     const ranges = [{ offset: 0, length: prefix }, ...(before.size > total && total > prefix ? [{ offset: before.size - (total - prefix), length: total - prefix }] : [])];
-    const lines: string[] = [];
-    for (const range of ranges) {
+    const lines: Array<{ text: string; range: number }> = [];
+    for (const [rangeIndex, range] of ranges.entries()) {
       if (!budget.check() || range.length === 0) break;
       const buffer = Buffer.alloc(range.length);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, range.offset);
@@ -96,37 +97,55 @@ export async function readKimiServerMetadata(entry: KimiServerJournalEntry, budg
       let text = buffer.subarray(0, bytesRead).toString('utf8');
       if (range.offset > 0) text = text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1);
       if (range.offset + bytesRead < before.size) text = text.slice(0, Math.max(0, text.lastIndexOf('\n')));
-      for (const line of text.split('\n')) if (line.trim().length > 0) lines.push(line);
+      for (const line of text.split('\n')) if (line.trim().length > 0) lines.push({ text: line, range: rangeIndex });
     }
     const after = await file.stat();
     const pathAfter = await regularFile(entry.journalPath);
     if (!sameIdentity(before, after) || pathAfter === undefined || !sameIdentity(before, pathAfter)) throw new SessionSourceChangedError();
-    const allowance = Math.max(0, budget.limits.maxRecords - budget.records);
-    const selected = lines.length <= allowance ? lines : allowance === 0 ? [] : [lines[0]!, ...(allowance > 1 ? lines.slice(-(allowance - 1)) : [])];
-    const state: Record<string, unknown> = {};
-    const parsed: Array<Record<string, unknown> | undefined> = [];
-    let latestHeaderIndex = -1;
+    const fallbackReserve = entry.fallbackStatePath === undefined ? 0 : 1;
+    const allowance = Math.max(0, budget.limits.maxRecords - budget.records - fallbackReserve);
+    const selected = lines.length <= allowance ? lines.map((line, index) => ({ ...line, position: index }))
+      : allowance === 0 ? [] : [
+        { ...lines[0]!, position: 0 },
+        ...(allowance > 1 ? lines.slice(-(allowance - 1)).map((line, index) => ({ ...line, position: lines.length - allowance + 1 + index })) : []),
+      ];
+    let state: Record<string, unknown> = {};
+    let activeEpoch: string | undefined;
     let partial = total < before.size || selected.length < lines.length;
-    for (const line of selected) {
+    for (let index = 0; index < selected.length; index += 1) {
+      const sampled = selected[index]!;
+      const previous = selected[index - 1];
+      const discontinuous = previous !== undefined && (sampled.range !== previous.range || sampled.position !== previous.position + 1);
       if (!budget.check()) { partial = true; break; }
       budget.records += 1;
       let value: unknown;
-      try { value = JSON.parse(line); } catch { partial = true; parsed.push(undefined); continue; }
-      if (!isMetadataRecord(value)) { partial = true; parsed.push(undefined); continue; }
-      parsed.push(value);
-      if (isJournalHeader(value)) latestHeaderIndex = parsed.length - 1;
-    }
-    const validHeader = latestHeaderIndex >= 0;
-    if (validHeader) {
-      const header = parsed[latestHeaderIndex]!;
-      if (validClock(header.created_at) !== undefined) state.createdAt = header.created_at;
-      for (let index = latestHeaderIndex + 1; index < parsed.length; index += 1) {
-        const record = parsed[index];
-        if (record === undefined) continue;
-        if (!applyJournalMetadata(state, record, entry.journalSessionId)) partial = true;
+      try { value = JSON.parse(sampled.text); } catch { partial = true; continue; }
+      if (!isMetadataRecord(value)) { partial = true; continue; }
+      if (isJournalHeader(value)) {
+        state = {};
+        activeEpoch = value.epoch as string;
+        if (validClock(value.created_at) !== undefined) state.createdAt = value.created_at;
+        continue;
       }
+      if (discontinuous) partial = true;
+      const envelope = isMetadataRecord(value.envelope) ? value.envelope : undefined;
+      const eventEpoch = typeof envelope?.epoch === 'string' && envelope.epoch.length > 0 ? envelope.epoch : undefined;
+      if (envelope?.epoch !== undefined && eventEpoch === undefined) { partial = true; state = {}; activeEpoch = undefined; continue; }
+      if (eventEpoch !== undefined) {
+        if (activeEpoch !== eventEpoch) {
+          state = {};
+          activeEpoch = eventEpoch;
+          partial = true;
+        }
+      } else if (activeEpoch === undefined || discontinuous) {
+        state = {};
+        activeEpoch = undefined;
+        partial = true;
+        continue;
+      }
+      if (!applyJournalMetadata(state, value, entry.journalSessionId)) partial = true;
     }
-    return { state, partial: partial || !validHeader || budget.truncated };
+    return { state, partial: partial || activeEpoch === undefined || budget.truncated };
   } finally { await file.close(); }
 }
 
@@ -199,10 +218,18 @@ function validClock(value: unknown): string | undefined {
 function identityKey(value: Stats): string { return [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs].join('\0'); }
 function sameIdentity(left: Stats, right: Stats): boolean { return identityKey(left) === identityKey(right); }
 function hasSessionJournal(events: string): boolean {
+  let directory: ReturnType<typeof opendirSync> | undefined;
   try {
-    return readdirSync(events, { withFileTypes: true }).some((entry) => entry.isFile() && !entry.isSymbolicLink()
-      && entry.name.startsWith('session_') && entry.name.endsWith('.jsonl') && entry.name.length > 'session_.jsonl'.length);
+    directory = opendirSync(events);
+    for (let inspected = 0; inspected < MAX_DIRECTORY_ENTRIES; inspected += 1) {
+      const entry = directory.readSync();
+      if (entry === null) return false;
+      if (entry.isFile() && !entry.isSymbolicLink() && entry.name.startsWith('session_')
+        && entry.name.endsWith('.jsonl') && entry.name.length > 'session_.jsonl'.length) return true;
+    }
+    return false;
   } catch { return false; }
+  finally { directory?.closeSync(); }
 }
 async function regularDirectory(path: string): Promise<boolean> { const value = await lstat(path).catch(() => undefined); return value?.isDirectory() === true && !value.isSymbolicLink(); }
 async function regularFile(path: string): Promise<Stats | undefined> { const value = await lstat(path).catch(() => undefined); return value?.isFile() === true && !value.isSymbolicLink() ? value : undefined; }

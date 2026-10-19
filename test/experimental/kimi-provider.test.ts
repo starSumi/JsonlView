@@ -1,4 +1,5 @@
 import { appendFile, mkdir, mkdtemp, opendir, open, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { opendirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +12,10 @@ import { DEFAULT_SESSION_NAVIGATOR_BUDGET as defaults } from '../../src/experime
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
   return { ...original, open: vi.fn(original.open), opendir: vi.fn(original.opendir) };
+});
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  return { ...original, opendirSync: vi.fn(original.opendirSync) };
 });
 
 const signal = (): AbortSignal => new AbortController().signal;
@@ -54,6 +59,11 @@ function journalEvent(type: string, payload: Record<string, unknown>, seq = 1): 
   return { kind: 'event', seq, envelope: { type, seq, timestamp: '2026-01-02T00:00:00.000Z', payload } };
 }
 
+function journalEventInEpoch(type: string, payload: Record<string, unknown>, epoch: string, seq = 1): unknown {
+  const value = journalEvent(type, payload, seq) as { kind: string; seq: number; envelope: Record<string, unknown> };
+  return { ...value, envelope: { ...value.envelope, epoch } };
+}
+
 async function serverJournal(id: string, records: readonly unknown[] = []): Promise<string> {
   const path = join(root, 'server', 'events', 'session_' + id + '.jsonl');
   await mkdir(dirname(path), { recursive: true });
@@ -92,6 +102,30 @@ describe('Kimi server journal Navigator provider', () => {
     expect(vi.mocked(open)).not.toHaveBeenCalled();
   });
 
+  it('does not discover Kimi homes through linked roots or linked sessions directories', async () => {
+    const linkedHome = join(root, 'linked-home');
+    await symlink(root, linkedHome, process.platform === 'win32' ? 'junction' : 'dir');
+    const linkedSessionsHome = join(root, 'linked-sessions-home');
+    await mkdir(linkedSessionsHome);
+    await symlink(join(root, 'sessions'), join(linkedSessionsHome, 'sessions'), process.platform === 'win32' ? 'junction' : 'dir');
+    const discoverKimi = (path: string) => discoverDefaultSources({ env: { KIMI_CODE_HOME: path }, homeDirectory: root }).filter((source) => source.provider === 'kimi');
+    expect(discoverKimi(linkedHome)).toEqual([]);
+    expect(discoverKimi(linkedSessionsHome)).toEqual([]);
+  });
+
+  it('caps synchronous server-root discovery before opening a large directory fully', async () => {
+    const server = join(root, 'bounded-server');
+    const events = join(server, 'events');
+    await mkdir(events, { recursive: true });
+    const readSync = vi.fn(() => ({ name: 'unrelated.jsonl', isFile: () => true, isSymbolicLink: () => false }));
+    const closeSync = vi.fn();
+    vi.mocked(opendirSync).mockReturnValueOnce({ readSync, closeSync } as unknown as ReturnType<typeof opendirSync>);
+    const sources = discoverDefaultSources({ env: { KIMI_CODE_HOME: server }, homeDirectory: root }).filter((source) => source.provider === 'kimi');
+    expect(sources).toEqual([]);
+    expect(readSync).toHaveBeenCalledTimes(16_384);
+    expect(closeSync).toHaveBeenCalledOnce();
+  });
+
   it('merges the home server layout by exact session id while retaining legacy subagents and paging', async () => {
     await sessionInWorkspace('wd_synthetic_0123456789ab', 'session_match-123', {
       title: 'Legacy title', agents: { main: {}, worker: { parentAgentId: 'main' } },
@@ -120,6 +154,36 @@ describe('Kimi server journal Navigator provider', () => {
     expect(pages.flatMap((result) => result.snapshot.relations)).toContainEqual(expect.objectContaining({ fromNativeId: main.nativeId, toNativeId: child.nativeId }));
   });
 
+  it('uses legacy state as bounded fallback when a matched server journal omits title metadata', async () => {
+    await sessionInWorkspace('wd_synthetic_0123456789ab', 'session_fallback-123', {
+      title: 'Legacy fallback title', lastPrompt: 'Legacy fallback prompt', agents: { main: {} },
+    }, ['main']);
+    await serverJournal('fallback-123', [journalEvent('event.session.status_changed', { status: 'running' })]);
+    const result = await provider.scan(signal(), defaults);
+    expect(result.snapshot.entities).toHaveLength(1);
+    expect(result.snapshot.entities[0]).toMatchObject({
+      vendorTitle: 'Legacy fallback title', firstMessagePreview: 'Legacy fallback prompt', status: 'running',
+    });
+    expect(result.snapshot.locations[0]?.relativePath).toBe('server/events/session_fallback-123.jsonl');
+    expect(vi.mocked(open).mock.calls.map((call) => call[0])).toContain(join(root, 'sessions', 'wd_synthetic_0123456789ab', 'session_fallback-123', 'state.json'));
+    const limited = await provider.scan(signal(), { ...defaults, maxRecords: 1 });
+    expect(limited.snapshot.entities[0]?.vendorTitle).toBe('Legacy fallback title');
+    expect(limited.snapshot.truncated).toBe(true);
+  });
+
+  it('keeps server parent identity when only a legacy subagent wire exists', async () => {
+    await sessionInWorkspace('wd_synthetic_0123456789ab', 'session_child-only-123', {
+      title: 'Legacy parent title', agents: { worker: { parentAgentId: 'main' } },
+    }, ['worker']);
+    await serverJournal('child-only-123', [journalEvent('session.meta.updated', { patch: { title: 'Server parent title' } })]);
+    const result = await provider.scan(signal(), defaults);
+    const main = result.snapshot.entities.find((entity) => entity.kind === 'session');
+    const child = result.snapshot.entities.find((entity) => entity.kind === 'subagent');
+    expect(main).toBeDefined();
+    expect(child?.parentNativeId).toBe(main?.nativeId);
+    expect(result.snapshot.relations).toContainEqual(expect.objectContaining({ fromNativeId: main?.nativeId, toNativeId: child?.nativeId }));
+  });
+
   it('projects only bounded metadata from server journals without optional envelope identity fields', async () => {
     const path = await serverJournal('metadata', [
       journalEvent('event.session.created', { session: { title: 'Old title', created_at: '2025-01-01T00:00:00.000Z', updated_at: '2025-01-02T00:00:00.000Z', last_prompt: 'Old prompt', metadata: { secret: 'DO_NOT_PROJECT' } } }),
@@ -142,8 +206,8 @@ describe('Kimi server journal Navigator provider', () => {
   });
 
   it('samples both ends for current metadata and keeps directory pagination resumable', async () => {
-    const filler = Array.from({ length: 30 }, (_, index) => journalEvent('tool.result', { output: 'PRIVATE_' + 'x'.repeat(5_000) }, index + 2));
-    const first = await serverJournal('sampled', [journalEvent('event.session.created', { session: { title: 'Old title' } }), ...filler, journalEvent('session.meta.updated', { patch: { title: 'Tail title', lastPrompt: 'Tail prompt' } }, 33)]);
+    const filler = Array.from({ length: 30 }, (_, index) => journalEventInEpoch('tool.result', { output: 'PRIVATE_' + 'x'.repeat(5_000) }, 'ep_synthetic', index + 2));
+    const first = await serverJournal('sampled', [journalEventInEpoch('event.session.created', { session: { title: 'Old title' } }, 'ep_synthetic'), ...filler, journalEventInEpoch('session.meta.updated', { patch: { title: 'Tail title', lastPrompt: 'Tail prompt' } }, 'ep_synthetic', 33)]);
     const second = await serverJournal('next', [journalEvent('event.session.created', { session: { title: 'Next page' } })]);
     await utimes(first, new Date('2026-01-02'), new Date('2026-01-02'));
     await utimes(second, new Date('2026-01-01'), new Date('2026-01-01'));
@@ -187,9 +251,9 @@ describe('Kimi server journal Navigator provider', () => {
 
   it('reserves bounded record inspection for tail metadata even in a small file', async () => {
     await serverJournal('record-tail', [
-      journalEvent('event.session.created', { session: { title: 'Old title' } }),
-      ...Array.from({ length: 20 }, (_, index) => journalEvent('tool.result', { output: 'inert' }, index + 2)),
-      journalEvent('session.meta.updated', { patch: { title: 'Tail under record limit' } }, 22),
+      journalEventInEpoch('event.session.created', { session: { title: 'Old title' } }, 'ep_synthetic'),
+      ...Array.from({ length: 20 }, (_, index) => journalEventInEpoch('tool.result', { output: 'inert' }, 'ep_synthetic', index + 2)),
+      journalEventInEpoch('session.meta.updated', { patch: { title: 'Tail under record limit' } }, 'ep_synthetic', 22),
     ]);
     const result = await serverProvider().scan(signal(), { ...defaults, maxRecords: 2 });
     expect(result.snapshot.entities[0]?.label).toBe('Tail under record limit');
@@ -198,9 +262,9 @@ describe('Kimi server journal Navigator provider', () => {
 
   it('splits a constrained byte budget between header and current tail metadata', async () => {
     await serverJournal('byte-tail', [
-      journalEvent('event.session.created', { session: { title: 'Old title' } }),
-      journalEvent('tool.result', { output: 'PRIVATE_' + 'x'.repeat(100_000) }, 2),
-      journalEvent('session.meta.updated', { patch: { title: 'Latest within bytes' } }, 3),
+      journalEventInEpoch('event.session.created', { session: { title: 'Old title' } }, 'ep_synthetic'),
+      journalEventInEpoch('tool.result', { output: 'PRIVATE_' + 'x'.repeat(100_000) }, 'ep_synthetic', 2),
+      journalEventInEpoch('session.meta.updated', { patch: { title: 'Latest within bytes' } }, 'ep_synthetic', 3),
     ]);
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     let bytesRead = 0;
@@ -270,6 +334,22 @@ describe('Kimi server journal Navigator provider', () => {
     const result = await serverProvider().scan(signal(), defaults);
     expect(result.snapshot.entities[0]).toMatchObject({ label: 'Recovered latest epoch', startedAt: '2027-01-15T08:00:00.000Z' });
     expect(JSON.stringify(result.snapshot)).not.toContain('Must not cross epoch');
+  });
+
+  it('does not mix sampled metadata when a new epoch header falls inside the head-tail gap', async () => {
+    const path = await serverJournal('epoch-gap');
+    const oldHeader = JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_old', created_at: 1_700_000_000_000 });
+    const newHeader = JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_new', created_at: 1_800_000_000_000 });
+    const oldTitle = JSON.stringify(journalEventInEpoch('session.meta.updated', { patch: { title: 'Old epoch title' } }, 'ep_old'));
+    const oldFiller = JSON.stringify(journalEventInEpoch('tool.result', { output: 'old_' + 'x'.repeat(10_000) }, 'ep_old', 2));
+    const newFiller = JSON.stringify(journalEventInEpoch('tool.result', { output: 'new_' + 'y'.repeat(10_000) }, 'ep_new', 1));
+    const newTitle = JSON.stringify(journalEventInEpoch('session.meta.updated', { patch: { title: 'Recovered from tail epoch' } }, 'ep_new', 2));
+    await writeFile(path, [oldHeader, oldTitle, ...Array(9).fill(oldFiller), newHeader, ...Array(8).fill(newFiller), newTitle].join('\n') + '\n');
+    const result = await serverProvider().scan(signal(), defaults);
+    expect(result.snapshot.entities[0]?.vendorTitle).toBe('Recovered from tail epoch');
+    expect(result.snapshot.entities[0]).not.toHaveProperty('startedAt');
+    expect(result.snapshot.truncated).toBe(true);
+    expect(JSON.stringify(result.snapshot)).not.toContain('Old epoch title');
   });
 
   it('validates optional volatile and offset envelope fields without rejecting valid annotations', async () => {

@@ -1,4 +1,4 @@
-import { readdirSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -113,8 +113,14 @@ function isFileUri(value: string): boolean {
 
 function isProviderRoot(provider: SessionNavigatorProviderId, path: string): boolean {
   try {
+    if (provider === 'kimi') {
+      const root = lstatSync(path);
+      if (!root.isDirectory() || root.isSymbolicLink()) return false;
+      if (isKimiServerSourceRoot(path)) return true;
+      const sessions = lstatSync(join(path, 'sessions'));
+      return sessions.isDirectory() && !sessions.isSymbolicLink();
+    }
     if (!statSync(path).isDirectory()) return false;
-    if (provider === 'kimi') return isKimiServerSourceRoot(path) || statSync(join(path, 'sessions')).isDirectory();
     const names = new Set(readdirSync(path, { encoding: 'utf8' }));
     if (provider === 'codex') {
       return [...names].some((name) => /^state(?:_\d+)?\.sqlite$/iu.test(name)) || names.has('sessions') || names.has('archived_sessions');

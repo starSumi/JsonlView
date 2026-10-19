@@ -70,14 +70,22 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
     let partial = inventory.partial;
     for (const entry of inventory.entries.slice(offset, offset + Math.max(0, Math.min(limits.maxFiles, limits.maxEntities)))) {
       if (!budget.check()) break;
-      const stateKey = entry.kind === 'server' ? 'server\0' + entry.journalPath : 'wire\0' + (entry.statePath ?? entry.sessionKey);
+      const stateKey = entry.kind === 'server' ? 'server\0' + entry.journalPath + '\0' + (entry.fallbackStatePath ?? '')
+        : 'wire\0' + (entry.statePath ?? entry.sessionKey);
       let state = states.get(stateKey);
       if (state === undefined) {
         if (!budget.available()) break;
-        const result = entry.kind === 'server' ? await readKimiServerMetadata(entry, budget) : await readState(entry.statePath, budget);
-        state = result.state;
+        if (entry.kind === 'server') {
+          const server = await readKimiServerMetadata(entry, budget);
+          const legacy = entry.fallbackStatePath === undefined ? undefined : await readState(entry.fallbackStatePath, budget);
+          state = { ...(legacy?.state ?? {}), ...server.state };
+          partial ||= server.partial || (legacy?.partial ?? false);
+        } else {
+          const result = await readState(entry.statePath, budget);
+          state = result.state;
+          partial ||= result.partial;
+        }
         states.set(stateKey, state);
-        partial ||= result.partial;
       }
       if (!budget.check()) break;
       const entity = this.entity(entry, state);
@@ -175,19 +183,33 @@ export class KimiSessionNavigatorProvider implements SessionNavigatorProvider {
 
 function mergeServerJournals(entries: SessionEntry[], journals: readonly KimiServerJournalEntry[]): void {
   const legacyMainIndexes = new Map<string, number>();
+  const canonicalSessionKeys = new Map<string, string>();
+  const legacyStatePaths = new Map<string, string>();
+  const legacySignatures = new Map<string, string>();
   for (const [index, entry] of entries.entries()) {
-    if (entry.kind !== 'wire' || entry.agentId !== 'main') continue;
+    if (entry.kind !== 'wire') continue;
     const sessionId = legacySessionId(entry.sessionKey);
-    if (sessionId !== undefined && !legacyMainIndexes.has(sessionId)) legacyMainIndexes.set(sessionId, index);
+    if (sessionId === undefined) continue;
+    if (!canonicalSessionKeys.has(sessionId) || entry.agentId === 'main') canonicalSessionKeys.set(sessionId, entry.sessionKey);
+    if (entry.statePath !== undefined && !legacyStatePaths.has(sessionId)) legacyStatePaths.set(sessionId, entry.statePath);
+    if (!legacySignatures.has(sessionId) || entry.agentId === 'main') legacySignatures.set(sessionId, entry.signature);
+    if (entry.agentId === 'main' && !legacyMainIndexes.has(sessionId)) legacyMainIndexes.set(sessionId, index);
   }
   for (const journal of journals) {
     const index = legacyMainIndexes.get(journal.journalSessionId);
+    const canonicalSessionKey = canonicalSessionKeys.get(journal.journalSessionId) ?? journal.sessionKey;
+    const fallbackStatePath = legacyStatePaths.get(journal.journalSessionId);
+    const legacySignature = legacySignatures.get(journal.journalSessionId);
     if (index === undefined) {
-      entries.push(journal);
+      entries.push({ ...journal, sessionKey: canonicalSessionKey, ...(fallbackStatePath === undefined ? {} : { fallbackStatePath }),
+        signature: journal.signature + '\0canonical:' + canonicalSessionKey + '\0legacy:' + (legacySignature ?? '') });
       continue;
     }
     const legacy = entries[index]!;
-    entries[index] = { ...journal, sessionKey: legacy.sessionKey, signature: journal.signature + '\0canonical:' + legacy.sessionKey };
+    const sessionKey = legacy.kind === 'wire' ? legacy.sessionKey : canonicalSessionKey;
+    const statePath = legacy.kind === 'wire' ? legacy.statePath : fallbackStatePath;
+    entries[index] = { ...journal, sessionKey, ...(statePath === undefined ? {} : { fallbackStatePath: statePath }),
+      signature: journal.signature + '\0canonical:' + sessionKey + '\0state:' + (statePath ?? '') + '\0legacy:' + (legacySignature ?? '') };
   }
 }
 
