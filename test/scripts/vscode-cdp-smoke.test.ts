@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const { createMutableSyntheticFixture } = await import(fileURLToPath(new URL('../../scripts/synthetic-cdp-fixture.mjs', import.meta.url)));
+const { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } = await import(
+  fileURLToPath(new URL('../../scripts/page-navigation-measurement.mjs', import.meta.url)),
+);
 
 const smokeScript = fileURLToPath(new URL('../../scripts/vscode-cdp-smoke.mjs', import.meta.url));
 const fixtureScript = fileURLToPath(new URL('../../scripts/synthetic-cdp-fixture.mjs', import.meta.url));
@@ -16,12 +19,16 @@ async function withTempRoot(check: (root: string) => Promise<void>): Promise<voi
   try {
     await check(root);
   } finally {
-    const relativeRoot = relative(resolve(tmpdir()), await realpath(root));
-    if (!relativeRoot || relativeRoot.startsWith('..') || isAbsolute(relativeRoot)) {
-      throw new Error('Refusing to remove an unexpected smoke test directory');
-    }
-    await rm(root, { recursive: true, force: true });
+    await removeOwnedTempRoot(root);
   }
+}
+
+async function removeOwnedTempRoot(root: string): Promise<void> {
+  const relativeRoot = relative(resolve(tmpdir()), await realpath(root));
+  if (!relativeRoot || relativeRoot.startsWith('..') || isAbsolute(relativeRoot)) {
+    throw new Error('Refusing to remove an unexpected smoke test directory');
+  }
+  await rm(root, { recursive: true, force: true });
 }
 
 function runSmoke(output: string, ...argumentsToPass: string[]) {
@@ -42,6 +49,30 @@ function prepareFixture(output: string) {
 }
 
 describe('synthetic CDP smoke fixture boundary', () => {
+  it('parses the cursor range without assuming row order', () => {
+    expect(parsePageCursorOrdinal('Rows #100-#199')).toBe(100);
+    expect(parsePageCursorOrdinal('Rows #0-#99')).toBe(0);
+    expect(parsePageCursorOrdinal('Loading page...')).toBeUndefined();
+    expect(parsePageCursorOrdinal('Rows #1.5-#9')).toBeUndefined();
+  });
+
+  it('requires one-page movement in the requested direction', () => {
+    expect(isExpectedPageNavigation(1, 2, 'next')).toBe(true);
+    expect(isExpectedPageNavigation(2, 1, 'previous')).toBe(true);
+    expect(isExpectedPageNavigation(1, 3, 'next')).toBe(false);
+    expect(isExpectedPageNavigation(2, 2, 'previous')).toBe(false);
+    expect(isExpectedPageNavigation(1, 2, 'sideways')).toBe(false);
+  });
+
+  it('requires the measured page state to remain unchanged across the settle frames', () => {
+    const committed = { page: 2, cursorText: 'Rows #100-#199', cursorOrdinal: 100, mountedOrdinal: 100, generation: 'g2' };
+    expect(samePageNavigationState(committed, { ...committed })).toBe(true);
+    expect(samePageNavigationState(committed, { ...committed, page: 3 })).toBe(false);
+    expect(samePageNavigationState(committed, { ...committed, cursorOrdinal: 200 })).toBe(false);
+    expect(samePageNavigationState(committed, { ...committed, mountedOrdinal: 101 })).toBe(false);
+    expect(samePageNavigationState(committed, { ...committed, generation: 'g3' })).toBe(false);
+  });
+
   for (const modeArguments of [
     ['--follow-file', 'victim.jsonl'],
     ['--append-file', 'victim.jsonl'],
@@ -71,6 +102,28 @@ describe('synthetic CDP smoke fixture boundary', () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('--synthetic-change requires append, truncate, or rewrite');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rejects inspect-only mode before creating a page-navigation measurement run', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--inspect-only', '--measure-page-navigation');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--measure-page-navigation cannot be combined with --inspect-only');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rejects page-navigation measurement combined with a synthetic file mutation', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--measure-page-navigation', '--synthetic-change', 'append');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--measure-page-navigation cannot be combined with other smoke modes');
       await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });

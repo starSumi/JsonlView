@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
+import { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } from './page-navigation-measurement.mjs';
 import { assertOutsideTree } from './path-boundary.mjs';
 import { createMutableSyntheticFixture } from './synthetic-cdp-fixture.mjs';
 
@@ -11,6 +12,7 @@ const inspectOnly = process.argv.includes('--inspect-only');
 const exercise = process.argv.includes('--exercise');
 const wide = process.argv.includes('--wide');
 const leaveInsights = process.argv.includes('--leave-insights');
+const measurePageNavigation = process.argv.includes('--measure-page-navigation');
 const syntheticChangeIndex = process.argv.indexOf('--synthetic-change');
 const syntheticChange = syntheticChangeIndex === -1 ? undefined : process.argv[syntheticChangeIndex + 1];
 const settleMilliseconds = Number(process.env.JSONLVIEW_CDP_SETTLE_MS ?? '12000');
@@ -26,12 +28,18 @@ if (process.argv.some((argument) => ['--follow-file', '--append-file', '--change
 if (syntheticChangeIndex !== -1 && !['append', 'truncate', 'rewrite'].includes(syntheticChange)) {
   throw new Error('--synthetic-change requires append, truncate, or rewrite.');
 }
+if (measurePageNavigation && inspectOnly) {
+  throw new Error('--measure-page-navigation cannot be combined with --inspect-only.');
+}
+if (measurePageNavigation && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
+  throw new Error('--measure-page-navigation cannot be combined with other smoke modes.');
+}
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 await mkdir(outputBaseDirectory, { recursive: true });
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 const outputDirectory = await mkdtemp(join(outputBaseDirectory, 'cdp-run-'));
-const ownedFixture = syntheticChange === undefined ? undefined
-  : await createMutableSyntheticFixture(outputDirectory, 250);
+const ownedFixture = syntheticChange === undefined && !measurePageNavigation ? undefined
+  : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation ? 1000 : 250);
 
 class CdpClient {
   #nextId = 0;
@@ -71,6 +79,16 @@ class CdpClient {
 }
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+
+function withTimeout(promise, milliseconds, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 async function targets() {
   const response = await fetch(`${baseUrl}/json/list`);
@@ -400,7 +418,7 @@ function isOwnedFixtureUri(uri, fixture) {
   }
 }
 
-async function sampleSyntheticView(target, action) {
+async function sampleSyntheticView(target, action, includeDetail = false) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
   await client.open();
   try {
@@ -423,7 +441,7 @@ async function sampleSyntheticView(target, action) {
           indexedRecords: Number.parseInt(inspected.querySelector('.status-records')?.textContent ?? '', 10),
           pending: Boolean(inspected.querySelector('.snapshot-update')),
           blocked: Boolean(inspected.querySelector('.invalidated-banner')),
-          detail: inspected.querySelector('.detail-drawer')?.innerText ?? null,
+          detail: ${JSON.stringify(includeDetail)} ? inspected.querySelector('.detail-drawer')?.innerText ?? null : null,
         };
       })()`,
       returnByValue: true,
@@ -442,6 +460,309 @@ async function waitForSyntheticView(target, predicate) {
     await delay(100);
   }
   return latest;
+}
+
+function preparePageNavigationMeasurement(parseCursorOrdinal) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const pager = inspected.querySelector('.page-controls');
+  const grid = inspected.querySelector('.data-grid-scroll');
+  const cursor = pager?.querySelector('.page-cursor');
+  if (!view || !pager || !grid || !cursor) throw new Error('Page navigation controls are not ready.');
+  grid.scrollTop = 0;
+  return new Promise((resolvePreparation, rejectPreparation) => {
+    let timeoutId;
+    let retryId;
+    const frameIds = new Set();
+    let completed = false;
+    const finish = (error, result) => {
+      if (completed) return;
+      completed = true;
+      view.clearTimeout(timeoutId);
+      view.clearTimeout(retryId);
+      for (const frameId of frameIds) view.cancelAnimationFrame(frameId);
+      frameIds.clear();
+      if (error) rejectPreparation(error);
+      else resolvePreparation(result);
+    };
+    const scheduleFrame = (callback) => {
+      const frameId = view.requestAnimationFrame(() => {
+        frameIds.delete(frameId);
+        if (!completed) callback();
+      });
+      frameIds.add(frameId);
+    };
+    const check = () => {
+      if (completed) return;
+      scheduleFrame(() => scheduleFrame(() => {
+        const cursorText = cursor.textContent?.trim() ?? '';
+        const cursorOrdinal = parseCursorOrdinal(cursorText);
+        const row = cursorOrdinal === undefined ? null
+          : grid.querySelector('.data-grid-row[data-row-ordinal="' + cursorOrdinal + '"][data-row-generation]');
+        const busy = pager.getAttribute('aria-busy') === 'true' || grid.getAttribute('aria-busy') === 'true';
+        if (busy || !row) {
+          retryId = view.setTimeout(check, 25);
+          return;
+        }
+        finish(null, {
+          page: Number(pager.querySelector('input[aria-label="Page number"]')?.value),
+          cursorOrdinal,
+          generation: row.dataset.rowGeneration,
+        });
+      }));
+    };
+    timeoutId = view.setTimeout(() => finish(new Error('Page top did not mount within 10 seconds.')), 10000);
+    check();
+  });
+}
+
+function installPageNavigationMeasurement(direction, parseCursorOrdinal, isSameState, expectedPage, probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const pager = inspected.querySelector('.page-controls');
+  const grid = inspected.querySelector('.data-grid-scroll');
+  const pageInput = pager?.querySelector('input[aria-label="Page number"]');
+  const cursor = pager?.querySelector('.page-cursor');
+  const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+  const button = pager?.querySelector('button[title=' + JSON.stringify(buttonTitle) + ']');
+  if (!view || !pager || !grid || !pageInput || !cursor || !button) {
+    throw new Error('Page navigation controls are not ready.');
+  }
+  const registryKey = '__jsonlviewPageNavigationMeasurements';
+  let registry = view[registryKey];
+  if (!registry) {
+    registry = new Map();
+    view[registryKey] = registry;
+  }
+  if (registry.get(probeId)?.cancelled) {
+    registry.delete(probeId);
+    return Promise.reject(new Error('Page navigation measurement was cancelled before setup.'));
+  }
+  const fromPage = Number(pageInput.value);
+  const fromCursor = cursor.textContent?.trim() ?? '';
+  const fromOrdinal = parseCursorOrdinal(fromCursor);
+  const firstRow = fromOrdinal === undefined ? null
+    : grid.querySelector('.data-grid-row[data-row-ordinal="' + fromOrdinal + '"][data-row-generation]');
+  const generation = firstRow?.dataset.rowGeneration;
+  if (!Number.isInteger(fromPage) || fromOrdinal === undefined || !generation || button.disabled) {
+    throw new Error('Requested page navigation is unavailable.');
+  }
+  return new Promise((resolveMeasurement, rejectMeasurement) => {
+    let startedAt;
+    let framePending = false;
+    let completed = false;
+    let timeoutId;
+    let observer;
+    const probe = { cancel: null };
+    registry.set(probeId, probe);
+    const readState = () => {
+      const page = Number(pageInput.value);
+      const cursorText = cursor.textContent?.trim() ?? '';
+      const cursorOrdinal = parseCursorOrdinal(cursorText);
+      const row = cursorOrdinal === undefined ? null
+        : grid.querySelector('.data-grid-row[data-row-ordinal="' + cursorOrdinal + '"][data-row-generation]');
+      const busy = pager.getAttribute('aria-busy') === 'true' || grid.getAttribute('aria-busy') === 'true';
+      return {
+        page,
+        cursorText,
+        cursorOrdinal,
+        mountedOrdinal: Number(row?.dataset.rowOrdinal),
+        generation: row?.dataset.rowGeneration,
+        mountedRows: grid.querySelectorAll('.data-grid-row[data-row-ordinal]').length,
+        busy,
+        ready: cursorText !== fromCursor && cursorText !== 'Loading page...'
+          && cursorOrdinal !== fromOrdinal && expectedPage(fromPage, page, direction)
+          && row?.dataset.rowGeneration === generation
+          && Number.isInteger(Number(row?.dataset.rowOrdinal)),
+      };
+    };
+    const cleanup = () => {
+      observer.disconnect();
+      pager.removeEventListener('click', onClick, true);
+      view.clearTimeout(timeoutId);
+      if (registry.get(probeId) === probe) registry.delete(probeId);
+    };
+    const finish = (error, result) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      if (error) rejectMeasurement(error);
+      else resolveMeasurement(result);
+    };
+    probe.cancel = () => finish(new Error('Page navigation measurement was cancelled by the CDP runner.'));
+    const check = () => {
+      if (startedAt === undefined || framePending) return;
+      const current = readState();
+      if (!current.ready || current.busy) return;
+      framePending = true;
+      view.requestAnimationFrame(() => view.requestAnimationFrame(() => {
+        framePending = false;
+        const settled = readState();
+        if (!settled.ready || settled.busy) {
+          check();
+          return;
+        }
+        if (!isSameState(current, settled)) {
+          check();
+          return;
+        }
+        const durationMs = view.performance.now() - startedAt;
+        finish(null, {
+          direction,
+          fromPage,
+          toPage: settled.page,
+          cursorFirstOrdinal: settled.cursorOrdinal,
+          mountedOrdinal: settled.mountedOrdinal,
+          mountedRows: settled.mountedRows,
+          durationMs,
+        });
+      }));
+    };
+    const onClick = (event) => {
+      if (!event.isTrusted || !event.composedPath().includes(button)) return;
+      if (startedAt !== undefined) {
+        finish(new Error('Concurrent page navigation clicks cannot share one measurement.'));
+        return;
+      }
+      startedAt = view.performance.now();
+      observer.observe(pager, { attributes: true, childList: true, characterData: true, subtree: true });
+      observer.observe(grid, { attributes: true, childList: true, characterData: true, subtree: true });
+      check();
+    };
+    timeoutId = view.setTimeout(() => {
+      finish(new Error('Page navigation did not commit within 15 seconds.'));
+    }, 15000);
+    observer = new view.MutationObserver(check);
+    pager.addEventListener('click', onClick, true);
+  });
+}
+
+function cancelPageNavigationMeasurement(probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const registry = view?.__jsonlviewPageNavigationMeasurements;
+  const probe = registry?.get(probeId);
+  if (probe?.cancel) probe.cancel();
+  else registry?.set(probeId, { cancelled: true });
+}
+
+async function identifySyntheticTarget(target) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  await client.open();
+  try {
+    const evaluated = await client.send('Runtime.evaluate', {
+      expression: '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return { appShell: Boolean(inspected.querySelector(".app-shell")), uri: inspected.body?.dataset.uri ?? null }; })()',
+      returnByValue: true,
+    });
+    return evaluated.result.value;
+  } finally {
+    client.close();
+  }
+}
+
+async function collectPageNavigationMeasurements(target) {
+  let probeSequence = 0;
+  const measureDirection = async (direction) => {
+    const probeId = 'page-nav:' + direction + ':' + String(++probeSequence);
+    const expression = '(' + installPageNavigationMeasurement.toString() + ')(' + JSON.stringify(direction)
+      + ', ' + parsePageCursorOrdinal.toString() + ', ' + samePageNavigationState.toString()
+      + ', ' + isExpectedPageNavigation.toString()
+      + ', ' + JSON.stringify(probeId) + ')';
+    const client = new CdpClient(target.webSocketDebuggerUrl);
+    try {
+      const work = (async () => {
+        await client.open();
+        const prepareExpression = '(' + preparePageNavigationMeasurement.toString()
+          + ')(' + parsePageCursorOrdinal.toString() + ')';
+        const preparedResponse = await client.send('Runtime.evaluate', {
+          expression: prepareExpression, awaitPromise: true, returnByValue: true,
+        });
+        if (preparedResponse.exceptionDetails) {
+          throw new Error(preparedResponse.exceptionDetails.exception?.description ?? preparedResponse.exceptionDetails.text);
+        }
+        const evaluation = client.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+          .then((response) => ({ response }), (error) => ({ error }));
+        const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+        const selector = '.page-controls button[title=' + JSON.stringify(buttonTitle) + ']';
+        const clickExpression = '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return inspected.querySelector(' + JSON.stringify(selector) + '); })()';
+        const clicked = await clickElement(client, clickExpression);
+        if (!clicked) throw new Error('The ' + direction + ' page button was not clickable.');
+        const outcome = await evaluation;
+        if (outcome.error) throw outcome.error;
+        const result = outcome.response;
+        if (result.exceptionDetails) {
+          throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+        }
+        return result.result.value;
+      })();
+      try {
+        return await withTimeout(work, 20000, 'Page navigation CDP measurement exceeded 20 seconds.');
+      } catch (error) {
+        const cancelExpression = '(' + cancelPageNavigationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')';
+        try {
+          await withTimeout(client.send('Runtime.evaluate', { expression: cancelExpression }), 1000,
+            'Page navigation measurement cancellation timed out.');
+        } catch {
+          // The in-page deadline remains the fallback when CDP is unavailable.
+        }
+        throw error;
+      }
+    } finally {
+      client.close();
+    }
+  };
+  const warmupsPerDirection = 3;
+  const measuredSamplesPerDirection = 20;
+  const measured = { next: [], previous: [] };
+  for (let index = 0; index < warmupsPerDirection; index += 1) {
+    await measureDirection('next');
+    await measureDirection('previous');
+  }
+  for (let index = 0; index < measuredSamplesPerDirection; index += 1) {
+    measured.next.push(await measureDirection('next'));
+    measured.previous.push(await measureDirection('previous'));
+  }
+  const summarize = (samples) => {
+    const sorted = samples.map((sample) => sample.durationMs).sort((left, right) => left - right);
+    const percentile = (value) => sorted[Math.max(0, Math.ceil(value * sorted.length) - 1)];
+    const round = (value) => Number(value.toFixed(3));
+    return {
+      sampleCount: samples.length,
+      minMs: round(sorted[0]),
+      p50Ms: round(percentile(0.5)),
+      p95Ms: round(percentile(0.95)),
+      maxMs: round(sorted.at(-1)),
+    };
+  };
+  return {
+    metric: 'webview-click-to-committed-dom-settle-proxy-plus-two-animation-frames',
+    clock: 'window.performance.now',
+    cacheCondition: 'run-owned synthetic fixture already indexed; paired warm-view sequence',
+    completionCondition: 'page number advances exactly one page in the requested direction, its cursor-first ordinal is mounted with the same generation, pager and grid idle, same page state survives two animation-frame callbacks',
+    presentationGuaranteed: false,
+    percentileMethod: 'nearest-rank',
+    warmupsPerDirection,
+    measuredSamplesPerDirection,
+    directions: {
+      next: { summary: summarize(measured.next), samples: measured.next },
+      previous: { summary: summarize(measured.previous), samples: measured.previous },
+    },
+  };
 }
 
 try {
@@ -557,26 +878,52 @@ const inspectable = currentTargets.filter((target) =>
   return priority(left) - priority(right);
 });
 const inspections = [];
-for (let index = 0; index < inspectable.length; index += 1) {
-  inspections.push(await inspectTarget(inspectable[index], index));
+if (!measurePageNavigation) {
+  for (let index = 0; index < inspectable.length; index += 1) {
+    inspections.push(await inspectTarget(inspectable[index], index));
+  }
+}
+
+let ownedFixtureTarget;
+let ownedFixtureBefore;
+if (ownedFixture) {
+  if (measurePageNavigation) {
+    for (const candidate of inspectable) {
+      let identity;
+      try {
+        identity = await identifySyntheticTarget(candidate);
+      } catch {
+        continue;
+      }
+      if (identity?.appShell && isOwnedFixtureUri(identity.uri, ownedFixture.fixture)) {
+        ownedFixtureTarget = candidate;
+        break;
+      }
+    }
+  } else {
+    const inspectedFixture = inspections.find((entry) =>
+      isOwnedFixtureUri(entry.inspection?.bodyDataset?.uri, ownedFixture.fixture));
+    ownedFixtureTarget = inspectable.find((entry) => entry.id === inspectedFixture?.target.id);
+  }
+  if (!ownedFixtureTarget) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
+  const expectedRecords = measurePageNavigation ? 1000 : 250;
+  ownedFixtureBefore = await waitForSyntheticView(ownedFixtureTarget,
+    (sample) => sample?.indexedRecords === expectedRecords);
+  if (ownedFixtureBefore?.indexedRecords !== expectedRecords || ownedFixtureBefore.pending || ownedFixtureBefore.blocked) {
+    throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
+  }
 }
 
 let changeResult = null;
-if (ownedFixture) {
-  const inspectedFixture = inspections.find((entry) =>
-    isOwnedFixtureUri(entry.inspection?.bodyDataset?.uri, ownedFixture.fixture));
-  if (!inspectedFixture) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
-  const target = inspectable.find((entry) => entry.id === inspectedFixture.target.id);
-  const before = await waitForSyntheticView(target, (sample) => sample?.indexedRecords === 250);
-  if (before?.indexedRecords !== 250 || before.pending || before.blocked) {
-    throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
-  }
+if (ownedFixture && syntheticChange !== undefined) {
+  const target = ownedFixtureTarget;
+  const before = ownedFixtureBefore;
   await ownedFixture.change(syntheticChange);
   const after = await waitForSyntheticView(target, (sample) =>
     syntheticChange === 'append' ? sample?.pending === true : sample?.blocked === true);
   await sampleSyntheticView(target, 'select');
   await delay(350);
-  const selected = await sampleSyntheticView(target);
+  const selected = await sampleSyntheticView(target, undefined, true);
   if (after?.pending || after?.blocked) await sampleSyntheticView(target, 'rebuild');
   const expectedRows = syntheticChange === 'append' ? 251 : syntheticChange === 'truncate' ? 0 : 250;
   const rebuilt = await waitForSyntheticView(target, (sample) =>
@@ -597,16 +944,23 @@ if (ownedFixture) {
   };
 }
 
+const pageNavigation = measurePageNavigation
+  ? await collectPageNavigationMeasurements(ownedFixtureTarget)
+  : null;
+
 const result = {
   port,
   outputDirectory,
   targetCount: currentTargets.length,
-  inspections,
+  ...(measurePageNavigation ? {} : { inspections }),
   ...(changeResult === null ? {} : { change: changeResult }),
+  ...(pageNavigation === null ? {} : { pageNavigation }),
 };
 await writeFile(resolve(outputDirectory, 'result.json'), JSON.stringify(result, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(result, null, 2));
 if (changeResult !== null && !changeResult.pass) process.exitCode = 1;
+if (pageNavigation !== null && (pageNavigation.directions.next.summary.sampleCount !== 20
+  || pageNavigation.directions.previous.summary.sampleCount !== 20)) process.exitCode = 1;
 } finally {
   await ownedFixture?.close();
 }
