@@ -9,10 +9,61 @@ const { createMutableSyntheticFixture } = await import(fileURLToPath(new URL('..
 const { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } = await import(
   fileURLToPath(new URL('../../scripts/page-navigation-measurement.mjs', import.meta.url)),
 );
+const { CdpClient, findCdpTargetWithinDeadline, runCdpMeasurement } = await import(
+  fileURLToPath(new URL('../../scripts/cdp-measurement-lifecycle.mjs', import.meta.url)),
+);
 
 const smokeScript = fileURLToPath(new URL('../../scripts/vscode-cdp-smoke.mjs', import.meta.url));
 const fixtureScript = fileURLToPath(new URL('../../scripts/synthetic-cdp-fixture.mjs', import.meta.url));
 const syntheticRecord = '{"message":"Synthetic acceptance event 0"}\n';
+
+class PreparationCancellationSocket extends EventTarget {
+  readyState = 0;
+  respondToCancellation: boolean;
+  commands: Array<{ id: number; method: string; params: { expression?: string } }> = [];
+  preparationRequestId: number | undefined;
+
+  constructor(respondToCancellation = true) {
+    super();
+    this.respondToCancellation = respondToCancellation;
+    queueMicrotask(() => {
+      this.readyState = 1;
+      this.dispatchEvent(new Event('open'));
+    });
+  }
+
+  send(payload: string) {
+    const command = JSON.parse(payload) as { id: number; method: string; params: { expression?: string } };
+    this.commands.push(command);
+    if (command.params.expression === 'cancel-page-probe' && !this.respondToCancellation) return;
+    if (command.params.expression === 'prepare-hangs') {
+      this.preparationRequestId = command.id;
+      return;
+    }
+    queueMicrotask(() => {
+      if (command.params.expression === 'cancel-page-probe' && this.preparationRequestId !== undefined) {
+        this.dispatchResponse({
+          id: this.preparationRequestId,
+          result: { exceptionDetails: { text: 'Page preparation cancelled.' } },
+        });
+        this.preparationRequestId = undefined;
+      }
+      this.dispatchResponse({ id: command.id, result: { result: { value: true } } });
+    });
+  }
+
+  private dispatchResponse(response: { id: number; result: unknown }) {
+    const message = new Event('message');
+    Object.defineProperty(message, 'data', { value: JSON.stringify(response) });
+    this.dispatchEvent(message);
+  }
+
+  close() {
+    if (this.readyState >= 2) return;
+    this.readyState = 3;
+    this.dispatchEvent(new Event('close'));
+  }
+}
 
 async function withTempRoot(check: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'jsonlview-smoke-'));
@@ -49,6 +100,92 @@ function prepareFixture(output: string) {
 }
 
 describe('synthetic CDP smoke fixture boundary', () => {
+  it('shares one deadline across the serial target scan', async () => {
+    let now = 0;
+    const budgets: number[] = [];
+
+    await expect(findCdpTargetWithinDeadline({
+      candidates: ['stale-1', 'stale-2', 'fixture'],
+      probe: async (_candidate: string, remainingMs: number) => {
+        budgets.push(remainingMs);
+        now += remainingMs;
+        throw new Error('CDP target detached.');
+      },
+      matches: () => false,
+      timeoutMs: 30,
+      timeoutMessage: 'Synthetic fixture target discovery exceeded 30 seconds.',
+      now: () => now,
+    })).rejects.toThrow('Synthetic fixture target discovery exceeded 30 seconds.');
+
+    expect(budgets).toEqual([30]);
+  });
+
+  it('cancels stalled preparation before closing the CDP session', async () => {
+    const socket = new PreparationCancellationSocket();
+    const client = new CdpClient('ws://test.invalid', () => socket as unknown as WebSocket);
+    let preparationSettled = false;
+    let pendingAfterPageCancellation: number | undefined;
+    let preparationSettledAtCancellation: boolean | undefined;
+
+    const result = runCdpMeasurement({
+      client,
+      timeoutMs: 25,
+      timeoutMessage: 'Page navigation CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 100,
+      task: async () => {
+        await client.open();
+        try {
+          const response = await client.send('Runtime.evaluate', { expression: 'prepare-hangs' });
+          if (response.exceptionDetails) throw new Error('Page preparation was cancelled.');
+        } finally {
+          preparationSettled = true;
+        }
+      },
+      onTimeout: () => client.send('Runtime.evaluate', { expression: 'cancel-page-probe' }).then(() => {
+        pendingAfterPageCancellation = client.pendingRequestCount;
+        preparationSettledAtCancellation = preparationSettled;
+      }),
+    });
+
+    await expect(result).rejects.toThrow('Page navigation CDP measurement exceeded 20 seconds.');
+    expect(socket.commands.map((command) => command.params.expression)).toEqual([
+      'prepare-hangs',
+      'cancel-page-probe',
+    ]);
+    expect(socket.readyState).toBe(3);
+    expect(pendingAfterPageCancellation).toBe(0);
+    expect(preparationSettledAtCancellation).toBe(true);
+    expect(client.pendingRequestCount).toBe(0);
+    expect(preparationSettled).toBe(true);
+  });
+
+  it('closes CDP when page cancellation misses its grace period', async () => {
+    const socket = new PreparationCancellationSocket(false);
+    const client = new CdpClient('ws://test.invalid', () => socket as unknown as WebSocket);
+    const startedAt = performance.now();
+
+    const result = runCdpMeasurement({
+      client,
+      timeoutMs: 20,
+      timeoutMessage: 'Page navigation CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 25,
+      task: async () => {
+        await client.open();
+        await client.send('Runtime.evaluate', { expression: 'prepare-hangs' });
+      },
+      onTimeout: () => client.send('Runtime.evaluate', { expression: 'cancel-page-probe' }),
+    });
+
+    await expect(result).rejects.toThrow('Page navigation CDP measurement exceeded 20 seconds.');
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    expect(socket.commands.map((command) => command.params.expression)).toEqual([
+      'prepare-hangs',
+      'cancel-page-probe',
+    ]);
+    expect(socket.readyState).toBe(3);
+    expect(client.pendingRequestCount).toBe(0);
+  });
+
   it('parses the cursor range without assuming row order', () => {
     expect(parsePageCursorOrdinal('Rows #100-#199')).toBe(100);
     expect(parsePageCursorOrdinal('Rows #0-#99')).toBe(0);

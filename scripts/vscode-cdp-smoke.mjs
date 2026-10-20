@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
+import { CdpClient, findCdpTargetWithinDeadline, runCdpMeasurement } from './cdp-measurement-lifecycle.mjs';
 import { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } from './page-navigation-measurement.mjs';
 import { assertOutsideTree } from './path-boundary.mjs';
 import { createMutableSyntheticFixture } from './synthetic-cdp-fixture.mjs';
@@ -17,6 +18,8 @@ const syntheticChangeIndex = process.argv.indexOf('--synthetic-change');
 const syntheticChange = syntheticChangeIndex === -1 ? undefined : process.argv[syntheticChangeIndex + 1];
 const settleMilliseconds = Number(process.env.JSONLVIEW_CDP_SETTLE_MS ?? '12000');
 const baseUrl = `http://127.0.0.1:${String(port)}`;
+const CDP_OPERATION_TIMEOUT_MS = 20000;
+const SYNTHETIC_TARGET_DISCOVERY_TIMEOUT_MS = 30000;
 
 if (!Number.isSafeInteger(settleMilliseconds) || settleMilliseconds < 0) {
   throw new Error('JSONLVIEW_CDP_SETTLE_MS must be a non-negative safe integer.');
@@ -41,57 +44,10 @@ const outputDirectory = await mkdtemp(join(outputBaseDirectory, 'cdp-run-'));
 const ownedFixture = syntheticChange === undefined && !measurePageNavigation ? undefined
   : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation ? 1000 : 250);
 
-class CdpClient {
-  #nextId = 0;
-  #pending = new Map();
-
-  constructor(url) {
-    this.socket = new WebSocket(url);
-  }
-
-  async open() {
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener('open', resolveOpen, { once: true });
-      this.socket.addEventListener('error', rejectOpen, { once: true });
-    });
-    this.socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data));
-      if (message.id === undefined) return;
-      const pending = this.#pending.get(message.id);
-      if (!pending) return;
-      this.#pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message));
-      else pending.resolve(message.result);
-    });
-  }
-
-  send(method, params = {}) {
-    const id = ++this.#nextId;
-    return new Promise((resolveRequest, rejectRequest) => {
-      this.#pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  close() {
-    this.socket.close();
-  }
-}
-
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
-function withTimeout(promise, milliseconds, message) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(message)), milliseconds);
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
-
 async function targets() {
-  const response = await fetch(`${baseUrl}/json/list`);
+  const response = await fetch(`${baseUrl}/json/list`, { signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(`CDP target list failed: ${String(response.status)}`);
   return response.json();
 }
@@ -418,51 +374,58 @@ function isOwnedFixtureUri(uri, fixture) {
   }
 }
 
-async function sampleSyntheticView(target, action, includeDetail = false) {
+async function sampleSyntheticView(target, action, includeDetail = false, timeoutMs = 5000) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
-  await client.open();
-  try {
-    const sampled = await client.send('Runtime.evaluate', {
-      expression: `(() => {
-        let inspected = document;
-        for (let depth = 0; depth < 3; depth += 1) {
-          const child = inspected.querySelector('iframe')?.contentDocument;
-          if (!child?.body) break;
-          inspected = child;
-        }
-        if (!inspected.querySelector('.app-shell')) return null;
-        if (${JSON.stringify(action)} === 'select') inspected.querySelectorAll('.data-grid-row')[1]?.click();
-        if (${JSON.stringify(action)} === 'rebuild') {
-          (inspected.querySelector('.snapshot-update button')
-            ?? inspected.querySelector('.invalidated-banner button'))?.click();
-        }
-        return {
-          uri: inspected.body?.dataset.uri ?? null,
-          indexedRecords: Number.parseInt(inspected.querySelector('.status-records')?.textContent ?? '', 10),
-          pending: Boolean(inspected.querySelector('.snapshot-update')),
-          blocked: Boolean(inspected.querySelector('.invalidated-banner')),
-          detail: ${JSON.stringify(includeDetail)} ? inspected.querySelector('.detail-drawer')?.innerText ?? null : null,
-        };
-      })()`,
-      returnByValue: true,
-    });
-    return sampled.result.value;
-  } finally {
-    client.close();
-  }
+  return runCdpMeasurement({
+    client,
+    timeoutMs,
+    timeoutMessage: 'Synthetic Webview sampling exceeded its deadline.',
+    task: async () => {
+      await client.open();
+      const sampled = await client.send('Runtime.evaluate', {
+        expression: `(() => {
+          let inspected = document;
+          for (let depth = 0; depth < 3; depth += 1) {
+            const child = inspected.querySelector('iframe')?.contentDocument;
+            if (!child?.body) break;
+            inspected = child;
+          }
+          if (!inspected.querySelector('.app-shell')) return null;
+          if (${JSON.stringify(action)} === 'select') inspected.querySelectorAll('.data-grid-row')[1]?.click();
+          if (${JSON.stringify(action)} === 'rebuild') {
+            (inspected.querySelector('.snapshot-update button')
+              ?? inspected.querySelector('.invalidated-banner button'))?.click();
+          }
+          return {
+            uri: inspected.body?.dataset.uri ?? null,
+            indexedRecords: Number.parseInt(inspected.querySelector('.status-records')?.textContent ?? '', 10),
+            pending: Boolean(inspected.querySelector('.snapshot-update')),
+            blocked: Boolean(inspected.querySelector('.invalidated-banner')),
+            detail: ${JSON.stringify(includeDetail)} ? inspected.querySelector('.detail-drawer')?.innerText ?? null : null,
+          };
+        })()`,
+        returnByValue: true,
+      });
+      return sampled.result.value;
+    },
+  });
 }
 
-async function waitForSyntheticView(target, predicate) {
+async function waitForSyntheticView(target, predicate, timeoutMs = 12000) {
+  const deadline = performance.now() + timeoutMs;
   let latest;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    latest = await sampleSyntheticView(target);
+  while (performance.now() < deadline) {
+    const remainingMs = deadline - performance.now();
+    latest = await sampleSyntheticView(target, undefined, false, Math.min(5000, remainingMs));
     if (predicate(latest)) return latest;
-    await delay(100);
+    const pauseMs = Math.min(100, deadline - performance.now());
+    if (pauseMs <= 0) break;
+    await delay(pauseMs);
   }
   return latest;
 }
 
-function preparePageNavigationMeasurement(parseCursorOrdinal) {
+function preparePageNavigationMeasurement(parseCursorOrdinal, probeId) {
   let inspected = document;
   for (let depth = 0; depth < 3; depth += 1) {
     const child = inspected.querySelector('iframe')?.contentDocument;
@@ -474,6 +437,16 @@ function preparePageNavigationMeasurement(parseCursorOrdinal) {
   const grid = inspected.querySelector('.data-grid-scroll');
   const cursor = pager?.querySelector('.page-cursor');
   if (!view || !pager || !grid || !cursor) throw new Error('Page navigation controls are not ready.');
+  const registryKey = '__jsonlviewPageNavigationMeasurements';
+  let registry = view[registryKey];
+  if (!registry) {
+    registry = new Map();
+    view[registryKey] = registry;
+  }
+  if (registry.get(probeId)?.cancelled) {
+    registry.delete(probeId);
+    throw new Error('Page navigation measurement was cancelled before preparation.');
+  }
   grid.scrollTop = 0;
   return new Promise((resolvePreparation, rejectPreparation) => {
     let timeoutId;
@@ -487,6 +460,7 @@ function preparePageNavigationMeasurement(parseCursorOrdinal) {
       view.clearTimeout(retryId);
       for (const frameId of frameIds) view.cancelAnimationFrame(frameId);
       frameIds.clear();
+      if (registry.get(probeId) === probe) registry.delete(probeId);
       if (error) rejectPreparation(error);
       else resolvePreparation(result);
     };
@@ -516,6 +490,9 @@ function preparePageNavigationMeasurement(parseCursorOrdinal) {
         });
       }));
     };
+    const probe = { cancel: null };
+    probe.cancel = () => finish(new Error('Page navigation preparation was cancelled by the CDP runner.'));
+    registry.set(probeId, probe);
     timeoutId = view.setTimeout(() => finish(new Error('Page top did not mount within 10 seconds.')), 10000);
     check();
   });
@@ -661,18 +638,21 @@ function cancelPageNavigationMeasurement(probeId) {
   else registry?.set(probeId, { cancelled: true });
 }
 
-async function identifySyntheticTarget(target) {
+async function identifySyntheticTarget(target, timeoutMs = CDP_OPERATION_TIMEOUT_MS) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
-  await client.open();
-  try {
-    const evaluated = await client.send('Runtime.evaluate', {
-      expression: '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return { appShell: Boolean(inspected.querySelector(".app-shell")), uri: inspected.body?.dataset.uri ?? null }; })()',
-      returnByValue: true,
-    });
-    return evaluated.result.value;
-  } finally {
-    client.close();
-  }
+  return runCdpMeasurement({
+    client,
+    timeoutMs,
+    timeoutMessage: 'Synthetic target identification exceeded 20 seconds.',
+    task: async () => {
+      await client.open();
+      const evaluated = await client.send('Runtime.evaluate', {
+        expression: '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return { appShell: Boolean(inspected.querySelector(".app-shell")), uri: inspected.body?.dataset.uri ?? null }; })()',
+        returnByValue: true,
+      });
+      return evaluated.result.value;
+    },
+  });
 }
 
 async function collectPageNavigationMeasurements(target) {
@@ -684,11 +664,15 @@ async function collectPageNavigationMeasurements(target) {
       + ', ' + isExpectedPageNavigation.toString()
       + ', ' + JSON.stringify(probeId) + ')';
     const client = new CdpClient(target.webSocketDebuggerUrl);
-    try {
-      const work = (async () => {
+    const prepareExpression = '(' + preparePageNavigationMeasurement.toString()
+      + ')(' + parsePageCursorOrdinal.toString() + ', ' + JSON.stringify(probeId) + ')';
+    return runCdpMeasurement({
+      client,
+      timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+      timeoutMessage: 'Page navigation CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 1000,
+      task: async () => {
         await client.open();
-        const prepareExpression = '(' + preparePageNavigationMeasurement.toString()
-          + ')(' + parsePageCursorOrdinal.toString() + ')';
         const preparedResponse = await client.send('Runtime.evaluate', {
           expression: prepareExpression, awaitPromise: true, returnByValue: true,
         });
@@ -709,22 +693,12 @@ async function collectPageNavigationMeasurements(target) {
           throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
         }
         return result.result.value;
-      })();
-      try {
-        return await withTimeout(work, 20000, 'Page navigation CDP measurement exceeded 20 seconds.');
-      } catch (error) {
+      },
+      onTimeout: () => {
         const cancelExpression = '(' + cancelPageNavigationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')';
-        try {
-          await withTimeout(client.send('Runtime.evaluate', { expression: cancelExpression }), 1000,
-            'Page navigation measurement cancellation timed out.');
-        } catch {
-          // The in-page deadline remains the fallback when CDP is unavailable.
-        }
-        throw error;
-      }
-    } finally {
-      client.close();
-    }
+        return client.send('Runtime.evaluate', { expression: cancelExpression });
+      },
+    });
   };
   const warmupsPerDirection = 3;
   const measuredSamplesPerDirection = 20;
@@ -800,18 +774,21 @@ if (wide) {
 
 if (ownedFixture) {
   const workbenchClient = new CdpClient(workbench.webSocketDebuggerUrl);
-  await workbenchClient.open();
-  try {
-    await key(workbenchClient, 'Escape', 'Escape', 27);
-    await key(workbenchClient, 'p', 'KeyP', 80, 2);
-    await delay(350);
-    await workbenchClient.send('Input.insertText', { text: ownedFixture.fixture });
-    await delay(500);
-    await key(workbenchClient, 'Enter', 'Enter', 13);
-    await delay(900);
-  } finally {
-    workbenchClient.close();
-  }
+  await runCdpMeasurement({
+    client: workbenchClient,
+    timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+    timeoutMessage: 'Synthetic fixture open exceeded 20 seconds.',
+    task: async () => {
+      await workbenchClient.open();
+      await key(workbenchClient, 'Escape', 'Escape', 27);
+      await key(workbenchClient, 'p', 'KeyP', 80, 2);
+      await delay(350);
+      await workbenchClient.send('Input.insertText', { text: ownedFixture.fixture });
+      await delay(500);
+      await key(workbenchClient, 'Enter', 'Enter', 13);
+      await delay(900);
+    },
+  });
 }
 
 if (!inspectOnly && !ownedFixture) {
@@ -888,18 +865,14 @@ let ownedFixtureTarget;
 let ownedFixtureBefore;
 if (ownedFixture) {
   if (measurePageNavigation) {
-    for (const candidate of inspectable) {
-      let identity;
-      try {
-        identity = await identifySyntheticTarget(candidate);
-      } catch {
-        continue;
-      }
-      if (identity?.appShell && isOwnedFixtureUri(identity.uri, ownedFixture.fixture)) {
-        ownedFixtureTarget = candidate;
-        break;
-      }
-    }
+    const fixtureTarget = await findCdpTargetWithinDeadline({
+      candidates: inspectable,
+      probe: identifySyntheticTarget,
+      matches: (identity) => identity?.appShell && isOwnedFixtureUri(identity.uri, ownedFixture.fixture),
+      timeoutMs: SYNTHETIC_TARGET_DISCOVERY_TIMEOUT_MS,
+      timeoutMessage: `Synthetic fixture target discovery exceeded ${String(SYNTHETIC_TARGET_DISCOVERY_TIMEOUT_MS / 1000)} seconds.`,
+    });
+    ownedFixtureTarget = fixtureTarget?.candidate;
   } else {
     const inspectedFixture = inspections.find((entry) =>
       isOwnedFixtureUri(entry.inspection?.bodyDataset?.uri, ownedFixture.fixture));
