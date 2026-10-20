@@ -932,7 +932,10 @@ function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSam
       } else {
         events.push(sanitizeTap(message));
       }
-      startQuietWindow();
+      // A host query may legitimately outlive the DOM transition. Keep the
+      // bounded event window open until the DOM has committed; only then does
+      // the quiet drain become a completion boundary.
+      if (domTransition) startQuietWindow();
     };
     const check = () => {
       if (completed || !active || startedAt === undefined || framePending || domTransition) return;
@@ -1113,10 +1116,18 @@ async function collectQueryAttributionMeasurements(target) {
           throw new Error('Query attribution request sequence was repeated or moved backwards.');
         }
         lastRequestSequence.set(identity, startEvent.attributes.request_seq);
-        return pairQueryAttribution({
-          events: measured.events, overflow: measured.overflow,
-          outOfWindowEvents: measured.outOfWindowEvents, domTransition: measured,
-        });
+        try {
+          return pairQueryAttribution({
+            events: measured.events, overflow: measured.overflow,
+            outOfWindowEvents: measured.outOfWindowEvents, domTransition: measured,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(detail + ' [eventCount=' + String(measured.events?.length ?? -1)
+            + ', overflow=' + String(measured.overflow === true)
+            + ', outOfWindow=' + String(measured.outOfWindowEvents ?? -1)
+            + ', eventNames=' + String((measured.events ?? []).map((event) => event.eventName).join(',')) + ']');
+        }
       },
       onTimeout: () => client.send('Runtime.evaluate', {
         expression: '(' + cancelQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
