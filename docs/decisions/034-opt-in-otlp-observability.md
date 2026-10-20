@@ -68,6 +68,14 @@ must not overlap.
 
 ## Evidence
 
+- `src/extension/otlp-projection.ts` is the contract-only projection: it accepts
+  revalidated `jsonlview.query.settled` events and emits a fixed duration metric
+  with finite `outcome`, `delivery`, and `abort_observed` dimensions. It omits
+  request sequence, row counts, timestamps, stale reasons, error names, source
+  data, and identity. Its tests enumerate the 16 schema-valid combinations
+  within a maximum 32-value Cartesian product. This
+  module has no SDK, exporter, queue, setting, or network behavior; explicit
+  export and shutdown remain gated by the revisit conditions below.
 - `src/profiles/opentelemetry-profile.ts` is an input projection only; it keeps
   one OTLP File Exporter envelope as one physical row.
 - `src/extension/diagnostic-context.ts` defines the existing bounded,
