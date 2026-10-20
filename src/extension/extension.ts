@@ -23,6 +23,7 @@ import type { SessionPreviews } from '../experimental/session-navigator/session-
 import { buildDiagnosticEnvelope, formatDiagnosticContext, formatDiagnosticPrompt, type JsonlViewDiagnosticEnvelope } from './diagnostic-context';
 import { appendExecutionIdentityLog, appendOutputLog, createOutputLogObservabilitySink, type JsonlViewOutputChannel } from './output-log';
 import { createCausalLifecycleTrace, type CausalLifecycleTrace } from './observability-contract';
+import { createCdpQueryTap, isCdpQueryTapEnabled } from './cdp-query-tap';
 import { parseStartupStageReceipt } from './startup-stage';
 import { logLifecycleFailure } from './lifecycle-failure';
 import { summaryIdentityMatches } from './summary-identity';
@@ -614,8 +615,14 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     const querySink = createOutputLogObservabilitySink(this.output === undefined ? undefined : {
       appendLine: (line) => this.output?.appendLine(line + ' trace=' + traceId + ' startup=' + startupId),
     });
+    const queryTap = createCdpQueryTap(panel.webview, { traceId, startupId }, isCdpQueryTapEnabled(
+      this.runtimeIdentity.extensionMode, process.env.JSONLVIEW_CDP_QUERY_TAP,
+    ));
     const controller = new DocumentController(document.session, panel.webview, {
-      onQueryOperation: (event) => querySink.record(event),
+      onQueryOperation: (event) => {
+        querySink.record(event);
+        queryTap.record(event);
+      },
       beforeRebuild: () => document.resetRecovery(),
       onRowOrderChanged: (direction) => {
         this.rowOrderWrite = this.rowOrderWrite.catch(() => {}).then(
@@ -714,6 +721,7 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
     const disposePanel = () => {
       finishStartup('disposed');
       controller.dispose();
+      queryTap.dispose();
       previewRegistration?.dispose();
       messageRegistration.dispose();
       viewStateRegistration.dispose();
