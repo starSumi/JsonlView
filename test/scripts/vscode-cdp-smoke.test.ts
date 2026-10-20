@@ -254,6 +254,28 @@ describe('synthetic CDP smoke fixture boundary', () => {
     });
   });
 
+  it('keeps query attribution separate from page-navigation measurement', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--measure-page-navigation', '--measure-query-attribution');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Page-navigation and query-attribution measurement modes are separate');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rejects inspect-only query-attribution mode before creating a run directory', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--inspect-only', '--measure-query-attribution');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--measure-query-attribution cannot be combined with --inspect-only');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
   it('rejects page-navigation measurement combined with a synthetic file mutation', async () => {
     await withTempRoot(async (root) => {
       const output = join(root, 'output');

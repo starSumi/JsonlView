@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
 import { CdpClient, findCdpTargetWithinDeadline, runCdpMeasurement } from './cdp-measurement-lifecycle.mjs';
 import { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } from './page-navigation-measurement.mjs';
+import { MAX_QUERY_TAP_EVENTS, pairQueryAttribution, summarizeQueryAttribution } from './query-attribution-measurement.mjs';
 import { assertOutsideTree } from './path-boundary.mjs';
 import { createMutableSyntheticFixture } from './synthetic-cdp-fixture.mjs';
 
@@ -14,6 +15,7 @@ const exercise = process.argv.includes('--exercise');
 const wide = process.argv.includes('--wide');
 const leaveInsights = process.argv.includes('--leave-insights');
 const measurePageNavigation = process.argv.includes('--measure-page-navigation');
+const measureQueryAttribution = process.argv.includes('--measure-query-attribution');
 const syntheticChangeIndex = process.argv.indexOf('--synthetic-change');
 const syntheticChange = syntheticChangeIndex === -1 ? undefined : process.argv[syntheticChangeIndex + 1];
 const settleMilliseconds = Number(process.env.JSONLVIEW_CDP_SETTLE_MS ?? '12000');
@@ -34,15 +36,24 @@ if (syntheticChangeIndex !== -1 && !['append', 'truncate', 'rewrite'].includes(s
 if (measurePageNavigation && inspectOnly) {
   throw new Error('--measure-page-navigation cannot be combined with --inspect-only.');
 }
+if (measureQueryAttribution && inspectOnly) {
+  throw new Error('--measure-query-attribution cannot be combined with --inspect-only.');
+}
+if (measurePageNavigation && measureQueryAttribution) {
+  throw new Error('Page-navigation and query-attribution measurement modes are separate.');
+}
 if (measurePageNavigation && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
   throw new Error('--measure-page-navigation cannot be combined with other smoke modes.');
+}
+if (measureQueryAttribution && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
+  throw new Error('--measure-query-attribution cannot be combined with other smoke modes.');
 }
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 await mkdir(outputBaseDirectory, { recursive: true });
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 const outputDirectory = await mkdtemp(join(outputBaseDirectory, 'cdp-run-'));
-const ownedFixture = syntheticChange === undefined && !measurePageNavigation ? undefined
-  : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation ? 1000 : 250);
+const ownedFixture = syntheticChange === undefined && !measurePageNavigation && !measureQueryAttribution ? undefined
+  : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation || measureQueryAttribution ? 1000 : 250);
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
@@ -739,6 +750,425 @@ async function collectPageNavigationMeasurements(target) {
   };
 }
 
+function installQueryAttributionGuard(arm) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  if (!view || !inspected.querySelector('.app-shell')) throw new Error('Query attribution Webview frame is not ready.');
+  const guardKey = '__jsonlviewQueryAttributionGuard';
+  let guard = view[guardKey];
+  if (!guard) {
+    guard = { armed: false, activeProbeId: null, outOfWindowEvents: 0 };
+    guard.onMessage = (event) => {
+      if (event.data?.__jsonlViewCdpQueryTap !== 1 || !guard.armed || guard.activeProbeId !== null) return;
+      guard.outOfWindowEvents = Math.min(Number.MAX_SAFE_INTEGER, guard.outOfWindowEvents + 1);
+    };
+    view.addEventListener('message', guard.onMessage);
+    view[guardKey] = guard;
+  }
+  if (arm) {
+    if (guard.activeProbeId !== null) throw new Error('A query attribution click window is still active.');
+    guard.outOfWindowEvents = 0;
+    guard.armed = true;
+  } else {
+    if (guard.activeProbeId !== null) throw new Error('A query attribution click window is still active.');
+    guard.outOfWindowEvents = 0;
+    guard.armed = false;
+  }
+  return { armed: guard.armed };
+}
+
+function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSameState, expectedPage, probeId, maxEvents, quietWindowMs) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const guard = view?.__jsonlviewQueryAttributionGuard;
+  const pager = inspected.querySelector('.page-controls');
+  const grid = inspected.querySelector('.data-grid-scroll');
+  const pageInput = pager?.querySelector('input[aria-label="Page number"]');
+  const cursor = pager?.querySelector('.page-cursor');
+  const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+  const button = pager?.querySelector('button[title=' + JSON.stringify(buttonTitle) + ']');
+  if (!view || !pager || !grid || !pageInput || !cursor || !button) {
+    throw new Error('Query attribution page controls are not ready.');
+  }
+  const registryKey = '__jsonlviewQueryAttributionMeasurements';
+  let registry = view[registryKey];
+  if (!registry) {
+    registry = new Map();
+    view[registryKey] = registry;
+  }
+  if (!guard?.armed) throw new Error('Query attribution tap guard was not armed after the stable baseline.');
+  if (guard.activeProbeId !== null) throw new Error('A prior query attribution click window is still active.');
+  if (guard.outOfWindowEvents !== 0) throw new Error('A query tap arrived outside the bounded click window.');
+  if (registry.get(probeId)?.cancelled) {
+    registry.delete(probeId);
+    return Promise.reject(new Error('Query attribution measurement was cancelled before setup.'));
+  }
+  const fromPage = Number(pageInput.value);
+  const fromCursor = cursor.textContent?.trim() ?? '';
+  const fromOrdinal = parseCursorOrdinal(fromCursor);
+  const firstRow = fromOrdinal === undefined ? null
+    : grid.querySelector('.data-grid-row[data-row-ordinal="' + fromOrdinal + '"][data-row-generation]');
+  const generation = firstRow?.dataset.rowGeneration;
+  if (!Number.isSafeInteger(fromPage) || fromOrdinal === undefined || !generation || button.disabled) {
+    throw new Error('Requested query attribution page transition is unavailable.');
+  }
+  return new Promise((resolveMeasurement, rejectMeasurement) => {
+    let startedAt;
+    let framePending = false;
+    let frameOne;
+    let frameTwo;
+    let completed = false;
+    let active = false;
+    let timeoutId;
+    let quietTimer;
+    let observer;
+    let domTransition;
+    let overflow = false;
+    const events = [];
+    const probe = { cancel: null };
+    const readState = () => {
+      const page = Number(pageInput.value);
+      const cursorText = cursor.textContent?.trim() ?? '';
+      const cursorOrdinal = parseCursorOrdinal(cursorText);
+      const row = cursorOrdinal === undefined ? null
+        : grid.querySelector('.data-grid-row[data-row-ordinal="' + cursorOrdinal + '"][data-row-generation]');
+      const busy = pager.getAttribute('aria-busy') === 'true' || grid.getAttribute('aria-busy') === 'true';
+      return {
+        page, cursorText, cursorOrdinal, mountedOrdinal: Number(row?.dataset.rowOrdinal),
+        generation: row?.dataset.rowGeneration, busy,
+        ready: cursorText !== fromCursor && cursorText !== 'Loading page...'
+          && cursorOrdinal !== fromOrdinal && expectedPage(fromPage, page, direction)
+          && row?.dataset.rowGeneration === generation
+          && Number.isSafeInteger(Number(row?.dataset.rowOrdinal)),
+      };
+    };
+    const cleanup = () => {
+      active = false;
+      if (guard.activeProbeId === probeId) guard.activeProbeId = null;
+      observer?.disconnect();
+      pager.removeEventListener('click', onClick, true);
+      view.removeEventListener('message', onMessage);
+      view.clearTimeout(timeoutId);
+      view.clearTimeout(quietTimer);
+      if (frameOne !== undefined) view.cancelAnimationFrame(frameOne);
+      if (frameTwo !== undefined) view.cancelAnimationFrame(frameTwo);
+      if (registry.get(probeId) === probe) registry.delete(probeId);
+    };
+    const finish = (error, result) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      if (error) rejectMeasurement(error);
+      else resolveMeasurement(result);
+    };
+    const startQuietWindow = () => {
+      if (!domTransition || !active) return;
+      view.clearTimeout(quietTimer);
+      quietTimer = view.setTimeout(() => finish(null, {
+        ...domTransition, events, overflow, outOfWindowEvents: guard.outOfWindowEvents,
+      }), quietWindowMs);
+    };
+    const sanitizeTap = (message) => {
+      const safeIdentifier = (value) => typeof value === 'string' && value.length > 0 && value.length <= 128
+        && !/[\u0000-\u001f\u007f]/u.test(value) ? value : undefined;
+      const traceId = safeIdentifier(message?.traceId);
+      const startupId = safeIdentifier(message?.startupId);
+      const eventName = safeIdentifier(message?.eventName);
+      const sanitized = {
+        traceId, startupId, eventName, attributes: {},
+      };
+      try {
+        const eventKeys = ['__jsonlViewCdpQueryTap', 'traceId', 'startupId', 'eventName', 'attributes'];
+        const allowedAttributes = new Set([
+          'stage', 'request_seq', 'outcome', 'delivery', 'abort_observed', 'duration_ms', 'rows', 'stale_reason', 'error_name',
+        ]);
+        if (Object.keys(message).some((key) => !eventKeys.includes(key))) sanitized.invalid = true;
+        if (traceId === undefined || startupId === undefined || eventName === undefined) sanitized.invalid = true;
+        if (!message.attributes || typeof message.attributes !== 'object' || Array.isArray(message.attributes)
+          || Object.keys(message.attributes).length > 16) {
+          sanitized.invalid = true;
+        } else {
+          for (const key of Object.keys(message.attributes)) {
+            if (!allowedAttributes.has(key)) {
+              sanitized.invalid = true;
+              continue;
+            }
+            const value = message.attributes[key];
+            if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+              sanitized.invalid = true;
+              continue;
+            }
+            if (typeof value === 'string' && (value.length === 0 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value))) {
+              sanitized.invalid = true;
+              continue;
+            }
+            if (typeof value === 'number' && !Number.isFinite(value)) {
+              sanitized.invalid = true;
+              continue;
+            }
+            sanitized.attributes[key] = value;
+          }
+        }
+      } catch {
+        sanitized.invalid = true;
+      }
+      return sanitized;
+    };
+    const onMessage = (event) => {
+      const message = event.data;
+      if (!message || typeof message !== 'object' || message.__jsonlViewCdpQueryTap !== 1 || !active) return;
+      if (events.length >= maxEvents) {
+        overflow = true;
+      } else {
+        events.push(sanitizeTap(message));
+      }
+      startQuietWindow();
+    };
+    const check = () => {
+      if (completed || !active || startedAt === undefined || framePending || domTransition) return;
+      const current = readState();
+      if (!current.ready || current.busy) return;
+      framePending = true;
+      frameOne = view.requestAnimationFrame(() => {
+        if (completed || !active) return;
+        frameTwo = view.requestAnimationFrame(() => {
+          if (completed || !active) return;
+        framePending = false;
+        const settled = readState();
+        if (!settled.ready || settled.busy || !isSameState(current, settled)) {
+          check();
+          return;
+        }
+        domTransition = {
+          direction, fromPage, toPage: settled.page, cursorFirstOrdinal: settled.cursorOrdinal,
+          mountedOrdinal: settled.mountedOrdinal, webviewElapsedMs: view.performance.now() - startedAt,
+        };
+        startQuietWindow();
+        });
+      });
+    };
+    const onClick = (event) => {
+      if (!event.isTrusted || !event.composedPath().includes(button)) return;
+      if (startedAt !== undefined) {
+        finish(new Error('Concurrent query attribution clicks cannot share one window.'));
+        return;
+      }
+      if (guard.outOfWindowEvents !== 0) {
+        finish(new Error('A query tap arrived outside the bounded click window.'));
+        return;
+      }
+      startedAt = view.performance.now();
+      active = true;
+      guard.activeProbeId = probeId;
+      observer.observe(pager, { attributes: true, childList: true, characterData: true, subtree: true });
+      observer.observe(grid, { attributes: true, childList: true, characterData: true, subtree: true });
+      check();
+    };
+    probe.cancel = () => finish(new Error('Query attribution measurement was cancelled by the CDP runner.'));
+    registry.set(probeId, probe);
+    view.addEventListener('message', onMessage);
+    observer = new view.MutationObserver(check);
+    pager.addEventListener('click', onClick, true);
+    timeoutId = view.setTimeout(() => {
+      finish(new Error('Query attribution page transition did not commit within 15 seconds.'));
+    }, 15000);
+  });
+}
+
+function cancelQueryAttributionMeasurement(probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const probe = view?.__jsonlviewQueryAttributionMeasurements?.get(probeId);
+  if (probe?.cancel) probe.cancel();
+  else view?.__jsonlviewQueryAttributionMeasurements?.set(probeId, { cancelled: true });
+}
+
+function drainQueryAttributionGuard(quietWindowMs) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const guardKey = '__jsonlviewQueryAttributionGuard';
+  const guard = view?.[guardKey];
+  if (!view || !guard) throw new Error('Query attribution Webview guard disappeared before final drain.');
+  return new Promise((resolveDrain) => {
+    view.setTimeout(() => {
+      const outOfWindowEvents = guard.outOfWindowEvents;
+      view.removeEventListener('message', guard.onMessage);
+      delete view[guardKey];
+      resolveDrain(outOfWindowEvents);
+    }, quietWindowMs);
+  });
+}
+
+let queryAttributionGuardClosed = false;
+async function readAndCloseQueryAttributionGuard(target, quietWindowMs) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  const outOfWindowEvents = await runCdpMeasurement({
+    client,
+    timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+    timeoutMessage: 'Query attribution final drain exceeded 20 seconds.',
+    task: async () => {
+      await client.open();
+      const response = await client.send('Runtime.evaluate', {
+        expression: '(' + drainQueryAttributionGuard.toString() + ')(' + String(quietWindowMs) + ')',
+        awaitPromise: true, returnByValue: true,
+      });
+      if (response.exceptionDetails) {
+        throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+      }
+      return response.result.value;
+    },
+  });
+  queryAttributionGuardClosed = true;
+  return outOfWindowEvents;
+}
+
+async function configureQueryAttributionGuard(target, arm) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  return runCdpMeasurement({
+    client,
+    timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+    timeoutMessage: 'Query attribution Webview guard setup exceeded 20 seconds.',
+    task: async () => {
+      await client.open();
+      const response = await client.send('Runtime.evaluate', {
+        expression: '(' + installQueryAttributionGuard.toString() + ')(' + String(arm) + ')',
+        returnByValue: true,
+      });
+      if (response.exceptionDetails) {
+        throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+      }
+      return response.result.value;
+    },
+  });
+}
+
+async function collectQueryAttributionMeasurements(target) {
+  let probeSequence = 0;
+  const lastRequestSequence = new Map();
+  let attributionIdentity;
+  const measureDirection = async (direction) => {
+    const probeId = 'query-attribution:' + direction + ':' + String(++probeSequence);
+    const expression = '(' + installQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(direction)
+      + ', ' + parsePageCursorOrdinal.toString() + ', ' + samePageNavigationState.toString()
+      + ', ' + isExpectedPageNavigation.toString() + ', ' + JSON.stringify(probeId)
+      + ', ' + String(MAX_QUERY_TAP_EVENTS) + ', 250)';
+    const client = new CdpClient(target.webSocketDebuggerUrl);
+    return runCdpMeasurement({
+      client,
+      timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+      timeoutMessage: 'Query attribution CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 1000,
+      task: async () => {
+        await client.open();
+        const evaluation = client.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+          .then((response) => ({ response }), (error) => ({ error }));
+        const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+        const selector = '.page-controls button[title=' + JSON.stringify(buttonTitle) + ']';
+        const clickExpression = '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return inspected.querySelector(' + JSON.stringify(selector) + '); })()';
+        if (!await clickElement(client, clickExpression)) {
+          await client.send('Runtime.evaluate', {
+            expression: '(' + cancelQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
+          });
+          throw new Error('The ' + direction + ' page button was not clickable.');
+        }
+        const outcome = await evaluation;
+        if (outcome.error) throw outcome.error;
+        const response = outcome.response;
+        if (response.exceptionDetails) {
+          throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+        }
+        const measured = response.result.value;
+        const startEvent = measured.events?.[0];
+        if (!startEvent || typeof startEvent.traceId !== 'string' || typeof startEvent.startupId !== 'string'
+          || !Number.isSafeInteger(startEvent.attributes?.request_seq)) {
+          throw new Error('Query attribution event window did not expose one valid query identity.');
+        }
+        const identity = JSON.stringify([startEvent.traceId, startEvent.startupId]);
+        if (attributionIdentity === undefined) attributionIdentity = identity;
+        if (identity !== attributionIdentity) {
+          throw new Error('Query attribution controller identity changed during the measurement run.');
+        }
+        const previousSequence = lastRequestSequence.get(identity);
+        if (previousSequence !== undefined && startEvent.attributes.request_seq <= previousSequence) {
+          throw new Error('Query attribution request sequence was repeated or moved backwards.');
+        }
+        lastRequestSequence.set(identity, startEvent.attributes.request_seq);
+        return pairQueryAttribution({
+          events: measured.events, overflow: measured.overflow,
+          outOfWindowEvents: measured.outOfWindowEvents, domTransition: measured,
+        });
+      },
+      onTimeout: () => client.send('Runtime.evaluate', {
+        expression: '(' + cancelQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
+      }),
+    });
+  };
+  const warmupsPerDirection = 3;
+  const measuredSamplesPerDirection = 20;
+  const measured = { next: [], previous: [] };
+  let guardDrained = false;
+  try {
+    for (let index = 0; index < warmupsPerDirection; index += 1) {
+      await measureDirection('next');
+      await measureDirection('previous');
+    }
+    for (let index = 0; index < measuredSamplesPerDirection; index += 1) {
+      measured.next.push(await measureDirection('next'));
+      measured.previous.push(await measureDirection('previous'));
+    }
+    const outOfWindowEvents = await readAndCloseQueryAttributionGuard(target, 250);
+    guardDrained = true;
+    if (outOfWindowEvents !== 0) {
+      throw new Error('A late or out-of-window query tap arrived during the final drain.');
+    }
+  } finally {
+    if (!guardDrained && !queryAttributionGuardClosed) {
+      try {
+        await readAndCloseQueryAttributionGuard(target, 0);
+      } catch {
+        // A detached target has no remaining Webview guard to clean up.
+      }
+    }
+  }
+  return {
+    metric: 'host-get-rows-query-pair-plus-webview-click-to-committed-dom-settle',
+    hostClock: 'extension-host-performance.now',
+    webviewClock: 'window.performance.now',
+    hostWindow: 'one trusted page click through DOM settle and a 250ms quiet drain; out-of-window taps fail the run',
+    measurementCondition: 'tap-enabled; development-only query instrumentation perturbs the measured path',
+    completionCondition: 'exactly one ordered started/settled pair with matching traceId, startupId and request_seq, plus one adjacent page transition settled across two animation frames',
+    presentationGuaranteed: false,
+    warmupsPerDirection,
+    measuredSamplesPerDirection,
+    directions: {
+      next: summarizeQueryAttribution(measured.next),
+      previous: summarizeQueryAttribution(measured.previous),
+    },
+    combined: summarizeQueryAttribution([...measured.next, ...measured.previous]),
+  };
+}
+
+let ownedFixtureTarget;
 try {
 const initialTargets = await targets();
 const workbench = initialTargets.find((target) => target.type === 'page' && target.url.includes('workbench.html'));
@@ -855,16 +1285,15 @@ const inspectable = currentTargets.filter((target) =>
   return priority(left) - priority(right);
 });
 const inspections = [];
-if (!measurePageNavigation) {
+if (!measurePageNavigation && !measureQueryAttribution) {
   for (let index = 0; index < inspectable.length; index += 1) {
     inspections.push(await inspectTarget(inspectable[index], index));
   }
 }
 
-let ownedFixtureTarget;
 let ownedFixtureBefore;
 if (ownedFixture) {
-  if (measurePageNavigation) {
+  if (measurePageNavigation || measureQueryAttribution) {
     const fixtureTarget = await findCdpTargetWithinDeadline({
       candidates: inspectable,
       probe: identifySyntheticTarget,
@@ -879,12 +1308,14 @@ if (ownedFixture) {
     ownedFixtureTarget = inspectable.find((entry) => entry.id === inspectedFixture?.target.id);
   }
   if (!ownedFixtureTarget) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
-  const expectedRecords = measurePageNavigation ? 1000 : 250;
+  if (measureQueryAttribution) await configureQueryAttributionGuard(ownedFixtureTarget, false);
+  const expectedRecords = measurePageNavigation || measureQueryAttribution ? 1000 : 250;
   ownedFixtureBefore = await waitForSyntheticView(ownedFixtureTarget,
     (sample) => sample?.indexedRecords === expectedRecords);
   if (ownedFixtureBefore?.indexedRecords !== expectedRecords || ownedFixtureBefore.pending || ownedFixtureBefore.blocked) {
     throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
   }
+  if (measureQueryAttribution) await configureQueryAttributionGuard(ownedFixtureTarget, true);
 }
 
 let changeResult = null;
@@ -920,20 +1351,33 @@ if (ownedFixture && syntheticChange !== undefined) {
 const pageNavigation = measurePageNavigation
   ? await collectPageNavigationMeasurements(ownedFixtureTarget)
   : null;
+const queryAttribution = measureQueryAttribution
+  ? await collectQueryAttributionMeasurements(ownedFixtureTarget)
+  : null;
 
 const result = {
   port,
-  outputDirectory,
+  ...(measureQueryAttribution ? {} : { outputDirectory }),
   targetCount: currentTargets.length,
-  ...(measurePageNavigation ? {} : { inspections }),
+  ...(!measurePageNavigation && !measureQueryAttribution ? { inspections } : {}),
   ...(changeResult === null ? {} : { change: changeResult }),
   ...(pageNavigation === null ? {} : { pageNavigation }),
+  ...(queryAttribution === null ? {} : { queryAttribution }),
 };
 await writeFile(resolve(outputDirectory, 'result.json'), JSON.stringify(result, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(result, null, 2));
 if (changeResult !== null && !changeResult.pass) process.exitCode = 1;
 if (pageNavigation !== null && (pageNavigation.directions.next.summary.sampleCount !== 20
   || pageNavigation.directions.previous.summary.sampleCount !== 20)) process.exitCode = 1;
+if (queryAttribution !== null && (queryAttribution.directions.next.pairedSampleCount !== 20
+  || queryAttribution.directions.previous.pairedSampleCount !== 20)) process.exitCode = 1;
 } finally {
+  if (measureQueryAttribution && ownedFixtureTarget && !queryAttributionGuardClosed) {
+    try {
+      await readAndCloseQueryAttributionGuard(ownedFixtureTarget, 0);
+    } catch {
+      // Target teardown is already the terminal failure boundary.
+    }
+  }
   await ownedFixture?.close();
 }
