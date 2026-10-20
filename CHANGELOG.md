@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Coalesce eligible forward-page hydration reads into a bounded, snapshot-clamped window while preserving direct reads for small or observable scans.
+- Add a development-only, exact-env-gated query attribution tap with a fixed metadata allowlist, bounded non-blocking delivery, terminal failure closure, and an aggregate-only CDP pairing mode; keep host and Webview clocks separate and production behavior unchanged.
 - Keep the compact query-rail scrollbar transparent until hover or keyboard focus.
 - Keep the data-grid horizontal scrollbar implicit until hover or keyboard focus, and visible in forced-colors mode.
 - Skip table cells and unused conversation/dataset scenes during bounded full Insights aggregation.

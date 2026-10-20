@@ -77,6 +77,7 @@ Read these before changing a shared boundary:
 53. [ADR-052 Rust query, MCP, and ACP boundary](052-rust-query-mcp-acp-boundary.md)
 54. [ADR-053 Kimi KAP server journal adapter](053-kimi-kap-server-journal-adapter.md)
 55. [ADR-054 bounded forward-page read window](054-bounded-forward-page-read-window.md)
+56. [ADR-055 development query attribution tap](055-development-query-attribution-tap.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

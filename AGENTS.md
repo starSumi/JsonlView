@@ -177,6 +177,14 @@ maintenance, and rollback trade-offs in docs/decisions/.
 - Keep Webview CSP, nonce, resource roots, and message validation in force.
 - Native failures degrade to the portable scanner and never make unchecked
   offsets or unbounded memory trusted.
+- The optional CDP query attribution tap is development-only and enabled only
+  when JSONLVIEW_CDP_QUERY_TAP is exactly 1. It projects a fixed allowlist of
+  GET_ROWS metadata into memory with bounded, non-blocking delivery; false,
+  rejected, thrown, timed-out, or overflowing delivery closes the tap and
+  invalidates the observation without affecting the query. It must not enter
+  the Webview protocol or persist raw events. Host and Webview timings are
+  separate clocks and require an isolated synthetic VS Code host before they
+  can support a performance claim. See ADR-055.
 
 ## Architecture and Parallel Work
 
