@@ -32,6 +32,23 @@ async function fixture(contents: string | Uint8Array, options: Parameters<typeof
   return { engine, path };
 }
 
+type PositionalRead = (
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number | bigint | null,
+) => Promise<{ bytesRead: number; buffer: Buffer }>;
+
+interface PositionalReadSpy {
+  mock: { calls: Array<[Buffer, number, number, number | bigint | null]> };
+  mockImplementation(implementation: PositionalRead): this;
+}
+
+function spyOnPositionalReads(engine: JsonlFileEngine): PositionalReadSpy {
+  const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+  return vi.spyOn(handle, 'read') as unknown as PositionalReadSpy;
+}
+
 describe('JsonlFileEngine indexing and hydration', () => {
   it('serializes byte coordinates above Number.MAX_SAFE_INTEGER without precision loss', () => {
     const hugeStart = BigInt(Number.MAX_SAFE_INTEGER) + 123_456_789n;
@@ -130,6 +147,252 @@ describe('JsonlFileEngine indexing and hydration', () => {
       kinds: { integer: '3' },
       confidence: 'complete',
     });
+  });
+
+  it('coalesces eligible forward-page reads without changing physical row semantics', async () => {
+    const records = Array.from({ length: 120 }, (_, ordinal) => {
+      if (ordinal === 0) return Buffer.from('\uFEFF{"id":0}');
+      if (ordinal === 1) return Buffer.from('   ');
+      if (ordinal === 2) return Buffer.from('{bad}');
+      if (ordinal === 3) return Buffer.from([0xff]);
+      return Buffer.from(JSON.stringify({ id: ordinal, value: 'x'.repeat(20) }));
+    });
+    const contents = Buffer.concat(records.flatMap((record, ordinal) => [
+      record,
+      ...(ordinal === records.length - 1 ? [] : [Buffer.from(ordinal === 0 ? '\r\n' : '\n')]),
+    ]));
+    const { engine } = await fixture(contents);
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+
+    const firstPage = await engine.getRows({ limit: 100 });
+    const firstPageReadCalls = reads.mock.calls.length;
+
+    expect(firstPageReadCalls).toBe(1);
+    expect(firstPage.rows).toHaveLength(100);
+    expect(firstPage.rows.map(({ ref }) => ref.ordinal)).toEqual(
+      Array.from({ length: 100 }, (_, ordinal) => String(ordinal)),
+    );
+    expect(firstPage.rows.slice(0, 4).map(({ ref, problems }) => [
+      ref.parseState, ref.delimiterByteLength, problems?.map(({ code }) => code) ?? [],
+    ])).toEqual([
+      ['valid', 2, ['NON_STANDARD_BOM']],
+      ['blank', 1, ['BLANK_RECORD']],
+      ['invalid_json', 1, ['INVALID_JSON']],
+      ['encoding_error', 1, ['INVALID_UTF8']],
+    ]);
+    expect(firstPage.rows[0]?.genericSummary).toBe('{"id":0}');
+    expect(firstPage.rows[99]?.genericSummary).toContain('"id":99');
+    expect(firstPage.anchorOrdinal).toBe('99');
+    expect(firstPage.hasAfter).toBe(true);
+    expect(engine.getDiagnostics().observedSchemaRecords).toBe('101');
+
+    const secondPage = await engine.getRows({ anchorOrdinal: firstPage.anchorOrdinal, limit: 100 });
+
+    expect(secondPage.rows.map(({ ref }) => ref.ordinal)).toEqual(
+      Array.from({ length: 20 }, (_, ordinal) => String(ordinal + 100)),
+    );
+    expect(secondPage.rows.at(-1)?.ref.delimiterByteLength).toBe(0);
+    expect(secondPage.hasAfter).toBe(false);
+  });
+
+  it('matches direct hydration across read-window refills and a row boundary', async () => {
+    const source = Array.from({ length: 120 }, (_, id) => JSON.stringify({
+      id,
+      payload: 'x'.repeat(id === 0 ? 15 * 1024 : 512),
+    })).join('\n');
+    const generation = 'forward-window-parity';
+    const { engine: windowEngine } = await fixture(source, { generation });
+    const { engine: directEngine } = await fixture(source, { generation });
+    await Promise.all([windowEngine.finishIndexing(), directEngine.finishIndexing()]);
+    const windowReads = spyOnPositionalReads(windowEngine);
+    const directReads = spyOnPositionalReads(directEngine);
+    const observedOrdinals: string[] = [];
+
+    const windowPage = await windowEngine.getRows({ limit: 100 });
+    const directPage = await directEngine.getRows({
+      limit: 100,
+      onHydrated: ({ ref }) => observedOrdinals.push(ref.ordinal),
+    });
+
+    expect(windowPage).toEqual(directPage);
+    expect(observedOrdinals).toEqual(Array.from({ length: 101 }, (_, id) => String(id)));
+    expect(windowReads.mock.calls.length).toBeLessThan(directReads.mock.calls.length);
+    expect(windowEngine.getDiagnostics().observedSchemaRecords)
+      .toBe(directEngine.getDiagnostics().observedSchemaRecords);
+  });
+
+  it('avoids read-ahead when one physical record exceeds half a window', async () => {
+    const records = Array.from({ length: 120 }, (_, id) => JSON.stringify({
+      id,
+      payload: 'x'.repeat(9 * 1024),
+    }));
+    const source = records.join('\n');
+    const { engine } = await fixture(source);
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+
+    const page = await engine.getRows({ limit: 100 });
+
+    expect(page.rows).toHaveLength(100);
+    expect(reads.mock.calls).toHaveLength(101);
+    expect(reads.mock.calls.every(([, , length]) => length < 16 * 1024)).toBe(true);
+  });
+
+  it('does not read ahead when hydration callbacks observe each record', async () => {
+    const source = Array.from({ length: 110 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source);
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+    const observed: string[] = [];
+
+    await engine.getRows({ limit: 100, onHydrated: ({ ref }) => observed.push(ref.ordinal) });
+
+    expect(observed).toHaveLength(101);
+    expect(reads.mock.calls.length).toBe(101);
+  });
+
+  it('keeps smaller forward pages on direct reads', async () => {
+    const source = Array.from({ length: 40 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source);
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+
+    await engine.getRows({ limit: 20 });
+
+    expect(reads.mock.calls.length).toBe(21);
+  });
+
+  it('keeps configured small read chunks on the direct hydration path', async () => {
+    const source = Array.from({ length: 120 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 8 });
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+
+    await engine.getRows({ limit: 100 });
+
+    expect(reads.mock.calls.length).toBeGreaterThanOrEqual(101);
+    expect(reads.mock.calls.every(([, , length]) => length <= 8)).toBe(true);
+  });
+
+  it('preserves row parsing when positional reads return short buffers', async () => {
+    const source = Array.from({ length: 240 }, (_, id) => String(id)).join('\n');
+    const { engine } = await fixture(source);
+    await engine.finishIndexing();
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const originalRead = handle.read.bind(handle) as PositionalRead;
+    const reads = spyOnPositionalReads(engine);
+    reads.mockImplementation((buffer, offset, length, position) => (
+      originalRead(buffer, offset, Math.min(length, 7), position)
+    ));
+
+    const page = await engine.getRows({ limit: 100 });
+
+    expect(reads.mock.calls.length).toBeGreaterThan(0);
+    expect(page.rows.map(({ genericSummary }) => genericSummary)).toEqual(
+      Array.from({ length: 100 }, (_, id) => String(id)),
+    );
+    expect(page.hasAfter).toBe(true);
+  });
+
+  it('falls back to direct reads for records larger than the bounded window', async () => {
+    const records = [JSON.stringify({ id: 0, payload: 'x'.repeat(20 * 1024) })];
+    records.push(...Array.from({ length: 110 }, (_, index) => JSON.stringify({ id: index + 1 })));
+    const { engine } = await fixture(records.join('\n'));
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+
+    const page = await engine.getRows({ limit: 100 });
+
+    expect(page.rows).toHaveLength(100);
+    expect(page.rows[0]?.ref.parseState).toBe('valid');
+    expect(page.rows[0]?.ref.contentByteLength).toBe(String(Buffer.byteLength(records[0] ?? '')));
+    expect(page.rows[99]?.ref.ordinal).toBe('99');
+    expect(reads.mock.calls.length).toBeLessThan(101);
+  });
+
+  it('checks cancellation immediately after filling a forward read window', async () => {
+    const source = Array.from({ length: 600 }, (_, id) => JSON.stringify({ id, value: 'x'.repeat(32) })).join('\n');
+    const { engine } = await fixture(source);
+    await engine.finishIndexing();
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const originalRead = handle.read.bind(handle) as PositionalRead;
+    const controller = new AbortController();
+    const reads = spyOnPositionalReads(engine);
+    reads.mockImplementation(async (buffer, offset, length, position) => {
+      const result = await originalRead(buffer, offset, length, position);
+      controller.abort();
+      return result;
+    });
+
+    await expect(engine.getRows({ limit: 100, signal: controller.signal })).rejects.toMatchObject({ code: 'ABORTED' });
+
+    expect(reads.mock.calls[0]?.[2]).toBe(16 * 1024);
+    expect(engine.getDiagnostics().observedSchemaRecords).toBe('0');
+  });
+
+  it('rejects a page when the source is truncated during a window fill', async () => {
+    const source = Array.from({ length: 600 }, (_, id) => JSON.stringify({ id, value: 'x'.repeat(32) })).join('\n');
+    const { engine, path } = await fixture(source);
+    await engine.finishIndexing();
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const originalRead = handle.read.bind(handle) as PositionalRead;
+    const reads = spyOnPositionalReads(engine);
+    reads.mockImplementation(async (buffer, offset, length, position) => {
+      const result = await originalRead(buffer, offset, length, position);
+      await truncate(path, 8);
+      return result;
+    });
+
+    await expect(engine.getRows({ limit: 100 })).rejects.toMatchObject({ code: 'SOURCE_CHANGED' });
+  });
+
+  it('does not hydrate read-ahead bytes beyond the page hydration budget', async () => {
+    const source = Array.from({ length: 120 }, (_, id) => JSON.stringify({ id, value: 'x'.repeat(12) })).join('\n');
+    const { engine } = await fixture(source, { pageHydrationMaxBytes: 120 });
+    await engine.finishIndexing();
+
+    const page = await engine.getRows({ limit: 100 });
+
+    expect(page.rows.length).toBeGreaterThan(0);
+    expect(page.rows.length).toBeLessThan(100);
+    expect(page.scan?.truncatedReason).toBe('hydration_limit');
+    expect(engine.getDiagnostics().observedSchemaRecords).toBe(String(page.scan?.examinedRecords));
+  });
+
+  it('keeps oversized records on preview-only reads in forward pages', async () => {
+    const { engine } = await fixture(JSON.stringify({ payload: 'x'.repeat(32 * 1024) }), {
+      maxRecordBytes: 128,
+      previewBytes: 12,
+    });
+    await engine.finishIndexing();
+    const reads = spyOnPositionalReads(engine);
+
+    const page = await engine.getRows({ limit: 100 });
+
+    expect(page.rows[0]?.ref.parseState).toBe('oversized');
+    expect(reads.mock.calls).toHaveLength(1);
+    expect(reads.mock.calls[0]?.[2]).toBe(12);
+  });
+
+  it('clamps forward read-ahead to the opened snapshot when the file is appended', async () => {
+    const source = Array.from({ length: 120 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine, path } = await fixture(source);
+    await engine.finishIndexing();
+    const originalSize = BigInt(Buffer.byteLength(source));
+    await appendFile(path, '\n' + JSON.stringify({ id: 120 }));
+    const reads = spyOnPositionalReads(engine);
+
+    const page = await engine.getRows({ limit: 100 });
+
+    expect(page.rows).toHaveLength(100);
+    expect(page.rows.at(-1)?.ref.ordinal).toBe('99');
+    expect(page.hasAfter).toBe(true);
+    for (const [, , requestedLength, position] of reads.mock.calls) {
+      if (typeof position === 'number' || typeof position === 'bigint') {
+        expect(BigInt(position) + BigInt(requestedLength ?? 0)).toBeLessThanOrEqual(originalSize);
+      }
+    }
   });
 
   it('preserves blank, malformed JSON, malformed UTF-8, and scalar records', async () => {

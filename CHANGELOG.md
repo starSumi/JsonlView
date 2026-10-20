@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Coalesce eligible forward-page hydration reads into a bounded, snapshot-clamped window while preserving direct reads for small or observable scans.
 - Keep the compact query-rail scrollbar transparent until hover or keyboard focus.
 - Keep the data-grid horizontal scrollbar implicit until hover or keyboard focus, and visible in forced-colors mode.
 - Skip table cells and unused conversation/dataset scenes during bounded full Insights aggregation.

@@ -51,6 +51,16 @@ documents:
     evidence: []
     revisit: when the upstream Kimi wire storage contract changes
     rollback: remove the Kimi registration and retain Generic access
+  - id: bounded-forward-page-read-window
+    path: docs/decisions/054-bounded-forward-page-read-window.md
+    title: Bounded forward-page read window
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [engine, performance, file-io, query]
+    evidence: []
+    revisit: when representative record spans are measured or a supported workload shows read amplification or latency regression
+    rollback: remove the query-local window and retain direct row reads
   - id: kimi-server-journal-adapter
     path: docs/decisions/053-kimi-kap-server-journal-adapter.md
     title: Kimi KAP server journal adapter

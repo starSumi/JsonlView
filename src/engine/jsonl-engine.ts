@@ -68,6 +68,8 @@ const HARD_SORT_MAX_EXAMINED_RECORDS = 1_000_000;
 const HARD_SORT_MAX_EXAMINED_BYTES = 512 * 1024 * 1024;
 const HARD_SORT_MAX_MILLISECONDS = 60_000;
 const MAX_SORT_WINDOW = 2_048;
+const FORWARD_PAGE_READ_WINDOW_BYTES = 16 * 1024;
+const FORWARD_PAGE_READ_WINDOW_MIN_LIMIT = 100;
 // Problems are an independent bounded scan. They are not folded into the
 // row page or DocumentSummary, so an explicit request can disclose progress
 // without retaining the complete source or a global problem array in the UI.
@@ -242,6 +244,48 @@ class SerialExecutor {
 
   idle(): Promise<void> {
     return this.tail;
+  }
+}
+
+class ForwardPageReadWindow {
+  private start = 0n;
+  private bytes = Buffer.alloc(0);
+
+  constructor(
+    private readonly handle: FileHandle,
+    private readonly fileSize: bigint,
+    private readonly maximumBytes: number,
+  ) {}
+
+  async read(start: bigint, length: number, recordSpan: number, guard: () => void): Promise<Buffer | undefined> {
+    guard();
+    if (
+      length <= 0
+      || length > this.maximumBytes
+      || recordSpan < length
+      || recordSpan * 2 > this.maximumBytes
+      || start < 0n
+    ) return undefined;
+    const end = start + BigInt(length);
+    if (end > this.fileSize) return undefined;
+
+    const windowEnd = this.start + BigInt(this.bytes.byteLength);
+    if (start >= this.start && end <= windowEnd) {
+      guard();
+      return this.bytes.subarray(Number(start - this.start), Number(end - this.start));
+    }
+
+    const remaining = this.fileSize - start;
+    if (remaining <= 0n) return undefined;
+    const readLength = Number(remaining < BigInt(this.maximumBytes) ? remaining : BigInt(this.maximumBytes));
+    const buffer = Buffer.allocUnsafe(readLength);
+    guard();
+    const { bytesRead } = await this.handle.read(buffer, 0, readLength, start);
+    guard();
+    this.start = start;
+    this.bytes = buffer.subarray(0, bytesRead);
+    if (bytesRead < length) return undefined;
+    return this.bytes.subarray(0, length);
   }
 }
 
@@ -488,6 +532,21 @@ export class JsonlFileEngine {
       const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
       const sort = normalizeRowSort(options.sort);
       const projection = resolveRowProjectionPlan(options.projection, options.enricher?.profileId);
+      const readWindow = direction === 'forward'
+        && limit >= FORWARD_PAGE_READ_WINDOW_MIN_LIMIT
+        && this.options.readChunkBytes >= FORWARD_PAGE_READ_WINDOW_BYTES
+        && options.sort === undefined
+        && options.predicate === undefined
+        && options.enricher === undefined
+        && options.onHydrated === undefined
+        && options.scanBudget === undefined
+        && scanBudget === undefined
+        ? new ForwardPageReadWindow(
+          this.handle,
+          this.fileSize,
+          FORWARD_PAGE_READ_WINDOW_BYTES,
+        )
+        : undefined;
       const physicalCursor = options.anchorOrdinal !== undefined || options.direction !== undefined;
       if (sort !== undefined) {
         if (physicalCursor && (!isOrdinalSort(sort) || options.sortOffset !== undefined)) {
@@ -553,7 +612,7 @@ export class JsonlFileEngine {
             scanTruncatedReason = 'hydration_limit';
             break;
           }
-          const candidate = await this.hydrate(internal, guard);
+          const candidate = await this.hydrate(internal, guard, false, readWindow);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
           guard();
           if (options.predicate !== undefined && candidate.value === undefined) {
@@ -1475,6 +1534,7 @@ export class JsonlFileEngine {
     internal: InternalRecordRef,
     guard: () => void,
     full = false,
+    readWindow?: ForwardPageReadWindow,
   ): Promise<HydratedRecord> {
     guard();
     const hydrationLimit = full ? this.options.fullRecordMaxBytes : this.options.maxRecordBytes;
@@ -1502,7 +1562,13 @@ export class JsonlFileEngine {
     }
 
     const length = Number(internal.contentByteLength);
-    const bytes = await this.readExactly(internal.byteStart, length, guard);
+    const bytes = await this.readExactly(
+      internal.byteStart,
+      length,
+      guard,
+      readWindow,
+      length + internal.delimiterByteLength,
+    );
     const hasBom = hasInitialBom(bytes, internal.ordinal);
     const content = stripInitialBom(bytes, internal.ordinal);
     let text: string;
@@ -1592,8 +1658,16 @@ export class JsonlFileEngine {
     );
   }
 
-  private async readExactly(start: bigint, length: number, guard: () => void): Promise<Buffer> {
+  private async readExactly(
+    start: bigint,
+    length: number,
+    guard: () => void,
+    readWindow?: ForwardPageReadWindow,
+    recordSpan = length,
+  ): Promise<Buffer> {
     if (length === 0) return Buffer.alloc(0);
+    const cached = await readWindow?.read(start, length, recordSpan, guard);
+    if (cached !== undefined) return cached;
     const result = Buffer.allocUnsafe(length);
     let offset = 0;
     while (offset < length) {

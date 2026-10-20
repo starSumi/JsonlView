@@ -195,6 +195,9 @@ cross-plane change:
   separation, redaction, budgets, and staged mutation phases.
 - [ADR-051 plane boundaries](docs/decisions/051-v2-plane-boundaries-and-engineering-gates.md):
   accepted source-authority and evidence rules for V2 evolution.
+- [ADR-054 bounded forward-page read window](docs/decisions/054-bounded-forward-page-read-window.md):
+  query-local read-ahead limits, eligibility, differential tests, and the
+  outstanding representative-workload gate.
 
 The Vault design notes are read-only research inputs. Do not add their paths,
 raw bodies, screenshots, or private evidence to the product runtime or package.
