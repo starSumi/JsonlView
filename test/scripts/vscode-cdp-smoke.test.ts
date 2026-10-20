@@ -254,24 +254,24 @@ describe('synthetic CDP smoke fixture boundary', () => {
     });
   });
 
-  it('keeps query attribution separate from page-navigation measurement', async () => {
+  it('keeps query temporal association separate from page-navigation measurement', async () => {
     await withTempRoot(async (root) => {
       const output = join(root, 'output');
-      const result = runSmoke(output, '--measure-page-navigation', '--measure-query-attribution');
+      const result = runSmoke(output, '--measure-page-navigation', '--measure-query-temporal-association');
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain('Page-navigation and query-attribution measurement modes are separate');
+      expect(result.stderr).toContain('Page-navigation and query temporal-association measurement modes are separate');
       await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });
 
-  it('rejects inspect-only query-attribution mode before creating a run directory', async () => {
+  it('rejects inspect-only query temporal-association mode before creating a run directory', async () => {
     await withTempRoot(async (root) => {
       const output = join(root, 'output');
-      const result = runSmoke(output, '--inspect-only', '--measure-query-attribution');
+      const result = runSmoke(output, '--inspect-only', '--measure-query-temporal-association');
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain('--measure-query-attribution cannot be combined with --inspect-only');
+      expect(result.stderr).toContain('--measure-query-temporal-association cannot be combined with --inspect-only');
       await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });

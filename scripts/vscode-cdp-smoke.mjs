@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
 import { CdpClient, findCdpTargetWithinDeadline, runCdpMeasurement } from './cdp-measurement-lifecycle.mjs';
 import { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } from './page-navigation-measurement.mjs';
-import { MAX_QUERY_TAP_EVENTS, pairQueryAttribution, summarizeQueryAttribution } from './query-attribution-measurement.mjs';
+import { MAX_QUERY_TAP_EVENTS, pairQueryTemporalAssociation, summarizeQueryTemporalAssociation } from './query-temporal-association.mjs';
 import { assertOutsideTree } from './path-boundary.mjs';
 import { createMutableSyntheticFixture } from './synthetic-cdp-fixture.mjs';
 
@@ -15,7 +15,7 @@ const exercise = process.argv.includes('--exercise');
 const wide = process.argv.includes('--wide');
 const leaveInsights = process.argv.includes('--leave-insights');
 const measurePageNavigation = process.argv.includes('--measure-page-navigation');
-const measureQueryAttribution = process.argv.includes('--measure-query-attribution');
+const measureQueryTemporalAssociation = process.argv.includes('--measure-query-temporal-association');
 const syntheticChangeIndex = process.argv.indexOf('--synthetic-change');
 const syntheticChange = syntheticChangeIndex === -1 ? undefined : process.argv[syntheticChangeIndex + 1];
 const settleMilliseconds = Number(process.env.JSONLVIEW_CDP_SETTLE_MS ?? '12000');
@@ -36,24 +36,24 @@ if (syntheticChangeIndex !== -1 && !['append', 'truncate', 'rewrite'].includes(s
 if (measurePageNavigation && inspectOnly) {
   throw new Error('--measure-page-navigation cannot be combined with --inspect-only.');
 }
-if (measureQueryAttribution && inspectOnly) {
-  throw new Error('--measure-query-attribution cannot be combined with --inspect-only.');
+if (measureQueryTemporalAssociation && inspectOnly) {
+  throw new Error('--measure-query-temporal-association cannot be combined with --inspect-only.');
 }
-if (measurePageNavigation && measureQueryAttribution) {
-  throw new Error('Page-navigation and query-attribution measurement modes are separate.');
+if (measurePageNavigation && measureQueryTemporalAssociation) {
+  throw new Error('Page-navigation and query temporal-association measurement modes are separate.');
 }
 if (measurePageNavigation && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
   throw new Error('--measure-page-navigation cannot be combined with other smoke modes.');
 }
-if (measureQueryAttribution && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
-  throw new Error('--measure-query-attribution cannot be combined with other smoke modes.');
+if (measureQueryTemporalAssociation && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
+  throw new Error('--measure-query-temporal-association cannot be combined with other smoke modes.');
 }
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 await mkdir(outputBaseDirectory, { recursive: true });
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 const outputDirectory = await mkdtemp(join(outputBaseDirectory, 'cdp-run-'));
-const ownedFixture = syntheticChange === undefined && !measurePageNavigation && !measureQueryAttribution ? undefined
-  : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation || measureQueryAttribution ? 1000 : 250);
+const ownedFixture = syntheticChange === undefined && !measurePageNavigation && !measureQueryTemporalAssociation ? undefined
+  : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation || measureQueryTemporalAssociation ? 1000 : 250);
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
@@ -750,7 +750,7 @@ async function collectPageNavigationMeasurements(target) {
   };
 }
 
-function installQueryAttributionGuard(arm) {
+function installQueryTemporalAssociationGuard(arm) {
   let inspected = document;
   for (let depth = 0; depth < 3; depth += 1) {
     const child = inspected.querySelector('iframe')?.contentDocument;
@@ -758,8 +758,8 @@ function installQueryAttributionGuard(arm) {
     inspected = child;
   }
   const view = inspected.defaultView;
-  if (!view || !inspected.querySelector('.app-shell')) throw new Error('Query attribution Webview frame is not ready.');
-  const guardKey = '__jsonlviewQueryAttributionGuard';
+  if (!view || !inspected.querySelector('.app-shell')) throw new Error('Query temporal-association Webview frame is not ready.');
+  const guardKey = '__jsonlviewQueryTemporalAssociationGuard';
   let guard = view[guardKey];
   if (!guard) {
     guard = { armed: false, activeProbeId: null, outOfWindowEvents: 0 };
@@ -771,18 +771,18 @@ function installQueryAttributionGuard(arm) {
     view[guardKey] = guard;
   }
   if (arm) {
-    if (guard.activeProbeId !== null) throw new Error('A query attribution click window is still active.');
+    if (guard.activeProbeId !== null) throw new Error('A query temporal-association click window is still active.');
     guard.outOfWindowEvents = 0;
     guard.armed = true;
   } else {
-    if (guard.activeProbeId !== null) throw new Error('A query attribution click window is still active.');
+    if (guard.activeProbeId !== null) throw new Error('A query temporal-association click window is still active.');
     guard.outOfWindowEvents = 0;
     guard.armed = false;
   }
   return { armed: guard.armed };
 }
 
-function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSameState, expectedPage, probeId, maxEvents, quietWindowMs) {
+function installQueryTemporalAssociationMeasurement(direction, parseCursorOrdinal, isSameState, expectedPage, probeId, maxEvents, quietWindowMs) {
   let inspected = document;
   for (let depth = 0; depth < 3; depth += 1) {
     const child = inspected.querySelector('iframe')?.contentDocument;
@@ -790,7 +790,7 @@ function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSam
     inspected = child;
   }
   const view = inspected.defaultView;
-  const guard = view?.__jsonlviewQueryAttributionGuard;
+  const guard = view?.__jsonlviewQueryTemporalAssociationGuard;
   const pager = inspected.querySelector('.page-controls');
   const grid = inspected.querySelector('.data-grid-scroll');
   const pageInput = pager?.querySelector('input[aria-label="Page number"]');
@@ -798,20 +798,20 @@ function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSam
   const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
   const button = pager?.querySelector('button[title=' + JSON.stringify(buttonTitle) + ']');
   if (!view || !pager || !grid || !pageInput || !cursor || !button) {
-    throw new Error('Query attribution page controls are not ready.');
+    throw new Error('Query temporal-association page controls are not ready.');
   }
-  const registryKey = '__jsonlviewQueryAttributionMeasurements';
+  const registryKey = '__jsonlviewQueryTemporalAssociationMeasurements';
   let registry = view[registryKey];
   if (!registry) {
     registry = new Map();
     view[registryKey] = registry;
   }
-  if (!guard?.armed) throw new Error('Query attribution tap guard was not armed after the stable baseline.');
-  if (guard.activeProbeId !== null) throw new Error('A prior query attribution click window is still active.');
+  if (!guard?.armed) throw new Error('Query observation guard was not armed after the stable baseline.');
+  if (guard.activeProbeId !== null) throw new Error('A prior query temporal-association click window is still active.');
   if (guard.outOfWindowEvents !== 0) throw new Error('A query tap arrived outside the bounded click window.');
   if (registry.get(probeId)?.cancelled) {
     registry.delete(probeId);
-    return Promise.reject(new Error('Query attribution measurement was cancelled before setup.'));
+    return Promise.reject(new Error('Query temporal-association measurement was cancelled before setup.'));
   }
   const fromPage = Number(pageInput.value);
   const fromCursor = cursor.textContent?.trim() ?? '';
@@ -820,7 +820,7 @@ function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSam
     : grid.querySelector('.data-grid-row[data-row-ordinal="' + fromOrdinal + '"][data-row-generation]');
   const generation = firstRow?.dataset.rowGeneration;
   if (!Number.isSafeInteger(fromPage) || fromOrdinal === undefined || !generation || button.disabled) {
-    throw new Error('Requested query attribution page transition is unavailable.');
+    throw new Error('Requested query temporal-association page transition is unavailable.');
   }
   return new Promise((resolveMeasurement, rejectMeasurement) => {
     let startedAt;
@@ -963,7 +963,7 @@ function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSam
     const onClick = (event) => {
       if (!event.isTrusted || !event.composedPath().includes(button)) return;
       if (startedAt !== undefined) {
-        finish(new Error('Concurrent query attribution clicks cannot share one window.'));
+        finish(new Error('Concurrent query temporal-association clicks cannot share one window.'));
         return;
       }
       if (guard.outOfWindowEvents !== 0) {
@@ -977,18 +977,18 @@ function installQueryAttributionMeasurement(direction, parseCursorOrdinal, isSam
       observer.observe(grid, { attributes: true, childList: true, characterData: true, subtree: true });
       check();
     };
-    probe.cancel = () => finish(new Error('Query attribution measurement was cancelled by the CDP runner.'));
+    probe.cancel = () => finish(new Error('Query temporal-association measurement was cancelled by the CDP runner.'));
     registry.set(probeId, probe);
     view.addEventListener('message', onMessage);
     observer = new view.MutationObserver(check);
     pager.addEventListener('click', onClick, true);
     timeoutId = view.setTimeout(() => {
-      finish(new Error('Query attribution page transition did not commit within 15 seconds.'));
+      finish(new Error('Query temporal-association page transition did not commit within 15 seconds.'));
     }, 15000);
   });
 }
 
-function cancelQueryAttributionMeasurement(probeId) {
+function cancelQueryTemporalAssociationMeasurement(probeId) {
   let inspected = document;
   for (let depth = 0; depth < 3; depth += 1) {
     const child = inspected.querySelector('iframe')?.contentDocument;
@@ -996,12 +996,12 @@ function cancelQueryAttributionMeasurement(probeId) {
     inspected = child;
   }
   const view = inspected.defaultView;
-  const probe = view?.__jsonlviewQueryAttributionMeasurements?.get(probeId);
+  const probe = view?.__jsonlviewQueryTemporalAssociationMeasurements?.get(probeId);
   if (probe?.cancel) probe.cancel();
-  else view?.__jsonlviewQueryAttributionMeasurements?.set(probeId, { cancelled: true });
+  else view?.__jsonlviewQueryTemporalAssociationMeasurements?.set(probeId, { cancelled: true });
 }
 
-function drainQueryAttributionGuard(quietWindowMs) {
+function drainQueryTemporalAssociationGuard(quietWindowMs) {
   let inspected = document;
   for (let depth = 0; depth < 3; depth += 1) {
     const child = inspected.querySelector('iframe')?.contentDocument;
@@ -1009,9 +1009,9 @@ function drainQueryAttributionGuard(quietWindowMs) {
     inspected = child;
   }
   const view = inspected.defaultView;
-  const guardKey = '__jsonlviewQueryAttributionGuard';
+  const guardKey = '__jsonlviewQueryTemporalAssociationGuard';
   const guard = view?.[guardKey];
-  if (!view || !guard) throw new Error('Query attribution Webview guard disappeared before final drain.');
+  if (!view || !guard) throw new Error('Query temporal-association Webview guard disappeared before final drain.');
   return new Promise((resolveDrain) => {
     view.setTimeout(() => {
       const outOfWindowEvents = guard.outOfWindowEvents;
@@ -1022,17 +1022,17 @@ function drainQueryAttributionGuard(quietWindowMs) {
   });
 }
 
-let queryAttributionGuardClosed = false;
-async function readAndCloseQueryAttributionGuard(target, quietWindowMs) {
+let queryTemporalAssociationGuardClosed = false;
+async function readAndCloseQueryTemporalAssociationGuard(target, quietWindowMs) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
   const outOfWindowEvents = await runCdpMeasurement({
     client,
     timeoutMs: CDP_OPERATION_TIMEOUT_MS,
-    timeoutMessage: 'Query attribution final drain exceeded 20 seconds.',
+    timeoutMessage: 'Query temporal-association final drain exceeded 20 seconds.',
     task: async () => {
       await client.open();
       const response = await client.send('Runtime.evaluate', {
-        expression: '(' + drainQueryAttributionGuard.toString() + ')(' + String(quietWindowMs) + ')',
+        expression: '(' + drainQueryTemporalAssociationGuard.toString() + ')(' + String(quietWindowMs) + ')',
         awaitPromise: true, returnByValue: true,
       });
       if (response.exceptionDetails) {
@@ -1041,20 +1041,20 @@ async function readAndCloseQueryAttributionGuard(target, quietWindowMs) {
       return response.result.value;
     },
   });
-  queryAttributionGuardClosed = true;
+  queryTemporalAssociationGuardClosed = true;
   return outOfWindowEvents;
 }
 
-async function configureQueryAttributionGuard(target, arm) {
+async function configureQueryTemporalAssociationGuard(target, arm) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
   return runCdpMeasurement({
     client,
     timeoutMs: CDP_OPERATION_TIMEOUT_MS,
-    timeoutMessage: 'Query attribution Webview guard setup exceeded 20 seconds.',
+    timeoutMessage: 'Query temporal-association Webview guard setup exceeded 20 seconds.',
     task: async () => {
       await client.open();
       const response = await client.send('Runtime.evaluate', {
-        expression: '(' + installQueryAttributionGuard.toString() + ')(' + String(arm) + ')',
+        expression: '(' + installQueryTemporalAssociationGuard.toString() + ')(' + String(arm) + ')',
         returnByValue: true,
       });
       if (response.exceptionDetails) {
@@ -1065,13 +1065,13 @@ async function configureQueryAttributionGuard(target, arm) {
   });
 }
 
-async function collectQueryAttributionMeasurements(target) {
+async function collectQueryTemporalAssociationMeasurements(target) {
   let probeSequence = 0;
   const lastRequestSequence = new Map();
-  let attributionIdentity;
+  let controllerIdentity;
   const measureDirection = async (direction) => {
-    const probeId = 'query-attribution:' + direction + ':' + String(++probeSequence);
-    const expression = '(' + installQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(direction)
+    const probeId = 'query-temporal-association:' + direction + ':' + String(++probeSequence);
+    const expression = '(' + installQueryTemporalAssociationMeasurement.toString() + ')(' + JSON.stringify(direction)
       + ', ' + parsePageCursorOrdinal.toString() + ', ' + samePageNavigationState.toString()
       + ', ' + isExpectedPageNavigation.toString() + ', ' + JSON.stringify(probeId)
       + ', ' + String(MAX_QUERY_TAP_EVENTS) + ', 250)';
@@ -1079,7 +1079,7 @@ async function collectQueryAttributionMeasurements(target) {
     return runCdpMeasurement({
       client,
       timeoutMs: CDP_OPERATION_TIMEOUT_MS,
-      timeoutMessage: 'Query attribution CDP measurement exceeded 20 seconds.',
+      timeoutMessage: 'Query temporal-association CDP measurement exceeded 20 seconds.',
       cancelTimeoutMs: 1000,
       task: async () => {
         await client.open();
@@ -1090,7 +1090,7 @@ async function collectQueryAttributionMeasurements(target) {
         const clickExpression = '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return inspected.querySelector(' + JSON.stringify(selector) + '); })()';
         if (!await clickElement(client, clickExpression)) {
           await client.send('Runtime.evaluate', {
-            expression: '(' + cancelQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
+            expression: '(' + cancelQueryTemporalAssociationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
           });
           throw new Error('The ' + direction + ' page button was not clickable.');
         }
@@ -1104,20 +1104,20 @@ async function collectQueryAttributionMeasurements(target) {
         const startEvent = measured.events?.[0];
         if (!startEvent || typeof startEvent.traceId !== 'string' || typeof startEvent.startupId !== 'string'
           || !Number.isSafeInteger(startEvent.attributes?.request_seq)) {
-          throw new Error('Query attribution event window did not expose one valid query identity.');
+          throw new Error('Query temporal-association window did not expose one valid query identity.');
         }
         const identity = JSON.stringify([startEvent.traceId, startEvent.startupId]);
-        if (attributionIdentity === undefined) attributionIdentity = identity;
-        if (identity !== attributionIdentity) {
-          throw new Error('Query attribution controller identity changed during the measurement run.');
+        if (controllerIdentity === undefined) controllerIdentity = identity;
+        if (identity !== controllerIdentity) {
+          throw new Error('Query temporal-association controller identity changed during the measurement run.');
         }
         const previousSequence = lastRequestSequence.get(identity);
         if (previousSequence !== undefined && startEvent.attributes.request_seq <= previousSequence) {
-          throw new Error('Query attribution request sequence was repeated or moved backwards.');
+          throw new Error('Query temporal-association request sequence was repeated or moved backwards.');
         }
         lastRequestSequence.set(identity, startEvent.attributes.request_seq);
         try {
-          return pairQueryAttribution({
+          return pairQueryTemporalAssociation({
             events: measured.events, overflow: measured.overflow,
             outOfWindowEvents: measured.outOfWindowEvents, domTransition: measured,
           });
@@ -1130,7 +1130,7 @@ async function collectQueryAttributionMeasurements(target) {
         }
       },
       onTimeout: () => client.send('Runtime.evaluate', {
-        expression: '(' + cancelQueryAttributionMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
+        expression: '(' + cancelQueryTemporalAssociationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
       }),
     });
   };
@@ -1147,35 +1147,37 @@ async function collectQueryAttributionMeasurements(target) {
       measured.next.push(await measureDirection('next'));
       measured.previous.push(await measureDirection('previous'));
     }
-    const outOfWindowEvents = await readAndCloseQueryAttributionGuard(target, 250);
+    const outOfWindowEvents = await readAndCloseQueryTemporalAssociationGuard(target, 250);
     guardDrained = true;
     if (outOfWindowEvents !== 0) {
       throw new Error('A late or out-of-window query tap arrived during the final drain.');
     }
   } finally {
-    if (!guardDrained && !queryAttributionGuardClosed) {
+    if (!guardDrained && !queryTemporalAssociationGuardClosed) {
       try {
-        await readAndCloseQueryAttributionGuard(target, 0);
+        await readAndCloseQueryTemporalAssociationGuard(target, 0);
       } catch {
         // A detached target has no remaining Webview guard to clean up.
       }
     }
   }
   return {
-    metric: 'host-get-rows-query-pair-plus-webview-click-to-committed-dom-settle',
+    metric: 'host-get-rows-pair-co-occurring-with-webview-click-to-committed-dom-settle',
+    association: 'bounded-temporal-co-occurrence-only',
+    causalAttribution: false,
     hostClock: 'extension-host-performance.now',
     webviewClock: 'window.performance.now',
     hostWindow: 'one trusted page click through DOM settle and a 250ms quiet drain; out-of-window taps fail the run',
     measurementCondition: 'tap-enabled; development-only query instrumentation perturbs the measured path',
-    completionCondition: 'exactly one ordered started/settled pair with matching traceId, startupId and request_seq, plus one adjacent page transition settled across two animation frames',
+    completionCondition: 'exactly one ordered host pair with matching traceId, startupId and request_seq co-occurs within the bounded click window with one adjacent page transition settled across two animation frames; this does not prove the click caused that query',
     presentationGuaranteed: false,
     warmupsPerDirection,
     measuredSamplesPerDirection,
     directions: {
-      next: summarizeQueryAttribution(measured.next),
-      previous: summarizeQueryAttribution(measured.previous),
+      next: summarizeQueryTemporalAssociation(measured.next),
+      previous: summarizeQueryTemporalAssociation(measured.previous),
     },
-    combined: summarizeQueryAttribution([...measured.next, ...measured.previous]),
+    combined: summarizeQueryTemporalAssociation([...measured.next, ...measured.previous]),
   };
 }
 
@@ -1296,7 +1298,7 @@ const inspectable = currentTargets.filter((target) =>
   return priority(left) - priority(right);
 });
 const inspections = [];
-if (!measurePageNavigation && !measureQueryAttribution) {
+if (!measurePageNavigation && !measureQueryTemporalAssociation) {
   for (let index = 0; index < inspectable.length; index += 1) {
     inspections.push(await inspectTarget(inspectable[index], index));
   }
@@ -1304,7 +1306,7 @@ if (!measurePageNavigation && !measureQueryAttribution) {
 
 let ownedFixtureBefore;
 if (ownedFixture) {
-  if (measurePageNavigation || measureQueryAttribution) {
+  if (measurePageNavigation || measureQueryTemporalAssociation) {
     const fixtureTarget = await findCdpTargetWithinDeadline({
       candidates: inspectable,
       probe: identifySyntheticTarget,
@@ -1319,14 +1321,14 @@ if (ownedFixture) {
     ownedFixtureTarget = inspectable.find((entry) => entry.id === inspectedFixture?.target.id);
   }
   if (!ownedFixtureTarget) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
-  if (measureQueryAttribution) await configureQueryAttributionGuard(ownedFixtureTarget, false);
-  const expectedRecords = measurePageNavigation || measureQueryAttribution ? 1000 : 250;
+  if (measureQueryTemporalAssociation) await configureQueryTemporalAssociationGuard(ownedFixtureTarget, false);
+  const expectedRecords = measurePageNavigation || measureQueryTemporalAssociation ? 1000 : 250;
   ownedFixtureBefore = await waitForSyntheticView(ownedFixtureTarget,
     (sample) => sample?.indexedRecords === expectedRecords);
   if (ownedFixtureBefore?.indexedRecords !== expectedRecords || ownedFixtureBefore.pending || ownedFixtureBefore.blocked) {
     throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
   }
-  if (measureQueryAttribution) await configureQueryAttributionGuard(ownedFixtureTarget, true);
+  if (measureQueryTemporalAssociation) await configureQueryTemporalAssociationGuard(ownedFixtureTarget, true);
 }
 
 let changeResult = null;
@@ -1362,30 +1364,30 @@ if (ownedFixture && syntheticChange !== undefined) {
 const pageNavigation = measurePageNavigation
   ? await collectPageNavigationMeasurements(ownedFixtureTarget)
   : null;
-const queryAttribution = measureQueryAttribution
-  ? await collectQueryAttributionMeasurements(ownedFixtureTarget)
+const queryTemporalAssociation = measureQueryTemporalAssociation
+  ? await collectQueryTemporalAssociationMeasurements(ownedFixtureTarget)
   : null;
 
 const result = {
   port,
-  ...(measureQueryAttribution ? {} : { outputDirectory }),
+  ...(measureQueryTemporalAssociation ? {} : { outputDirectory }),
   targetCount: currentTargets.length,
-  ...(!measurePageNavigation && !measureQueryAttribution ? { inspections } : {}),
+  ...(!measurePageNavigation && !measureQueryTemporalAssociation ? { inspections } : {}),
   ...(changeResult === null ? {} : { change: changeResult }),
   ...(pageNavigation === null ? {} : { pageNavigation }),
-  ...(queryAttribution === null ? {} : { queryAttribution }),
+  ...(queryTemporalAssociation === null ? {} : { queryTemporalAssociation }),
 };
 await writeFile(resolve(outputDirectory, 'result.json'), JSON.stringify(result, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(result, null, 2));
 if (changeResult !== null && !changeResult.pass) process.exitCode = 1;
 if (pageNavigation !== null && (pageNavigation.directions.next.summary.sampleCount !== 20
   || pageNavigation.directions.previous.summary.sampleCount !== 20)) process.exitCode = 1;
-if (queryAttribution !== null && (queryAttribution.directions.next.pairedSampleCount !== 20
-  || queryAttribution.directions.previous.pairedSampleCount !== 20)) process.exitCode = 1;
+if (queryTemporalAssociation !== null && (queryTemporalAssociation.directions.next.associatedSampleCount !== 20
+  || queryTemporalAssociation.directions.previous.associatedSampleCount !== 20)) process.exitCode = 1;
 } finally {
-  if (measureQueryAttribution && ownedFixtureTarget && !queryAttributionGuardClosed) {
+  if (measureQueryTemporalAssociation && ownedFixtureTarget && !queryTemporalAssociationGuardClosed) {
     try {
-      await readAndCloseQueryAttributionGuard(ownedFixtureTarget, 0);
+      await readAndCloseQueryTemporalAssociationGuard(ownedFixtureTarget, 0);
     } catch {
       // Target teardown is already the terminal failure boundary.
     }

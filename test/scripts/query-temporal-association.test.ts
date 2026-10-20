@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
 
-const { pairQueryAttribution, summarizeQueryAttribution } = await import(
-  fileURLToPath(new URL('../../scripts/query-attribution-measurement.mjs', import.meta.url)),
+const { pairQueryTemporalAssociation, summarizeQueryTemporalAssociation } = await import(
+  fileURLToPath(new URL('../../scripts/query-temporal-association.mjs', import.meta.url)),
 );
 
 const startedEvent = {
@@ -22,14 +22,25 @@ const domTransition = {
   direction: 'next', fromPage: 1, toPage: 2, cursorFirstOrdinal: 100, mountedOrdinal: 100, webviewElapsedMs: 24.1254,
 };
 
-describe('CDP query attribution pairing', () => {
-  it('pairs a single host query with one committed DOM page transition and omits identifiers', () => {
-    const sample = pairQueryAttribution({ events: pair(), domTransition });
+describe('CDP query temporal association', () => {
+  it('associates a single host query with a committed DOM page transition without causal claims', () => {
+    const sample = pairQueryTemporalAssociation({ events: pair(), domTransition });
 
-    expect(sample).toEqual({ direction: 'next', hostDurationMs: 17, webviewElapsedMs: 24.125 });
+    expect(sample).toEqual({
+      association: 'bounded-temporal-co-occurrence-only', causalAttribution: false,
+      direction: 'next', hostDurationMs: 17, webviewElapsedMs: 24.125,
+    });
     expect(JSON.stringify(sample)).not.toContain('trace-a');
     expect(JSON.stringify(sample)).not.toContain('startup-a');
     expect(JSON.stringify(sample)).not.toContain('request_seq');
+  });
+
+  it('labels an unrelated but coincident host query as temporal-only', () => {
+    const unrelatedQuery = pair().map((event) => ({ ...event, traceId: 'unrelated-query' }));
+    const sample = pairQueryTemporalAssociation({ events: unrelatedQuery, domTransition });
+
+    expect(sample.association).toBe('bounded-temporal-co-occurrence-only');
+    expect(sample.causalAttribution).toBe(false);
   });
 
   it.each([
@@ -50,21 +61,23 @@ describe('CDP query attribution pairing', () => {
     ['nonadjacent DOM transition', { domTransition: { ...domTransition, toPage: 3 } }],
   ])('fails closed for %s', (_name, override) => {
     const input = { events: pair(), domTransition, ...override };
-    expect(() => pairQueryAttribution(input as Parameters<typeof pairQueryAttribution>[0]))
-      .toThrow(/Query attribution failed closed/);
+    expect(() => pairQueryTemporalAssociation(input as Parameters<typeof pairQueryTemporalAssociation>[0]))
+      .toThrow(/Query temporal association failed closed/);
   });
 
   it('summarizes host and Webview clocks separately without retaining samples', () => {
-    const summary = summarizeQueryAttribution([
-      pairQueryAttribution({ events: pair(), domTransition }),
-      pairQueryAttribution({
+    const summary = summarizeQueryTemporalAssociation([
+      pairQueryTemporalAssociation({ events: pair(), domTransition }),
+      pairQueryTemporalAssociation({
         events: pair(),
         domTransition: { ...domTransition, direction: 'previous', fromPage: 2, toPage: 1, webviewElapsedMs: 30 },
       }),
     ]);
 
     expect(summary).toEqual({
-      pairedSampleCount: 2,
+      associatedSampleCount: 2,
+      association: 'bounded-temporal-co-occurrence-only',
+      causalAttribution: false,
       percentileMethod: 'nearest-rank',
       hostQueryDuration: { sampleCount: 2, minMs: 17, p50Ms: 17, p95Ms: 17, maxMs: 17 },
       webviewClickToDomSettle: { sampleCount: 2, minMs: 24.125, p50Ms: 24.125, p95Ms: 30, maxMs: 30 },

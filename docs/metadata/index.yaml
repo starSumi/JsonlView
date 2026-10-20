@@ -61,16 +61,16 @@ documents:
     evidence: []
     revisit: when representative record spans are measured or a supported workload shows read amplification or latency regression
     rollback: remove the query-local window and retain direct row reads
-  - id: development-query-attribution-tap
-    path: docs/decisions/055-development-query-attribution-tap.md
-    title: Development query attribution tap
+  - id: development-query-observation-tap
+    path: docs/decisions/055-development-query-observation-tap.md
+    title: Development query observation tap
     kind: decision
     status: accepted
     owner: product
     tags: [extension, webview, cdp, observability, testing, bounds]
-    evidence: [focused-host-tap-tests, focused-cdp-attribution-tests]
-    revisit: when the query event schema, Webview delivery contract, or host attribution boundary changes
-    rollback: remove the development tap and Harness query-attribution mode while retaining existing observers
+    evidence: [focused-host-tap-tests, focused-cdp-temporal-association-tests]
+    revisit: when the query event schema, Webview delivery contract, or request-intent correlation changes
+    rollback: remove the development tap and Harness temporal-association mode while retaining existing observers
   - id: kimi-server-journal-adapter
     path: docs/decisions/053-kimi-kap-server-journal-adapter.md
     title: Kimi KAP server journal adapter

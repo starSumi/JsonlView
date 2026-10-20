@@ -17,7 +17,7 @@ const STALE_REASONS = new Set(['document', 'generation', 'epoch']);
 export const MAX_QUERY_TAP_EVENTS = 8;
 
 function fail(reason) {
-  throw new Error(`Query attribution failed closed: ${reason}.`);
+  throw new Error(`Query temporal association failed closed: ${reason}.`);
 }
 
 function isIdentifier(value) {
@@ -85,8 +85,8 @@ function validateDomTransition(domTransition) {
   }
 }
 
-/** Pair one bounded host query window with one committed Webview page transition. */
-export function pairQueryAttribution({ events, overflow = false, outOfWindowEvents = 0, domTransition }) {
+/** Associate one bounded host query window with one committed Webview page transition by time only. */
+export function pairQueryTemporalAssociation({ events, overflow = false, outOfWindowEvents = 0, domTransition }) {
   if (overflow) fail('host event window overflowed');
   if (!Number.isSafeInteger(outOfWindowEvents) || outOfWindowEvents !== 0) fail('host event arrived outside its click window');
   if (!Array.isArray(events) || events.length !== 2 || events.length > MAX_QUERY_TAP_EVENTS) {
@@ -104,14 +104,16 @@ export function pairQueryAttribution({ events, overflow = false, outOfWindowEven
   }
   validateDomTransition(domTransition);
   return Object.freeze({
+    association: 'bounded-temporal-co-occurrence-only',
+    causalAttribution: false,
     direction: domTransition.direction,
     hostDurationMs: settled.hostDurationMs,
     webviewElapsedMs: Number(domTransition.webviewElapsedMs.toFixed(3)),
   });
 }
 
-/** Return only aggregate timing summaries; correlation IDs and event payloads are omitted. */
-export function summarizeQueryAttribution(samples) {
+/** Return aggregate timings without implying that the click caused the host query. */
+export function summarizeQueryTemporalAssociation(samples) {
   if (!Array.isArray(samples) || samples.length === 0) fail('no paired samples were measured');
   const summarize = (values) => {
     const sorted = [...values].sort((left, right) => left - right);
@@ -126,7 +128,9 @@ export function summarizeQueryAttribution(samples) {
     };
   };
   return Object.freeze({
-    pairedSampleCount: samples.length,
+    associatedSampleCount: samples.length,
+    association: 'bounded-temporal-co-occurrence-only',
+    causalAttribution: false,
     percentileMethod: 'nearest-rank',
     hostQueryDuration: summarize(samples.map((sample) => sample.hostDurationMs)),
     webviewClickToDomSettle: summarize(samples.map((sample) => sample.webviewElapsedMs)),
