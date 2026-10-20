@@ -10,9 +10,9 @@ const sourceHashes: Record<(typeof modules)[number], string> = {
   layout: '927fd862193e64b5e0dfae6ee7cfeb3568ac8fcf6897553672eafd7b40411add',
   'workspace-header': '1569ee6162ab9d6f5c7790df3ef74140a98b8580fd7a040e88c6ed04ee31ae0c',
   'record-query': '23e9ee63919717d9454100cb38f86fce51ed0f831594b5e6ec0d2d075dc09a91',
-  views: 'aedddb3d54d2f2b9f340c6846f56cf2f6ddcbbcd374be35fdf4e6087e3954887',
+  views: '251cfcade65d868ec61aa510b1b6f4df466fbfbe227ce9a288c01cba1d8043b5',
   'source-intake': 'e78c9a13a3d01b00885f5c907e5f5f5363b92f7dd7e003687dd28400dc4276b8',
-  accessibility: '5d883311df1370f32db9417656e1d5f84e0697af0e4fec8b28e763a529b3b484',
+  accessibility: 'd0f73ed688c888a4f528e0ebc57edd9f83b4af37ab2a3443a515cc43bef55e26',
 };
 
 function parseTopLevelBlocks(source: string): string[] {

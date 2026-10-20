@@ -27,6 +27,21 @@ describe('record grid presentation styles', () => {
     expect(styles).toContain('.data-grid-scroll::-webkit-scrollbar-thumb:hover');
   });
 
+  it('keeps only the grid horizontal scrollbar implicit until hover or keyboard focus', () => {
+    const gridScrollbar = cssBlock('.data-grid-scroll');
+    expect(gridScrollbar).toContain('scrollbar-width: auto;');
+    expect(gridScrollbar).toContain('scrollbar-color: auto;');
+    expect(styles).toContain('.data-grid-scroll::-webkit-scrollbar-thumb:horizontal {\n  background: transparent;');
+    expect(styles).toContain('.data-grid-scroll:hover::-webkit-scrollbar-thumb:horizontal');
+    expect(styles).toContain('.data-grid-scroll:focus-within::-webkit-scrollbar-thumb:horizontal');
+    expect(styles).toContain('background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.65)));');
+  });
+
+  it('keeps the grid horizontal scrollbar visible with system colors in forced-colors mode', () => {
+    const forcedColors = styles.slice(styles.indexOf('@media (forced-colors: active)'));
+    expect(forcedColors).toContain('.data-grid-scroll::-webkit-scrollbar-thumb:horizontal,\n  .data-grid-scroll:hover::-webkit-scrollbar-thumb:horizontal,\n  .data-grid-scroll:focus-within::-webkit-scrollbar-thumb:horizontal,\n  .data-grid-scroll::-webkit-scrollbar-thumb:horizontal:hover {\n    background: CanvasText;');
+  });
+
   it('keeps pointer-active cells quiet and reserves the focus ring for keyboard entry', () => {
     const activeCell = cssBlock('.data-grid-scroll .is-active-cell');
     expect(activeCell).toContain('background: transparent;');

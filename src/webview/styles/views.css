@@ -720,6 +720,12 @@
   scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.45)) transparent;
 }
 
+/* Standard scrollbar properties suppress Chromium's axis-specific pseudo styling. */
+.data-grid-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
 .data-grid-scroll::-webkit-scrollbar,
 .timeline-scroll::-webkit-scrollbar,
 .schema-scroll::-webkit-scrollbar,
@@ -747,6 +753,16 @@
   border-radius: 4px;
   background: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.45));
   background-clip: padding-box;
+}
+
+.data-grid-scroll::-webkit-scrollbar-thumb:horizontal {
+  background: transparent;
+}
+
+.data-grid-scroll:hover::-webkit-scrollbar-thumb:horizontal,
+.data-grid-scroll:focus-within::-webkit-scrollbar-thumb:horizontal,
+.data-grid-scroll::-webkit-scrollbar-thumb:horizontal:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.65)));
 }
 
 .data-grid-scroll::-webkit-scrollbar-thumb:hover,

@@ -555,6 +555,7 @@ export class JsonlFileEngine {
           }
           const candidate = await this.hydrate(internal, guard);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
+          guard();
           if (options.predicate !== undefined && candidate.value === undefined) {
             sawUninspectableRecord = true;
           }
@@ -615,6 +616,7 @@ export class JsonlFileEngine {
           }
           const candidate = await this.hydrate(internal, guard);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
+          guard();
           if (options.predicate !== undefined && candidate.value === undefined) {
             sawUninspectableRecord = true;
           }

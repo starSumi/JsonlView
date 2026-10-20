@@ -1,4 +1,11 @@
 @media (forced-colors: active) {
+  .data-grid-scroll::-webkit-scrollbar-thumb:horizontal,
+  .data-grid-scroll:hover::-webkit-scrollbar-thumb:horizontal,
+  .data-grid-scroll:focus-within::-webkit-scrollbar-thumb:horizontal,
+  .data-grid-scroll::-webkit-scrollbar-thumb:horizontal:hover {
+    background: CanvasText;
+  }
+
   .navigator-action[aria-expanded='true'] {
     outline: 1px solid Highlight;
   }

@@ -100,6 +100,30 @@ describe('dataset page projection', () => {
     }
   });
 
+  it.each(['forward', 'backward'] as const)('stops profile enrichment after synchronous cancellation in %s scan', async (direction) => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-inspection-cancelled-enrichment-'));
+    let engine: JsonlFileEngine | undefined;
+    try {
+      const file = join(directory, 'source.jsonl');
+      await writeFile(file, '{"id":1}\n{"id":2}');
+      engine = await JsonlFileEngine.open(file);
+      const controller = new AbortController();
+      const project = vi.fn(() => undefined);
+
+      await expect(engine.getRows({
+        direction,
+        limit: 2,
+        signal: controller.signal,
+        onHydrated: () => controller.abort(),
+        enricher: { profileId: 'cancel-test', project },
+      })).rejects.toMatchObject({ code: 'ABORTED' });
+      expect(project).not.toHaveBeenCalled();
+    } finally {
+      await engine?.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('preserves backward cursors and scan truncation in inspection metadata', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'jsonl-inspection-cursors-'));
     let engine: JsonlFileEngine | undefined;

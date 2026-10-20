@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Keep the compact query-rail scrollbar transparent until hover or keyboard focus.
+- Keep the data-grid horizontal scrollbar implicit until hover or keyboard focus, and visible in forced-colors mode.
 - Skip table cells and unused conversation/dataset scenes during bounded full Insights aggregation.
 - Request conversation and dataset row scenes only for views that consume them, reuse the physical query viewport on view changes, and inspect detection samples without materializing display rows.
 - Collapse workspace tab labels only on narrow workspace panes while preserving accessible names, keep Follow identifiable, and reflect either visible Navigator child view in the header glyph.
