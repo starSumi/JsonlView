@@ -8,11 +8,11 @@ const sourceHashes: Record<(typeof modules)[number], string> = {
   tokens: 'cdc1959a81fa8bdf16476db56f1dd0a80e8ba559e4c7e3a4dcd05f6bd58e5356',
   base: '7e96df3d2c29c1f065eaa22a85f277b1e10dd1af0c63ba7d2780e18cc260bbcb',
   layout: '927fd862193e64b5e0dfae6ee7cfeb3568ac8fcf6897553672eafd7b40411add',
-  'workspace-header': '8b5fac1c9626a730e2cfe8db8f2cca110db8570ba1836c00483512e294564a0e',
+  'workspace-header': '1569ee6162ab9d6f5c7790df3ef74140a98b8580fd7a040e88c6ed04ee31ae0c',
   'record-query': '23e9ee63919717d9454100cb38f86fce51ed0f831594b5e6ec0d2d075dc09a91',
   views: 'aedddb3d54d2f2b9f340c6846f56cf2f6ddcbbcd374be35fdf4e6087e3954887',
   'source-intake': 'e78c9a13a3d01b00885f5c907e5f5f5363b92f7dd7e003687dd28400dc4276b8',
-  accessibility: '369139f506d4cb24a49fd26a08c679ddadd17dcd3cb5631b172f58cd349da503',
+  accessibility: '5d883311df1370f32db9417656e1d5f84e0697af0e4fec8b28e763a529b3b484',
 };
 
 function parseTopLevelBlocks(source: string): string[] {

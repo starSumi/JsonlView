@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep the compact query-rail scrollbar transparent until hover or keyboard focus.
+- Skip table cells and unused conversation/dataset scenes during bounded full Insights aggregation.
 - Request conversation and dataset row scenes only for views that consume them, reuse the physical query viewport on view changes, and inspect detection samples without materializing display rows.
 - Collapse workspace tab labels only on narrow workspace panes while preserving accessible names, keep Follow identifiable, and reflect either visible Navigator child view in the header glyph.
 - Move the Session Navigator SQLite catalog behind a complete application port, centralize provider loading and reveal policies, bound reveal intents, and invalidate stale continuations while retaining cached sessions.

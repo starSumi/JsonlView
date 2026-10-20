@@ -8,6 +8,7 @@ import type {
 } from '../shared/types';
 
 const INSIGHT_PAGE_SIZE = 500;
+const INSIGHT_ROW_PROJECTION = { conversation: false, dataset: false };
 const INSIGHT_BUCKET_WIDTH_MS = 5 * 60 * 1_000;
 const DEFAULT_INSIGHT_MAX_EXAMINED_RECORDS = 100_000;
 const DEFAULT_INSIGHT_MAX_EXAMINED_BYTES = 64 * 1024 * 1024;
@@ -86,10 +87,12 @@ export async function runInsightQuery(request: InsightQueryRequest): Promise<Ins
     }
     const page = await source.getRows({
       ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      columns: [],
       limit: INSIGHT_PAGE_SIZE,
       ...(predicate === undefined ? {} : { predicate }),
       enricher,
       generation,
+      projection: INSIGHT_ROW_PROJECTION,
       signal,
       scanBudget: {
         maxExaminedRecords: Number(remainingRecords),

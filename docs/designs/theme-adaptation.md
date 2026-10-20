@@ -68,10 +68,12 @@ input has a bounded width. At workspace widths of 700px or less, view tabs use
 their icons and compact counts; each tab keeps an explicit accessible name and
 tooltip. At 1050px or less, Profile and secondary status labels collapse while
 the Follow label remains visible. At workspace widths of 900px or less, query
-controls stay on one horizontal rail; when they do not fit, that rail scrolls with a thin
-host-token scrollbar. The search input shrinks before the other controls, while
-keyboard tab order and accessible labels remain available. This inner rail must
-not create an outer horizontal scrollbar or displace telemetry status.
+controls stay on one horizontal rail; when they do not fit, that rail scrolls
+with a thin host-token scrollbar that stays transparent at rest and appears on
+pointer hover or keyboard focus. The search input shrinks before the other
+controls, while keyboard tab order and accessible labels remain available. This
+inner rail must not create an outer horizontal scrollbar or displace telemetry
+status.
 Below 520px, Navigator and the icon tabs share the first primary row; Profile,
 Follow, and Rebuild use the next row without clipping.
 
@@ -185,9 +187,10 @@ new interpretation of truncation.
   contain overscroll, and preserve the current scroll position while their
   options or viewport change. They must be reachable with the keyboard and must
   not flicker when a pointer crosses the scrollbar.
-- Scrollbars remain discoverable and native to the host. They may be compact,
-  but they must not be hidden, replaced with a fixed product color, or allowed
-  to move layout content when they appear.
+- Scrollbars remain native to the host and keyboard-scrollable. A compact thumb
+  may stay transparent at rest when pointer hover or keyboard focus reveals its
+  host-token state; scrolling must not depend on hover alone or move layout
+  content.
 - Focus-visible styling is always available without relying on pointer hover.
   Closing a popover or detail surface returns focus to its invoking control when
   the host still contains that control.

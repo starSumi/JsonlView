@@ -41,21 +41,25 @@ describe('runInsightQuery', () => {
     const first = source.calls[0]!;
     const second = source.calls[1]!;
     expect(first).toMatchObject({
+      columns: [],
       limit: 500,
       generation,
       signal: controller.signal,
       enricher,
       predicate,
+      projection: { conversation: false, dataset: false },
       scanBudget: { maxExaminedRecords: 5, maxExaminedBytes: 100n },
     });
     expect(first.anchorOrdinal).toBeUndefined();
     expect(second).toMatchObject({
+      columns: [],
       anchorOrdinal: '1',
       limit: 500,
       generation,
       signal: controller.signal,
       enricher,
       predicate,
+      projection: { conversation: false, dataset: false },
       scanBudget: { maxExaminedRecords: 3, maxExaminedBytes: 96n },
     });
     expect(second.scanBudget?.deadlineEpochMs).toBe(first.scanBudget?.deadlineEpochMs);

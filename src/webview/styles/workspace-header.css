@@ -267,8 +267,15 @@
 }
 
 .workspace-tabs:hover,
-.workspace-tabs:focus-within {
+.workspace-tabs:focus-within,
+.workspace-query-controls > .table-query-toolbar:hover,
+.workspace-query-controls > .table-query-toolbar:focus-within {
   scrollbar-color: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background)) transparent;
+}
+
+.workspace-query-controls > .table-query-toolbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
 
 .workspace-tabs::-webkit-scrollbar,
@@ -277,8 +284,16 @@
   height: 4px;
 }
 
+.workspace-query-controls > .table-query-toolbar::-webkit-scrollbar {
+  height: 6px;
+}
+
 .workspace-tabs::-webkit-scrollbar-track,
 .detail-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-query-controls > .table-query-toolbar::-webkit-scrollbar-track {
   background: transparent;
 }
 
@@ -288,11 +303,25 @@
   background: transparent;
 }
 
+.workspace-query-controls > .table-query-toolbar::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  background-clip: padding-box;
+}
+
 .workspace-tabs:hover::-webkit-scrollbar-thumb,
 .workspace-tabs:focus-within::-webkit-scrollbar-thumb,
 .detail-tabs:hover::-webkit-scrollbar-thumb,
 .detail-tabs:focus-within::-webkit-scrollbar-thumb {
   background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background));
+}
+
+.workspace-query-controls > .table-query-toolbar:hover::-webkit-scrollbar-thumb,
+.workspace-query-controls > .table-query-toolbar:focus-within::-webkit-scrollbar-thumb,
+.workspace-query-controls > .table-query-toolbar::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background));
+  background-clip: padding-box;
 }
 
 .preview-lifecycle-actions button,

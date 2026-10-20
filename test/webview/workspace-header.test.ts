@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { WorkspaceHeader, type WorkspaceHeaderProps } from '../../src/webview/workspace-header';
 
+const workspaceHeaderStyles = readFileSync(new URL('../../src/webview/styles/workspace-header.css', import.meta.url), 'utf8');
+const accessibilityStyles = readFileSync(new URL('../../src/webview/styles/accessibility.css', import.meta.url), 'utf8');
 const styles = ['tokens', 'base', 'layout', 'workspace-header', 'record-query', 'views', 'source-intake', 'accessibility']
   .map((module) => readFileSync(new URL('../../src/webview/styles/' + module + '.css', import.meta.url), 'utf8'))
   .join('\n');
@@ -36,9 +38,26 @@ describe('workspace header status', () => {
     expect(compactToolbarRules).toContain('flex-wrap: nowrap');
     expect(compactToolbarRules).toContain('overflow-x: auto');
     expect(compactToolbarRules).toContain('overscroll-behavior-inline: contain');
-    expect(compactToolbarRules).toContain('scrollbar-color: var(--vscode-scrollbarSlider-background) transparent');
+    expect(compactToolbarRules).not.toContain('scrollbar-color: var(--vscode-scrollbarSlider-background) transparent');
     expect(compactToolbarRules).toContain('flex: 0 0 clamp(160px, 32vw, 220px)');
     expect(compactToolbarRules).not.toContain('display: none');
+  });
+
+  it('keeps the query-rail scrollbar implicit until pointer hover or keyboard focus', () => {
+    const scrollbarRules = workspaceHeaderStyles.slice(
+      workspaceHeaderStyles.indexOf('.workspace-query-controls > .table-query-toolbar {'),
+      workspaceHeaderStyles.indexOf('.preview-lifecycle-actions button,'),
+    );
+
+    expect(scrollbarRules).toContain('scrollbar-width: thin;');
+    expect(scrollbarRules).toContain('scrollbar-color: transparent transparent;');
+    expect(scrollbarRules).toContain('.workspace-query-controls > .table-query-toolbar:hover');
+    expect(scrollbarRules).toContain('.workspace-query-controls > .table-query-toolbar:focus-within');
+    expect(scrollbarRules).toContain('background: transparent;');
+    expect(scrollbarRules).toContain('var(--vscode-scrollbarSlider-hoverBackground, var(--vscode-scrollbarSlider-background))');
+    expect(scrollbarRules).not.toContain('flex: 0 0 32px');
+    expect(scrollbarRules).not.toContain('border-bottom: 1px solid');
+    expect(accessibilityStyles).not.toContain('.workspace-query-controls .table-query-toolbar::-webkit-scrollbar-thumb {');
   });
 
   it('uses icon-only workspace tabs at narrow widths while retaining their accessible labels', () => {

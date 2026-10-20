@@ -75,11 +75,13 @@ The projection plan is orthogonal to physical query identity. New Webview row
 requests state whether the current presentation needs conversation and dataset
 scenes, and the engine echoes the page's available capabilities. Table pages
 omit both scenes, Conversation pages request only conversation scenes, and
-Generic Insights pages request dataset scenes. A display switch reissues the
-current bounded viewport through the existing query controller, preserving its
-anchor, predicate, filters, row types, sort and pagination state. It does not
-create a second query owner. Engine callers that omit the plan retain the
-historical projection defaults; pages from that contract without capability
+visible Generic Insights table pages may request dataset scenes for the
+sample panel; the separate full or filtered Insights aggregation requests no
+display scenes and consumes only profile-projected fields. A display switch
+reissues the current bounded viewport through the existing query controller,
+preserving its anchor, predicate, filters, row types, sort and pagination state.
+It does not create a second query owner. Engine callers that omit the plan retain
+the historical projection defaults; pages from that contract without capability
 metadata are interpreted using those defaults.
 
 If a projection refresh fails, the physical page and selected record remain
