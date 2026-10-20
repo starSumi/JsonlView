@@ -51,15 +51,17 @@ small read chunks, cancellation, truncation, snapshot append bounds, callback
 observation, and hydration limits.
 
 An exploratory paired run used the same benchmark runner and generated inputs
-for baseline `1b1a64706b7013568f790a203700142bda7242ae` and the candidate. It
-measured an indexed forward page after full indexing, with five warmups and 30
-timing samples; read-call and byte counts came from a separate instrumented
-pass. All paired page digests matched. The mixed-size case read more bytes even
-though it made fewer calls, so read amplification remains workload-dependent.
+for baseline `1b1a64706b7013568f790a203700142bda7242ae` and candidate
+`fcd591f9b3d8f2de3c77e3ba28330e92dc067f83`. It measured an indexed forward
+page after full indexing, with five warmups and 30 timing samples; read-call
+and byte counts came from a separate instrumented pass. All paired page digests
+matched. The mixed-size case read more bytes even though it made fewer calls,
+so read amplification remains workload-dependent.
 
-The retained receipt is
-`exploratory-read-window-20261020-001` in the external harness. It binds the
-candidate revision and source-manifest hash, baseline revision, benchmark
+The retained receipt is `run-jsonlview-windowed-read-20261020`,
+`forward-page-read-window`, attempt 1 in the external harness. Its SHA-256 is
+`a744d7f89259597cb93c4990ce194299dcc58ec6358915b2f0d8172bf94187e2`. It binds
+the candidate revision and source-manifest hash, baseline revision, benchmark
 runner, input hashes, commands, and aggregate results. This is synthetic
 warm-cache exploration only. It does not establish representative, cold-cache,
 after-append, concurrent-panel, resource-budget, or L4 acceptance. The full
