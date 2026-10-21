@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep the current descending page when an append response races a click before the Webview commits the new rows.
 - Keep the search field fully visible when status information reduces toolbar space.
 - Show Rebuild only while the displayed snapshot is invalidated, with its label on wide panes and its icon on narrow panes.
 - Bound test execution to two isolated thread workers while preserving the complete test set and default timeouts.

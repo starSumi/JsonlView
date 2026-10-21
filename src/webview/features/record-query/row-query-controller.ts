@@ -192,12 +192,19 @@ export class RowQueryController {
     const prior = this.#viewport;
     const sameSession = prior !== undefined && !snapshotIdentityChanged(prior, context.session)
       && prior.query === this.#query;
+    // During append adoption, a response for the new generation can reach the
+    // controller before React commits its rows. A click from the still-rendered
+    // prior-generation page must not inherit that newer page's start or replay
+    // window when it reports the physical reading anchor.
+    const sameRenderedGeneration = ref.generation === context.session.generation;
     const descending = isPhysicalOrdinalSort(this.#sort) && this.#sort?.direction === 'desc';
     const windowFirstOrdinal = descending
-      ? sameSession ? prior.windowFirstOrdinal : context.workspace.rows[0]?.ref.ordinal : undefined;
+      ? sameSession && sameRenderedGeneration ? prior.windowFirstOrdinal : context.workspace.rows[0]?.ref.ordinal
+      : undefined;
     this.#viewport = { ...context.session, query: this.#query, firstVisibleOrdinal: ref.ordinal,
       ...(windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal }),
-      ...(sameSession && prior.queryWindow !== undefined ? { queryWindow: prior.queryWindow } : {}),
+      ...(sameSession && sameRenderedGeneration && prior.queryWindow !== undefined
+        ? { queryWindow: prior.queryWindow } : {}),
       ...(descending ? { sortDirection: 'desc' as const } : {}) };
   }
 

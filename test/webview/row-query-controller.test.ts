@@ -843,6 +843,61 @@ describe('row query controller with real client and reducer', () => {
     expect(test.state.unseenActivity).toBe(true);
   });
 
+  it('keeps the current descending page when appending after selecting its last row', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ followMode: true, sortDirection: 'desc' });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['125', '75', '26'], 'g1', {
+      sort, hasBefore: false, hasAfter: true, indexedRecords: '126', totalRecords: '126',
+    }));
+
+    // The table captures its top visible row as the reading anchor even when
+    // the selected detail is the last row on the descending page.
+    test.controller.pauseFollowing(row('125').ref);
+    expect(test.controller.viewportMode).toBe('reading');
+    test.opened('g2', 2, true, '156');
+
+    const recovery = test.last('GET_ROWS');
+    expect(logicalRowsPayload(recovery)).toEqual({
+      limit: 100, sort, anchorOrdinal: '126', direction: 'backward',
+    });
+    expect(test.rows(recovery, page(['125', '75', '26'], 'g2', {
+      sort, hasBefore: false, hasAfter: true, indexedRecords: '156', totalRecords: '156',
+    }))).toBe(true);
+    expect(test.state.rows.map((item) => item.ref.ordinal)).toEqual(['125', '75', '26']);
+    expect(test.state.viewportMode).toBe('reading');
+    expect(test.state.followMode).toBe(true);
+  });
+
+  it('does not combine a stale rendered row with the newer page start during append commit lag', () => {
+    const sort = { columnId: '__ordinal', direction: 'desc' as const };
+    const test = harness({ followMode: true, sortDirection: 'desc' });
+    test.boot();
+    test.rows(test.last('GET_ROWS'), page(['125', '75', '26'], 'g1', {
+      sort, hasBefore: false, hasAfter: true, indexedRecords: '126', totalRecords: '126',
+    }));
+    const staleRenderedRef = test.state.rows.at(-1)!.ref;
+
+    // OPENED and the tail page response reach the controller before React's
+    // reducer commit, so the DOM still exposes the preceding generation.
+    test.delayCommits();
+    test.opened('g2', 2, true, '156');
+    const appendedTail = test.last('GET_ROWS');
+    expect(logicalRowsPayload(appendedTail)).toMatchObject({ sort, direction: 'backward' });
+    expect(test.rows(appendedTail, page(['155', '56'], 'g2', {
+      sort, indexedRecords: '156', totalRecords: '156',
+    }))).toBe(true);
+
+    // A click from the still-rendered old page must not inherit the newly
+    // received page's first row as its descending window anchor.
+    test.controller.pauseFollowing(staleRenderedRef);
+    test.commit();
+    test.opened('g3', 3, true, '157');
+    expect(logicalRowsPayload(test.last('GET_ROWS'))).toEqual({
+      limit: 100, sort, anchorOrdinal: '126', direction: 'backward',
+    });
+  });
+
   it('keeps an underfilled ascending page and its selected detail stable across append', () => {
     const test = harness({ followMode: true });
     test.boot();
