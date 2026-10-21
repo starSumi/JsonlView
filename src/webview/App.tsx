@@ -5,7 +5,6 @@ import {
   BarChart3,
   Braces,
   CircleAlert,
-  RefreshCw,
   Table2,
   X,
 } from 'lucide-react';
@@ -1032,7 +1031,7 @@ export function App(): React.JSX.Element {
         complete={summary?.indexingComplete ?? false}
         phase={state.invalidationReason === 'append' ? 'snapshot' : state.phase}
         appendPending={state.invalidationReason === 'append'}
-          rebuildAvailable={state.invalidationReason !== undefined}
+        rebuildAvailable={summary !== undefined}
         rebuildBusy={Boolean(state.pending.rebuild)}
         navigatorVisible={navigatorVisible}
         onRebuild={rebuild}
@@ -1107,18 +1106,6 @@ export function App(): React.JSX.Element {
           />
           <span>Follow</span>
         </label>
-        {state.invalidationReason === undefined ? (
-          <button
-            type="button"
-            className="icon-button rebuild-action"
-            title="Rebuild index"
-            aria-label="Rebuild index"
-            disabled={!summary || Boolean(state.pending.rebuild)}
-            onClick={rebuild}
-          >
-            <RefreshCw size={15} className={state.pending.rebuild ? 'spin' : ''} aria-hidden />
-          </button>
-        ) : null}
       </WorkspaceHeader>
 
       {state.invalidationReason !== undefined && state.invalidationReason !== 'append' ? (
