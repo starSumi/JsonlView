@@ -305,6 +305,18 @@ describe('App column presentation and projection boundary', () => {
       React.isValidElement<{ className?: string }>(child) && child.props.className === 'workspace-tab-label')).toBe(true);
   });
 
+  it('shows Rebuild only while the displayed snapshot is invalidated', () => {
+    commit();
+    const rebuildAvailable = (): boolean => Boolean(props(WorkspaceHeader).rebuildAvailable);
+    expect(rebuildAvailable()).toBe(false);
+
+    deliver('OPENED', summary, last('READY'));
+    expect(rebuildAvailable()).toBe(false);
+
+    deliverBroadcast('SOURCE_INVALIDATED', { reason: 'append' });
+    expect(rebuildAvailable()).toBe(true);
+  });
+
   it('shows only current-page dataset observations and hides them during a new page request', () => {
     commit();
     deliver('OPENED', { ...summary, profileVersion: '1' }, last('READY'));

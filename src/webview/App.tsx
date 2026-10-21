@@ -1031,7 +1031,7 @@ export function App(): React.JSX.Element {
         complete={summary?.indexingComplete ?? false}
         phase={state.invalidationReason === 'append' ? 'snapshot' : state.phase}
         appendPending={state.invalidationReason === 'append'}
-        rebuildAvailable={summary !== undefined}
+        rebuildAvailable={summary !== undefined && state.invalidationReason !== undefined}
         rebuildBusy={Boolean(state.pending.rebuild)}
         navigatorVisible={navigatorVisible}
         onRebuild={rebuild}
