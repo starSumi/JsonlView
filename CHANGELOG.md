@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep the search field fully visible when status information reduces toolbar space.
+
 - Collapse query toolbar action labels to icons when the toolbar is narrow, preserve accessible names and active counts, and identify observed problems clearly in the status strip.
 - Coalesce eligible forward-page hydration reads into a bounded, snapshot-clamped window while preserving direct reads for small or observable scans.
 - Add a development-only, exact-env-gated query observation tap with a fixed metadata allowlist, bounded non-blocking delivery, terminal failure closure, and aggregate-only CDP temporal-association measurements; explicitly make no causal attribution claim, keep host and Webview clocks separate, and leave production behavior unchanged.

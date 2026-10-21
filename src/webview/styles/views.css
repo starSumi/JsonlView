@@ -58,7 +58,7 @@
 }
 
 .workspace-query-controls .table-query-toolbar .search-box {
-  flex: 0 0 clamp(120px, 32vw, 420px);
+  flex: 1 1 clamp(120px, 32vw, 420px);
   min-width: 120px;
   max-width: 420px;
 }
