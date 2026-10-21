@@ -8,11 +8,11 @@ const sourceHashes: Record<(typeof modules)[number], string> = {
   tokens: 'cdc1959a81fa8bdf16476db56f1dd0a80e8ba559e4c7e3a4dcd05f6bd58e5356',
   base: '7e96df3d2c29c1f065eaa22a85f277b1e10dd1af0c63ba7d2780e18cc260bbcb',
   layout: '927fd862193e64b5e0dfae6ee7cfeb3568ac8fcf6897553672eafd7b40411add',
-  'workspace-header': '1569ee6162ab9d6f5c7790df3ef74140a98b8580fd7a040e88c6ed04ee31ae0c',
+  'workspace-header': '18977650c8692b4537fd8130af38846664f2854b303a6a9531e02aa51fe2542b',
   'record-query': '23e9ee63919717d9454100cb38f86fce51ed0f831594b5e6ec0d2d075dc09a91',
-  views: '251cfcade65d868ec61aa510b1b6f4df466fbfbe227ce9a288c01cba1d8043b5',
+  views: '9afde0e35c631491a9a2d1679bad4985e929f52f8f13e6f29dde8c5241192170',
   'source-intake': 'e78c9a13a3d01b00885f5c907e5f5f5363b92f7dd7e003687dd28400dc4276b8',
-  accessibility: 'd0f73ed688c888a4f528e0ebc57edd9f83b4af37ab2a3443a515cc43bef55e26',
+  accessibility: '9945ed897b9758efc7c7985497652887bc4a0cb5753e6f9efc29e47258d038be',
 };
 
 function parseTopLevelBlocks(source: string): string[] {
