@@ -62,6 +62,10 @@ clipboard path, and never changes activation safety or includes source data.
   Node 24.15.0.
 - Install with pnpm install --frozen-lockfile.
 - Do not make CI or cloud jobs depend on a developer PATH or FNM_DIR.
+- The Vitest suite uses two isolated thread workers to bound process-startup
+  and temporary-I/O contention. Keep default test timeouts, file isolation,
+  and the complete test set; native addon compatibility remains part of the
+  full suite. This follows Vitest's performance guidance for thread pools.
 
 ## Mandatory Commands
 

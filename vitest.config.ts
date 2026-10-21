@@ -9,6 +9,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    pool: 'threads',
+    maxWorkers: 2,
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     coverage: {
       reporter: ['text', 'json-summary'],

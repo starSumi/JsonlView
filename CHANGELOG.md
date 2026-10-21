@@ -4,6 +4,7 @@
 
 - Keep the search field fully visible when status information reduces toolbar space.
 - Keep Rebuild discoverable before a source-change notification, with its label on wide panes and its icon on narrow panes.
+- Bound test execution to two isolated thread workers while preserving the complete test set and default timeouts.
 
 - Collapse query toolbar action labels to icons when the toolbar is narrow, preserve accessible names and active counts, and identify observed problems clearly in the status strip.
 - Coalesce eligible forward-page hydration reads into a bounded, snapshot-clamped window while preserving direct reads for small or observable scans.
