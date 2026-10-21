@@ -335,6 +335,13 @@
   white-space: nowrap;
 }
 
+.preview-save-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
 .workspace-tabs button,
 .detail-tabs button {
   position: relative;

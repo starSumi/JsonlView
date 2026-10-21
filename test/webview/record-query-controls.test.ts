@@ -82,7 +82,7 @@ describe('record order controls', () => {
         { columnId: 'actor', source: 'profile', operator: 'eq', value: 'assistant' }],
       filterableColumns: [{ id: 'status', label: 'Status', source: 'profile' },
         { id: 'actor', label: 'Actor', source: 'profile' }], filterColumnId: 'status' });
-    expect(markup).toContain('Field filters (2)');
+    expect(markup).toContain('aria-description="2 field conditions applied"');
     expect(markup).toContain('aria-label="Remove condition 1"');
     expect(markup).toContain('aria-label="Remove condition 2"');
     expect(markup).toContain('Status eq &quot;ok&quot;');

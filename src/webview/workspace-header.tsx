@@ -67,7 +67,7 @@ export function WorkspaceHeader({ children, navigation, secondary, ...status }: 
           >
             <CircleAlert size={13} aria-hidden />
             <span>{status.problemRecords}</span>
-            <span className="status-scope">{status.problemRecords === '1' ? 'record' : 'records'} observed</span>
+            <span className="status-scope">{status.problemRecords === '1' ? 'problem' : 'problems'} observed</span>
           </span>
           {status.appendPending ? (
             <span className="snapshot-update" title="The current snapshot remains readable; rebuild to include appended records.">

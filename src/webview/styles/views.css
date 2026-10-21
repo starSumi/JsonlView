@@ -31,6 +31,7 @@
 }
 
 .workspace-query-controls {
+  container: query-toolbar / inline-size;
   display: flex;
   flex: 1 1 auto;
   justify-content: flex-end;

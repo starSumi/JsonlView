@@ -119,7 +119,7 @@ export function RecordQueryControls({
             onChange={() => onSortDirectionChange('asc')}
           />
           <ArrowUpNarrowWide size={15} aria-hidden />
-          <span aria-hidden="true">Asc</span>
+          <span className="query-tool-label" aria-hidden="true">Asc</span>
         </label>
         <label className={`row-order-option${sortDirection === 'desc' ? ' is-active' : ''}${searchDisabled || descendingDisabled ? ' is-disabled' : ''}`}
           title={descendingDisabled ? descendingDisabledReason : 'Sort rows descending; last line first'}>
@@ -134,12 +134,14 @@ export function RecordQueryControls({
             onChange={() => onSortDirectionChange('desc')}
           />
           <ArrowDownWideNarrow size={15} aria-hidden />
-          <span aria-hidden="true">Desc</span>
+          <span className="query-tool-label" aria-hidden="true">Desc</span>
         </label>
       </fieldset>
       <details className="filter-menu" ref={filterMenuRef}>
-        <summary className={`query-tool-button${filterActive ? ' is-active' : ''}`} title="Field filters: match all conditions" aria-label="Field filters">
-          <Filter size={15} aria-hidden /><span>Field filters{filters.length ? ` (${filters.length})` : ''}</span>
+        <summary className={`query-tool-button${filterActive ? ' is-active' : ''}`} title="Field filters: match all conditions" aria-label="Field filters"
+          aria-description={filters.length ? `${filters.length} field conditions applied` : undefined}>
+          <Filter size={15} aria-hidden /><span className="query-tool-label">Field filters</span>
+          {filters.length ? <span className="query-tool-count" aria-hidden="true">({filters.length})</span> : null}
         </summary>
         <form
           className="filter-popover"

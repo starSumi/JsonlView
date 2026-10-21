@@ -29,8 +29,10 @@ export function RowTypeChooser({ sources, selection, disabled, onChange }: RowTy
     }
   };
   return <details className="filter-menu row-types-menu" ref={menuRef}>
-    <summary className={`query-tool-button${active ? ' is-active' : ''}`} title="Row types: include any selected type" aria-label="Row types">
-      <ListFilter size={15} aria-hidden /><span>Row types{active ? ` (${values.length})` : ''}</span>
+    <summary className={`query-tool-button${active ? ' is-active' : ''}`} title="Row types: include any selected type" aria-label="Row types"
+      aria-description={active ? `${values.length} row types selected` : undefined}>
+      <ListFilter size={15} aria-hidden /><span className="query-tool-label">Row types</span>
+      {active ? <span className="query-tool-count" aria-hidden="true">({values.length})</span> : null}
     </summary>
     <div className="filter-popover row-type-popover" data-popover-width="300" data-popover-height="480">
       <strong>Row types</strong>

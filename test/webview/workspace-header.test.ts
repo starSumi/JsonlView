@@ -151,7 +151,7 @@ describe('workspace header status', () => {
     expect(markup).toContain('24 rows');
     expect(markup).toContain('512 B / 1.0 KB');
     expect(markup).toContain('2 problem records observed during hydration; not a complete-file total');
-    expect(markup).toContain('2</span><span class="status-scope">records observed');
+    expect(markup).toContain('2</span><span class="status-scope">problems observed');
     expect(markup).toContain('aria-label="50% indexed"');
     expect(markup).not.toContain('status-file');
     expect(markup).not.toContain('Update pending');

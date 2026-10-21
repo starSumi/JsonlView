@@ -42,7 +42,7 @@ export function ColumnChooser(props: ColumnChooserProps): React.JSX.Element {
   const advanced = catalog.advanced.filter(matches);
   return <details ref={menuRef} className="columns-menu">
     <summary className="query-tool-button" title="Columns: choose what the table displays" aria-label="Columns">
-      <Columns3 size={15} aria-hidden /><span>Columns</span>
+      <Columns3 size={15} aria-hidden /><span className="query-tool-label">Columns</span>
     </summary>
     <div className="columns-popover column-chooser" data-popover-width="320" data-popover-height="480">
       <strong>Columns</strong>
