@@ -14,9 +14,9 @@ const MAX_RENDERED_SECTIONS = 96;
 const MAX_RENDERED_TEXT_BYTES = 128 * 1024;
 
 /** Source-anchored contract for this exhaustive table. */
-export const KIMI_WIRE_MANIFEST_REVISION = KIMI_SOURCE_REVISION;
-export const KIMI_CURRENT_RECORD_COUNT = 64;
-export const KIMI_HISTORICAL_RECORD_COUNT = 0;
+export const KIMI_WIRE_MANIFEST_REVISION: string = KIMI_SOURCE_REVISION;
+export const KIMI_CURRENT_RECORD_COUNT: number = 64;
+export const KIMI_HISTORICAL_RECORD_COUNT: number = 0;
 
 /** Current records from the pinned manifest; newer or historical keys remain Raw-only. */
 export const KIMI_EVENT_TYPES = [
@@ -672,7 +672,7 @@ type KimiHandlerTable = { [K in KimiEventType]: KimiHandlerEntry<K> };
 const emptyHandler = <K extends KimiEventType>(_payload: KimiPayloadOf<K>): readonly KimiCandidate[] => [];
 
 /** Every upstream wire key has an explicit policy: semantic projection or Raw fallback. */
-export const kimiEventHandlers = {
+export const kimiEventHandlers: KimiHandlerTable = {
   'config.update': { strategy: 'lifecycle', collect: systemPromptCandidates },
   'context.append_loop_event': { strategy: 'loop', collect: (payload) => loopCandidates(payload.event) },
   'context.append_message': { strategy: 'content', collect: messageCandidates },

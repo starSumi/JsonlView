@@ -127,7 +127,7 @@ export function isKimiAgentCoreRecord(value: unknown): boolean {
 }
 
 /** @deprecated Use isKimiAgentCoreRecord for the full persisted event family. */
-export const isKimiContextRecord = isKimiAgentCoreRecord;
+export const isKimiContextRecord: (value: unknown) => boolean = isKimiAgentCoreRecord;
 
 function isKimiMcpToolsDiscovered(value: unknown): boolean {
   if (!isObject(value) || !hasOptionalAgentId(value)

@@ -132,7 +132,7 @@ export function classifyCodexItem(
 
 export function codexItemHasResult(
   item: Record<string, unknown> | undefined,
-  normalizedType = normalizeCodexItemType(typeof item?.type === 'string' ? item.type : undefined),
+  normalizedType: string | undefined = normalizeCodexItemType(typeof item?.type === 'string' ? item.type : undefined),
 ): boolean {
   if (!item || !normalizedType) return false;
   const status = typeof own(item, 'status') === 'string' ? String(own(item, 'status')).toLowerCase() : undefined;

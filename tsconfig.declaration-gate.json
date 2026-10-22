@@ -11,7 +11,9 @@
   "include": [
     "src/shared/**/*.ts",
     "src/shared/**/*.d.ts",
-    "src/webview/shared/presentation/**/*.ts"
+    "src/webview/shared/presentation/**/*.ts",
+    "src/webview/features/event-presentation/model.ts",
+    "src/webview/providers/**/*.ts"
   ],
   "exclude": [
     "node_modules"
