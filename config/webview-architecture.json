@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "facades": [
+    { "path": "src/webview/idle.ts", "owner": "src/webview/shared/utils/idle.ts" },
+    { "path": "src/webview/exhaustiveness.ts", "owner": "src/webview/shared/utils/exhaustiveness.ts" },
+    { "path": "src/webview/use-light-dismiss.ts", "owner": "src/webview/shared/hooks/use-light-dismiss.ts" },
+    { "path": "src/webview/use-manual-tabs.ts", "owner": "src/webview/shared/hooks/use-manual-tabs.ts" },
+    { "path": "src/webview/use-modal-focus.ts", "owner": "src/webview/shared/hooks/use-modal-focus.ts" },
+    { "path": "src/webview/detail-drawer.tsx", "owner": "src/webview/widgets/detail-drawer/detail-drawer.tsx" },
+    { "path": "src/webview/code-syntax.tsx", "owner": "src/webview/widgets/detail-drawer/code-syntax.tsx" },
+    { "path": "src/webview/content-view.tsx", "owner": "src/webview/widgets/detail-drawer/content-view.tsx" },
+    { "path": "src/webview/copy-button.tsx", "owner": "src/webview/widgets/detail-drawer/copy-button.tsx" },
+    { "path": "src/webview/diff-view.tsx", "owner": "src/webview/widgets/detail-drawer/diff-view.tsx" },
+    { "path": "src/webview/json-raw.tsx", "owner": "src/webview/widgets/detail-drawer/json-raw.tsx" },
+    { "path": "src/webview/json-syntax.tsx", "owner": "src/webview/widgets/detail-drawer/json-syntax.tsx" },
+    { "path": "src/webview/json-tree.tsx", "owner": "src/webview/widgets/detail-drawer/json-tree.tsx" },
+    { "path": "src/webview/patch-syntax.ts", "owner": "src/webview/widgets/detail-drawer/patch-syntax.ts" },
+    { "path": "src/webview/content-analysis.ts", "owner": "src/webview/shared/presentation/content-analysis.ts" },
+    { "path": "src/webview/code-syntax-core.ts", "owner": "src/webview/shared/presentation/code-syntax-core.ts" },
+    { "path": "src/webview/json-syntax-core.ts", "owner": "src/webview/shared/presentation/json-syntax-core.ts" },
+    { "path": "src/webview/features/event-presentation/AgentEventPresentation.tsx", "owner": "src/webview/widgets/detail-drawer/AgentEventPresentation.tsx" }
+  ]
+}

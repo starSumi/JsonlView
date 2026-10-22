@@ -142,7 +142,7 @@ for (const pin of pinnedWorkflowActions) {
 }
 
 const packageJson = JSON.parse(await text('package.json'));
-for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'verify:execution-identity', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'check:contract', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
+for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'verify:execution-identity', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'check:contract', 'check:architecture', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
   if (typeof packageJson.scripts?.[script] !== 'string') failures.push(`package.json missing script: ${script}`);
 }
 
@@ -150,7 +150,7 @@ for (const helper of ['scripts/check-agent-spec.mjs', 'scripts/check-docs-index.
   if (!(await exists(helper))) failures.push(`release helper is missing: ${helper}`);
 }
 
-for (const config of ['config/agent-spec.json', 'config/docs-index.json', 'config/docs-metadata.json']) {
+for (const config of ['config/agent-spec.json', 'config/docs-index.json', 'config/docs-metadata.json', 'config/webview-architecture.json']) {
   if (!(await exists(config))) failures.push('project governance manifest is missing: ' + config);
 }
 
