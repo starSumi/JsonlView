@@ -5,6 +5,8 @@
 - Refactor bounded Webview projections and provider presentation into explicit
   feature/provider seams while preserving the single reducer, protocol client,
   query controller, generation barriers, and compatibility entry points.
+- Extract the table query toolbar into a render-only feature seam while keeping
+  query state, protocol ownership, and cancellation boundaries in App.
 - Keep the current descending page when an append response races a click before the Webview commits the new rows.
 - Keep the search field fully visible when status information reduces toolbar space.
 - Show Rebuild only while the displayed snapshot is invalidated, with its label on wide panes and its icon on narrow panes.
