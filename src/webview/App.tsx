@@ -24,9 +24,7 @@ import {
   shouldAutomaticallyHydrateSelectedRecord,
 } from './full-record-intent';
 import { deferIdle } from './shared/utils/idle';
-import { InsightsView } from './insights-view';
-import { DatasetInsights } from './dataset-insights';
-import { InsightsToolbar } from './insights-toolbar';
+import { DatasetInsights, InsightsToolbar, InsightsView } from './widgets/insights-panel';
 import { shouldIssueInsightRequest } from './insight-request';
 import {
   datasetProvenanceTooltip,
