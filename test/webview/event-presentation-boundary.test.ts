@@ -16,13 +16,13 @@ describe('event presentation module boundaries', () => {
     expect(providerSource).not.toContain("from '../code-syntax'");
     expect(providerSource).not.toContain("from '../json-syntax'");
     expect(providerSource).not.toContain("from 'react'");
-    expect(providerSource).toContain("from '../content-analysis'");
-    expect(providerSource).toContain("from '../code-syntax-core'");
-    expect(providerSource).toContain("from '../json-syntax-core'");
+    expect(providerSource).toContain("from '../shared/presentation/content-analysis'");
+    expect(providerSource).toContain("from '../shared/presentation/code-syntax-core'");
+    expect(providerSource).toContain("from '../shared/presentation/json-syntax-core'");
   });
 
   it('keeps the root facade responsible for the React wrapper and compatibility exports', () => {
-    expect(facadeSource).toContain("from './features/event-presentation/AgentEventPresentation'");
+    expect(facadeSource).toContain("from './widgets/detail-drawer/AgentEventPresentation'");
     expect(facadeSource).toContain("from './providers/agent-event-presentation'");
   });
 });

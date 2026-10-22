@@ -1,6 +1,6 @@
 import type { AgentRowProjection } from '../../shared/types';
 import { findSemanticFeatures } from '../../shared/semantic-features';
-import { classifyContent } from '../content-analysis';
+import { classifyContent } from '../shared/presentation/content-analysis';
 import { claudeToolSections, hasClaudeToolProjection, type ClaudeToolSection } from './claude-tool-projection';
 import type { EventPresentationSection } from '../features/event-presentation/model';
 

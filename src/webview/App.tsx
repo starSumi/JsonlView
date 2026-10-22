@@ -18,7 +18,7 @@ import type {
 } from '../shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
-import { DetailDrawer, type NavigatorBridgeState } from './detail-drawer';
+import { DetailDrawer, type NavigatorBridgeState } from './widgets/detail-drawer';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
