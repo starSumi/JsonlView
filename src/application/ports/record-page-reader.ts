@@ -5,8 +5,8 @@ import type {
   RowProjectionPlan,
   RowScanBudget,
   RowSort,
-} from '../../shared/types';
-import { isRowProjectionPlan } from '../../shared/row-projection';
+} from '@shared/types';
+import { isRowProjectionPlan } from '@shared/row-projection';
 
 export const RECORD_PAGE_MAX_LIMIT = 500;
 export const RECORD_PAGE_MAX_SORT_WINDOW = 2_048n;

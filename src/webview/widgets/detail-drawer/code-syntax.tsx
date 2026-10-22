@@ -1,16 +1,16 @@
 import React from 'react';
 
-import { tokenizeCode as tokenizeCodeCore } from '../../shared/presentation/code-syntax-core';
+import { tokenizeCode as tokenizeCodeCore } from '@webview/shared/presentation/code-syntax-core';
 import { tokenizePatch } from './patch-syntax';
 
-export { formatJavaScriptForDisplay, tokenizeCode } from '../../shared/presentation/code-syntax-core';
+export { formatJavaScriptForDisplay, tokenizeCode } from '@webview/shared/presentation/code-syntax-core';
 export { tokenizePatch } from './patch-syntax';
 export type {
   CodeSyntaxKind,
   CodeSyntaxOptions,
   CodeSyntaxResult,
   CodeSyntaxToken,
-} from '../../shared/presentation/code-syntax-core';
+} from '@webview/shared/presentation/code-syntax-core';
 
 interface HighlightedCodeProps {
   source: string;

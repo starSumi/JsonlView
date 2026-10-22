@@ -1,4 +1,4 @@
-import type { AgentRowProjection, ColumnSpec, PathToken, RowSort } from '../shared/types';
+import type { AgentRowProjection, ColumnSpec, PathToken, RowSort } from '@shared/types';
 import { JsonlEngineError } from './errors';
 import { jsonKindOf, resolveFieldPath } from './predicate';
 

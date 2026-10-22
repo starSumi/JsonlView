@@ -1,5 +1,5 @@
-import type { AgentRowProjection } from '../../shared/types';
-import type { EventPresentationSection } from '../features/event-presentation/model';
+import type { AgentRowProjection } from '@shared/types';
+import type { EventPresentationSection } from '@features/event-presentation/model';
 import { buildClaudeEventSections, type ClaudeEventBuilderContext } from './claude-event-builder';
 import { buildGenericAgentEventSections, type GenericEventBuilderContext } from './generic-event-builder';
 import { buildKimiEventSections, type KimiEventBuilderContext } from './kimi-event-builder';

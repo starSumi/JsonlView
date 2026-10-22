@@ -4,7 +4,7 @@ import { HighlightedCode } from './code-syntax';
 import { CopyButton } from './copy-button';
 import { JsonCode, stringifyJsonBounded } from './json-syntax';
 
-import type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate } from '../../shared/presentation/content-analysis';
+import type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate } from '@webview/shared/presentation/content-analysis';
 export type { ContentMode, DetectedContentKind, EmbeddedJsonCandidate };
 import {
   classifyContent,
@@ -14,7 +14,7 @@ import {
   inferCodeLanguage,
   normalizeMarkdownSource,
   parseJsonObjectOrArray,
-} from '../../shared/presentation/content-analysis';
+} from '@webview/shared/presentation/content-analysis';
 export {
   classifyContent,
   decodeEscapedDisplayText,

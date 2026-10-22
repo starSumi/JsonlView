@@ -1,1 +1,1 @@
-export * from './widgets/insights-panel/insights-chart';
+export * from '@widgets/insights-panel/insights-chart';

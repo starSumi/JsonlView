@@ -1,13 +1,13 @@
-import type { AgentRowProjection } from '../../shared/types';
+import type { AgentRowProjection } from '@shared/types';
 import {
   isClaudeHistoryRecord,
   isClaudeJobTimelineRecord,
-} from '../../profiles/claude-record-strategy';
+} from '@profiles/claude-record-strategy';
 import {
   classifyCodexItem,
   normalizeCodexItemType,
-} from '../../profiles/codex-item-strategy';
-import { decodeKimiServerEvent } from '../../profiles/kimi-server-record';
+} from '@profiles/codex-item-strategy';
+import { decodeKimiServerEvent } from '@profiles/kimi-server-record';
 import { stringifyJsonBounded } from '../shared/presentation/json-syntax-core';
 import { classifyContent, inferCodeLanguage } from '../shared/presentation/content-analysis';
 import { DEFAULT_MAX_CHARS, formatJavaScriptForDisplay } from '../shared/presentation/code-syntax-core';
@@ -22,7 +22,7 @@ import type { PiEventBuilderContext } from './pi-event-builder';
 import type { KimiEventBuilderContext } from './kimi-event-builder';
 import type { GenericEventBuilderContext } from './generic-event-builder';
 import { buildProviderEventSections, type PresentationStrategyContext } from './presentation-strategy-registry';
-import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from '../features/event-presentation/model';
+import type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from '@features/event-presentation/model';
 
 const MAX_TEXT = 8_000;
 // Keep the first paint cheap, but allow an explicit Show full action to render

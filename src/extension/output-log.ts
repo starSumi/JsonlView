@@ -4,7 +4,7 @@ import {
   type ObservabilityEvent,
   type ObservabilitySink,
 } from './observability-contract';
-import { isExecutionIdentity, isRuntimeExecutionIdentity, type ExecutionIdentity, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+import { isExecutionIdentity, isRuntimeExecutionIdentity, type ExecutionIdentity, type RuntimeExecutionIdentity } from '@shared/execution-identity';
 
 const MAX_DETAIL_LENGTH = 512;
 

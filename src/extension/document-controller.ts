@@ -12,10 +12,10 @@ import type {
   SnapshotIdentity,
   TemporaryPreviewStatus,
   WebviewRequest,
-} from '../shared/types';
+} from '@shared/types';
 import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
-import { createProtocolEnvelope, readProtocolIdentity } from '../shared/transport';
-import { isNavigatorBridgeResult } from '../shared/protocol/navigator-bridge';
+import { createProtocolEnvelope, readProtocolIdentity } from '@shared/transport';
+import { isNavigatorBridgeResult } from '@shared/protocol/navigator-bridge';
 import { validateWebviewRequest } from './message-validation';
 import { RequestRegistry } from './request-registry';
 import { summaryIdentityMatches } from './summary-identity';

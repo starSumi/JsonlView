@@ -4,7 +4,7 @@ import {
   type FieldStats,
   type JsonKind,
   type PathToken,
-} from '../shared/types';
+} from '@shared/types';
 import { jsonKindOf } from './predicate';
 
 interface MutableFieldStats {

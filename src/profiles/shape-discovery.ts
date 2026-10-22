@@ -3,7 +3,7 @@ import {
   type FieldPath,
   type JsonKind,
   type PathToken,
-} from '../shared/types';
+} from '@shared/types';
 import { isObject, own } from './utils';
 
 /** A bounded structural view of records. It is evidence, not a schema claim. */

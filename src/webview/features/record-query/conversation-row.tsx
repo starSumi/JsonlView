@@ -1,5 +1,5 @@
 import type React from 'react';
-import type { RowProjection } from '../../../shared/types';
+import type { RowProjection } from '@shared/types';
 
 export const CONVERSATION_MESSAGE_HEIGHT = 132;
 export const CONVERSATION_EVENT_HEIGHT = 42;

@@ -1,4 +1,4 @@
-import type { RuntimeExecutionIdentity } from '../shared/execution-identity';
+import type { RuntimeExecutionIdentity } from '@shared/execution-identity';
 import type { ObservabilityEvent } from './observability-contract';
 import { isSafeErrorName } from './error-metadata';
 

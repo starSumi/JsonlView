@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { posix } from 'node:path';
 import type * as vscode from 'vscode';
-import type { SnapshotIdentity } from '../shared/types';
-import { UNKNOWN_RUNTIME_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+import type { SnapshotIdentity } from '@shared/types';
+import { UNKNOWN_RUNTIME_IDENTITY, type RuntimeExecutionIdentity } from '@shared/execution-identity';
 
 export function getWebviewHtml(
   webview: vscode.Webview,

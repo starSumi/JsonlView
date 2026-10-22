@@ -1,5 +1,5 @@
-import type { AgentRowProjection, FieldPath } from '../shared/types';
-import { bestSemanticFeature } from '../shared/semantic-features';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
+import { bestSemanticFeature } from '@shared/semantic-features';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import {
   CLAUDE_CONTROL_TYPES,

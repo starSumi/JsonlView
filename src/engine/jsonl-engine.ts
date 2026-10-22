@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import { open, stat, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { summarizeDatasetRecord } from '../profiles/dataset-analysis';
+import { summarizeDatasetRecord } from '@profiles/dataset-analysis';
 import { pathToFileURL } from 'node:url';
-import { projectConversation } from '../profiles/conversation-projection';
+import { projectConversation } from '@profiles/conversation-projection';
 import type {
   AgentRowProjection,
   CellProjection,
@@ -25,9 +25,9 @@ import type {
   RowSort,
   ScanTruncationReason,
   SnapshotIdentity,
-} from '../shared/types';
-import { resolveRowProjectionPlan } from '../shared/row-projection';
-import { MAX_TABLE_COLUMNS } from '../shared/types';
+} from '@shared/types';
+import { resolveRowProjectionPlan } from '@shared/row-projection';
+import { MAX_TABLE_COLUMNS } from '@shared/types';
 import { JsonlEngineError, isAbortError } from './errors';
 import { createNewlineScanner } from './newline-scanner';
 import { evaluatePredicate, jsonKindOf, resolveFieldPath } from './predicate';

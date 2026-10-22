@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { JsonKind } from '../../../shared/types';
+import type { JsonKind } from '@shared/types';
 import { CopyButton } from './copy-button';
 
 export const JSON_TREE_ROOT_ID = '$';

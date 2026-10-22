@@ -7,7 +7,7 @@ import {
   type CodeSyntaxOptions,
   type CodeSyntaxResult,
   type CodeSyntaxToken,
-} from '../../shared/presentation/code-syntax-core';
+} from '@webview/shared/presentation/code-syntax-core';
 
 interface PatchLine {
   text: string;

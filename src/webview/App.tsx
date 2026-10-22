@@ -15,16 +15,16 @@ import type {
   RowFilterOperator,
   SortDirection,
   TemporaryPreviewStatus,
-} from '../shared/types';
-import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH } from '../shared/types';
-import { createProtocolEnvelope } from '../shared/transport';
-import { DetailDrawer, type NavigatorBridgeState } from './widgets/detail-drawer';
+} from '@shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH } from '@shared/types';
+import { createProtocolEnvelope } from '@shared/transport';
+import { DetailDrawer, type NavigatorBridgeState } from '@widgets/detail-drawer';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
 } from './full-record-intent';
 import { deferIdle } from './shared/utils/idle';
-import { DatasetInsights, InsightsToolbar, InsightsView } from './widgets/insights-panel';
+import { DatasetInsights, InsightsToolbar, InsightsView } from '@widgets/insights-panel';
 import { shouldIssueInsightRequest } from './insight-request';
 import {
   datasetProvenanceTooltip,
@@ -42,7 +42,7 @@ import {
   workspaceRecordColumnLimit,
   workspaceShowsPageControls,
   workspaceTableColumns,
-} from './features/workspace/projections';
+} from '@features/workspace/projections';
 import {
   buildStructuredFilter,
   canRequestSortedPage,
@@ -52,16 +52,16 @@ import {
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
   TableQueryToolbar,
-} from './features/record-query';
-import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '../shared/row-projection';
-import { rowProjectionPlanForView } from './features/record-query/row-projection-policy';
+} from '@features/record-query';
+import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '@shared/row-projection';
+import { rowProjectionPlanForView } from '@features/record-query/row-projection-policy';
 import type { ViewportIdentity } from './paging';
 import { VsCodeMessageClient } from './protocol-client';
 import { RowQueryController, type RowsRequestMetadata, type RowsRequestOptions } from './row-query-controller';
 import { snapshotIdentityChanged } from './snapshot-identity';
 import { createStartupStageReceipt, startStartupHandshake, type StartupStage } from './startup-handshake';
 import { profileOptionList } from './profile-options';
-import { TemporaryPreviewActions, WorkspaceHeader } from './widgets/workspace-header';
+import { TemporaryPreviewActions, WorkspaceHeader } from '@widgets/workspace-header';
 import { useManualTabs } from './shared/hooks/use-manual-tabs';
 import { useNarrowViewport } from './shared/hooks/use-modal-focus';
 import {
@@ -85,8 +85,8 @@ import {
   SchemaView,
   TimelineView,
 } from './views';
-import { RecordTable } from './features/record-query';
-import { WorkspacePageControls } from './features/workspace/WorkspacePageControls';
+import { RecordTable } from '@features/record-query';
+import { WorkspacePageControls } from '@features/workspace/WorkspacePageControls';
 import {
   clampDetailWidth,
   DEFAULT_DETAIL_WIDTH,
@@ -94,8 +94,8 @@ import {
   MIN_DETAIL_WIDTH,
   MIN_PRIMARY_WIDTH,
   SPLITTER_WIDTH,
-} from './features/detail-splitter';
-import { useDetailSplitter } from './features/detail-splitter';
+} from '@features/detail-splitter';
+import { useDetailSplitter } from '@features/detail-splitter';
 
 const configuredPageSize = Number(document.body.dataset.pageSize ?? '100');
 const PAGE_SIZE = Number.isSafeInteger(configuredPageSize)

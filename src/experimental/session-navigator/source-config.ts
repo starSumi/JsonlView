@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { catalogSourceId, catalogSourceLabel } from '../../application/catalog/catalog-identity';
+import { catalogSourceId, catalogSourceLabel } from '@application/catalog/catalog-identity';
 import { isKimiServerSourceRoot } from './kimi-server-journal';
 import { isGenericFileProvider, type AuthorizedSourceSetting, type SessionNavigatorProviderId } from './types';
 

@@ -1,18 +1,18 @@
 import type React from 'react';
 import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { Braces, Code2, Database, GitBranch, LoaderCircle, X } from 'lucide-react';
-import type { RecordDetail, RecordRef } from '../../../shared/types';
-import { AUTOMATIC_FULL_RECORD_LIMIT_BYTES } from '../../full-record-intent';
-import { formatBytes } from '../../format';
+import type { RecordDetail, RecordRef } from '@shared/types';
+import { AUTOMATIC_FULL_RECORD_LIMIT_BYTES } from '@webview/full-record-intent';
+import { formatBytes } from '@webview/format';
 import { CopyButton } from './copy-button';
 import { RawJsonView } from './json-raw';
 import { JsonCode, stringifyJsonBounded } from './json-syntax';
 import { JsonTree } from './json-tree';
 import { AgentEventPresentation } from './AgentEventPresentation';
-import { recordPresentationKey, recordRefKey, sameRecordRef } from '../../record-identity';
-import type { DetailTab } from '../../state';
-import { useManualTabs } from '../../shared/hooks/use-manual-tabs';
-import { useModalFocus } from '../../shared/hooks/use-modal-focus';
+import { recordPresentationKey, recordRefKey, sameRecordRef } from '@webview/record-identity';
+import type { DetailTab } from '@webview/state';
+import { useManualTabs } from '@webview/shared/hooks/use-manual-tabs';
+import { useModalFocus } from '@webview/shared/hooks/use-modal-focus';
 
 interface DetailDrawerProps {
   id?: string;

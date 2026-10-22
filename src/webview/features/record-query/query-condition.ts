@@ -1,6 +1,6 @@
-import type { ColumnSpec, Predicate, RowFilter } from '../../../shared/types';
-import { normalizePredicate } from '../../../shared/analysis-intent';
-import { combinePredicates, predicateForFilter } from '../../query';
+import type { ColumnSpec, Predicate, RowFilter } from '@shared/types';
+import { normalizePredicate } from '@shared/analysis-intent';
+import { combinePredicates, predicateForFilter } from '@webview/query';
 import { rowTypePredicate, type RowTypeSelection } from './query-selection';
 
 export interface QueryConditionInput {

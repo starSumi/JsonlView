@@ -12,7 +12,7 @@ import { isSessionSourceChangedError } from './provider-errors';
 import { SourceIntakePanel, validateLocalSourceUri } from './source-intake';
 import { type SessionPreview, SessionPreviews } from './session-previews';
 import { DEFAULT_SESSION_NAVIGATOR_BUDGET, sessionNavigatorProviderLabel, type AuthorizedSourceSetting, type DetectedAgentProviderId, type NavigatorEntity, type NavigatorSourceSummary, type RevealIntent, type SessionNavigatorProvider, type SessionNavigatorProviderId, type SessionNavigatorSortKey } from './types';
-import type { NavigatorBridgeResultV1 } from '../../shared/protocol/navigator-bridge';
+import type { NavigatorBridgeResultV1 } from '@shared/protocol/navigator-bridge';
 
 const SOURCES_SETTING = 'sessionNavigator.sources';
 const ENABLED_SETTING = 'sessionNavigator.enabled';

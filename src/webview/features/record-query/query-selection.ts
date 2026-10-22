@@ -1,5 +1,5 @@
-import type { ColumnSpec, FieldStats, Predicate, RowFilter, RowProjection } from '../../../shared/types';
-import { predicateForFilter } from '../../query';
+import type { ColumnSpec, FieldStats, Predicate, RowFilter, RowProjection } from '@shared/types';
+import { predicateForFilter } from '@webview/query';
 
 export const MAX_FIELD_FILTERS = 16;
 export const MAX_ROW_TYPES = 32;

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { dirname } from 'node:path';
-import { loadRustQueryBridge, createMcpRustQueryHandler } from './extension/rust-query-bridge';
-import { McpReadOnlyServer, MCP_READ_ONLY_MAX_LINE_BYTES, type McpLineTransport } from './extension/mcp-read-only-server';
+import { loadRustQueryBridge, createMcpRustQueryHandler } from '@extension/rust-query-bridge';
+import { McpReadOnlyServer, MCP_READ_ONLY_MAX_LINE_BYTES, type McpLineTransport } from '@extension/mcp-read-only-server';
 
 const sourceId = process.env.JSONLVIEW_MCP_SOURCE_ID;
 const sourcePath = process.env.JSONLVIEW_MCP_SOURCE_PATH;

@@ -10,10 +10,10 @@ import type {
   RowProjectionPlan,
   ScanTruncationReason,
   WebviewRequest,
-} from '../../../shared/types';
-import { MAX_TABLE_COLUMNS } from '../../../shared/types';
-import { recordColumnForPath, schemaRecordColumns } from '../../format';
-import { parseFilterLiteral, predicateForFilter } from '../../query';
+} from '@shared/types';
+import { MAX_TABLE_COLUMNS } from '@shared/types';
+import { recordColumnForPath, schemaRecordColumns } from '@webview/format';
+import { parseFilterLiteral, predicateForFilter } from '@webview/query';
 import type { RowTypeSelection } from './query-selection';
 import { compileQueryCondition } from './query-condition';
 

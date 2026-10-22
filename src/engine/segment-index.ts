@@ -1,5 +1,5 @@
 import type { FileHandle } from 'node:fs/promises';
-import type { ParseState, RecordRef } from '../shared/types';
+import type { ParseState, RecordRef } from '@shared/types';
 import { JsonlEngineError } from './errors';
 import {
   MAX_NEWLINE_SCAN_BYTES,

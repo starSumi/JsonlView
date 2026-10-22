@@ -1,4 +1,4 @@
-import { EXECUTION_IDENTITY, isRuntimeExecutionIdentity, UNKNOWN_RUNTIME_IDENTITY, type ExecutionIdentity, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+import { EXECUTION_IDENTITY, isRuntimeExecutionIdentity, UNKNOWN_RUNTIME_IDENTITY, type ExecutionIdentity, type RuntimeExecutionIdentity } from '@shared/execution-identity';
 
 const READY_RETRY_MS = 2500;
 const MAX_READY_ATTEMPTS = 3;

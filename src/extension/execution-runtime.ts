@@ -1,5 +1,5 @@
 import type * as vscode from 'vscode';
-import { isRuntimeExecutionIdentity, UNKNOWN_RUNTIME_IDENTITY, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+import { isRuntimeExecutionIdentity, UNKNOWN_RUNTIME_IDENTITY, type RuntimeExecutionIdentity } from '@shared/execution-identity';
 
 /** VS Code ExtensionContext owns host mode; bundle optimization never proves it. */
 export function captureRuntimeExecutionIdentity(

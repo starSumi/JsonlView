@@ -1,4 +1,4 @@
-import type { AgentRowProjection, ProfileSuggestion } from '../shared/types';
+import type { AgentRowProjection, ProfileSuggestion } from '@shared/types';
 import { ClaudeCodeProfile } from './claude-profile';
 import { CodexHistoryProfile, CodexSessionIndexProfile } from './codex-auxiliary-profile';
 import { CodexExecProfile } from './codex-exec-profile';

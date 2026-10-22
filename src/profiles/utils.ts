@@ -3,7 +3,7 @@ import type {
   AgentEvidence,
   AgentRowProjection,
   FieldPath,
-} from '../shared/types';
+} from '@shared/types';
 
 const MAX_SUMMARY_LENGTH = 240;
 const MAX_DETECTION_REASONS = 8;

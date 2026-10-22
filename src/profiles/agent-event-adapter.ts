@@ -1,4 +1,4 @@
-import type { AgentEventKind, AgentRowProjection, FieldPath } from '../shared/types';
+import type { AgentEventKind, AgentRowProjection, FieldPath } from '@shared/types';
 import { actorFromRole, isObject, keyPath, own, usageFromObject } from './utils';
 
 const MAX_NESTING = 2;

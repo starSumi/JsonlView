@@ -5,7 +5,7 @@ import type {
   InsightSummary,
   RowPage,
   ScanTruncationReason,
-} from '../shared/types';
+} from '@shared/types';
 
 const INSIGHT_PAGE_SIZE = 500;
 const INSIGHT_ROW_PROJECTION = { conversation: false, dataset: false };

@@ -1,4 +1,4 @@
-import type { TemporaryPreviewStatus } from '../../../shared/types';
+import type { TemporaryPreviewStatus } from '@shared/types';
 import { Save } from 'lucide-react';
 
 export function TemporaryPreviewActions({ status, onSaveAs }: { status: TemporaryPreviewStatus; onSaveAs: () => void }): React.JSX.Element {

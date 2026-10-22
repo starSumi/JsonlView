@@ -1,4 +1,4 @@
-import type { AgentRowProjection, FieldPath } from '../shared/types';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
 import { adaptGenericAgentEvent } from './agent-event-adapter';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import { boundedSummary, createProjection, evidence, keyPath, pushReason, setActor, setDerivedField, setStringField } from './utils';

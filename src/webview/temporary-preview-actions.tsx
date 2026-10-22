@@ -1,1 +1,1 @@
-export { TemporaryPreviewActions } from './widgets/workspace-header';
+export { TemporaryPreviewActions } from '@widgets/workspace-header';

@@ -1,6 +1,6 @@
-import { aggregateDatasetSummaries, DATASET_ANALYSIS_LIMITS } from '../profiles/dataset-analysis';
-import type { DatasetSampleSummary } from '../shared/dataset-analysis';
-import type { RowProjection } from '../shared/types';
+import { aggregateDatasetSummaries, DATASET_ANALYSIS_LIMITS } from '@profiles/dataset-analysis';
+import type { DatasetSampleSummary } from '@shared/dataset-analysis';
+import type { RowProjection } from '@shared/types';
 
 export function summarizeVisibleDatasetRows(rows: readonly RowProjection[], partial = false): DatasetSampleSummary | undefined {
   const inspected = rows.slice(0, DATASET_ANALYSIS_LIMITS.records);

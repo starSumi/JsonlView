@@ -3,7 +3,7 @@ import type {
   JsonKind,
   JsonScalar,
   Predicate,
-} from '../shared/types';
+} from '@shared/types';
 
 export interface PredicateContext {
   profileFields?: Readonly<Record<string, JsonScalar | undefined>>;

@@ -2,9 +2,9 @@ import type React from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { Braces, GripVertical, LoaderCircle } from 'lucide-react';
-import type { ColumnSpec, RecordRef, RowProjection, RowSort } from '../../../shared/types';
-import { columnGridTemplate, getColumnText, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from '../../format';
-import { gridCellId, gridCellRowIndex, pinActiveGridRow, useGridFocus, type GridCell } from '../../use-grid-focus';
+import type { ColumnSpec, RecordRef, RowProjection, RowSort } from '@shared/types';
+import { columnGridTemplate, getColumnText, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from '@webview/format';
+import { gridCellId, gridCellRowIndex, pinActiveGridRow, useGridFocus, type GridCell } from '@webview/use-grid-focus';
 import { captureViewportAnchor, GRID_HEADER_HEIGHT, GRID_ROW_HEIGHT, isRowVisible, latestRowIndex,
   physicalRowKey, resolveViewportAnchor, rowOffset, type ViewportAnchor } from './viewport-anchor';
 import { ConversationRow, conversationRowHeight } from './conversation-row';

@@ -1,18 +1,18 @@
-import type { ColumnSpec, ExtensionMessage, RecordRef, RowFilter, RowPage, RowProjection, RowProjectionPlan, RowScanBudget, RowSort, SortDirection } from '../../../shared/types';
+import type { ColumnSpec, ExtensionMessage, RecordRef, RowFilter, RowPage, RowProjection, RowProjectionPlan, RowScanBudget, RowSort, SortDirection } from '@shared/types';
 import { buildRecordQueryRequest, canRequestSortedPage, columnsAfterProfileChange, createFilterScanBudget, isPhysicalOrdinalSort, selectedRecordColumns } from './model';
 import {
   advanceSortPage, anchorForPage, normalizeSortOffset, normalizeSortOffsetHistory, normalizeSortPage,
   pageFromOrdinal, pageFromSortOffset, previousSortPage, rowsOptionsAfterRebuild, rowsOptionsForViewport,
-} from '../../paging';
-import type { PendingRequest, ProtocolSession, VsCodeMessageClient } from '../../protocol-client';
+} from '@webview/paging';
+import type { PendingRequest, ProtocolSession, VsCodeMessageClient } from '@webview/protocol-client';
 import {
   captureRebuild, planEmptyRestore, planOpened,
   type PendingViewportIntent, type QueryViewport, type RebuildViewportIntent,
   type QueryWindowReplay, type RecoveryRowsOptions, type RestoreViewportIntent, type RestoreViewportPhase,
 } from './row-query-recovery-policy';
-import { snapshotIdentityChanged } from '../../snapshot-identity';
-import { sameRecordRef } from '../../record-identity';
-import { canReadSnapshot, type ViewportMode, type WorkspaceAction, type WorkspaceState } from '../../state';
+import { snapshotIdentityChanged } from '@webview/snapshot-identity';
+import { sameRecordRef } from '@webview/record-identity';
+import { canReadSnapshot, type ViewportMode, type WorkspaceAction, type WorkspaceState } from '@webview/state';
 import { MAX_FIELD_FILTERS, MAX_ROW_TYPES, type RowTypeSelection } from './query-selection';
 import { reconcileProfileQueryState } from './profile-query-state';
 import { rowProjectionPlanForView } from './row-projection-policy';

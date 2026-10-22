@@ -1,4 +1,4 @@
-import type { RecordRef, RowProjection, RowSort } from '../../../shared/types';
+import type { RecordRef, RowProjection, RowSort } from '@shared/types';
 
 export const GRID_ROW_HEIGHT = 30;
 export const GRID_HEADER_HEIGHT = 30;

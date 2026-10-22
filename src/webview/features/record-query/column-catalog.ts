@@ -1,5 +1,5 @@
-import type { ColumnSpec, FieldStats } from '../../../shared/types';
-import { ORDINAL_COLUMN } from '../../format';
+import type { ColumnSpec, FieldStats } from '@shared/types';
+import { ORDINAL_COLUMN } from '@webview/format';
 
 export interface ColumnCatalog {
   common: ColumnSpec[];

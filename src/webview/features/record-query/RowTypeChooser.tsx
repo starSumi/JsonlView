@@ -1,8 +1,8 @@
 import type React from 'react';
 import { useRef, useState } from 'react';
 import { ListFilter } from 'lucide-react';
-import { useLightDismiss } from '../../shared/hooks/use-light-dismiss';
-import { useViewportPopover } from '../../use-viewport-popover';
+import { useLightDismiss } from '@webview/shared/hooks/use-light-dismiss';
+import { useViewportPopover } from '@webview/use-viewport-popover';
 import { MAX_ROW_TYPES, type RowTypeSelection, type RowTypeSource } from './query-selection';
 
 export interface RowTypeChooserProps {

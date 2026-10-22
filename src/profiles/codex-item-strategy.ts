@@ -1,4 +1,4 @@
-import type { AgentEventKind, AgentRowProjection } from '../shared/types';
+import type { AgentEventKind, AgentRowProjection } from '@shared/types';
 import { own } from './utils';
 
 /**

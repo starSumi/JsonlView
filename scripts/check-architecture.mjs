@@ -4,6 +4,16 @@ import { dirname, extname, join, normalize, relative, resolve } from 'node:path'
 const root = process.cwd();
 const sourceRoot = resolve(root, 'src/webview');
 const config = JSON.parse(await readFile(resolve(root, 'config/webview-architecture.json'), 'utf8'));
+const tsconfig = JSON.parse(await readFile(resolve(root, 'tsconfig.json'), 'utf8'));
+const pathAliases = Object.entries(tsconfig.compilerOptions?.paths ?? {}).flatMap(([pattern, targets]) => {
+  const target = targets[0];
+  if (typeof target !== 'string') return [];
+  return [{
+    prefix: pattern.endsWith('/*') ? pattern.slice(0, -1) : pattern,
+    pattern,
+    target,
+  }];
+});
 const facadePaths = new Map(config.facades.map(({ path, owner }) => [normalize(resolve(root, path)), owner]));
 const privateRoots = config.privateRoots.map(({ path, entry }) => ({
   root: normalize(resolve(root, path)),
@@ -29,8 +39,15 @@ function isWithin(candidate, directory) {
 }
 
 function resolveImport(importer, specifier, sourcePaths) {
-  if (!specifier.startsWith('.')) return undefined;
-  const base = resolve(dirname(importer), specifier);
+  let base;
+  if (specifier.startsWith('.')) {
+    base = resolve(dirname(importer), specifier);
+  } else {
+    const alias = pathAliases.find(({ pattern, prefix }) => pattern.endsWith('/*') ? specifier.startsWith(prefix) : specifier === pattern);
+    if (!alias) return undefined;
+    const suffix = alias.pattern.endsWith('/*') ? specifier.slice(alias.prefix.length) : '';
+    base = resolve(root, alias.target.replace('*', suffix));
+  }
   const candidates = [
     base,
     ...[...sourceExtensions].map((extension) => base + extension),

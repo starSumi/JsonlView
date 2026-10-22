@@ -1,4 +1,4 @@
-import type { FieldPath, ParseState } from '../shared/types';
+import type { FieldPath, ParseState } from '@shared/types';
 import { isObject, own } from './utils';
 
 export const LLAMA_FACTORY_V1_ADAPTER_ID = 'llamafactory-v1';

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
-import type { SnapshotIdentity } from '../shared/types';
+import type { SnapshotIdentity } from '@shared/types';
 
 const PREFIX_BYTES = 64 * 1024;
 

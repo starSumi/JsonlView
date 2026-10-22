@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
-import type { AgentRowProjection } from '../../../shared/types';
+import type { AgentRowProjection } from '@shared/types';
 import { CopyButton } from './copy-button';
 import { ContentView } from './content-view';
 import { HighlightedCode } from './code-syntax';
 import { DiffView } from './diff-view';
-import { eventSectionKey, type AgentEventPresentationModel, type EventPresentationSection, type FunctionCallView } from '../../features/event-presentation/model';
-import { buildAgentEventPresentation } from '../../providers/agent-event-presentation';
+import { eventSectionKey, type AgentEventPresentationModel, type EventPresentationSection, type FunctionCallView } from '@features/event-presentation/model';
+import { buildAgentEventPresentation } from '@webview/providers/agent-event-presentation';
 
 function FunctionCallArgumentsView({ view, expanded }: { view: FunctionCallView; expanded: boolean }): React.JSX.Element {
   const command = expanded ? view.command.fullCode ?? view.command.code : view.command.code;

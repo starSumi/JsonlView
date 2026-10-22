@@ -1,4 +1,4 @@
-import type { DocumentSummary } from '../shared/types';
+import type { DocumentSummary } from '@shared/types';
 
 /** Authority captured by a summary-producing operation, before asynchronous delivery. */
 export function summaryIdentityMatches(captured: DocumentSummary, current: DocumentSummary): boolean {

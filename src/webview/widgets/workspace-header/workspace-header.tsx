@@ -1,6 +1,6 @@
 import type React from 'react';
 import { Check, CircleAlert, LoaderCircle, PanelLeft, RefreshCw } from 'lucide-react';
-import { formatBytes } from '../../format';
+import { formatBytes } from '@webview/format';
 
 export interface WorkspaceHeaderProps {
   children: React.ReactNode;

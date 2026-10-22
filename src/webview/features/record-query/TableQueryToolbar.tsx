@@ -1,6 +1,6 @@
 import type React from 'react';
-import type { TemporaryPreviewStatus } from '../../../shared/types';
-import { TemporaryPreviewActions } from '../../widgets/workspace-header';
+import type { TemporaryPreviewStatus } from '@shared/types';
+import { TemporaryPreviewActions } from '@widgets/workspace-header';
 import { ColumnChooser, type ColumnChooserProps } from './ColumnChooser';
 import { RecordQueryControls, type RecordQueryControlsProps } from './RecordQueryControls';
 import { RowTypeChooser, type RowTypeChooserProps } from './RowTypeChooser';

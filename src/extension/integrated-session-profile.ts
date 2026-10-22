@@ -1,6 +1,6 @@
 import type { AgentProfileRegistry } from '../profiles';
-import type { ColumnSpec, JsonScalar } from '../shared/types';
-import { MAX_TABLE_COLUMNS } from '../shared/types';
+import type { ColumnSpec, JsonScalar } from '@shared/types';
+import { MAX_TABLE_COLUMNS } from '@shared/types';
 
 /**
  * Pure profile policy used by the session facade. It owns presentation

@@ -1,4 +1,4 @@
-import { EXECUTION_IDENTITY, executionIdentitiesEqual, isExecutionIdentity, isRuntimeExecutionIdentity, runtimeExecutionIdentitiesEqual, UNKNOWN_RUNTIME_IDENTITY, type ExecutionIdentity, type RuntimeExecutionIdentity } from '../shared/execution-identity';
+import { EXECUTION_IDENTITY, executionIdentitiesEqual, isExecutionIdentity, isRuntimeExecutionIdentity, runtimeExecutionIdentitiesEqual, UNKNOWN_RUNTIME_IDENTITY, type ExecutionIdentity, type RuntimeExecutionIdentity } from '@shared/execution-identity';
 
 export type StartupStage = 'opened-accepted' | 'page-committed' | 'startup-error';
 

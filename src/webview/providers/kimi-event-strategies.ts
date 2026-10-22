@@ -1,12 +1,12 @@
-import type { AgentRowProjection } from '../../shared/types';
-import { KIMI_SOURCE_REVISION } from '../../profiles/kimi-record';
+import type { AgentRowProjection } from '@shared/types';
+import { KIMI_SOURCE_REVISION } from '@profiles/kimi-record';
 import {
   decodeKimiServerEvent,
   type KimiServerEvent,
   type KimiServerEventType,
-} from '../../profiles/kimi-server-record';
+} from '@profiles/kimi-server-record';
 import { assertNever } from '../shared/utils/exhaustiveness';
-import type { EventPresentationSection } from '../features/event-presentation/model';
+import type { EventPresentationSection } from '@features/event-presentation/model';
 import type { KimiEventBuilderContext, KimiEventObject } from './kimi-event-builder';
 
 const MAX_ITEMS = 32;

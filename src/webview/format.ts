@@ -1,5 +1,5 @@
-import { displayFieldPath, MAX_TABLE_COLUMNS } from '../shared/types';
-import type { CellProjection, ColumnSpec, FieldPath, FieldStats, JsonKind, RowProjection } from '../shared/types';
+import { displayFieldPath, MAX_TABLE_COLUMNS } from '@shared/types';
+import type { CellProjection, ColumnSpec, FieldPath, FieldStats, JsonKind, RowProjection } from '@shared/types';
 
 export interface TreePreviewRow {
   path: string;

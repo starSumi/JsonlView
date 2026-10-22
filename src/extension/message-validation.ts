@@ -5,10 +5,10 @@ import {
   type RecordRef,
   type RowScanBudget,
   type WebviewRequest,
-} from '../shared/types';
-import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
-import { MAX_PROTOCOL_REQUEST_ID_LENGTH, validateProtocolEnvelope } from '../shared/transport';
-import { isRowProjectionPlan } from '../shared/row-projection';
+} from '@shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '@shared/types';
+import { MAX_PROTOCOL_REQUEST_ID_LENGTH, validateProtocolEnvelope } from '@shared/transport';
+import { isRowProjectionPlan } from '@shared/row-projection';
 
 const MAX_QUERY_DEPTH = 16;
 const MAX_QUERY_NODES = 256;

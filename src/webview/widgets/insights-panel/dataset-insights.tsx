@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useId } from 'react';
-import type { DatasetNumericSummary, DatasetSampleSummary } from '../../../shared/dataset-analysis';
+import type { DatasetNumericSummary, DatasetSampleSummary } from '@shared/dataset-analysis';
 import { formatCount } from './insights-chart';
 
 /** Separate from file aggregates: these observations belong to the loaded row page. */

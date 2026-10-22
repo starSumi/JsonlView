@@ -1,4 +1,4 @@
-import type { AgentRowProjection, FieldPath } from '../shared/types';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
 import { kimiTimestamp, kimiUsage } from './kimi-record';
 import { isKimiServerEventType, kimiServerContentPreview, type KimiServerEvent, type KimiServerEventType } from './kimi-server-record';
 import { actorFromRole, boundedSummary, createProjection, evidence, indexedPath, keyPath, numberAt, objectAt, own, setActor, setDerivedField, setStringField, stringAt } from './utils';

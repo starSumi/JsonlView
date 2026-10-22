@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { ParseState } from '../../../shared/types';
+import type { ParseState } from '@shared/types';
 import { CopyButton } from './copy-button';
 import { JsonCode, stringifyJsonBounded, type BoundedJsonText } from './json-syntax';
 

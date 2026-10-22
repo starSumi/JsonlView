@@ -1,8 +1,8 @@
 import {
   type ExtensionMessage,
   type WebviewRequest,
-} from '../shared/types';
-import { createProtocolEnvelope, isExtensionMessage } from '../shared/transport';
+} from '@shared/types';
+import { createProtocolEnvelope, isExtensionMessage } from '@shared/transport';
 import type { RequestKind } from './state';
 
 export { isExtensionMessage };

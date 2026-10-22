@@ -1,5 +1,5 @@
 import { assertRecordPageRequest, type RecordPageReader, type RecordPageRequest } from '../ports/record-page-reader';
-import type { RowPage } from '../../shared/types';
+import type { RowPage } from '@shared/types';
 
 /** Application boundary for loading one bounded record page. */
 export class LoadRecordPage {

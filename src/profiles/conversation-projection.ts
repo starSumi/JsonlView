@@ -1,8 +1,8 @@
-import type { AgentRowProjection, ConversationProjection, FieldPath, PathToken } from '../shared/types';
+import type { AgentRowProjection, ConversationProjection, FieldPath, PathToken } from '@shared/types';
 
 import { MAX_CONVERSATION_CHARACTERS, MAX_CONVERSATION_PARTS, MAX_CONVERSATION_DEPTH,
-  MAX_CONVERSATION_VISITS, MAX_CONVERSATION_ROLE_CHARACTERS, MAX_CONVERSATION_LABEL_CHARACTERS } from '../shared/types';
-export { MAX_CONVERSATION_CHARACTERS, MAX_CONVERSATION_PARTS, MAX_CONVERSATION_DEPTH, MAX_CONVERSATION_VISITS } from '../shared/types';
+  MAX_CONVERSATION_VISITS, MAX_CONVERSATION_ROLE_CHARACTERS, MAX_CONVERSATION_LABEL_CHARACTERS } from '@shared/types';
+export { MAX_CONVERSATION_CHARACTERS, MAX_CONVERSATION_PARTS, MAX_CONVERSATION_DEPTH, MAX_CONVERSATION_VISITS } from '@shared/types';
 
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): ObjectValue | undefined =>

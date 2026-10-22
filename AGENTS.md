@@ -66,6 +66,14 @@ clipboard path, and never changes activation safety or includes source data.
   and temporary-I/O contention. Keep default test timeouts, file isolation,
   and the complete test set; native addon compatibility remains part of the
   full suite. This follows Vitest's performance guidance for thread pools.
+- TypeScript source imports use explicit owner aliases declared in
+  \`tsconfig.json\` (\`@shared/*\`, \`@application/*\`, \`@engine/*\`, \`@profiles/*\`,
+  \`@webview/*\`, \`@features/*\`, and \`@widgets/*\`, plus the remaining top-level
+  owners). Vitest derives its absolute aliases from that map and esbuild pins
+  the same \`tsconfig.json\` with the product root as its working directory.
+  Same-directory imports stay relative; public Webview facades remain the
+  checker-visible entry points, and aliases never change runtime package
+  exports.
 
 ## Mandatory Commands
 

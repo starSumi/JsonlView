@@ -1,10 +1,10 @@
-import type { ColumnSpec, DatasetRuntimeProvenanceV1, FieldStats, RowProjection } from '../../../shared/types';
-import type { NavigatorBridgeResultV1 } from '../../../shared/protocol/navigator-bridge';
-import { MAX_TABLE_COLUMNS } from '../../../shared/types';
-import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '../../../shared/row-projection';
-import { summarizeVisibleDatasetRows } from '../../dataset-page-analysis';
-import { visibleColumns } from '../../format';
-import type { WorkspaceState, WorkspaceTab } from '../../state';
+import type { ColumnSpec, DatasetRuntimeProvenanceV1, FieldStats, RowProjection } from '@shared/types';
+import type { NavigatorBridgeResultV1 } from '@shared/protocol/navigator-bridge';
+import { MAX_TABLE_COLUMNS } from '@shared/types';
+import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '@shared/row-projection';
+import { summarizeVisibleDatasetRows } from '@webview/dataset-page-analysis';
+import { visibleColumns } from '@webview/format';
+import type { WorkspaceState, WorkspaceTab } from '@webview/state';
 import { configuredRecordColumns, recordColumnOptions } from '../record-query/model';
 
 export function projectionIntentKey(

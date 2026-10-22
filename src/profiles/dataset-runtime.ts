@@ -8,7 +8,7 @@ import type {
   ParseState,
   RecordRef,
   RowPage,
-} from '../shared/types';
+} from '@shared/types';
 import { inspectLlamaFactoryDataset, type DatasetRecordSample } from './dataset-adapter';
 
 export const DATASET_HEAD_PLAN: Readonly<DatasetHeadPlanV1> = Object.freeze({

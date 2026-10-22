@@ -1,1 +1,1 @@
-export { WorkspaceHeader, type WorkspaceHeaderProps } from './widgets/workspace-header';
+export { WorkspaceHeader, type WorkspaceHeaderProps } from '@widgets/workspace-header';

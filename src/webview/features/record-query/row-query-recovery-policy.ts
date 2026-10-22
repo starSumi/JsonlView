@@ -1,4 +1,4 @@
-import type { RowScanBudget, RowSort } from '../../../shared/types';
+import type { RowScanBudget, RowSort } from '@shared/types';
 import {
   rowsOptionsAfterEmptyRebuild,
   rowsOptionsAfterOpened,
@@ -6,8 +6,8 @@ import {
   rowsOptionsAfterRebuild,
   rowsOptionsForViewport,
   type RebuildRowsOptions,
-} from '../../paging';
-import { snapshotIdentityChanged, type AcceptedSnapshotIdentity } from '../../snapshot-identity';
+} from '@webview/paging';
+import { snapshotIdentityChanged, type AcceptedSnapshotIdentity } from '@webview/snapshot-identity';
 
 export interface RecoveryRowsOptions extends Readonly<RebuildRowsOptions> {
   readonly navigation?: 'logical' | 'physical';

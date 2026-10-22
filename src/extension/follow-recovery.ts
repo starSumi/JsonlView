@@ -1,4 +1,4 @@
-import type { DocumentSummary } from '../shared/types';
+import type { DocumentSummary } from '@shared/types';
 import type { SourceRefreshKind } from '../engine';
 
 /**

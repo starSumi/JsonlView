@@ -9,6 +9,10 @@ const watch = process.argv.includes('--watch');
 const production = !watch;
 const outputDirectory = resolve(process.env.JSONLVIEW_DIST_OUTPUT ?? fileURLToPath(new URL('./dist/', import.meta.url)));
 const rootDirectory = fileURLToPath(new URL('./', import.meta.url));
+const projectResolution = {
+  absWorkingDir: rootDirectory,
+  tsconfig: resolve(rootDirectory, 'tsconfig.json'),
+};
 const buildMode = watch ? 'development' : 'production';
 const buildIdentity = await createExecutionIdentity({ rootDirectory, buildMode });
 const watchFiles = await collectExecutionIdentityInputs(rootDirectory);
@@ -36,6 +40,7 @@ function identityPlugin() {
 await rm(outputDirectory, { recursive: true, force: true });
 
 const extensionOptions = {
+  ...projectResolution,
   entryPoints: ['src/extension/extension.ts'],
   bundle: true,
   format: 'cjs',
@@ -50,6 +55,7 @@ const extensionOptions = {
 };
 
 const webviewOptions = {
+  ...projectResolution,
   entryPoints: ['src/webview/index.tsx'],
   bundle: true,
   format: 'iife',
@@ -66,6 +72,7 @@ const webviewOptions = {
 };
 
 const mcpServerOptions = {
+  ...projectResolution,
   entryPoints: ['src/mcp-server.ts'],
   bundle: true,
   format: 'cjs',

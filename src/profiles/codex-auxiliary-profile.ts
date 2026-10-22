@@ -1,4 +1,4 @@
-import type { AgentRowProjection } from '../shared/types';
+import type { AgentRowProjection } from '@shared/types';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import { sourceSurfaceEvidence } from './shape-discovery';
 import {

@@ -15,7 +15,7 @@ import type {
   DatasetDetectionStageV1,
   DatasetDetectionTerminalStatusV1,
   DatasetDetectionTerminalV1,
-} from '../shared/types';
+} from '@shared/types';
 import {
   JsonlEngineError,
   JsonlFileEngine,
@@ -37,7 +37,7 @@ import {
   profileColumns,
   profilePredicateFields,
 } from './integrated-session-profile';
-import { DatasetHeadInspection, pendingDatasetProvenance, terminalDatasetProvenance } from '../profiles/dataset-runtime';
+import { DatasetHeadInspection, pendingDatasetProvenance, terminalDatasetProvenance } from '@profiles/dataset-runtime';
 
 const DETECTION_HEAD_SAMPLE_LIMIT = 32;
 const DETECTION_TAIL_SAMPLE_LIMIT = 32;
@@ -821,7 +821,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
 function appendDetectionSample(
   samples: GenericRecordSample[],
   sampledOrdinals: Set<string>,
-  record: { value?: unknown; ref: { ordinal: string }; parseState: import('../shared/types').ParseState },
+  record: { value?: unknown; ref: { ordinal: string }; parseState: import('@shared/types').ParseState },
   sourcePathHint: string,
   limit: number,
 ): void {

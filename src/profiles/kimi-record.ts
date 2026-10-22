@@ -1,4 +1,4 @@
-import type { AgentRowProjection } from '../shared/types';
+import type { AgentRowProjection } from '@shared/types';
 import { isObject, numberAt, objectAt, own, stringAt } from './utils';
 
 // Persisted agent-core-v2 wire records, not the similarly named transport protocol.

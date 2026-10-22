@@ -23,7 +23,7 @@ import type {
   CatalogStoredSnapshot,
   SessionCatalogPort,
 } from '../../application';
-import { catalogSourceId, catalogSourceKind, catalogSourceLabel } from '../../application/catalog/catalog-identity';
+import { catalogSourceId, catalogSourceKind, catalogSourceLabel } from '@application/catalog/catalog-identity';
 
 export const DEFAULT_CATALOG_PAGE_LIMIT = 200 as const;
 export const MAX_CATALOG_PAGE_LIMIT = 500 as const;

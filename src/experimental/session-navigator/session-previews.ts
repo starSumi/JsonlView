@@ -3,7 +3,7 @@ import { lstat, mkdtemp, open, realpath, rmdir, unlink, type FileHandle } from '
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import * as vscode from 'vscode';
-import type { TemporaryPreviewStatus } from '../../shared/types';
+import type { TemporaryPreviewStatus } from '@shared/types';
 
 export const MAX_SESSION_PREVIEWS = 20;
 const MAX_BYTES = 1_048_576;

@@ -1,4 +1,4 @@
-import type { AgentRowProjection, FieldPath } from '../shared/types';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
 import { isKimiAgentCoreRecord, kimiContentPreview, kimiUsage } from './kimi-record';
 import { actorFromRole, boundedSummary, createProjection, evidence, indexedPath, keyPath, numberAt, objectAt, own, setActor, setDerivedField as setRawDerivedField, setStringField as setRawStringField, stringAt } from './utils';
 

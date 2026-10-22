@@ -1,1 +1,1 @@
-export * from './widgets/insights-panel/dataset-insights';
+export * from '@widgets/insights-panel/dataset-insights';

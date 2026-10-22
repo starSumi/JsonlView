@@ -1,4 +1,4 @@
-import type { RecordRef } from '../shared/types';
+import type { RecordRef } from '@shared/types';
 
 export function recordRefKey(ref: RecordRef): string {
   return `${ref.generation}:${recordPresentationKey(ref)}`;

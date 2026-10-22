@@ -1,4 +1,4 @@
-import type { AgentRowProjection, FieldPath } from '../shared/types';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import { projectKimiAgentCoreEvent, projectKimiMessage } from './kimi-agent-core-projection';
 import { isKimiAgentCoreRecord, isKimiMetadata, isKimiToolsSnapshot, kimiContentPreview, kimiTimestamp, kimiToolSnapshotCount, kimiUsage } from './kimi-record';

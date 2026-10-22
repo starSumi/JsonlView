@@ -1,6 +1,6 @@
-import type { RowProjectionPlan } from '../../../shared/types';
-import { legacyRowProjectionPlan } from '../../../shared/row-projection';
-import type { WorkspaceTab } from '../../state';
+import type { RowProjectionPlan } from '@shared/types';
+import { legacyRowProjectionPlan } from '@shared/row-projection';
+import type { WorkspaceTab } from '@webview/state';
 
 export function rowProjectionPlanForView(
   tab: WorkspaceTab,

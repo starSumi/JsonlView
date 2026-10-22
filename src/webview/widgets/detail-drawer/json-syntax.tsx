@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-export { stringifyJsonBounded } from '../../shared/presentation/json-syntax-core';
-export type { BoundedJsonOptions, BoundedJsonText } from '../../shared/presentation/json-syntax-core';
+export { stringifyJsonBounded } from '@webview/shared/presentation/json-syntax-core';
+export type { BoundedJsonOptions, BoundedJsonText } from '@webview/shared/presentation/json-syntax-core';
 
 export type JsonSyntaxKind =
   | 'plain'

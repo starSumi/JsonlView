@@ -1,1 +1,1 @@
-export * from './widgets/insights-panel/insights-toolbar';
+export * from '@widgets/insights-panel/insights-toolbar';

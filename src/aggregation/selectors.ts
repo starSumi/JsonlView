@@ -1,4 +1,4 @@
-import type { AgentRowProjection, JsonScalar, RowProjection } from '../shared/types';
+import type { AgentRowProjection, JsonScalar, RowProjection } from '@shared/types';
 import type { CommonDimension, FieldSelector, SelectedValue } from './types';
 
 const UNKNOWN_LITERALS = new Set(['unknown', '<unknown>', '(unknown)']);

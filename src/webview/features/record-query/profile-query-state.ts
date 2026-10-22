@@ -1,4 +1,4 @@
-import type { ColumnSpec, RowFilter, RowSort } from '../../../shared/types';
+import type { ColumnSpec, RowFilter, RowSort } from '@shared/types';
 
 export interface ReconciledProfileQueryState {
   sort?: RowSort;

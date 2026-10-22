@@ -5,7 +5,7 @@ import type {
   ProfileSuggestion,
   RecordRef,
   ParseState,
-} from '../shared/types';
+} from '@shared/types';
 
 export interface GenericRecordSample {
   value: unknown;
