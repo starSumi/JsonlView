@@ -1,4 +1,5 @@
 import React, { type ReactElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { ColumnSpec } from '../../src/shared/types';
 import { ColumnChooser, type ColumnChooserProps } from '../../src/webview/features/record-query/ColumnChooser';
@@ -98,5 +99,23 @@ describe('TableQueryToolbar render seam', () => {
 
     expect(toolbar.props.className).toBe('table-query-toolbar');
     expect(childrenOf(toolbar).some((child) => child.type === ColumnChooser)).toBe(false);
+  });
+
+  it('renders the labeled toolbar and preserves the control order', () => {
+    const markup = renderToStaticMarkup(React.createElement(TableQueryToolbar, {
+      previewStatus: undefined,
+      onSaveAs: vi.fn(),
+      queryControls: queryProps(),
+      rowTypes: rowTypes(),
+      showColumns: true,
+      columns: columns(),
+    }));
+
+    expect(markup).toMatch(/^<fieldset class="table-query-toolbar" aria-label="Table search and display">/);
+    expect(markup).toContain('Search and filters query this file together in bounded scans. Results appear in this view.');
+    expect(markup.indexOf('Search records')).toBeLessThan(markup.indexOf('Record order'));
+    expect(markup.indexOf('Record order')).toBeLessThan(markup.indexOf('Field filters'));
+    expect(markup.indexOf('Field filters')).toBeLessThan(markup.indexOf('Row types'));
+    expect(markup.indexOf('Field filters')).toBeLessThan(markup.indexOf('Columns'));
   });
 });
