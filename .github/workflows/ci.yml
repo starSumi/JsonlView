@@ -51,7 +51,6 @@ jobs:
         run: pnpm check:biome
       - run: pnpm check:cargo-notices
       - run: pnpm check:runtime-notices
-      - run: pnpm typecheck
       - run: pnpm test:coverage
       - run: pnpm build
       - run: pnpm native:check
@@ -67,6 +66,29 @@ jobs:
       # and VSIX candidates stay in the external harness/release environment;
       # uploading them here would make every PR artifact publicly downloadable
       # before identity, license, and provenance gates have passed.
+
+  type-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 peeled commit
+        with:
+          version: 10.26.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run independent TypeScript static gates
+        run: |
+          pnpm check:typescript-erasable
+          pnpm check:typescript-gates
+          pnpm check:typescript-tests
+          pnpm typecheck
 
   native-windows:
     runs-on: windows-latest

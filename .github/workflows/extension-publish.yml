@@ -56,7 +56,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $checks = (gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA/check-runs?per_page=100" | ConvertFrom-Json).check_runs
-          $required = @('quality', 'native-windows', 'Analyze JavaScript and TypeScript (javascript-typescript)')
+          $required = @('quality', 'type-safety', 'native-windows', 'Analyze JavaScript and TypeScript (javascript-typescript)')
           foreach ($name in $required) {
             $matches = @($checks | Where-Object { $_.name -eq $name -and $_.conclusion -eq 'success' })
             if ($matches.Count -eq 0) { throw "Required successful check is missing for $env:GITHUB_SHA - $name" }
