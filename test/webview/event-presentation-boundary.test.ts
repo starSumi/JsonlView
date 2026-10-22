@@ -22,7 +22,7 @@ describe('event presentation module boundaries', () => {
   });
 
   it('keeps the root facade responsible for the React wrapper and compatibility exports', () => {
-    expect(facadeSource).toContain("from './widgets/detail-drawer/AgentEventPresentation'");
+    expect(facadeSource).toContain("from './widgets/detail-drawer'");
     expect(facadeSource).toContain("from './providers/agent-event-presentation'");
   });
 });
