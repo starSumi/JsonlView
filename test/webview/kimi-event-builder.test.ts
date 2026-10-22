@@ -360,6 +360,60 @@ describe('Kimi event builder', () => {
     ]);
   });
 
+  it('renders legacy agent message envelopes without misclassifying them as server journals', () => {
+    const sections = buildKimiEventSections({
+      type: 'agent.message.appended',
+      kind: 'event',
+      message: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Completed the requested task.' }],
+          toolCalls: [{ type: 'function', id: 'call-1', function: { name: 'Bash', arguments: '{"command":"pwd"}' } }],
+        },
+        meta: { source: 'agent-core' },
+      },
+    }, kimiProfile, context());
+
+    expect(sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Message 1', text: 'Completed the requested task.' }),
+      expect.objectContaining({ title: 'Tool call · Bash', code: expect.stringContaining('pwd') }),
+    ]));
+    expect(sections).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Kimi server raw fallback · malformed journal event' }),
+    ]));
+  });
+
+  it('renders a loop tool command from args.command when no display command is present', () => {
+    const sections = buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: { type: 'tool.call', name: 'Bash', args: { command: 'printf from args', cwd: 'F:/tmp' } },
+    }, kimiProfile, context());
+
+    expect(sections).toEqual([expect.objectContaining({
+      title: 'Tool command · Bash',
+      code: 'printf from args',
+      language: 'shell',
+    })]);
+  });
+
+  it('renders agent-call prompts from both display metadata and args', () => {
+    const sections = buildKimiEventSections({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        name: 'Task',
+        args: { prompt: 'Inspect the parser', subagent_type: 'coder' },
+        display: { kind: 'agent_call', agent_name: 'coder', prompt: 'Inspect the parser' },
+      },
+    }, kimiProfile, context());
+
+    expect(sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Agent', text: 'coder' }),
+      expect.objectContaining({ title: 'Agent prompt', text: 'Inspect the parser' }),
+      expect.objectContaining({ title: 'Tool kind', text: 'agent_call' }),
+    ]));
+  });
+
   it('shows server session, turn, status, and severity in selected-record metadata', () => {
     const value = serverRecord('turn.step.retrying', {
       sessionId: 'session-1',

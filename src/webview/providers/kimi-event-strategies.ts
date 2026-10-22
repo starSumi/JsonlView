@@ -236,10 +236,21 @@ function toolCall(event: Extract<KimiLoopEvent, { type: 'tool.call' }>): KimiCan
   const directCommand = own(event, 'command');
   const displayCommand = display ? own(display, 'command') : undefined;
   const argsCommand = argsObject ? own(argsObject, 'command') : undefined;
+  const displayAgentName = display
+    ? label(own(display, 'agent_name')) ?? label(own(display, 'agentName'))
+    : undefined;
+  const displayPrompt = display ? own(display, 'prompt') : undefined;
+  const argsPrompt = argsObject ? own(argsObject, 'prompt') : undefined;
+  const prompt = displayPrompt ?? argsPrompt;
   if (directCommand !== undefined) result.push(code(name ? 'Tool command · ' + name : 'Tool command', directCommand, 'shell'));
   else if (displayCommand !== undefined) result.push(code(name ? 'Tool command · ' + name : 'Tool command', displayCommand, 'shell'));
-  else if (argsCommand !== undefined) result.push(code(title, argsCommand, 'shell'));
-  else if (args !== undefined) result.push(code(title, args));
+  else if (argsCommand !== undefined) result.push(code(name ? 'Tool command · ' + name : 'Tool command', argsCommand, 'shell'));
+  else if (prompt === undefined && args !== undefined) result.push(code(title, args));
+  if (displayAgentName !== undefined) result.push(text('Agent', displayAgentName));
+  if (prompt !== undefined) result.push(text(displayAgentName !== undefined ? 'Agent prompt' : 'Tool prompt', prompt));
+  if (display && own(display, 'kind') !== undefined && (displayAgentName !== undefined || prompt !== undefined)) {
+    result.push(text('Tool kind', own(display, 'kind')));
+  }
   if (display && own(display, 'description') !== undefined) result.push(text(name ? 'Tool description · ' + name : 'Tool description', own(display, 'description')));
   if (own(event, 'extras') !== undefined) result.push(code(title + ' extras', own(event, 'extras')));
   return result;
@@ -813,13 +824,31 @@ export function presentKimiEvent(
   const serverEvent = decodeKimiServerEvent(payload);
   if (serverEvent) return renderKimiCandidates(collectKimiServerEvent(serverEvent), context);
   // A physical Kimi server journal record must never fall through to the legacy
-  // agent-core wire decoder when the server envelope is malformed.
-  if (own(payload, 'kind') === 'event') {
+  // agent-core wire decoder when the server envelope is malformed. Agent-core
+  // records also use kind=event, so the journal boundary needs a journal
+  // marker before it can claim a malformed server record.
+  const looksLikeServerJournal = own(payload, 'kind') === 'event'
+    && (own(payload, 'seq') !== undefined || own(payload, 'envelope') !== undefined);
+  if (looksLikeServerJournal) {
     return renderKimiCandidates([code('Kimi server raw fallback · malformed journal event', {
       provider: 'kimi-code-server',
       reason: 'invalid journal envelope',
       source: 'Raw',
     })], context);
+  }
+  // Older agent-core append records wrap the actual message one level deeper
+  // than context.append_message. Keep this compatibility path separate from
+  // the current manifest so the source-backed event table stays exhaustive.
+  if (own(payload, 'type') === 'agent.message.appended' && own(payload, 'kind') === 'event') {
+    const envelope = objectOf(own(payload, 'message'));
+    const message = envelope ? objectOf(own(envelope, 'message')) : undefined;
+    if (message && label(own(message, 'role')) !== undefined && Array.isArray(own(message, 'content'))) {
+      return renderKimiCandidates(messageCandidates({
+        ...payload,
+        type: 'context.append_message',
+        message,
+      } as KimiPayloadOf<'context.append_message'>), context);
+    }
   }
   const decoded = decodeKimiEvent(payload);
   if (decoded.kind !== 'known') return renderUnknown(decoded, context);

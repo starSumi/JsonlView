@@ -12,6 +12,7 @@
 - Keep the current descending page when an append response races a click before the Webview commits the new rows.
 - Keep the search field fully visible when status information reduces toolbar space.
 - Show Rebuild only while the displayed snapshot is invalidated, with its label on wide panes and its icon on narrow panes.
+- Render legacy Kimi agent message envelopes and nested tool commands through the Kimi semantic presentation instead of the malformed journal fallback.
 - Bound test execution to two isolated thread workers while preserving the complete test set and default timeouts.
 
 - Collapse query toolbar action labels to icons when the toolbar is narrow, preserve accessible names and active counts, and identify observed problems clearly in the status strip.

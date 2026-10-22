@@ -95,6 +95,26 @@ describe('Kimi persisted record presentation', () => {
     expect(steered?.sections).toEqual([expect.objectContaining({ title: 'Prompt 1', text: 'Use the focused file.' })]);
   });
 
+  it('unwraps legacy agent message envelopes and preserves nested tool calls', () => {
+    const model = buildAgentEventPresentation({
+      type: 'agent.message.appended',
+      kind: 'event',
+      message: {
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+          toolCalls: [{ type: 'function', name: 'Bash', arguments: '{"command":"printf done"}' }],
+        },
+      },
+    }, kimi);
+
+    expect(model?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Message 1', text: 'Done.' }),
+      expect.objectContaining({ title: 'Tool call · Bash', code: expect.stringContaining('printf done') }),
+    ]));
+    expect(JSON.stringify(model)).not.toContain('malformed journal event');
+  });
+
   it('unwraps message text and reasoning while keeping opaque parts private to Raw', () => {
     const model = buildAgentEventPresentation({ type: 'context.append_message', message: { role: 'assistant', content: [
       { type: 'think', think: 'Visible reasoning' },
@@ -131,7 +151,7 @@ describe('Kimi persisted record presentation', () => {
     expect(part?.title).toBe('Kimi · content.part');
     expect(part?.sections).toEqual([expect.objectContaining({ title: 'Content', text: 'streamed text', richText: true })]);
     const call = buildAgentEventPresentation({ type: 'context.append_loop_event', event: { type: 'tool.call', name: 'Bash', toolCallId: 'c1', args: { command: 'echo hello' } } }, kimi);
-    expect(call?.sections).toEqual([expect.objectContaining({ title: 'Tool call · Bash', code: expect.stringContaining('echo hello') })]);
+    expect(call?.sections).toEqual([expect.objectContaining({ title: 'Tool command · Bash', code: expect.stringContaining('echo hello') })]);
     const result = buildAgentEventPresentation({ type: 'context.append_loop_event', event: { type: 'tool.result', toolCallId: 'c1', result: { output: [{ type: 'text', text: 'Done' }], isError: true, note: 'Failed intentionally' } } }, kimi);
     expect(result?.metadata).toEqual(expect.arrayContaining([{ label: 'tool call id', value: 'c1' }, { label: 'error', value: 'true' }]));
     expect(result?.sections).toEqual([expect.objectContaining({ title: 'Tool result 1', text: 'Done' }), expect.objectContaining({ title: 'Result note', text: 'Failed intentionally' })]);
