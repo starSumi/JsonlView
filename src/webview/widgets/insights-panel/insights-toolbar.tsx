@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { InsightDimension, InsightScope, InsightSummary } from '../../../shared/types';
 import { formatScanLimit } from '../../features/record-query/model';

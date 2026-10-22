@@ -1,4 +1,5 @@
-import React, { useId } from 'react';
+import type React from 'react';
+import { useId } from 'react';
 import {
   CategoryChart,
   formatBucketStart,
@@ -95,9 +96,9 @@ function CategoryPanel({ categories }: { categories: readonly InsightCategory[] 
             {visible.map((category, index) => (
               <tr key={`${category.label}:${String(index)}`}>
                 <th scope="row" title={category.label}>{category.label}</th>
-                <td className="insights-number">
+                <td className="insights-number" aria-label={category.approximate === true ? 'approximately ' + formatCount(category.count) : undefined}>
                   {category.approximate === true ? (
-                    <span className="insights-approximate" aria-label={`approximately ${formatCount(category.count)}`}>
+                    <span className="insights-approximate">
                       <span aria-hidden="true">~</span>{formatCount(category.count)}
                     </span>
                   ) : formatCount(category.count)}

@@ -1,4 +1,5 @@
-import React, { useId } from 'react';
+import type React from 'react';
+import { useId } from 'react';
 
 export interface InsightCategory {
   label: string;
@@ -115,7 +116,7 @@ export function TimeChart({ buckets }: TimeChartProps): React.JSX.Element {
 
 function ChartGrid(): React.JSX.Element {
   return (
-    <g className="insights-chart-grid" aria-hidden="true">
+    <g className="insights-chart-grid">
       {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
         const y = PLOT_BOTTOM - ratio * PLOT_HEIGHT;
         return <line key={ratio} x1={0} x2={CHART_WIDTH} y1={y} y2={y} />;
