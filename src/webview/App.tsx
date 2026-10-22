@@ -49,7 +49,6 @@ import {
   buildStructuredFilter,
   ColumnChooser,
   canRequestSortedPage,
-  RecordPager,
   RecordQueryBanner,
   RecordQueryControls,
   RowTypeChooser,
@@ -92,6 +91,7 @@ import {
   TimelineView,
 } from './views';
 import { RecordTable } from './features/record-query';
+import { WorkspacePageControls } from './features/workspace/WorkspacePageControls';
 import {
   clampDetailWidth,
   DEFAULT_DETAIL_WIDTH,
@@ -1171,7 +1171,7 @@ export function App(): React.JSX.Element {
             </div>
           ) : null}
           </div>
-          <RecordPager
+          <WorkspacePageControls
             visible={showPageControls}
             busy={Boolean(state.pending.rows)}
             invalidated={!canReadSnapshot(state.invalidationReason)}
