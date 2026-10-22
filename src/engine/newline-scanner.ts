@@ -78,8 +78,10 @@ export const MAX_NEWLINE_SCAN_BYTES = 256 * 1024;
 
 class PackedNewlineOffsets implements NewlineOffsetBatch {
   readonly count: number;
+  private readonly pages: readonly OffsetPage[];
 
-  constructor(private readonly pages: readonly OffsetPage[]) {
+  constructor(pages: readonly OffsetPage[]) {
+    this.pages = pages;
     this.count = pages.reduce((total, page) => total + page.length, 0);
   }
 

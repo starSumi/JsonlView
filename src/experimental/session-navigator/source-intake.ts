@@ -98,12 +98,14 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
   #viewLifetime: AbortController | undefined;
   #pending: Promise<void> | undefined;
   #disposal: Promise<void> | undefined;
+  public readonly previews: SessionPreviews;
 
   public readonly onDidChangeVisibility = this.#visibilityChanged.event;
 
-  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, public readonly previews = new SessionPreviews(), onConnect?: ConnectSourceHandler) {
+  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, previews = new SessionPreviews(), onConnect?: ConnectSourceHandler) {
     this.#onSource = onSource;
     this.#onDetectedAgent = onDetectedAgent;
+    this.previews = previews;
     this.#onConnect = onConnect;
   }
 

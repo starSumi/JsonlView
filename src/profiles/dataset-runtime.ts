@@ -37,6 +37,7 @@ export function terminalDatasetProvenance(
 
 /** Reuses an existing hydration stream. Limits describe inspection, never I/O or RSS. */
 export class DatasetHeadInspection {
+  private readonly inspect: typeof inspectLlamaFactoryDataset;
   private samples: DatasetRecordSample[] = [];
   private examinedBytes = 0n;
   private invalidRecords = 0;
@@ -44,7 +45,9 @@ export class DatasetHeadInspection {
   private inspectionBoundaryFailure = false;
   private stoppedBy: DatasetHeadCoverageV1['stoppedBy'];
 
-  public constructor(private readonly inspect = inspectLlamaFactoryDataset) {}
+  public constructor(inspect: typeof inspectLlamaFactoryDataset = inspectLlamaFactoryDataset) {
+    this.inspect = inspect;
+  }
 
   public accept(record: { value?: unknown; ref: RecordRef; parseState: ParseState }): void {
     if (this.stoppedBy !== undefined) return;

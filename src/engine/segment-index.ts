@@ -59,6 +59,9 @@ type OperationGuard = () => void;
 export class AdaptiveSegmentIndex {
   private readonly segments: SegmentMeta[] = [];
   private readonly exactCache = new Map<number, InternalRecordRef[]>();
+  private readonly handle: FileHandle;
+  private readonly fileSize: bigint;
+  private readonly options: SegmentIndexOptions;
   private pendingRefs: InternalRecordRef[] = [];
   private scanOffset = 0n;
   private lineStart = 0n;
@@ -67,10 +70,14 @@ export class AdaptiveSegmentIndex {
   private complete = false;
 
   constructor(
-    private readonly handle: FileHandle,
-    private readonly fileSize: bigint,
-    private readonly options: SegmentIndexOptions,
-  ) {}
+    handle: FileHandle,
+    fileSize: bigint,
+    options: SegmentIndexOptions,
+  ) {
+    this.handle = handle;
+    this.fileSize = fileSize;
+    this.options = options;
+  }
 
   get indexedBytes(): bigint {
     return this.scanOffset;

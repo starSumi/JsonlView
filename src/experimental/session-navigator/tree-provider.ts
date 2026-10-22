@@ -125,14 +125,18 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
   #probeTimer: NodeJS.Timeout | undefined;
   #disposed = false;
   #opening: Promise<NavigatorBridgeResult> | undefined;
+  public readonly previews: SessionPreviews;
+  private readonly catalogOpener: SessionCatalogOpener;
 
   public readonly onDidChangeTreeData = this.#changed.event;
   /** Fires while either the Sessions or Add Source Navigator view is visible and expanded. */
   public readonly onDidChangeVisibility = this.#visibilityChanged.event;
 
-  public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry, public readonly previews = new SessionPreviews(), private readonly catalogOpener: SessionCatalogOpener = defaultCatalogOpener) {
+  public constructor(context: vscode.ExtensionContext, revealRegistry: RevealIntentRegistry, previews = new SessionPreviews(), catalogOpener: SessionCatalogOpener = defaultCatalogOpener) {
     this.#context = context;
     this.#revealRegistry = revealRegistry;
+    this.previews = previews;
+    this.catalogOpener = catalogOpener;
     this.#intake = new SourceIntakePanel(
       (uri, signal) => this.confirmCustomSource(uri, () => signal.aborted),
       (provider, signal) => this.authorizeDetectedAgent(provider, signal),

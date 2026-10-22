@@ -90,6 +90,8 @@ interface DetectedProfileState {
 }
 
 export class IntegratedJsonlSession implements JsonlSessionPort {
+  private readonly filePath: string;
+  private readonly options: IntegratedSessionOptions;
   private readonly registry: AgentProfileRegistry;
   private readonly listeners = new Set<SummaryListener>();
   private readonly followListeners = new Set<FollowModeListener>();
@@ -115,10 +117,12 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
   private followEnabled = false;
 
   private constructor(
-    private readonly filePath: string,
-    private readonly options: IntegratedSessionOptions,
+    filePath: string,
+    options: IntegratedSessionOptions,
     engine: JsonlFileEngine,
   ) {
+    this.filePath = filePath;
+    this.options = options;
     this.engine = engine;
     this.registry = createProfileRegistry();
   }

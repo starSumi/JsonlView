@@ -5,8 +5,10 @@ import { type SessionPreview, SessionPreviews } from './session-previews';
 export class RecentPreviewsTreeProvider implements vscode.TreeDataProvider<SessionPreview>, vscode.Disposable {
   readonly #changed = new vscode.EventEmitter<void>();
   readonly #registration: vscode.Disposable;
+  private readonly previews: SessionPreviews;
   public readonly onDidChangeTreeData = this.#changed.event;
-  public constructor(private readonly previews: SessionPreviews) {
+  public constructor(previews: SessionPreviews) {
+    this.previews = previews;
     this.#registration = previews.onDidChange(() => this.#changed.fire());
   }
   public register(): vscode.Disposable[] {

@@ -38,6 +38,8 @@ const SOURCE_RECONCILE_DELAY_MS = 150;
 const STARTUP_STALL_MS = 10_000;
 
 export class JsonlViewDocument implements vscode.CustomDocument {
+  public readonly uri: vscode.Uri;
+  public readonly session: IntegratedJsonlSession;
   private readonly panels = new Set<vscode.WebviewPanel>();
   private readonly disposables: vscode.Disposable[] = [];
   private reconcileTimer: NodeJS.Timeout | undefined;
@@ -53,9 +55,11 @@ export class JsonlViewDocument implements vscode.CustomDocument {
   private recoveryTrace: CausalLifecycleTrace | undefined;
 
   private constructor(
-    public readonly uri: vscode.Uri,
-    public readonly session: IntegratedJsonlSession,
+    uri: vscode.Uri,
+    session: IntegratedJsonlSession,
   ) {
+    this.uri = uri;
+    this.session = session;
     this.publishedProfileId = session.getSummary().profileId;
     this.publishedProfileVersion = session.getSummary().profileVersion;
     this.recovery = new FollowRecoveryCoordinator({
@@ -486,6 +490,12 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 }
 
 export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<JsonlViewDocument> {
+  private readonly context: vscode.ExtensionContext;
+  private readonly revealRegistry: RevealIntentRegistry;
+  private readonly openSessionNavigator: (target?: NavigatorBridgeTarget) => Promise<unknown> | unknown;
+  private readonly output: JsonlViewOutputChannel | undefined;
+  private readonly runtimeIdentity: RuntimeExecutionIdentity;
+  private readonly previews: SessionPreviews | undefined;
   private readonly resolvedDocuments = new Set<JsonlViewDocument>();
   private readonly traceIds = new WeakMap<JsonlViewDocument, string>();
   private nextTraceId = 0;
@@ -495,13 +505,20 @@ export class JsonlViewProvider implements vscode.CustomReadonlyEditorProvider<Js
   private rowOrderWrite: Promise<void> = Promise.resolve();
 
   public constructor(
-    private readonly context: vscode.ExtensionContext,
-    private readonly revealRegistry: RevealIntentRegistry,
-    private readonly openSessionNavigator: (target?: NavigatorBridgeTarget) => Promise<unknown> | unknown,
-    private readonly output: JsonlViewOutputChannel | undefined,
-    private readonly runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
-    private readonly previews?: SessionPreviews,
-  ) {}
+    context: vscode.ExtensionContext,
+    revealRegistry: RevealIntentRegistry,
+    openSessionNavigator: (target?: NavigatorBridgeTarget) => Promise<unknown> | unknown,
+    output: JsonlViewOutputChannel | undefined,
+    runtimeIdentity: RuntimeExecutionIdentity = captureRuntimeExecutionIdentity(context),
+    previews?: SessionPreviews,
+  ) {
+    this.context = context;
+    this.revealRegistry = revealRegistry;
+    this.openSessionNavigator = openSessionNavigator;
+    this.output = output;
+    this.runtimeIdentity = runtimeIdentity;
+    this.previews = previews;
+  }
 
   public setNavigatorVisibility(visible: boolean): void {
     if (this.navigatorVisible === visible) return;

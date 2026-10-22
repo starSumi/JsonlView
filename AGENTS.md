@@ -74,7 +74,9 @@ Run these commands for a normal product change:
     pnpm check:agent-spec
     pnpm check:docs-index
     pnpm check:contract
+    pnpm check:typescript-erasable
     pnpm check:typescript-gates
+    pnpm check:typescript-tests
     pnpm check:biome
     pnpm typecheck
     pnpm test

@@ -223,8 +223,11 @@ interface SortCandidate {
 class SerialExecutor {
   private tail: Promise<void> = Promise.resolve();
   private pending = 0;
+  private readonly maximumPending: number;
 
-  constructor(private readonly maximumPending: number) {}
+  constructor(maximumPending: number) {
+    this.maximumPending = maximumPending;
+  }
 
   run<T>(operation: () => Promise<T>): Promise<T> {
     if (this.pending >= this.maximumPending) {
@@ -250,12 +253,19 @@ class SerialExecutor {
 class ForwardPageReadWindow {
   private start = 0n;
   private bytes = Buffer.alloc(0);
+  private readonly handle: FileHandle;
+  private readonly fileSize: bigint;
+  private readonly maximumBytes: number;
 
   constructor(
-    private readonly handle: FileHandle,
-    private readonly fileSize: bigint,
-    private readonly maximumBytes: number,
-  ) {}
+    handle: FileHandle,
+    fileSize: bigint,
+    maximumBytes: number,
+  ) {
+    this.handle = handle;
+    this.fileSize = fileSize;
+    this.maximumBytes = maximumBytes;
+  }
 
   async read(start: bigint, length: number, recordSpan: number, guard: () => void): Promise<Buffer | undefined> {
     guard();
@@ -296,6 +306,19 @@ class ForwardPageReadWindow {
 export class JsonlFileEngine {
   readonly filePath: string;
   readonly snapshot: SnapshotIdentity;
+  private readonly handle: FileHandle;
+  private readonly fileSize: bigint;
+  private readonly options: NormalizedOptions;
+  private readonly sourceDevice: bigint;
+  private readonly sourceInode: bigint;
+  private readonly sourceMtimeMs: number;
+  private readonly sourceMtimeNs: bigint;
+  private readonly sourceCtimeNs: bigint;
+  private readonly prefixFingerprint: SourceFingerprint;
+  private readonly tailFingerprint: SourceFingerprint;
+  private fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined;
+  private fullFingerprintKnown: boolean;
+  private readonly fingerprintAbort: AbortController;
 
   private readonly executor: SerialExecutor;
   private readonly lifecycleAbort = new AbortController();
@@ -309,23 +332,36 @@ export class JsonlFileEngine {
 
   private constructor(
     filePath: string,
-    private readonly handle: FileHandle,
-    private readonly fileSize: bigint,
+    handle: FileHandle,
+    fileSize: bigint,
     snapshot: SnapshotIdentity,
-    private readonly options: NormalizedOptions,
-    private readonly sourceDevice: bigint,
-    private readonly sourceInode: bigint,
-    private readonly sourceMtimeMs: number,
-    private readonly sourceMtimeNs: bigint,
-    private readonly sourceCtimeNs: bigint,
-    private readonly prefixFingerprint: SourceFingerprint,
-    private readonly tailFingerprint: SourceFingerprint,
-    private fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined,
-    private fullFingerprintKnown: boolean,
-    private readonly fingerprintAbort: AbortController,
+    options: NormalizedOptions,
+    sourceDevice: bigint,
+    sourceInode: bigint,
+    sourceMtimeMs: number,
+    sourceMtimeNs: bigint,
+    sourceCtimeNs: bigint,
+    prefixFingerprint: SourceFingerprint,
+    tailFingerprint: SourceFingerprint,
+    fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined,
+    fullFingerprintKnown: boolean,
+    fingerprintAbort: AbortController,
   ) {
     this.filePath = filePath;
     this.snapshot = snapshot;
+    this.handle = handle;
+    this.fileSize = fileSize;
+    this.options = options;
+    this.sourceDevice = sourceDevice;
+    this.sourceInode = sourceInode;
+    this.sourceMtimeMs = sourceMtimeMs;
+    this.sourceMtimeNs = sourceMtimeNs;
+    this.sourceCtimeNs = sourceCtimeNs;
+    this.prefixFingerprint = prefixFingerprint;
+    this.tailFingerprint = tailFingerprint;
+    this.fullFingerprint = fullFingerprint;
+    this.fullFingerprintKnown = fullFingerprintKnown;
+    this.fingerprintAbort = fingerprintAbort;
     this.executor = new SerialExecutor(options.maxQueuedOperations);
     this.index = new AdaptiveSegmentIndex(handle, fileSize, {
       readChunkBytes: options.readChunkBytes,

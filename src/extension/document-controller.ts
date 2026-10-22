@@ -101,6 +101,9 @@ export interface DocumentControllerHooks {
 }
 
 export class DocumentController {
+  private readonly session: JsonlSessionPort;
+  private readonly channel: MessageChannel;
+  private readonly hooks: DocumentControllerHooks;
   private readonly requests = new RequestRegistry();
   private readonly loadRecordPage: LoadRecordPage;
   private readonly loadProblemPage: LoadProblemPage;
@@ -111,10 +114,13 @@ export class DocumentController {
   private queryRequestSequence = 0;
 
   public constructor(
-    private readonly session: JsonlSessionPort,
-    private readonly channel: MessageChannel,
-    private readonly hooks: DocumentControllerHooks = {},
+    session: JsonlSessionPort,
+    channel: MessageChannel,
+    hooks: DocumentControllerHooks = {},
   ) {
+    this.session = session;
+    this.channel = channel;
+    this.hooks = hooks;
     this.loadRecordPage = new LoadRecordPage(session);
     this.loadProblemPage = new LoadProblemPage(session);
   }

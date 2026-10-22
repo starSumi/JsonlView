@@ -3,5 +3,10 @@
   "compilerOptions": {
     "erasableSyntaxOnly": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "experimental/**/*.ts"
+  ]
 }

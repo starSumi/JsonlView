@@ -148,12 +148,14 @@ export type MutationErrorCode =
 
 export class StagedMutationError extends Error {
   override readonly name = 'StagedMutationError';
+  readonly code: MutationErrorCode;
 
   constructor(
-    readonly code: MutationErrorCode,
+    code: MutationErrorCode,
     message: string,
   ) {
     super(message);
+    this.code = code;
   }
 }
 

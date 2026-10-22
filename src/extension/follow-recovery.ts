@@ -169,6 +169,7 @@ const realTimerApi: FollowRecoveryTimerApi = {
  * same identity -> quiet metadata -> stable candidate generation.
  */
 export class FollowRecoveryCoordinator {
+  private readonly host: FollowRecoveryHost;
   private readonly options: Required<FollowRecoveryOptions>;
   private readonly timers: FollowRecoveryTimerApi;
   private state: FollowRecoveryState = 'idle';
@@ -186,10 +187,11 @@ export class FollowRecoveryCoordinator {
   private gapCount = 0;
 
   public constructor(
-    private readonly host: FollowRecoveryHost,
+    host: FollowRecoveryHost,
     options: FollowRecoveryOptions = {},
     timers: FollowRecoveryTimerApi = realTimerApi,
   ) {
+    this.host = host;
     this.options = normalizeOptions(options);
     this.timers = timers;
   }
@@ -695,8 +697,11 @@ function sameProbe(
 }
 
 export class FollowRecoveryTerminalError extends Error {
-  public constructor(public readonly reason: 'delete' | 'replace' | 'truncate') {
+  public readonly reason: 'delete' | 'replace' | 'truncate';
+
+  public constructor(reason: 'delete' | 'replace' | 'truncate') {
     super(`Source ${reason}d while following.`);
+    this.reason = reason;
     this.name = 'FollowRecoveryTerminalError';
   }
 }

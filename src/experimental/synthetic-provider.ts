@@ -285,7 +285,10 @@ export function buildSyntheticNavigationIndex(options: SyntheticNavigationBuildO
 
 /** Pure adapter façade; it owns no source handle and never performs I/O. */
 export class SyntheticNavigationAdapter {
-  public constructor(public readonly sourceId: string) {
+  public readonly sourceId: string;
+
+  public constructor(sourceId: string) {
+    this.sourceId = sourceId;
     assertOpaque(sourceId, 'sourceId');
   }
 
