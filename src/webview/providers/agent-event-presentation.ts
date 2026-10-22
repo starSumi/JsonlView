@@ -8,10 +8,9 @@ import {
   normalizeCodexItemType,
 } from '../../profiles/codex-item-strategy';
 import { decodeKimiServerEvent } from '../../profiles/kimi-server-record';
-import { stringifyJsonBounded } from '../json-syntax';
-import { classifyContent, inferCodeLanguage } from '../content-view';
-import { formatJavaScriptForDisplay } from '../code-syntax';
-import { DEFAULT_MAX_CHARS } from '../code-syntax-core';
+import { stringifyJsonBounded } from '../json-syntax-core';
+import { classifyContent, inferCodeLanguage } from '../content-analysis';
+import { DEFAULT_MAX_CHARS, formatJavaScriptForDisplay } from '../code-syntax-core';
 import type { ClaudeEventBuilderContext } from './claude-event-builder';
 import {
   buildCodexContextSections,
