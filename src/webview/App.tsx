@@ -63,8 +63,7 @@ import { RowQueryController, type RowsRequestMetadata, type RowsRequestOptions }
 import { snapshotIdentityChanged } from './snapshot-identity';
 import { createStartupStageReceipt, startStartupHandshake, type StartupStage } from './startup-handshake';
 import { profileOptionList } from './profile-options';
-import { WorkspaceHeader } from './workspace-header';
-import { TemporaryPreviewActions } from './temporary-preview-actions';
+import { TemporaryPreviewActions, WorkspaceHeader } from './widgets/workspace-header';
 import { useManualTabs } from './shared/hooks/use-manual-tabs';
 import { useNarrowViewport } from './shared/hooks/use-modal-focus';
 import {
