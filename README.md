@@ -180,6 +180,7 @@ version declared by package.json.
 
     pnpm install --frozen-lockfile
     pnpm check:contract
+    pnpm check:typescript-gates
     pnpm typecheck
     pnpm test
     pnpm build

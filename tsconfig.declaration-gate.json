@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "erasableSyntaxOnly": true,
+    "isolatedDeclarations": true,
+    "noEmit": false,
+    "rootDir": "."
+  },
+  "include": [
+    "src/shared/**/*.ts",
+    "src/shared/**/*.d.ts",
+    "src/webview/shared/presentation/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

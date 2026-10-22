@@ -567,6 +567,8 @@
     "generate:cargo-notices": "node scripts/generate-cargo-notices.mjs",
     "check:runtime-notices": "node scripts/check-runtime-notices.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",
+    "check:typescript-erasable": "tsc --noEmit -p tsconfig.erasable-syntax.json",
+    "check:typescript-gates": "node scripts/check-typescript-gates.mjs",
     "agent-spec-lint": "node scripts/check-agent-spec.mjs",
     "check:agent-spec": "pnpm agent-spec-lint",
     "check:docs-index": "node scripts/check-docs-index.mjs",

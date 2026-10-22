@@ -211,8 +211,8 @@ export function formatJavaScriptForDisplay(source: string): string {
   return outputChunks.join('').trimEnd();
 }
 
-export const DEFAULT_MAX_CHARS = 128 * 1024;
-export const DEFAULT_MAX_TOKENS = 12_000;
+export const DEFAULT_MAX_CHARS: number = 128 * 1024;
+export const DEFAULT_MAX_TOKENS: number = 12_000;
 
 const KEYWORDS: Record<string, ReadonlySet<string>> = {
   python: new Set('and as assert async await break case class continue def del elif else except False finally for from global if import in is lambda match None nonlocal not or pass raise return True try while with yield'.split(' ')),
