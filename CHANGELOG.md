@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add owner-boundary TypeScript path aliases across source imports, derive the
+  same aliases in Vitest and esbuild, and keep Webview architecture checks
+  aware of aliased imports.
 - Enforce erasable TypeScript syntax and explicit declaration contracts, add
   Rust 2024 precise lifetime capture, and gate the opt-in React Compiler with
   a bounded Activity detail surface and compiler-aware execution identity.
