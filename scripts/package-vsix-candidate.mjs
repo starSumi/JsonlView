@@ -63,6 +63,7 @@ try {
     'LICENSE.txt',
     'THIRD-PARTY-NOTICES.txt',
     '.vscodeignore',
+    'package.nls.json',
   ];
   for (const file of packageFiles) await cp(resolve(root, file), resolve(staging, file));
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
