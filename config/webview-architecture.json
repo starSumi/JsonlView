@@ -19,5 +19,11 @@
     { "path": "src/webview/code-syntax-core.ts", "owner": "src/webview/shared/presentation/code-syntax-core.ts" },
     { "path": "src/webview/json-syntax-core.ts", "owner": "src/webview/shared/presentation/json-syntax-core.ts" },
     { "path": "src/webview/features/event-presentation/AgentEventPresentation.tsx", "owner": "src/webview/widgets/detail-drawer/AgentEventPresentation.tsx" }
+  ],
+  "privateRoots": [
+    {
+      "path": "src/webview/widgets/detail-drawer",
+      "entry": "src/webview/widgets/detail-drawer/index.ts"
+    }
   ]
 }

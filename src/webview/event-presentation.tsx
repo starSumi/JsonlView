@@ -1,8 +1,8 @@
 import type React from 'react';
-import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './widgets/detail-drawer/AgentEventPresentation';
+import { AgentEventPresentation as AgentEventPresentationView, type AgentEventPresentationProps } from './widgets/detail-drawer';
 import { buildAgentEventPresentation } from './providers/agent-event-presentation';
 
-export type { AgentEventPresentationProps } from './widgets/detail-drawer/AgentEventPresentation';
+export type { AgentEventPresentationProps } from './widgets/detail-drawer';
 export type { AgentEventPresentationModel, EventPresentationSection, FunctionCallView } from './features/event-presentation/model';
 export { buildAgentEventPresentation } from './providers/agent-event-presentation';
 
