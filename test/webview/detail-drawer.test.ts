@@ -2,7 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { RecordDetail, RecordRef } from '../../src/shared/types';
-import { DetailDrawer } from '../../src/webview/detail-drawer';
+import { DETAIL_ACTIVITY_RECORD_BUDGET_BYTES, DetailDrawer, shouldPreserveDetailTabState } from '../../src/webview/detail-drawer';
 
 function detail(parseState: RecordDetail['ref']['parseState'], rawComplete: boolean): RecordDetail {
   return {
@@ -22,6 +22,20 @@ function detail(parseState: RecordDetail['ref']['parseState'], rawComplete: bool
 }
 
 describe('detail drawer unavailable record states', () => {
+  it('does not retain hidden Activity tabs for records above the byte budget', () => {
+    const small = detail('valid', true);
+    small.ref.contentByteLength = String(DETAIL_ACTIVITY_RECORD_BUDGET_BYTES);
+    expect(shouldPreserveDetailTabState(small)).toBe(true);
+
+    const large = detail('valid', true);
+    large.ref.contentByteLength = String(DETAIL_ACTIVITY_RECORD_BUDGET_BYTES + 1);
+    expect(shouldPreserveDetailTabState(large)).toBe(false);
+
+    const malformed = detail('valid', true);
+    malformed.ref.contentByteLength = 'not-a-number';
+    expect(shouldPreserveDetailTabState(malformed)).toBe(false);
+  });
+
   it('keeps the tree detail focused on the selected record without a secondary Navigator action', () => {
     const selected = detail('valid', true);
     selected.value = { message: 'keep current record visible' };
@@ -77,6 +91,18 @@ describe('detail drawer unavailable record states', () => {
     expect(markup).toContain('data-record-ref="generation-1:7:0:24:23:1"');
     expect(markup).not.toContain('detail-stream');
     expect(markup).not.toContain('data-detail-anchor-count');
+  });
+
+  it('keeps every tabpanel accessible while only the active tab body is server-visible', () => {
+    const markup = renderToStaticMarkup(React.createElement(DetailDrawer, {
+      detail: detail('valid', true), loading: false, activeTab: 'raw',
+      onTabChange: () => undefined, onRequestFull: () => undefined, onClose: () => undefined,
+    }));
+
+    expect(markup.match(/role="tabpanel"/g)).toHaveLength(4);
+    expect(markup.match(/hidden=""/g)).toHaveLength(3);
+    expect(markup).toContain('class="code-pane"');
+    expect(markup).not.toContain('aria-label="Bounded JSON tree"');
   });
 
   it('uses labeled modal markup and a backdrop only for the narrow presentation', () => {

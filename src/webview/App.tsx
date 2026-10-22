@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, type CSSProperties } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef, type CSSProperties } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -450,8 +450,7 @@ export function App(): React.JSX.Element {
     }
   }, [requestProblems, state.activeTab, state.invalidationReason, state.pending.problems, state.problems, state.summary]);
 
-  useEffect(() => {
-    const onMessage = (event: MessageEvent<unknown>): void => {
+  const onMessage = useEffectEvent((event: MessageEvent<unknown>): void => {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
       if (message.type === 'PREVIEW_STATUS') { setPreviewStatus(message.payload); return; }
@@ -535,10 +534,12 @@ export function App(): React.JSX.Element {
         const request = clientRef.current.send('SET_FOLLOW_MODE', { enabled: true });
         dispatch({ type: 'REQUEST_SENT', request });
       }
-    };
+  });
+
+  useEffect(() => {
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [cancelReadRequests, finishCancelled, queryController]);
+  }, []);
 
   useEffect(() => {
     const payload = restored === undefined ? {} : { restoredState: restored };

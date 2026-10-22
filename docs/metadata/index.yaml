@@ -731,6 +731,16 @@ documents:
     evidence: []
     revisit: when a second native query consumer or remote ACP transport is promoted
     rollback: disable the native capability and omit the opt-in MCP or ACP entrypoints
+  - id: adr-056-modern-language-and-compiler-gates
+    path: docs/decisions/056-modern-language-and-compiler-gates.md
+    title: Modern Language And Compiler Gates
+    kind: decision
+    status: accepted
+    owner: product
+    tags: [typescript, react, rust, compiler, build, declarations]
+    evidence: []
+    revisit: when language gates, compiler allowlists, native lifetime APIs, or benchmark triggers change
+    rollback: revert the coordinated language and compiler gate commits and invalidate affected receipts
   - id: decisions-index
     path: docs/decisions/README.md
     title: JsonlView Decisions

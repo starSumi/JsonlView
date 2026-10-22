@@ -7,6 +7,7 @@ export interface ExecutionIdentity {
   extensionId: string;
   extensionVersion: string;
   buildMode: 'development' | 'production' | 'test';
+  compilerMode: 'disabled' | 'enabled';
   sourceRevision: string;
   sourceState: 'clean' | 'modified';
   buildInputsSha256: string;
@@ -21,7 +22,7 @@ const GIT_REVISION = /^[0-9a-f]{40}$/;
 const EXTENSION_ID = /^[A-Za-z0-9][A-Za-z0-9.-]{2,127}$/;
 const EXTENSION_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/;
 const IDENTITY_KEYS = [
-  'schemaVersion', 'extensionId', 'extensionVersion', 'buildMode', 'sourceRevision', 'sourceState',
+  'schemaVersion', 'extensionId', 'extensionVersion', 'buildMode', 'compilerMode', 'sourceRevision', 'sourceState',
   'buildInputsSha256', 'buildInputCount', 'digestAlgorithm', 'canonicalization', 'manifestSha256',
 ];
 
@@ -60,6 +61,7 @@ export function isExecutionIdentity(value: unknown): value is ExecutionIdentity 
     && typeof identity.extensionId === 'string' && EXTENSION_ID.test(identity.extensionId)
     && typeof identity.extensionVersion === 'string' && identity.extensionVersion.length <= 64 && EXTENSION_VERSION.test(identity.extensionVersion)
     && (identity.buildMode === 'development' || identity.buildMode === 'production' || identity.buildMode === 'test')
+    && (identity.compilerMode === 'disabled' || identity.compilerMode === 'enabled')
     && typeof identity.sourceRevision === 'string' && GIT_REVISION.test(identity.sourceRevision)
     && (identity.sourceState === 'clean' || identity.sourceState === 'modified')
     && typeof identity.buildInputsSha256 === 'string' && SHA256.test(identity.buildInputsSha256)
@@ -74,6 +76,7 @@ export function executionIdentitiesEqual(left: ExecutionIdentity, right: Executi
     && left.extensionId === right.extensionId
     && left.extensionVersion === right.extensionVersion
     && left.buildMode === right.buildMode
+    && left.compilerMode === right.compilerMode
     && left.sourceRevision === right.sourceRevision
     && left.sourceState === right.sourceState
     && left.buildInputsSha256 === right.buildInputsSha256

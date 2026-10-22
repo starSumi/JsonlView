@@ -12,7 +12,7 @@ export const EXECUTION_BUNDLE_INVENTORY = 'execution-bundle-inventory.json';
 const RUNTIME_BINDING = '__JSONLVIEW_EXECUTION_IDENTITY_V1__';
 const INVENTORIED_FILES = ['execution-identity.json', 'extension.cjs', 'webview.css', 'webview.js'];
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
-const BUILD_INPUT_FILES = ['esbuild.mjs', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'scripts/execution-identity.mjs'];
+const BUILD_INPUT_FILES = ['esbuild.mjs', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'scripts/execution-identity.mjs', 'scripts/react-compiler.mjs'];
 const BUILD_INPUT_DIRECTORIES = ['src'];
 const MAX_BUILD_INPUT_FILES = 4096;
 const MAX_BUILD_INPUT_BYTES = 64 * 1024 * 1024;
@@ -97,7 +97,7 @@ export function finalizeExecutionIdentity(payload) {
 }
 
 function assertExecutionIdentity(identity) {
-  const keys = ['schemaVersion', 'extensionId', 'extensionVersion', 'buildMode', 'sourceRevision',
+  const keys = ['schemaVersion', 'extensionId', 'extensionVersion', 'buildMode', 'compilerMode', 'sourceRevision',
     'sourceState', 'buildInputsSha256', 'buildInputCount', 'digestAlgorithm', 'canonicalization', 'manifestSha256'];
   if (identity === null || typeof identity !== 'object' || Array.isArray(identity)
     || Object.keys(identity).length !== keys.length || !keys.every((key) => Object.hasOwn(identity, key))
@@ -106,6 +106,7 @@ function assertExecutionIdentity(identity) {
     || typeof identity.extensionVersion !== 'string' || identity.extensionVersion.length > 64
     || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(identity.extensionVersion)
     || !['development', 'production', 'test'].includes(identity.buildMode)
+    || !['disabled', 'enabled'].includes(identity.compilerMode)
     || typeof identity.sourceRevision !== 'string' || !/^[0-9a-f]{40}$/.test(identity.sourceRevision)
     || !['clean', 'modified'].includes(identity.sourceState)
     || typeof identity.buildInputsSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(identity.buildInputsSha256)
@@ -144,8 +145,9 @@ export function verifyExecutionReceipt(receipt, expectedIdentity, expectedRuntim
   return Object.freeze({ executionIdentity: Object.freeze({ ...expectedIdentity }), runtimeIdentity: Object.freeze({ ...expectedRuntime }) });
 }
 
-export async function createExecutionIdentity({ rootDirectory, buildMode }) {
+export async function createExecutionIdentity({ rootDirectory, buildMode, compilerMode = process.env.JSONLVIEW_REACT_COMPILER === '1' ? 'enabled' : 'disabled' }) {
   if (!['development', 'production', 'test'].includes(buildMode)) throw new Error('unsupported execution identity build mode');
+  if (!['disabled', 'enabled'].includes(compilerMode)) throw new Error('unsupported React Compiler mode');
   const root = resolve(rootDirectory);
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
   if (typeof packageJson.publisher !== 'string' || typeof packageJson.name !== 'string' || typeof packageJson.version !== 'string') {
@@ -158,6 +160,7 @@ export async function createExecutionIdentity({ rootDirectory, buildMode }) {
     extensionId: `${packageJson.publisher}.${packageJson.name}`,
     extensionVersion: packageJson.version,
     buildMode,
+    compilerMode,
     sourceRevision: gitIdentity.sourceRevision,
     sourceState: gitIdentity.sourceState,
     buildInputsSha256: buildInputs.sha256,

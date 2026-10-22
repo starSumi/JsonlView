@@ -555,6 +555,7 @@
   },
   "scripts": {
     "build": "node esbuild.mjs",
+    "build:react-compiler:smoke": "node scripts/react-compiler-smoke.mjs",
     "verify:execution-identity": "node scripts/execution-identity.mjs --dist dist",
     "benchmark:engine": "node scripts/benchmark-engine.mjs",
     "benchmark:trend": "node scripts/benchmark-trend.mjs",
@@ -607,6 +608,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@babel/core": "7.28.5",
     "@babel/parser": "7.29.8",
     "@biomejs/biome": "2.5.15",
     "@napi-rs/cli": "3.10.5",
@@ -617,6 +619,7 @@
     "@vitest/coverage-v8": "5.0.1",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "4.0.0",
+    "babel-plugin-react-compiler": "1.0.0",
     "esbuild": "0.28.2",
     "tar": "7.5.22",
     "typescript": "7.0.2",

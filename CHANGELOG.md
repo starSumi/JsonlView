@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Enforce erasable TypeScript syntax and explicit declaration contracts, add
+  Rust 2024 precise lifetime capture, and gate the opt-in React Compiler with
+  a bounded Activity detail surface and compiler-aware execution identity.
 - Refactor bounded Webview projections and provider presentation into explicit
   feature/provider seams while preserving the single reducer, protocol client,
   query controller, generation barriers, and compatibility entry points.

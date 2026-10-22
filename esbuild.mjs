@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectExecutionIdentityInputs, createExecutionIdentity, createExecutionIdentityPlugin, finalizeExecutionBuild } from './scripts/execution-identity.mjs';
+import { createReactCompilerPlugin } from './scripts/react-compiler.mjs';
 
 const watch = process.argv.includes('--watch');
 const production = !watch;
@@ -11,6 +12,7 @@ const rootDirectory = fileURLToPath(new URL('./', import.meta.url));
 const buildMode = watch ? 'development' : 'production';
 const buildIdentity = await createExecutionIdentity({ rootDirectory, buildMode });
 const watchFiles = await collectExecutionIdentityInputs(rootDirectory);
+const reactCompilerPlugin = createReactCompilerPlugin({ rootDirectory });
 
 // Watch output is development-only: independent incremental rebuilds do not
 // publish a frozen pair, manifest or byte inventory. Production shares one
@@ -60,7 +62,7 @@ const webviewOptions = {
     'process.env.NODE_ENV': production ? '"production"' : '"development"',
   },
   logLevel: 'info',
-  plugins: [identityPlugin()],
+  plugins: [identityPlugin(), ...(reactCompilerPlugin ? [reactCompilerPlugin] : [])],
 };
 
 const mcpServerOptions = {

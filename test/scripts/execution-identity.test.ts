@@ -34,7 +34,7 @@ async function selectedSource() {
   const root = await temporaryDirectory();
   await mkdir(resolve(root, 'src'));
   await mkdir(resolve(root, 'scripts'));
-  for (const path of ['esbuild.mjs', 'pnpm-lock.yaml', 'tsconfig.json', 'scripts/execution-identity.mjs']) await writeFile(resolve(root, path), '{}');
+  for (const path of ['esbuild.mjs', 'pnpm-lock.yaml', 'tsconfig.json', 'scripts/execution-identity.mjs', 'scripts/react-compiler.mjs']) await writeFile(resolve(root, path), '{}');
   await writeFile(resolve(root, 'package.json'), JSON.stringify({ publisher: 'Synthetic', name: 'fixture', version: '1.0.0' }));
   await writeFile(resolve(root, '.gitignore'), 'dist/\n');
   await writeFile(resolve(root, 'src/index.ts'), "import identity from 'jsonlview:execution-identity'; export {identity};");
@@ -58,6 +58,7 @@ function payload() {
     extensionId: 'Sumi-Sophia.jsonl-view',
     extensionVersion: '0.2.11',
     buildMode: 'test',
+    compilerMode: 'disabled',
     sourceRevision: '0'.repeat(40),
     sourceState: 'modified',
     buildInputsSha256: '1'.repeat(64),

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useMemo, useRef } from 'react';
+import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { Braces, Code2, Database, GitBranch, LoaderCircle, X } from 'lucide-react';
 import type { RecordDetail, RecordRef } from '../../../shared/types';
 import { AUTOMATIC_FULL_RECORD_LIMIT_BYTES } from '../../full-record-intent';
@@ -71,11 +71,45 @@ const detailTabs: Array<{
   { id: 'bytes', label: 'Bytes', icon: Database },
 ];
 
+export const DETAIL_ACTIVITY_RECORD_BUDGET_BYTES = 1024 * 1024;
+
+export function shouldPreserveDetailTabState(detail: RecordDetail | undefined): boolean {
+  if (detail === undefined) return true;
+  if (!/^(0|[1-9]\d*)$/.test(detail.ref.contentByteLength)) return false;
+  return BigInt(detail.ref.contentByteLength) <= BigInt(DETAIL_ACTIVITY_RECORD_BUDGET_BYTES);
+}
+
 export function DetailDrawer({ id = 'record-detail', modal = false, detail, selectedRef, loading, readBlocked = false, blockedOrdinal, activeTab, onTabChange, onRequestFull, onInteraction, onClose }: DetailDrawerProps): React.JSX.Element {
+  "use memo";
   const drawerRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
+  const activeRef = selectedRef ?? detail?.ref;
+  const presentationKey = activeRef ? recordPresentationKey(activeRef) : 'loading';
+  // Keep tab content lazy until first activation. Activity then preserves the
+  // mounted tab's local state while its panel is hidden, without keeping the
+  // whole drawer alive after App closes it.
+  const [visitedState, setVisitedState] = useState<{ key: string; tabs: ReadonlySet<DetailTab> }>(() => ({
+    key: presentationKey,
+    tabs: new Set([activeTab]),
+  }));
+  const visitedTabs = visitedState.key === presentationKey ? visitedState.tabs : new Set<DetailTab>([activeTab]);
+  useEffect(() => {
+    setVisitedState((current) => {
+      if (current.key !== presentationKey) return { key: presentationKey, tabs: new Set([activeTab]) };
+      return current.tabs.has(activeTab) ? current : { key: presentationKey, tabs: new Set([...current.tabs, activeTab]) };
+    });
+  }, [activeTab, presentationKey]);
+  const activateTab = (tab: DetailTab): void => {
+    setVisitedState((current) => {
+      const base = current.key === presentationKey ? current.tabs : new Set<DetailTab>([activeTab]);
+      return base.has(tab) && current.key === presentationKey
+        ? current
+        : { key: presentationKey, tabs: base.has(tab) ? base : new Set([...base, tab]) };
+    });
+    onTabChange(tab);
+  };
   const tabs = useManualTabs({ ids: detailTabs.map((tab) => tab.id), activeId: activeTab,
-    onActivate: onTabChange, idPrefix: `${id}-views` });
+    onActivate: activateTab, idPrefix: `${id}-views` });
   useModalFocus({ modal, dialogRef: drawerRef, initialFocusRef: titleRef, onClose });
   // A late response can cross the host boundary after selection changes. The
   // reducer rejects it, but keep the drawer fail-closed if a caller races the
@@ -85,13 +119,9 @@ export function DetailDrawer({ id = 'record-detail', modal = false, detail, sele
     || sameRecordRef(detail.ref, selectedRef)
     || (readBlocked && sameRecordRef({ ...detail.ref, generation: selectedRef.generation }, selectedRef));
   const visibleDetail = detailMatchesSelection ? detail : undefined;
-  const derived = useMemo(
-    () => visibleDetail?.profile ? stringifyJsonBounded(visibleDetail.profile) : undefined,
-    [visibleDetail?.profile],
-  );
-  const activeRef = selectedRef ?? detail?.ref;
+  const preserveTabState = shouldPreserveDetailTabState(visibleDetail);
+  const derived = visibleDetail?.profile ? stringifyJsonBounded(visibleDetail.profile) : undefined;
   const recordKey = activeRef ? recordRefKey(activeRef) : 'loading';
-  const presentationKey = activeRef ? recordPresentationKey(activeRef) : 'loading';
   const drawerA11y = modal
     ? { role: 'dialog' as const, 'aria-modal': true as const, 'aria-labelledby': `${id}-title` }
     : { 'aria-label': 'Record detail' };
@@ -104,6 +134,52 @@ export function DetailDrawer({ id = 'record-detail', modal = false, detail, sele
       return { key: `${baseKey}:${occurrence}`, problem };
     });
   }, [visibleDetail?.problems]);
+  const renderTabBody = (tabId: DetailTab): React.JSX.Element | null => {
+    if (visibleDetail === undefined) return null;
+    if (tabId === 'tree') {
+      return (
+        <>
+          {visibleDetail.value !== undefined
+            ? <AgentEventPresentation key={`preview:${presentationKey}`} value={visibleDetail.value} profile={visibleDetail.profile} autoExpandFirstFullSection />
+            : null}
+          {visibleDetail.value !== undefined
+            ? <JsonTree key={`tree:${presentationKey}`} value={visibleDetail.value} />
+            : <UnavailableRecordView detail={visibleDetail} loading={loading} readBlocked={readBlocked} onRequestFull={onRequestFull} />}
+        </>
+      );
+    }
+    if (tabId === 'raw') {
+      return (
+        <div className="code-pane">
+          <RawJsonView
+            key={presentationKey}
+            source={visibleDetail.rawPreview}
+            rawComplete={visibleDetail.rawComplete}
+            parseState={visibleDetail.ref.parseState}
+          />
+        </div>
+      );
+    }
+    if (tabId === 'derived') {
+      return visibleDetail.profile && derived
+        ? <div className="code-pane">
+            {derived.truncated ? <div className="bounded-notice">Derived JSON was bounded for display</div> : null}
+            <JsonCode source={derived.text} ariaLabel="Derived semantic JSON syntax preview" collapsible />
+          </div>
+        : <div className="detail-empty">No semantic projection for this record.</div>;
+    }
+    return (
+      <dl className="byte-facts">
+        <dt>Ordinal</dt><dd>{visibleDetail.ref.ordinal}</dd>
+        <dt>Start</dt><dd>{visibleDetail.ref.byteStart}</dd>
+        <dt>End exclusive</dt><dd>{visibleDetail.ref.byteEndExclusive}</dd>
+        <dt>Content length</dt><dd>{visibleDetail.ref.contentByteLength}</dd>
+        <dt>Delimiter length</dt><dd>{visibleDetail.ref.delimiterByteLength}</dd>
+        <dt>Parse state</dt><dd>{visibleDetail.ref.parseState}</dd>
+        <dt>Generation</dt><dd>{visibleDetail.ref.generation}</dd>
+      </dl>
+    );
+  };
 
   return (
     <>
@@ -155,45 +231,11 @@ export function DetailDrawer({ id = 'record-detail', modal = false, detail, sele
         ) : null}
         {visibleDetail || !blockedOrdinal ? detailTabs.map(({ id: tabId }) => (
           <div key={tabId} className="detail-tab-panel" {...tabs.getPanelProps(tabId)}>
-        {visibleDetail && activeTab === tabId && tabId === 'tree' ? (
-          <>
-            {visibleDetail.value !== undefined
-              ? <AgentEventPresentation key={`preview:${presentationKey}`} value={visibleDetail.value} profile={visibleDetail.profile} autoExpandFirstFullSection />
+            {visitedTabs.has(tabId)
+              ? preserveTabState
+                ? <Activity mode={activeTab === tabId ? 'visible' : 'hidden'}>{renderTabBody(tabId)}</Activity>
+                : activeTab === tabId ? renderTabBody(tabId) : null
               : null}
-            {visibleDetail.value !== undefined
-              ? <JsonTree key={`tree:${presentationKey}`} value={visibleDetail.value} />
-              : <UnavailableRecordView detail={visibleDetail} loading={loading} readBlocked={readBlocked} onRequestFull={onRequestFull} />}
-          </>
-        ) : null}
-        {visibleDetail && activeTab === tabId && tabId === 'raw' ? (
-          <div className="code-pane">
-            <RawJsonView
-              key={presentationKey}
-              source={visibleDetail.rawPreview}
-              rawComplete={visibleDetail.rawComplete}
-              parseState={visibleDetail.ref.parseState}
-            />
-          </div>
-        ) : null}
-        {visibleDetail && activeTab === tabId && tabId === 'derived' ? (
-          visibleDetail.profile && derived
-            ? <div className="code-pane">
-                {derived.truncated ? <div className="bounded-notice">Derived JSON was bounded for display</div> : null}
-                <JsonCode source={derived.text} ariaLabel="Derived semantic JSON syntax preview" collapsible />
-              </div>
-            : <div className="detail-empty">No semantic projection for this record.</div>
-        ) : null}
-        {visibleDetail && activeTab === tabId && tabId === 'bytes' ? (
-          <dl className="byte-facts">
-            <dt>Ordinal</dt><dd>{visibleDetail.ref.ordinal}</dd>
-            <dt>Start</dt><dd>{visibleDetail.ref.byteStart}</dd>
-            <dt>End exclusive</dt><dd>{visibleDetail.ref.byteEndExclusive}</dd>
-            <dt>Content length</dt><dd>{visibleDetail.ref.contentByteLength}</dd>
-            <dt>Delimiter length</dt><dd>{visibleDetail.ref.delimiterByteLength}</dd>
-            <dt>Parse state</dt><dd>{visibleDetail.ref.parseState}</dd>
-            <dt>Generation</dt><dd>{visibleDetail.ref.generation}</dd>
-          </dl>
-        ) : null}
           </div>
         )) : null}
         {keyedProblems.length ? (

@@ -43,7 +43,7 @@ vi.mock('react', async (importOriginal) => {
   const useRef = <Value,>(initial: Value) => {
     const index = hooks.cursor++;
     hooks.slots[index] ??= { current: initial };
-    return hooks.slots[index];
+    return hooks.slots[index] as { current: Value };
   };
   const useMemo = <Value,>(factory: () => Value, deps?: readonly unknown[]) => {
     const index = hooks.cursor++;
@@ -67,7 +67,12 @@ vi.mock('react', async (importOriginal) => {
     hooks.slots[index] = effect;
     hooks.layoutEffects.push(() => { previous?.cleanup?.(); effect.cleanup = setup() || undefined; });
   };
-  const replacements = { useState, useReducer, useRef, useMemo, useEffect, useLayoutEffect,
+  const useEffectEvent = <Args extends readonly unknown[], Result>(callback: (...args: Args) => Result): ((...args: Args) => Result) => {
+    const ref = useRef<(...args: Args) => Result>(callback);
+    ref.current = callback;
+    return useMemo(() => (...args: Args) => ref.current(...args), []);
+  };
+  const replacements = { useState, useReducer, useRef, useMemo, useEffect, useLayoutEffect, useEffectEvent,
     useCallback: <Value,>(callback: Value, deps: readonly unknown[]) => useMemo(() => callback, deps) };
   return { ...react, ...replacements, default: { ...react, ...replacements } };
 });
@@ -226,6 +231,16 @@ const visibleValues = (): string[] => {
 };
 
 describe('App column presentation and projection boundary', () => {
+  it('registers the window message listener once across state commits', () => {
+    const addListener = vi.spyOn(browser, 'addEventListener');
+    commit();
+    expect(addListener.mock.calls.filter(([type]) => type === 'message')).toHaveLength(1);
+
+    deliverBroadcast('NAVIGATOR_VISIBILITY', { visible: true });
+    expect(addListener.mock.calls.filter(([type]) => type === 'message')).toHaveLength(1);
+    addListener.mockRestore();
+  });
+
   it('uses committed splitter options and cancels the drag when its separator detaches', () => {
     boot();
     props(RecordTable).onSelect(props(RecordTable).rows[0]!.ref);

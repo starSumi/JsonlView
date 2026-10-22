@@ -6,6 +6,7 @@ const payload: Omit<ExecutionIdentity, 'manifestSha256'> = {
   extensionId: 'Sumi-Sophia.jsonl-view',
   extensionVersion: '0.2.11',
   buildMode: 'test',
+  compilerMode: 'disabled',
   sourceRevision: '0000000000000000000000000000000000000000',
   sourceState: 'modified',
   buildInputsSha256: '1111111111111111111111111111111111111111111111111111111111111111',
