@@ -11,15 +11,13 @@ import {
 import type {
   InsightDimension,
   InsightScope,
-  DatasetRuntimeProvenanceV1,
   RecordRef,
   RowFilterOperator,
   SortDirection,
   TemporaryPreviewStatus,
 } from '../shared/types';
-import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH, MAX_TABLE_COLUMNS } from '../shared/types';
+import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH } from '../shared/types';
 import { createProtocolEnvelope } from '../shared/transport';
-import type { NavigatorBridgeResultV1 } from '../shared/protocol/navigator-bridge';
 import { DetailDrawer, type NavigatorBridgeState } from './detail-drawer';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
@@ -28,16 +26,30 @@ import {
 import { deferIdle } from './idle';
 import { InsightsView } from './insights-view';
 import { DatasetInsights } from './dataset-insights';
-import { summarizeVisibleDatasetRows } from './dataset-page-analysis';
 import { InsightsToolbar } from './insights-toolbar';
 import { shouldIssueInsightRequest } from './insight-request';
-import { visibleColumns } from './format';
+import {
+  datasetProvenanceTooltip,
+  navigatorUiState,
+  projectionIntentKey,
+  selectedRecordColumnIds,
+  workspaceAvailableColumns,
+  workspaceBaseColumns,
+  workspaceDatasetProjectionAvailable,
+  workspaceDatasetSummary,
+  workspaceHasPartialContinuation,
+  workspacePageRange,
+  workspacePartialBannerIdentity,
+  workspacePartialScan,
+  workspaceRecordColumnLimit,
+  workspaceShowsPageControls,
+  workspaceTableColumns,
+} from './features/workspace/projections';
 import {
   buildStructuredFilter,
   ColumnChooser,
   canRequestSortedPage,
   RecordPager,
-  recordColumnOptions,
   RecordQueryBanner,
   RecordQueryControls,
   RowTypeChooser,
@@ -46,7 +58,6 @@ import {
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
 } from './features/record-query';
-import { configuredRecordColumns } from './features/record-query/model';
 import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '../shared/row-projection';
 import { rowProjectionPlanForView } from './features/record-query/row-projection-policy';
 import type { ViewportIdentity } from './paging';
@@ -74,48 +85,6 @@ import {
   type WorkspaceState,
 } from './state';
 
-function navigatorUiState(result: NavigatorBridgeResultV1): NavigatorBridgeState {
-  switch (result.status) {
-    case 'opened': return 'authorized';
-    case 'authorization-required':
-    case 'authorization-pending': return 'authorization-required';
-    case 'cancelled': return 'cancelled';
-    case 'failed':
-    case 'authorization-denied':
-    case 'unknown': return 'failed';
-    case 'disabled': return 'disabled';
-  }
-}
-
-function projectionIntentKey(state: WorkspaceState, required: { conversation: boolean; dataset: boolean }): string {
-  const summary = state.summary;
-  return [
-    summary?.snapshot.generation ?? '',
-    summary?.profileId ?? '',
-    summary?.profileVersion ?? '',
-    summary?.profileEpoch ?? '',
-    state.activeTab,
-    state.displayMode,
-    state.page?.anchorOrdinal ?? '',
-    state.page?.sortOffset ?? '',
-    state.query,
-    JSON.stringify(state.filters),
-    JSON.stringify(state.rowTypes),
-    JSON.stringify(state.sort),
-    JSON.stringify(required),
-  ].join('|');
-}
-
-function datasetProvenanceTooltip(provenance: DatasetRuntimeProvenanceV1): string {
-  if (provenance.status === 'pending') return 'Dataset head sample pending';
-  if ('terminal' in provenance) {
-    const action = provenance.terminal.action === 'reload' ? 'Reload to retry.'
-      : provenance.terminal.action === 'enable-auto-detection' ? 'Enable profile auto detection to sample.' : 'No action required.';
-    return `Dataset detection ${provenance.status} at ${provenance.terminal.stage}: ${provenance.terminal.code}. ${action}`;
-  }
-  const coverage = provenance.coverage;
-  return `Dataset head sample: ${provenance.adapterId} ${provenance.adapterVersion}; ${coverage.sampledRecords} records / ${coverage.examinedBytes} bytes; confidence ${provenance.confidence}`;
-}
 import {
   fallbackColumns,
   ProblemsView,
@@ -690,22 +659,17 @@ export function App(): React.JSX.Element {
     summary?.profileSuggestions ?? [],
   );
   const baseColumns = useMemo(
-    () => state.columns.length > 0 ? state.columns : fallbackColumns(state.rows),
+    () => workspaceBaseColumns(state.columns, state.rows),
     [state.columns, state.rows],
   );
-  const selectedRecordIds = new Set(
-    configuredRecordColumns(baseColumns, state.schema, state.columnVisibility)?.map((column) => column.id) ?? [],
-  );
+  const selectedRecordIds = selectedRecordColumnIds(baseColumns, state.schema, state.columnVisibility);
   const availableColumns = useMemo(
-    () => recordColumnOptions(baseColumns, state.schema, state.columnVisibility),
+    () => workspaceAvailableColumns(baseColumns, state.schema, state.columnVisibility),
     [baseColumns, state.schema, state.columnVisibility],
   );
-  const recordColumnLimit = Math.max(
-    0,
-    MAX_TABLE_COLUMNS - baseColumns.filter((column) => column.source === 'profile').length,
-  );
+  const recordColumnLimit = workspaceRecordColumnLimit(baseColumns);
   const filterableColumns = availableColumns;
-  const tableColumns = visibleColumns(baseColumns, state.columnVisibility, state.columnOrder);
+  const tableColumns = workspaceTableColumns(baseColumns, state.columnVisibility, state.columnOrder);
   const timelineRows = selectTimelineRows(state);
   const problems = selectProblems(state);
   const problemEntries = state.problems === undefined
@@ -883,37 +847,16 @@ export function App(): React.JSX.Element {
   const previousPage = (): void => queryController.previousPage();
   const jumpToPage = (): void => queryController.submitPageInput();
 
-  const pageRange = state.rows.length > 0
-    ? `Rows #${state.rows[0]?.ref.ordinal}-#${state.rows.at(-1)?.ref.ordinal}`
-    : `${state.rows.length} rows`;
-  const partialScan = state.page?.scan?.truncatedReason !== undefined;
+  const pageRange = workspacePageRange(state.rows);
+  const partialScan = workspacePartialScan(state.page);
   const datasetSummary = useMemo(
-    () => summarizeVisibleDatasetRows(state.rows, partialScan),
+    () => workspaceDatasetSummary(state.rows, partialScan),
     [state.rows, partialScan],
   );
-  const datasetProjectionAvailable = state.page !== undefined && rowProjectionPlanCovers(
-    state.page.projection ?? legacyRowProjectionPlan(state.pageProjectionProfileId ?? state.summary?.profileId),
-    { conversation: false, dataset: true },
-  );
-  const hasPartialContinuation = partialScan
-    && (state.sort !== undefined || state.page?.scan?.cursorOrdinal !== undefined);
-  const partialBannerIdentity = state.page === undefined
-    ? undefined
-    : [
-      state.page.anchorOrdinal,
-      state.page.sortOffset ?? '',
-      state.page.sortNextOffset ?? '',
-      state.page.scan?.cursorOrdinal ?? '',
-      state.page.scan?.examinedRecords ?? '',
-      state.page.scan?.truncatedReason ?? '',
-    ].join('|');
-  const showPageControls = (state.activeTab === 'table' || state.activeTab === 'timeline')
-    && (
-      state.rows.length > 0
-      || state.page?.hasBefore === true
-      || state.page?.hasAfter === true
-      || hasPartialContinuation
-    );
+  const datasetProjectionAvailable = workspaceDatasetProjectionAvailable(state);
+  const hasPartialContinuation = workspaceHasPartialContinuation(partialScan, state.sort, state.page);
+  const partialBannerIdentity = workspacePartialBannerIdentity(state.page);
+  const showPageControls = workspaceShowsPageControls(state.activeTab, state.rows, state.page, hasPartialContinuation);
   const canAdvancePage = state.page?.hasAfter === true && (
     state.sort === undefined
       ? true
