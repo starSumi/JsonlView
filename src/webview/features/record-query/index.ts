@@ -28,3 +28,5 @@ export * from './query-condition';
 export * from './row-projection-policy';
 export { ColumnChooser } from './ColumnChooser';
 export { RowTypeChooser } from './RowTypeChooser';
+export { TableQueryToolbar } from './TableQueryToolbar';
+export type { TableQueryToolbarProps } from './TableQueryToolbar';

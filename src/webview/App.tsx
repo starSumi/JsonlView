@@ -47,15 +47,13 @@ import {
 } from './features/workspace/projections';
 import {
   buildStructuredFilter,
-  ColumnChooser,
   canRequestSortedPage,
   RecordQueryBanner,
-  RecordQueryControls,
-  RowTypeChooser,
   rowTypeSources,
   compileQueryCondition,
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
+  TableQueryToolbar,
 } from './features/record-query';
 import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '../shared/row-projection';
 import { rowProjectionPlanForView } from './features/record-query/row-projection-policy';
@@ -873,88 +871,85 @@ export function App(): React.JSX.Element {
       })()
   );
 
-  const tableQueryControls = state.activeTab === 'table' ? (
-    <fieldset className="table-query-toolbar" aria-label="Table search and display">
-      {previewStatus ? <div className="preview-lifecycle-actions">
-        <TemporaryPreviewActions status={previewStatus} onSaveAs={savePreviewAs} />
-      </div> : null}
-      <RecordQueryControls
-        query={state.query}
-        searchDisabled={!summary || !canReadSnapshot(state.invalidationReason)}
-        sortDirection={state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc'}
-        descendingDisabled={summary?.indexingComplete !== true
-          || state.invalidationReason !== undefined
-          || Boolean(state.pending.rebuild)
-          || Boolean(state.pending.order)}
-        descendingDisabledReason={state.invalidationReason !== undefined
-          ? 'Rebuild the changed source before reversing row order'
-          : state.pending.rebuild
-            ? 'Rebuilding the index'
-            : state.pending.order
-              ? 'Saving the row order preference'
-              : 'Indexing the file before reverse order is available'}
-        onSortDirectionChange={setSortDirection}
-        onSearchSubmit={() => {
-          const query = queryController.query;
-          requestRows({ query });
-        }}
-        onSearchChange={(query) => {
-          queryController.pauseFollowing();
-          queryController.editQuery(query);
-        }}
-        onSearchClear={() => {
-          // Clear is an explicit cross-control action. Release a stale
-          // Page focus gate even when the host did not deliver onBlur.
-          queryController.releasePageInputFocus();
-          queryController.editQuery('');
-          requestRows({ query: '' });
-        }}
-        filterActive={state.filters.length > 0}
-        filters={state.filters}
-        filterableColumns={filterableColumns}
-        filterColumnId={filterColumnId}
-        filterOperator={filterOperator}
-        filterOperators={availableFilterOperators}
-        filterValue={filterValue}
-        filterCaseSensitive={filterCaseSensitive}
-        onFilterColumnChange={setFilterColumnId}
-        onFilterOperatorChange={setFilterOperator}
-        onFilterValueChange={setFilterValue}
-        onFilterCaseSensitiveChange={setFilterCaseSensitive}
-        onFilterSubmit={submitStructuredFilter}
-        onFilterClear={() => queryController.applyFilters([])}
-        onFilterRemove={(index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index))}
-      />
-      <RowTypeChooser
-        sources={rowTypeSources(baseColumns, state.schema, state.rows, state.rowTypes)}
-        selection={state.rowTypes}
-        disabled={!summary || !canReadSnapshot(state.invalidationReason)}
-        onChange={(selection) => queryController.applyRowTypes(selection)}
-      />
-      {state.displayMode === 'table' ? <ColumnChooser
-        columns={availableColumns}
-        schema={state.schema}
-        selectedRecordIds={selectedRecordIds}
-        visibility={state.columnVisibility}
-        recordColumnLimit={recordColumnLimit}
-        schemaComplete={state.schemaComplete}
-        schemaLoadFailed={schemaLoadFailed}
-        onRetrySchema={requestSchema}
-        onVisibilityChange={(column, visible) => {
-          dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
-          if (column.source !== 'record') return;
-          const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
-          const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
-          // Retain the current page's bounded projection for display-only
-          // changes. Missing fields (including promoted overflow) still
-          // require hydration through the existing viewport query.
-          if (columns.every((selected) => state.columns.some((current) => current.id === selected.id))) return;
-          requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
-        }}
-      /> : null}
-      <small className="table-query-scope">Search and filters query this file together in bounded scans. Results appear in this view.</small>
-    </fieldset>
-  ) : null;
+  const tableQueryControls = state.activeTab === 'table' ? TableQueryToolbar({
+    previewStatus,
+    onSaveAs: savePreviewAs,
+    queryControls: {
+      query: state.query,
+      searchDisabled: !summary || !canReadSnapshot(state.invalidationReason),
+      sortDirection: state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc',
+      descendingDisabled: summary?.indexingComplete !== true
+        || state.invalidationReason !== undefined
+        || Boolean(state.pending.rebuild)
+        || Boolean(state.pending.order),
+      descendingDisabledReason: state.invalidationReason !== undefined
+        ? 'Rebuild the changed source before reversing row order'
+        : state.pending.rebuild
+          ? 'Rebuilding the index'
+          : state.pending.order
+            ? 'Saving the row order preference'
+            : 'Indexing the file before reverse order is available',
+      onSortDirectionChange: setSortDirection,
+      onSearchSubmit: () => {
+        const query = queryController.query;
+        requestRows({ query });
+      },
+      onSearchChange: (query) => {
+        queryController.pauseFollowing();
+        queryController.editQuery(query);
+      },
+      onSearchClear: () => {
+        // Clear is an explicit cross-control action. Release a stale
+        // Page focus gate even when the host did not deliver onBlur.
+        queryController.releasePageInputFocus();
+        queryController.editQuery('');
+        requestRows({ query: '' });
+      },
+      filterActive: state.filters.length > 0,
+      filters: state.filters,
+      filterableColumns,
+      filterColumnId,
+      filterOperator,
+      filterOperators: availableFilterOperators,
+      filterValue,
+      filterCaseSensitive,
+      onFilterColumnChange: setFilterColumnId,
+      onFilterOperatorChange: setFilterOperator,
+      onFilterValueChange: setFilterValue,
+      onFilterCaseSensitiveChange: setFilterCaseSensitive,
+      onFilterSubmit: submitStructuredFilter,
+      onFilterClear: () => queryController.applyFilters([]),
+      onFilterRemove: (index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index)),
+    },
+    rowTypes: {
+      sources: rowTypeSources(baseColumns, state.schema, state.rows, state.rowTypes),
+      selection: state.rowTypes,
+      disabled: !summary || !canReadSnapshot(state.invalidationReason),
+      onChange: (selection) => queryController.applyRowTypes(selection),
+    },
+    showColumns: state.displayMode === 'table',
+    columns: {
+      columns: availableColumns,
+      schema: state.schema,
+      selectedRecordIds,
+      visibility: state.columnVisibility,
+      recordColumnLimit,
+      schemaComplete: state.schemaComplete,
+      schemaLoadFailed,
+      onRetrySchema: requestSchema,
+      onVisibilityChange: (column, visible) => {
+        dispatch({ type: 'SET_COLUMN_VISIBILITY', columnId: column.id, visible });
+        if (column.source !== 'record') return;
+        const nextVisibility = { ...state.columnVisibility, [column.id]: visible };
+        const columns = selectedRecordColumns(baseColumns, state.schema, nextVisibility) ?? [];
+        // Retain the current page's bounded projection for display-only
+        // changes. Missing fields (including promoted overflow) still
+        // require hydration through the existing viewport query.
+        if (columns.every((selected) => state.columns.some((current) => current.id === selected.id))) return;
+        requestRows({ ...queryController.currentViewportOptions(), columns }, { preserveOnRebuild: true });
+      },
+    },
+  }) : null;
 
   const workspaceStyle = drawerOpen
     ? ({ '--detail-pane-width': `${displayedDetailWidth}px` } as CSSProperties)
