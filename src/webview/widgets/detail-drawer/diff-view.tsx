@@ -181,10 +181,13 @@ export function DiffView({ source, ariaLabel }: DiffViewProps): React.JSX.Elemen
           Diff preview is limited to the first {parsed.displayedLines.toLocaleString()} lines; Raw remains authoritative and Copy uses the available diff source.
         </div>
       ) : null}
-      <ol className={`diff-lines${wrap ? ' is-wrapped' : ''}`} aria-label={ariaLabel}>
+      {/* biome-ignore lint/a11y/useSemanticElements: diff rows require the existing CSS grid surface */}
+      <div className={`diff-lines${wrap ? ' is-wrapped' : ''}`} role="list" aria-label={ariaLabel}>
         {parsed.lines.map((line) => (
-          <li
+          /* biome-ignore lint/a11y/useSemanticElements: each row is a labeled grid item */
+          <div
             className={`diff-line diff-line-${line.kind}`}
+            role="listitem"
             aria-label={`${line.marker}${line.text}`.trimEnd()}
             key={`${line.kind}:${line.marker}:${line.oldLine ?? ''}:${line.newLine ?? ''}:${line.text}`}
           >
@@ -192,9 +195,9 @@ export function DiffView({ source, ariaLabel }: DiffViewProps): React.JSX.Elemen
             <span className="diff-line-number" aria-hidden>{line.newLine ?? ''}</span>
             <span className="diff-line-marker" aria-hidden>{line.marker}</span>
             <span className="diff-line-text">{line.text || ' '}</span>
-          </li>
+          </div>
         ))}
-      </ol>
+      </div>
     </div>
   );
 }
