@@ -152,4 +152,3 @@ export function fallbackColumns(rows: readonly RowProjection[]): ColumnSpec[] {
   }
   return [...ids].slice(0, 8).map((id) => ({ id, label: id, source: 'record' }));
 }
-
