@@ -1,17 +1,19 @@
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, open, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { TextDecoder } from 'node:util';
 import * as vscode from 'vscode';
 import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
+import { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
 import { sessionNavigatorProviderLabel, type DetectedAgentProviderId } from './types';
 import { SessionPreviews } from './session-previews';
 
-export const SOURCE_INTAKE_MAX_BYTES = 1_048_576;
-export const SOURCE_INTAKE_MAX_RECORDS = 10_000;
+export { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
 const MAX_SOURCES = 32;
 
 type IntakeMessage =
   | { readonly type: 'pick-files' | 'pick-folder' }
   | { readonly type: 'paste-jsonl' | 'connect-agent' }
+  | { readonly type: 'preview-uris'; readonly uris: readonly string[] }
   | { readonly type: 'drop-uris'; readonly uris: readonly string[] }
   | { readonly type: 'import-jsonl'; readonly text: string }
   | { readonly type: 'authorize-agent'; readonly provider: DetectedAgentProviderId }
@@ -33,6 +35,12 @@ export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
     && message.uris.every((uri: unknown) => typeof uri === 'string' && uri.length > 0 && uri.length <= 8_192)
     && message.uris.join('').length <= 65_536) {
     return { type: 'drop-uris', uris: message.uris as string[] };
+  }
+  if (message.type === 'preview-uris' && keys.length === 2 && Array.isArray(message.uris)
+    && message.uris.length > 0 && message.uris.length <= MAX_SOURCES
+    && message.uris.every((uri: unknown) => typeof uri === 'string' && uri.length > 0 && uri.length <= 8_192)
+    && message.uris.join('').length <= 65_536) {
+    return { type: 'preview-uris', uris: message.uris as string[] };
   }
   if (message.type === 'webview-diagnostic' && keys.length === 3
     && typeof message.name === 'string' && message.name.length > 0 && message.name.length <= 128
@@ -79,15 +87,41 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
   return vscode.Uri.file(canonical);
 }
 
+async function readPreviewSource(uri: vscode.Uri, signal: AbortSignal): Promise<{ readonly text: string; readonly records: number }> {
+  if (signal.aborted) throw new Error('Source preview was cancelled.');
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(uri.fsPath, 'r');
+    const buffer = Buffer.alloc(SOURCE_INTAKE_MAX_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const result = await handle.read(buffer, length, buffer.length - length, length);
+      if (result.bytesRead === 0) break;
+      length += result.bytesRead;
+    }
+    if (length > SOURCE_INTAKE_MAX_BYTES) throw new Error('Dropped previews are limited to 1 MiB. Choose Files to open a larger source.');
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, length));
+    const records = validatePastedJsonl(text);
+    return { text, records };
+  } catch (error) {
+    if (error instanceof Error && (error.message.includes('preview') || error.message.startsWith('Line '))) throw error;
+    throw new Error('The dropped source could not be read as UTF-8 JSONL. Choose Files to open it directly.');
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
 export type DetectedAgentHandler = (provider: DetectedAgentProviderId, signal: AbortSignal) => Promise<void>;
 export type ConnectSourceHandler = (signal: AbortSignal) => Promise<void>;
+export type DetectedAgentProviderResolver = () => readonly DetectedAgentProviderId[];
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
 export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewProvider {
   readonly #onSource: SourceIntakeHandler;
   readonly #onDetectedAgent: DetectedAgentHandler | undefined;
   readonly #onConnect: ConnectSourceHandler | undefined;
+  readonly #detectedProviders: DetectedAgentProviderResolver;
   readonly #lifetime = new AbortController();
   readonly #visibilityChanged = new vscode.EventEmitter<boolean>();
   #panel: vscode.WebviewPanel | undefined;
@@ -102,11 +136,12 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
 
   public readonly onDidChangeVisibility = this.#visibilityChanged.event;
 
-  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, previews = new SessionPreviews(), onConnect?: ConnectSourceHandler) {
+  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler, previews = new SessionPreviews(), onConnect?: ConnectSourceHandler, detectedProviders: DetectedAgentProviderResolver = () => ['codex', 'claude', 'pi', 'kimi', 'gemini', 'opencode', 'agentsview']) {
     this.#onSource = onSource;
     this.#onDetectedAgent = onDetectedAgent;
     this.previews = previews;
     this.#onConnect = onConnect;
+    this.#detectedProviders = detectedProviders;
   }
 
   public resolveWebviewView(view: vscode.WebviewView): void {
@@ -145,16 +180,20 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
     });
   }
 
-  public show(): void {
+  public show(initialAction?: 'paste'): void {
     if (this.#lifetime.signal.aborted) return;
-    if (this.#panel !== undefined) { this.#panel.reveal(); return; }
+    if (this.#panel !== undefined) {
+      this.#panel.reveal();
+      if (initialAction === 'paste') void this.#panel.webview.postMessage({ type: 'open-paste' });
+      return;
+    }
     const panel = vscode.window.createWebviewPanel('jsonlView.sourceIntake', 'Add Source', vscode.ViewColumn.Active, {
       enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true,
     });
     this.#panel = panel;
     const controller = new AbortController();
     this.#panelLifetime = controller;
-    panel.webview.html = getSourceIntakeHtml();
+    panel.webview.html = getSourceIntakeHtml(this.#detectedProviders());
     const listener = panel.webview.onDidReceiveMessage((message: unknown) => {
       if (controller.signal.aborted) return;
       if (this.#pending !== undefined) {
@@ -169,6 +208,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       controller.abort(); listener.dispose();
       if (this.#panel === panel) { this.#panel = undefined; this.#panelLifetime = undefined; }
     });
+    if (initialAction === 'paste') void panel.webview.postMessage({ type: 'open-paste' });
   }
 
   public dispose(): Promise<void> {
@@ -196,7 +236,8 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
         return;
       }
       if (message.type === 'paste-jsonl') {
-        this.show();
+        this.show('paste');
+        await this.post(webview, signal, 'idle', 'Paste editor opened.');
         return;
       }
       await this.post(webview, signal, 'busy', 'Adding source…');
@@ -216,7 +257,15 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       if (message.type === 'import-jsonl') {
         const records = validatePastedJsonl(message.text);
         await this.openPreview(message.text, records, signal);
-        await this.post(webview, signal, 'success', `Opened a temporary preview with ${String(records)} records.`, true);
+        await this.post(webview, signal, 'success', `Opened a temporary preview with ${String(records)} records. Save As is available under Recent Previews.`, true);
+        return;
+      }
+      if (message.type === 'preview-uris') {
+        if (message.uris.length !== 1) throw new Error('Drop one JSONL file for a temporary preview, or choose Files to add several sources.');
+        const uri = await validateLocalSourceUri(message.uris[0]!);
+        const { text, records } = await readPreviewSource(uri, signal);
+        await this.openPreview(text, records, signal);
+        await this.post(webview, signal, `success`, `Opened a temporary preview with ${String(records)} records. Save As is available under Recent Previews.`);
         return;
       }
       const selected = message.type === 'drop-uris' ? message.uris : (await vscode.window.showOpenDialog({

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make Navigator source intake actionable for OS file and folder drops: single
+  JSONL files open bounded temporary previews with Recent Previews / Save As,
+  unsupported drops fall back to the native picker, compact Paste opens the
+  editor explicitly, and agent connectors without detected local homes stay
+  hidden.
 - Add owner-boundary TypeScript path aliases across source imports, derive the
   same aliases in Vitest and esbuild, and keep Webview architecture checks
   aware of aliased imports.

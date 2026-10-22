@@ -53,7 +53,7 @@ another source's successful result. A failed initial scan can be retried from
 its warning state or by reopening the view.
 
 Add Source opens a lazy, theme-aware WebviewPanel for file/folder selection,
-dropping sources, and explicit multiline JSONL paste. A TreeView cannot expose
+single-file temporary previews, and explicit multiline JSONL paste. A TreeView cannot expose
 this multiline/drop-zone form, so it remains the navigation surface instead of
 becoming a custom tree renderer. The persistent source-drop view supplies empty
 state guidance; the native tree does not add an action disguised as a data node.
@@ -62,12 +62,13 @@ OS drops enumerate DataTransfer items; the
 
 The opt-in navigator also places a compact Webview View before the native tree.
 It keeps a dashed local-file drop target and a visible file-picker button above
-the session list. The same host-side URI validation and explicit source
-authorization apply to both entry points; the persistent view does not read the
-clipboard or stream file contents through the Webview. It accepts VS Code
-Explorer URI drops; when the host does not expose a dropped file as a URI,
-clicking the target opens the file picker. The richer panel remains the explicit
-multiline-paste surface.
+the session list. A single `.jsonl` or `.ndjson` drop opens a bounded temporary
+preview and never changes the authorized-source setting; Recent Previews exposes
+the existing Save As action. Files and Folder remain the explicit source
+authorization routes. URI drops and browser File objects use the same host-side
+validation and UTF-8/size/record limits. Folders, unsupported files, and drops
+whose path is not exposed open the native picker. The persistent view never reads
+the clipboard or writes source content into the navigation catalog.
 
 The intake form has a host-enforced 1 MiB / 10,000 record text limit. Larger
 existing files use the existing bounded reader without copying file bodies

@@ -1,8 +1,45 @@
 import { randomBytes } from 'node:crypto';
+import { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
+import type { DetectedAgentProviderId } from './types';
+
+const DETECTED_AGENT_BUTTONS = [
+  ['codex', 'Connect Codex'],
+  ['claude', 'Connect Claude'],
+  ['pi', 'Connect pi'],
+  ['kimi', 'Connect Kimi Code'],
+  ['gemini', 'Connect Gemini'],
+  ['opencode', 'Connect OpenCode'],
+  ['agentsview', 'Connect AgentsView'],
+] as const satisfies readonly (readonly [DetectedAgentProviderId, string])[];
+
+const DEFAULT_DETECTED_AGENTS = DETECTED_AGENT_BUTTONS.map(([provider]) => provider);
+
+function formatMiB(bytes: number): string {
+  const value = bytes / (1024 * 1024);
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/u, '').replace(/\.$/u, '');
+}
+
+function renderDetectedAgentButtons(availableProviders: readonly DetectedAgentProviderId[]): string {
+  const available = new Set(availableProviders);
+  return DETECTED_AGENT_BUTTONS
+    .filter(([provider]) => available.has(provider))
+    .map(([provider, label]) => `<button id="connect-${provider}" data-provider="${provider}" type="button">${label}</button>`)
+    .join('');
+}
 
 /** Static document: source content only travels as structured messages and textarea values. */
-export function getSourceIntakeHtml(): string {
+export function getSourceIntakeHtml(availableProviders: readonly DetectedAgentProviderId[] = DEFAULT_DETECTED_AGENTS): string {
   const nonce = randomBytes(18).toString('base64url');
+  const maxBytes = SOURCE_INTAKE_MAX_BYTES;
+  const maxMiB = formatMiB(maxBytes);
+  const maxRecords = SOURCE_INTAKE_MAX_RECORDS;
+  const detectedButtons = renderDetectedAgentButtons(availableProviders);
+  const detectedSection = detectedButtons.length === 0 ? '' : `
+    <section class="detected" aria-labelledby="detected-title">
+      <p id="detected-title" class="detected-title">Connect known local agents</p>
+      <p class="hint">Restore a provider home from its standard location when it is available. No source content is sent from this panel.</p>
+      <div class="detected-actions">${detectedButtons}</div>
+    </section>`;
   return String.raw`<!doctype html>
 <html lang="en">
 <head>
@@ -60,19 +97,7 @@ export function getSourceIntakeHtml(): string {
     <div class="eyebrow">JsonlView</div>
     <h1>Add sources</h1>
     <p class="intro">Choose local files, add a folder, or paste JSONL to start exploring.</p>
-    <section class="detected" aria-labelledby="detected-title">
-      <p id="detected-title" class="detected-title">Connect known local agents</p>
-      <p class="hint">Restore a provider home from its standard location when it is available. No source content is sent from this panel.</p>
-      <div class="detected-actions">
-        <button id="connect-codex" type="button">Connect Codex</button>
-        <button id="connect-claude" type="button">Connect Claude</button>
-        <button id="connect-pi" type="button">Connect pi</button>
-        <button id="connect-kimi" type="button">Connect Kimi Code</button>
-        <button id="connect-gemini" type="button">Connect Gemini</button>
-        <button id="connect-opencode" type="button">Connect OpenCode</button>
-        <button id="connect-agentsview" type="button">Connect AgentsView</button>
-      </div>
-    </section>
+    ${detectedSection}
     <div class="choices" aria-label="Source options">
       <button class="choice" id="files" type="button">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6"/></svg>
@@ -88,14 +113,14 @@ export function getSourceIntakeHtml(): string {
       </button>
     </div>
     <div class="drop-zone" id="drop-zone">
-      <strong>Drop files or a folder here</strong>
-      <p class="hint">Local sources stay on your machine.</p>
+      <strong>Drop one JSONL file for a temporary preview</strong>
+      <p class="hint">Use Files or Folder to authorize a source.</p>
     </div>
     <section class="paste" id="paste-section" hidden>
       <label for="jsonl">JSONL content</label>
       <textarea id="jsonl" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="paste-hint" placeholder='{"event":"started"}&#10;{"event":"finished"}'></textarea>
       <div class="paste-footer">
-        <span class="hint" id="paste-hint">One JSON value per line · up to 1 MiB / 10,000 records</span>
+        <span class="hint" id="paste-hint">One JSON value per line · up to ${maxMiB} MiB / ${maxRecords} records</span>
         <button class="primary" id="preview" type="button">Open preview</button>
       </div>
     <p class="hint">Pasted text opens as a temporary local file. Reopen it from Recent Previews during this VS Code session; use Save As to keep a permanent copy.</p>
@@ -112,7 +137,7 @@ export function getSourceIntakeHtml(): string {
   <script nonce="${nonce}">
     (() => {
       const vscode = acquireVsCodeApi();
-      const maxBytes = 1048576;
+      const maxBytes = ${maxBytes};
       const status = document.getElementById('status');
       const text = document.getElementById('jsonl');
       const drop = document.getElementById('drop-zone');
@@ -137,17 +162,15 @@ export function getSourceIntakeHtml(): string {
       window.addEventListener('unhandledrejection', event => showDiagnostic('UnhandledRejection', event.reason && event.reason.message ? event.reason.message : event.reason));
       document.getElementById('files').addEventListener('click', () => send({ type: 'pick-files' }));
       document.getElementById('folder').addEventListener('click', () => send({ type: 'pick-folder' }));
-      document.getElementById('connect-codex').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'codex' }));
-      document.getElementById('connect-claude').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'claude' }));
-      document.getElementById('connect-pi').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'pi' }));
-      document.getElementById('connect-kimi').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'kimi' }));
-      document.getElementById('connect-gemini').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'gemini' }));
-      document.getElementById('connect-opencode').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'opencode' }));
-      document.getElementById('connect-agentsview').addEventListener('click', () => send({ type: 'authorize-agent', provider: 'agentsview' }));
-      pasteChoice.addEventListener('click', () => {
+      document.querySelectorAll('[data-provider]').forEach(button => {
+        const provider = button.dataset.provider;
+        if (provider) button.addEventListener('click', () => send({ type: 'authorize-agent', provider }));
+      });
+      function openPasteSection() {
         document.getElementById('paste-section').hidden = false;
         pasteChoice.setAttribute('aria-expanded', 'true'); text.focus();
-      });
+      }
+      pasteChoice.addEventListener('click', openPasteSection);
       document.getElementById('preview').addEventListener('click', () => {
         if (text.value.length > maxBytes || new TextEncoder().encode(text.value).length > maxBytes) {
           setStatus('JSONL preview is limited to 1 MiB. Choose Files to open a larger local source.', 'error'); return;
@@ -156,7 +179,9 @@ export function getSourceIntakeHtml(): string {
       });
       window.addEventListener('message', event => {
         const message = event.data;
-        if (!message || message.type !== 'status' || typeof message.text !== 'string') return;
+        if (!message) return;
+        if (message.type === 'open-paste') { openPasteSection(); return; }
+        if (message.type !== 'status' || typeof message.text !== 'string') return;
         setBusy(message.state === 'busy'); setStatus(message.text, message.state);
         if (message.clearText === true) text.value = '';
       });
@@ -171,9 +196,10 @@ export function getSourceIntakeHtml(): string {
         if (rawUris) {
           if (rawUris.length > 65536) { setStatus('Choose up to 32 local sources at a time.', 'error'); return; }
           const uris = rawUris.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#'));
-          send({ type: 'drop-uris', uris }); return;
+          if (uris.length !== 1) { setStatus('Drop one JSONL file for a temporary preview, or choose Files to add several sources.', 'error'); return; }
+          send({ type: 'preview-uris', uris }); return;
         }
-        const entries = Array.from(transfer.items || []).map(item => typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null);
+        const entries = Array.from(transfer.items || []).map(item => { try { return typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null; } catch { return null; } });
         if (entries.some(entry => entry && entry.isDirectory)) {
           setStatus('Choose the dropped folder in the folder picker. This window cannot read its original path.', 'idle');
           send({ type: 'pick-folder' }); return;
@@ -197,13 +223,11 @@ export function getSourceIntakeHtml(): string {
 </html>`;
 }
 
-/** Compact persistent Webview View used as the always-visible local source drop target. */
-function getLegacySourceDropHtml(): string {
-  const nonce = randomBytes(18).toString('base64url');
-  return String.raw`<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';"><style nonce="${nonce}">*{box-sizing:border-box}body{margin:0;padding:6px 8px;color:var(--vscode-foreground);background:var(--vscode-sideBar-background);font:var(--vscode-font-size)/1.35 var(--vscode-font-family)}.drop{display:block;width:100%;border:1px dashed var(--vscode-focusBorder);border-radius:6px;padding:14px 8px;text-align:center;color:var(--vscode-foreground);background:color-mix(in srgb,var(--vscode-focusBorder) 12%,var(--vscode-sideBar-background));cursor:pointer}.drop:hover{background:color-mix(in srgb,var(--vscode-focusBorder) 20%,var(--vscode-sideBar-background))}.drop.dragging{border-color:var(--vscode-focusBorder);background:var(--vscode-list-dropBackground)}svg{width:20px;height:20px;display:block;margin:0 auto 4px;fill:none;stroke:currentColor;stroke-width:1.6}strong{display:block;font-weight:600}.hint{display:block;margin-top:2px;color:var(--vscode-descriptionForeground);font-size:11px}button{margin-top:6px;padding:3px 9px;border:1px solid var(--vscode-button-border,var(--vscode-button-background));border-radius:3px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);font:inherit;cursor:pointer}button:hover{background:var(--vscode-button-hoverBackground)}button:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}button:disabled{opacity:.6;cursor:default}#status{min-height:14px;margin:4px 0 0;font-size:11px;overflow-wrap:anywhere}#status[data-state=error]{color:var(--vscode-errorForeground)}</style></head><body><button class="drop" id="drop" type="button"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 15v4h16v-4"/></svg><strong>Drop JSONL here</strong><span class="hint">or choose a local file</span><span id="status" role="status" aria-live="polite"></span></button><script nonce="${nonce}">(()=>{const v=acquireVsCodeApi(),d=document.getElementById('drop'),s=document.getElementById('status');let busy=false,depth=0;function status(t,state){s.textContent=t;s.dataset.state=state}function send(m){if(busy)return;busy=true;status('Adding source…','busy');v.postMessage(m).catch(()=>{busy=false;status('Source view was closed. Reopen it and try again.','error')})}d.addEventListener('click',()=>send({type:'pick-files'}));document.addEventListener('dragenter',e=>{e.preventDefault();depth++;d.classList.add('dragging')});document.addEventListener('dragleave',e=>{e.preventDefault();if(--depth<=0){depth=0;d.classList.remove('dragging')}});document.addEventListener('dragover',e=>{e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect=busy?'none':'copy'});document.addEventListener('drop',e=>{e.preventDefault();depth=0;d.classList.remove('dragging');if(busy||!e.dataTransfer)return;const raw=e.dataTransfer.getData('text/uri-list');if(raw){const uris=raw.split(/\r?\n/u).map(x=>x.trim()).filter(x=>x&&!x.startsWith('#'));send({type:'drop-uris',uris});return}status('Drop from the VS Code Explorer or click this box to choose files.','idle')});window.addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='status'||typeof m.text!=='string')return;busy=m.state==='busy';status(m.text,m.state)})})();</script></body></html>`;
-}
+
 export function getSourceDropHtml(): string {
   const nonce = randomBytes(18).toString('base64url');
+  const maxBytes = SOURCE_INTAKE_MAX_BYTES;
+  const maxMiB = formatMiB(maxBytes);
   return String.raw`<!doctype html>
 <html lang="en">
 <head>
@@ -248,9 +272,9 @@ export function getSourceDropHtml(): string {
     <div class="source-actions"><button class="source-action" id="files" type="button">Files</button><button class="source-action" id="folder" type="button">Folder</button><button class="source-action" id="paste" type="button">Paste</button><button class="source-action" id="connect" type="button">Connect</button></div>
     <button class="drop" id="drop" type="button">
       <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 15v4h16v-4"/></svg>
-      <strong>Drop JSONL here</strong><span class="hint">or choose a local file</span>
+      <strong>Drop JSONL for a temporary preview</strong><span class="hint">or choose a source</span>
     </button>
-    <span class="hint">Files and folders stay read-only. Paste opens a temporary preview; Connect adds an authorized local source.</span>
+    <span class="hint">Files and folders stay read-only. Drop or Paste opens a temporary preview; Files and Folder authorize sources.</span>
     <span id="status" role="status" aria-live="polite"></span>
   </section>
   <script nonce="${nonce}">
@@ -268,12 +292,20 @@ export function getSourceDropHtml(): string {
       drop.addEventListener('click', () => send({ type: 'pick-files' }));
       document.getElementById('files').addEventListener('click', () => send({ type: 'pick-files' }));
       document.getElementById('folder').addEventListener('click', () => send({ type: 'pick-folder' }));
-      document.getElementById('paste').addEventListener('click', () => { if (!busy) v.postMessage({ type: 'paste-jsonl' }); });
+      document.getElementById('paste').addEventListener('click', () => {
+        if (busy) return;
+        busy = true;
+        status('Opening paste editor…', 'busy');
+        Promise.resolve(v.postMessage({ type: 'paste-jsonl' })).catch(() => {
+          busy = false;
+          status('Source view was closed. Reopen it and try again.', 'error');
+        });
+      });
       document.getElementById('connect').addEventListener('click', () => send({ type: 'connect-agent' }));
       document.addEventListener('dragenter', event => { event.preventDefault(); if (actions.hidden) { actions.hidden = false; toggle.setAttribute('aria-expanded', 'true'); toggle.querySelector('.chevron').textContent = '⌄'; } depth++; drop.classList.add('dragging'); });
       document.addEventListener('dragleave', event => { event.preventDefault(); if (--depth <= 0) { depth = 0; drop.classList.remove('dragging'); } });
       document.addEventListener('dragover', event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; });
-      document.addEventListener('drop', event => { event.preventDefault(); depth = 0; drop.classList.remove('dragging'); if (busy || !event.dataTransfer) return; const raw = event.dataTransfer.getData('text/uri-list'); if (raw) { const uris = raw.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#')); send({ type: 'drop-uris', uris }); return; } status('Drop from the VS Code Explorer or choose Files.', 'idle'); });
+      document.addEventListener('drop', event => { event.preventDefault(); depth = 0; drop.classList.remove('dragging'); if (busy || !event.dataTransfer) return; const transfer = event.dataTransfer; const raw = transfer.getData('text/uri-list'); if (raw) { const uris = raw.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#')); if (uris.length !== 1) { status('Drop one JSONL file for a temporary preview, or choose Files to add several sources.', 'error'); return; } send({ type: 'preview-uris', uris }); return; } const entries = Array.from(transfer.items || []).map(item => { try { return typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null; } catch { return null; } }); if (entries.some(entry => entry && entry.isDirectory)) { status('Choose the dropped folder in the folder picker.', 'idle'); send({ type: 'pick-folder' }); return; } const files = Array.from(transfer.files || []); if (files.length === 1 && /\.(jsonl|ndjson)$/iu.test(files[0].name) && typeof files[0].arrayBuffer === 'function') { const file = files[0]; if (file.size > ${maxBytes}) { status('Dropped previews are limited to ${maxMiB} MiB. Choose Files to open a larger source.', 'error'); return; } busy = true; status('Opening preview…', 'busy'); Promise.resolve(file.arrayBuffer()).then(buffer => { if (buffer.byteLength > ${maxBytes}) throw new Error('oversized'); const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer); busy = false; send({ type: 'import-jsonl', text: content }); }).catch(() => { busy = false; status('The dropped file could not be read as UTF-8 JSONL. Choose Files to open it directly.', 'error'); }); return; } if (files.length > 0) { status('Choose the dropped file in the file picker.', 'idle'); send({ type: 'pick-files' }); return; } status('Drop from the VS Code Explorer or click this box to choose files.', 'idle'); });
       window.addEventListener('message', event => { const message = event.data; if (!message || message.type !== 'status' || typeof message.text !== 'string') return; busy = message.state === 'busy'; status(message.text, message.state); });
     })();
   </script>

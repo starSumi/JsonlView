@@ -114,6 +114,7 @@ describe('bounded source intake validation', () => {
     expect(() => parseSourceIntakeMessage({ type: 'authorize-agent', provider: 'kimi', root: '/unapproved' })).toThrow();
     expect(parseSourceIntakeMessage({ type: 'paste-jsonl' })).toEqual({ type: 'paste-jsonl' });
     expect(parseSourceIntakeMessage({ type: 'connect-agent' })).toEqual({ type: 'connect-agent' });
+    expect(parseSourceIntakeMessage({ type: 'preview-uris', uris: ['file:///source.jsonl'] })).toEqual({ type: 'preview-uris', uris: ['file:///source.jsonl'] });
     expect(() => parseSourceIntakeMessage({ type: 'paste-jsonl', extra: true })).toThrow();
   });
 
@@ -254,6 +255,17 @@ describe('Add Source panel host lifecycle', () => {
     expect(onSource).toHaveBeenCalledTimes(1);
   });
 
+  it('opens a dropped JSONL URI as a temporary preview without remembering an authorized source', async () => {
+    const file = join(directory, 'dropped.jsonl');
+    await writeFile(file, '{}\n');
+    intake.show();
+    await send({ type: 'preview-uris', uris: [pathToFileURL(file).toString()] });
+    expect(onSource).not.toHaveBeenCalled();
+    expect(host.open).toHaveBeenCalledWith('vscode.openWith', expect.anything(), 'jsonlView.editor');
+    expect(host.post.mock.calls.at(-1)?.[0]).toMatchObject({ state: 'success' });
+    expect(host.post.mock.calls.at(-1)?.[0].text).toContain('Save As');
+  });
+
   it('creates a private session preview, keeps it when intake closes, and cleans only owned files on disposal', async () => {
     const content = '{"text":"<img src=x onerror=alert(1)>"}\n';
     intake.show();
@@ -364,8 +376,8 @@ describe('persistent sidebar source drop view', () => {
     } as unknown as vscode.WebviewView;
     intake.resolveWebviewView(view);
     expect(webview.options).toEqual({ enableScripts: true, localResourceRoots: [] });
-    expect(html).toContain('Drop JSONL here');
-    expect(html).toContain('Drop JSONL here');
+    expect(html).toContain('Drop JSONL for a temporary preview');
+    expect(html).toContain('Drop JSONL for a temporary preview');
     expect(html).toContain('type="button"');
     expect(html).toContain('aria-expanded="true"');
     expect(html).not.toContain('id="source-actions" hidden');
@@ -403,6 +415,15 @@ describe('persistent sidebar source drop view', () => {
     expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();
   });
 
+  it('renders only detected agent connectors when the host supplies a bounded provider list', () => {
+    const html = getSourceIntakeHtml(['codex', 'kimi']);
+    expect(html).toContain('Connect Codex');
+    expect(html).toContain('Connect Kimi Code');
+    for (const label of ['Connect Claude', 'Connect Gemini', 'Connect OpenCode', 'Connect AgentsView']) {
+      expect(html).not.toContain(label);
+    }
+  });
+
   it('wires all four native-styled source actions to bounded host messages', async () => {
     const html = getSourceDropHtml();
     const source = html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!;
@@ -428,6 +449,61 @@ describe('persistent sidebar source drop view', () => {
       expect(posted).toEqual([expected]);
     }
   });
+
+  it('previews one dropped JSONL file and falls back to native pickers for other drops', async () => {
+    const html = getSourceDropHtml();
+    const source = html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!;
+    const listeners = new Map<string, (event: any) => void>();
+    const windowListeners = new Map<string, (event: any) => void>();
+    const makeElement = (hidden = false) => ({
+      hidden, textContent: '', dataset: {} as Record<string, string>,
+      classList: { add() {}, remove() {} },
+      listeners: new Map<string, ((event: unknown) => void)[]>(),
+      addEventListener(type: string, listener: (event: unknown) => void) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); },
+      getAttribute() { return 'true'; },
+      setAttribute() {},
+      querySelector() { return { textContent: '' }; },
+      focus() {},
+    });
+    const elements = new Map(['toggle', 'source-actions', 'drop', 'status', 'files', 'folder', 'paste', 'connect'].map((name) => [name, makeElement(name === 'source-actions')]));
+    const posted: unknown[] = [];
+    const document = {
+      getElementById(id: string) { return elements.get(id)!; },
+      addEventListener(type: string, listener: (event: any) => void) { listeners.set(type, listener); },
+      querySelectorAll() { return []; },
+    };
+    new Script(source).runInNewContext({ document, window: { addEventListener(type: string, listener: (event: any) => void) { windowListeners.set(type, listener); } }, TextDecoder, TextEncoder, acquireVsCodeApi: () => ({ postMessage(message: unknown) { posted.push(message); } }) });
+    const drop = listeners.get('drop')!;
+    drop({ preventDefault() {}, dataTransfer: { getData: () => '', items: [], files: [{ name: 'sample.jsonl', size: 3, arrayBuffer: () => Promise.resolve(new TextEncoder().encode('{}\n').buffer) }] } });
+    await vi.waitFor(() => expect(posted).toEqual([{ type: 'import-jsonl', text: '{}\n' }]));
+    windowListeners.get('message')!({ data: { type: 'status', state: 'idle', text: 'Preview opened.' } });
+    posted.length = 0;
+    drop({ preventDefault() {}, dataTransfer: { getData: () => '', items: [], files: [{}] } });
+    expect(posted).toEqual([{ type: 'pick-files' }]);
+    windowListeners.get('message')!({ data: { type: 'status', state: 'idle', text: 'Picker opened.' } });
+    posted.length = 0;
+    drop({ preventDefault() {}, dataTransfer: { getData: () => '', items: [{ webkitGetAsEntry: () => ({ isDirectory: true }) }], files: [] } });
+    expect(posted).toEqual([{ type: 'pick-folder' }]);
+  });
+});
+
+it('opens the full paste editor when Paste is activated from the persistent source view', async () => {
+  let receive: ((message: unknown) => void) | undefined;
+  const view = {
+    webview: {
+      options: undefined as vscode.WebviewOptions | undefined,
+      set html(value: string) { host.html = value; },
+      postMessage: host.post,
+      onDidReceiveMessage: (listener: (message: unknown) => void) => { receive = listener; return { dispose() {} }; },
+    },
+    visible: true,
+    onDidChangeVisibility: () => ({ dispose() {} }),
+    onDidDispose: () => ({ dispose() {} }),
+  } as unknown as vscode.WebviewView;
+  intake.resolveWebviewView(view);
+  receive!({ type: 'paste-jsonl' });
+  await vi.waitFor(() => expect(host.post).toHaveBeenCalledWith({ type: 'open-paste' }));
+  expect(host.post).toHaveBeenCalledWith(expect.objectContaining({ type: 'status', state: 'idle', text: 'Paste editor opened.' }));
 });
 
 it('ships a nonce-only static document without HTML injection or automatic clipboard reads', () => {
@@ -442,6 +518,7 @@ it('ships a nonce-only static document without HTML injection or automatic clipb
   expect(html).toContain('Send to VS Code AI');
   expect(html).toContain('webview-diagnostic');
   expect(html).toContain('Source files are read-only');
+  expect(html).toContain('open-paste');
   expect(html).toContain('Connect pi');
   expect(html).toContain('Connect Kimi Code');
   expect(() => new Script(html.match(/<script nonce="[^"]+">([\s\S]+?)<\/script>/u)![1]!)).not.toThrow();

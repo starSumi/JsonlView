@@ -142,6 +142,9 @@ export class SessionNavigatorTreeProvider implements vscode.TreeDataProvider<Ses
       (provider, signal) => this.authorizeDetectedAgent(provider, signal),
       previews,
       (signal) => this.authorizeAgent(() => this.#disposed || signal.aborted),
+      () => discoverDefaultSources()
+        .map(({ provider }) => provider)
+        .filter((provider): provider is Exclude<typeof provider, 'generic'> => provider !== 'generic'),
     );
     this.#intakeVisibilityRegistration = this.#intake.onDidChangeVisibility((visible) => this.handleSourceDropVisibility(visible));
     this.#previewRegistration = previews.onDidChange(() => this.#changed.fire(undefined));
