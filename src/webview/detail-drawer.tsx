@@ -11,8 +11,8 @@ import { JsonTree } from './json-tree';
 import { AgentEventPresentation } from './event-presentation';
 import { recordPresentationKey, recordRefKey, sameRecordRef } from './record-identity';
 import type { DetailTab } from './state';
-import { useManualTabs } from './use-manual-tabs';
-import { useModalFocus } from './use-modal-focus';
+import { useManualTabs } from './shared/hooks/use-manual-tabs';
+import { useModalFocus } from './shared/hooks/use-modal-focus';
 
 interface DetailDrawerProps {
   id?: string;

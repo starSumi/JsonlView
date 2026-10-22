@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useRef, useState } from 'react';
 import { ListFilter } from 'lucide-react';
-import { useLightDismiss } from '../../use-light-dismiss';
+import { useLightDismiss } from '../../shared/hooks/use-light-dismiss';
 import { useViewportPopover } from '../../use-viewport-popover';
 import { MAX_ROW_TYPES, type RowTypeSelection, type RowTypeSource } from './query-selection';
 

@@ -23,7 +23,7 @@ import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
 } from './full-record-intent';
-import { deferIdle } from './idle';
+import { deferIdle } from './shared/utils/idle';
 import { InsightsView } from './insights-view';
 import { DatasetInsights } from './dataset-insights';
 import { InsightsToolbar } from './insights-toolbar';
@@ -65,8 +65,8 @@ import { createStartupStageReceipt, startStartupHandshake, type StartupStage } f
 import { profileOptionList } from './profile-options';
 import { WorkspaceHeader } from './workspace-header';
 import { TemporaryPreviewActions } from './temporary-preview-actions';
-import { useManualTabs } from './use-manual-tabs';
-import { useNarrowViewport } from './use-modal-focus';
+import { useManualTabs } from './shared/hooks/use-manual-tabs';
+import { useNarrowViewport } from './shared/hooks/use-modal-focus';
 import {
   canReadSnapshot,
   createInitialState,

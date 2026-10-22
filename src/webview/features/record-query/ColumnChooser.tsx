@@ -2,7 +2,7 @@ import type React from 'react';
 import { useRef, useState } from 'react';
 import { Columns3 } from 'lucide-react';
 import type { ColumnSpec, FieldStats } from '../../../shared/types';
-import { useLightDismiss } from '../../use-light-dismiss';
+import { useLightDismiss } from '../../shared/hooks/use-light-dismiss';
 import { useViewportPopover } from '../../use-viewport-popover';
 import { buildColumnCatalog, fieldColumnReason } from './column-catalog';
 

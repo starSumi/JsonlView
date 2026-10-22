@@ -2,7 +2,7 @@ import type React from 'react';
 import { useRef, useState } from 'react';
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Filter, Search, X } from 'lucide-react';
 import type { ColumnSpec, RowFilter, RowFilterOperator, SortDirection } from '../../../shared/types';
-import { useLightDismiss } from '../../use-light-dismiss';
+import { useLightDismiss } from '../../shared/hooks/use-light-dismiss';
 import { useViewportPopover } from '../../use-viewport-popover';
 import { describeFieldFilter, MAX_FIELD_FILTERS } from './query-selection';
 

@@ -5,7 +5,7 @@ import {
   type KimiServerEvent,
   type KimiServerEventType,
 } from '../../profiles/kimi-server-record';
-import { assertNever } from '../exhaustiveness';
+import { assertNever } from '../shared/utils/exhaustiveness';
 import type { EventPresentationSection } from '../features/event-presentation/model';
 import type { KimiEventBuilderContext, KimiEventObject } from './kimi-event-builder';
 
