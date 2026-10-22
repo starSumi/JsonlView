@@ -510,7 +510,7 @@
     "verify:vsix-targets": "node scripts/verify-vsix-targets.mjs"
   },
   "dependencies": {
-    "@tanstack/react-virtual": "3.14.13",
+    "@tanstack/react-virtual": "3.14.21",
     "lucide-react": "1.47.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
