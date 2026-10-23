@@ -97,7 +97,6 @@ export function createMcpRustQueryHandler(
     sourceId,
     documentId: sourceId,
     generation: 'mcp-session',
-    fingerprint: `mcp:${sourceId}`,
   });
   const port = new QueryExecutionPort((identity): QueryExecutionSourceV1 | undefined => {
     const sourcePath = sourcePaths.get(identity.sourceId);
