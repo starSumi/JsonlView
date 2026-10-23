@@ -5,6 +5,7 @@ import {
 } from '@shared/query-ast';
 import {
   isQueryRequestDtoV1,
+  isQuerySettlementDtoV1,
   QUERY_DTO_LIMITS,
   type QueryRequestDtoV1,
   type QuerySettlementDtoV1,
@@ -24,7 +25,7 @@ export type QueryExecutionTargetV1 = 'record-page' | 'raw-records';
 export interface QueryExecutionSourceV1 {
   readonly identity: QuerySourceIdentityV1;
   readonly recordPage: RecordPageReader;
-  /** A future raw adapter may opt in; no raw adapter is installed by GET_ROWS. */
+  /** Host-owned raw adapters may opt in without changing projected page semantics. */
   readonly rawRecords?: RawRecordReaderV1;
 }
 
@@ -45,7 +46,7 @@ export interface QueryExecutionRequestV1 {
   readonly target: QueryExecutionTargetV1;
   readonly dto: QueryRequestDtoV1;
   /** Presentation-only fields remain owned by the record-page application contract. */
-  readonly page: Omit<RecordPageRequest, 'predicate'>;
+  readonly page: Pick<RecordPageRequest, 'columns' | 'projection'>;
 }
 
 export type QueryExecutionResultV1 =
@@ -68,6 +69,10 @@ export class QueryExecutionUnsupportedError extends Error {
   public readonly code = 'QUERY_TARGET_UNSUPPORTED' as const;
 }
 
+export class QueryExecutionCancelledError extends Error {
+  public readonly code = 'QUERY_CANCELLED' as const;
+}
+
 /**
  * The one application execution port for versioned queries. It lowers the
  * versioned AST into the existing RecordPageRequest and delegates all scan,
@@ -87,6 +92,10 @@ export class QueryExecutionPort {
     if (!isQueryRequestDtoV1(request.dto)) {
       throw new TypeError('Invalid query request DTO v1.');
     }
+    if (signal.aborted) throw new QueryExecutionCancelledError('The query was cancelled.');
+    if (Date.now() >= request.dto.budget.deadlineEpochMs) {
+      throw new QueryExecutionDeadlineError('The query deadline has elapsed.');
+    }
     const source = this.resolveSource(request.dto.source);
     if (source === undefined || !sameSourceIdentity(source.identity, request.dto.source)) {
       throw new QueryExecutionSourceError('The query source is no longer available.');
@@ -96,29 +105,52 @@ export class QueryExecutionPort {
         throw new QueryExecutionUnsupportedError('The raw-record query target is not installed for this source.');
       }
       const execution = await source.rawRecords.execute(request.dto, signal);
+      const settlement = createCompletedSettlement(request.dto, execution.truncation);
+      assertSettlement(settlement);
       return {
         target: 'raw-records',
         result: execution.result,
-        settlement: createCompletedSettlement(request.dto, execution.truncation),
+        settlement,
       };
     }
 
+    if (request.target !== 'record-page') {
+      throw new QueryExecutionUnsupportedError('The query target is not supported.');
+    }
     const predicate = lowerQueryAstV1(request.dto.ast);
-    const pageRequest: RecordPageRequest = predicate === undefined
-      ? { ...request.page }
-      : { ...request.page, predicate };
+    const pageRequest: RecordPageRequest = {
+      ...request.page,
+      limit: request.dto.budget.limit,
+      ...(request.dto.cursor.anchorOrdinal === undefined ? {} : { anchorOrdinal: request.dto.cursor.anchorOrdinal }),
+      ...(request.dto.cursor.direction === undefined ? {} : { direction: request.dto.cursor.direction }),
+      ...(request.dto.cursor.sort === undefined ? {} : { sort: request.dto.cursor.sort }),
+      ...(request.dto.cursor.sortOffset === undefined ? {} : { sortOffset: request.dto.cursor.sortOffset }),
+      maxReturnedBytes: request.dto.budget.maxBytes,
+      ...(request.dto.budget.maxExaminedRecords === undefined && request.dto.budget.maxExaminedBytes === undefined
+        ? {}
+        : {
+          scanBudget: {
+            ...(request.dto.budget.maxExaminedRecords === undefined ? {} : { maxExaminedRecords: request.dto.budget.maxExaminedRecords }),
+            ...(request.dto.budget.maxExaminedBytes === undefined ? {} : { maxExaminedBytes: request.dto.budget.maxExaminedBytes }),
+            deadlineEpochMs: request.dto.budget.deadlineEpochMs,
+          },
+        }),
+      ...(predicate === undefined ? {} : { predicate }),
+    };
     assertRecordPageRequest(pageRequest);
     const page = await source.recordPage.getRows(pageRequest, signal);
     const truncationReason = page.scan?.truncatedReason;
+    const settlement = truncationReason === undefined
+      ? createCompletedSettlement(request.dto, undefined)
+      : createCompletedSettlement(request.dto, {
+        reason: truncationReason,
+        ...(page.scan?.cursorOrdinal === undefined ? {} : { nextOrdinal: page.scan.cursorOrdinal }),
+      });
+    assertSettlement(settlement);
     return {
       target: 'record-page',
       page,
-      settlement: truncationReason === undefined
-        ? createCompletedSettlement(request.dto, undefined)
-        : createCompletedSettlement(request.dto, {
-          reason: truncationReason,
-          ...(page.scan?.cursorOrdinal === undefined ? {} : { nextOrdinal: page.scan.cursorOrdinal }),
-        }),
+      settlement,
     };
   }
 }
@@ -158,7 +190,18 @@ export function createQueryExecutionRequestV1(
     },
     cancellation: { requestId },
   };
-  return { target: 'record-page', dto, page: pageWithoutPredicate };
+  return {
+    target: 'record-page',
+    dto,
+    page: {
+      ...(pageWithoutPredicate.columns === undefined ? {} : { columns: pageWithoutPredicate.columns }),
+      ...(pageWithoutPredicate.projection === undefined ? {} : { projection: pageWithoutPredicate.projection }),
+    },
+  };
+}
+
+export class QueryExecutionDeadlineError extends Error {
+  public readonly code = 'QUERY_DEADLINE_EXCEEDED' as const;
 }
 
 function createCompletedSettlement(
@@ -189,4 +232,8 @@ function sameSourceIdentity(left: QuerySourceIdentityV1, right: QuerySourceIdent
     && left.generation === right.generation
     && left.epoch === right.epoch
     && left.fingerprint === right.fingerprint;
+}
+
+function assertSettlement(value: QuerySettlementDtoV1): void {
+  if (!isQuerySettlementDtoV1(value)) throw new TypeError('Query execution produced an invalid settlement.');
 }

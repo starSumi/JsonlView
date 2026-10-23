@@ -12,6 +12,7 @@ export const RECORD_PAGE_MAX_LIMIT = 500;
 export const RECORD_PAGE_MAX_SORT_WINDOW = 2_048n;
 export const RECORD_PAGE_MAX_SCAN_RECORDS = 1_000_000;
 export const RECORD_PAGE_MAX_SCAN_BYTES = 512n * 1024n * 1024n;
+export const RECORD_PAGE_MAX_RESULT_BYTES = 512n * 1024n * 1024n;
 export const RECORD_PAGE_MAX_SCAN_AHEAD_MS = 60_000;
 
 /** Request owned by the record-page application use case, independent of VS Code transport. */
@@ -22,6 +23,8 @@ export interface RecordPageRequest {
   predicate?: Predicate;
   columns?: ColumnSpec[];
   projection?: RowProjectionPlan;
+  /** Maximum UTF-8 bytes retained in the returned page. */
+  maxReturnedBytes?: string;
   sort?: RowSort;
   sortOffset?: string;
   scanBudget?: RowScanBudget;
@@ -72,6 +75,13 @@ export function assertRecordPageRequest(request: RecordPageRequest): void {
   }
   if (request.projection !== undefined && !isRowProjectionPlan(request.projection)) {
     fail('Record page projection plan is invalid.');
+  }
+  if (request.maxReturnedBytes !== undefined && !isDecimalString(request.maxReturnedBytes)) {
+    fail('Record page result byte budget is invalid.');
+  }
+  if (request.maxReturnedBytes !== undefined && (BigInt(request.maxReturnedBytes) < 1n
+    || BigInt(request.maxReturnedBytes) > RECORD_PAGE_MAX_RESULT_BYTES)) {
+    fail('Record page result byte budget is outside the bounded result window.');
   }
   if (request.scanBudget !== undefined && !isScanBudget(request.scanBudget)) {
     fail('Record page scan budget is invalid or over budget.');

@@ -70,6 +70,18 @@ describe('versioned query DTO', () => {
       truncation: undefined,
       error: { code: 'io-failed', recoverable: true },
     })).toBe(false);
+    expect(isQuerySettlementDtoV1({
+      ...truncated,
+      status: 'failed',
+      truncation: undefined,
+      error: { code: 'io-failed', recoverable: true },
+    })).toBe(true);
+    expect(isQuerySettlementDtoV1({
+      ...truncated,
+      status: 'failed',
+      truncation: undefined,
+      error: { code: 'cancelled', recoverable: true },
+    })).toBe(false);
     expect(parseQuerySettlementDtoV1('{"schema":"jsonlview.query-dto.v1"}')).toBeUndefined();
   });
 

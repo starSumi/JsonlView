@@ -4,6 +4,7 @@ export {
   RECORD_PAGE_MAX_SCAN_AHEAD_MS,
   RECORD_PAGE_MAX_SCAN_BYTES,
   RECORD_PAGE_MAX_SCAN_RECORDS,
+  RECORD_PAGE_MAX_RESULT_BYTES,
   RECORD_PAGE_MAX_SORT_WINDOW,
   RecordPageRequestError,
 } from './ports/record-page-reader';
@@ -12,6 +13,8 @@ export { LoadRecordPage } from './use-cases/load-record-page';
 export {
   createQueryExecutionRequestV1,
   QueryExecutionPort,
+  QueryExecutionDeadlineError,
+  QueryExecutionCancelledError,
   QueryExecutionSourceError,
   QueryExecutionUnsupportedError,
 } from './ports/query-execution-port';

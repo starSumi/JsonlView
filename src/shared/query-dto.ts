@@ -164,7 +164,13 @@ export function isQuerySettlementDtoV1(value: unknown): value is QuerySettlement
       return value.truncation === undefined
         && (value.error?.code === 'unsupported-query' || value.error?.code === 'native-unavailable');
     case 'failed':
-      return value.truncation === undefined && value.error !== undefined;
+      return value.truncation === undefined
+        && value.error !== undefined
+        && (value.error.code === 'invalid-request'
+          || value.error.code === 'deadline-exceeded'
+          || value.error.code === 'budget-exceeded'
+          || value.error.code === 'native-failed'
+          || value.error.code === 'io-failed');
     default:
       return false;
   }

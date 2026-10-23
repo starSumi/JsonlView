@@ -137,6 +137,8 @@ export interface GetRowsOptions extends JsonlOperationContext {
   /** Receives each hydrated record without retaining it in the returned page. */
   onHydrated?: (record: { value?: unknown; ref: RecordRef; parseState: ParseState }) => void;
   scanBudget?: RowScanBudget;
+  /** Optional caller-owned returned-byte cap; never exceeds the engine hydration cap. */
+  maxReturnedBytes?: string | bigint;
 }
 
 export type InspectRowsOptions = Pick<GetRowsOptions,
@@ -566,6 +568,7 @@ export class JsonlFileEngine {
       const limit = boundedInteger(options.limit ?? 100, 1, 500, 'limit');
       const direction = options.direction ?? 'forward';
       const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
+      const returnedByteLimit = normalizeReturnedByteLimit(options.maxReturnedBytes, this.options.pageHydrationMaxBytes);
       const sort = normalizeRowSort(options.sort);
       const projection = resolveRowProjectionPlan(options.projection, options.enricher?.profileId);
       const readWindow = direction === 'forward'
@@ -640,7 +643,7 @@ export class JsonlFileEngine {
           }
           if (
             collected.length > 0
-            && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+            && retainedBytes + internal.contentByteLength > returnedByteLimit
           ) {
             // Leave the boundary record unconsumed. The next continuation can
             // present it without sampling a record excluded by this page cap.
@@ -701,7 +704,7 @@ export class JsonlFileEngine {
           }
           if (
             collected.length > 0
-            && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+            && retainedBytes + internal.contentByteLength > returnedByteLimit
           ) {
             // Leave the boundary record unconsumed so the next backward page
             // can present it without sampling excluded data.
@@ -813,6 +816,7 @@ export class JsonlFileEngine {
     const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
     const direction = sort.direction === 'desc' ? 'backward' : 'forward';
     const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
+    const returnedByteLimit = normalizeReturnedByteLimit(options.maxReturnedBytes, this.options.pageHydrationMaxBytes);
     await this.index.finish(guard);
     const total = this.index.totalRecords ?? this.index.indexedRecords;
     const selected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
@@ -836,7 +840,7 @@ export class JsonlFileEngine {
         if (internal === undefined) break;
         if (
           selected.length > 0
-          && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+          && retainedBytes + internal.contentByteLength > returnedByteLimit
         ) {
           hydrationTruncated = true;
           truncatedReason = 'hydration_limit';
@@ -881,7 +885,7 @@ export class JsonlFileEngine {
           if (matchedRecords > offset && selected.length < limit) {
             if (
               selected.length > 0
-              && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+              && retainedBytes + internal.contentByteLength > returnedByteLimit
             ) {
               hydrationTruncated = true;
               truncatedReason = 'hydration_limit';
@@ -974,6 +978,7 @@ export class JsonlFileEngine {
       );
     }
     const scanBudget = normalizeSortScanBudget(options.scanBudget);
+    const returnedByteLimit = normalizeReturnedByteLimit(options.maxReturnedBytes, this.options.pageHydrationMaxBytes);
     let columns = options.columns === undefined
       ? this.defaultColumns(options.enricher?.columns)
       : options.columns.slice(0, MAX_TABLE_COLUMNS);
@@ -1048,7 +1053,7 @@ export class JsonlFileEngine {
       guard();
       if (
         selected.length > 0
-        && retainedBytes + candidate.internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+        && retainedBytes + candidate.internal.contentByteLength > returnedByteLimit
       ) {
         hydrationTruncated = true;
         break;
@@ -1890,6 +1895,13 @@ function normalizeRowScanBudget(
     ...(maxExaminedBytes === undefined ? {} : { maxExaminedBytes }),
     ...(deadlineEpochMs === undefined ? {} : { deadlineEpochMs }),
   };
+}
+
+function normalizeReturnedByteLimit(value: string | bigint | undefined, engineLimit: number): bigint {
+  if (value === undefined) return BigInt(engineLimit);
+  const parsed = typeof value === 'bigint' ? value : parseNonNegativeBigInt(value, 'maxReturnedBytes');
+  if (parsed < 1n) throw new JsonlEngineError('INVALID_ARGUMENT', 'maxReturnedBytes must be greater than zero.');
+  return parsed < BigInt(engineLimit) ? parsed : BigInt(engineLimit);
 }
 
 function normalizeProblemScanBudget(

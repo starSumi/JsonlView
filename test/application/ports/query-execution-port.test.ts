@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createQueryExecutionRequestV1,
   QueryExecutionPort,
+  QueryExecutionCancelledError,
+  QueryExecutionDeadlineError,
   QueryExecutionSourceError,
   QueryExecutionUnsupportedError,
   type QueryExecutionSourceV1,
@@ -31,7 +33,7 @@ function request(overrides: Partial<RecordPageRequest> = {}) {
     limit: 10,
     columns: [],
     ...overrides,
-  }, 1_000);
+  }, Date.now());
 }
 
 function sourceWith(reader: QueryExecutionSourceV1['recordPage']): QueryExecutionSourceV1 {
@@ -57,6 +59,7 @@ describe('QueryExecutionPort', () => {
       columns: [],
       anchorOrdinal: '4',
       direction: 'forward',
+      maxReturnedBytes: '536870912',
       predicate: { op: 'text_search', value: 'needle', caseSensitive: false },
     }, expect.any(AbortSignal));
   });
@@ -82,5 +85,24 @@ describe('QueryExecutionPort', () => {
     const rawUnsupported = new QueryExecutionPort(() => sourceWith({ getRows: vi.fn() }));
     await expect(rawUnsupported.execute({ ...request(), target: 'raw-records' }, new AbortController().signal))
       .rejects.toBeInstanceOf(QueryExecutionUnsupportedError);
+  });
+
+  it('rejects expired, cancelled, and unknown execution requests before a reader call', async () => {
+    const getRows = vi.fn().mockResolvedValue(page);
+    const port = new QueryExecutionPort(() => sourceWith({ getRows }));
+    const expired = request();
+    const expiredRequest = {
+      ...expired,
+      dto: { ...expired.dto, budget: { ...expired.dto.budget, deadlineEpochMs: Date.now() - 1 } },
+    };
+    await expect(port.execute(expiredRequest, new AbortController().signal))
+      .rejects.toBeInstanceOf(QueryExecutionDeadlineError);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(port.execute(request(), controller.signal))
+      .rejects.toBeInstanceOf(QueryExecutionCancelledError);
+    await expect(port.execute({ ...request(), target: 'unknown' as never }, new AbortController().signal))
+      .rejects.toBeInstanceOf(QueryExecutionUnsupportedError);
+    expect(getRows).not.toHaveBeenCalled();
   });
 });
