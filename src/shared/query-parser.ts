@@ -147,7 +147,7 @@ function diagnostic(
     severity: 'error',
     message,
     start: Math.max(0, start),
-    length: Math.max(0, length),
+    length: Math.min(QUERY_DSL_LIMITS.maxSourceLength, Math.max(0, length)),
     ...(options.expected === undefined ? {} : { expected: options.expected }),
     ...(found === undefined ? {} : { found }),
   };
