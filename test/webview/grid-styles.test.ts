@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const styles = ['tokens', 'base', 'layout', 'workspace-header', 'record-query', 'views', 'source-intake', 'accessibility']
+const styles = ['tokens', 'base', 'layout', 'workspace-header', 'record-query', 'views', 'insights-transition', 'source-intake', 'accessibility']
   .map((module) => readFileSync(new URL('../../src/webview/styles/' + module + '.css', import.meta.url), 'utf8'))
   .join('\n');
 
@@ -14,6 +14,12 @@ function cssBlock(selector: string): string {
 }
 
 describe('record grid presentation styles', () => {
+  it('keeps BFCL insights in a bounded vertical scroll region', () => {
+    const scrollRegion = cssBlock('.bfcl-insights-scroll');
+    expect(scrollRegion).toContain('min-height: 0;');
+    expect(scrollRegion).toContain('overflow-y: auto;');
+  });
+
   it('gives the sticky header an opaque isolated paint layer', () => {
     const header = cssBlock('.data-grid-header');
     expect(header).toContain('isolation: isolate;');

@@ -181,6 +181,7 @@ export function App(): React.JSX.Element {
   // Navigator handoff again.
   const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>('disabled');
   const [navigatorVisible, setNavigatorVisible] = React.useState(false);
+  const [rowsProjectionFailed, setRowsProjectionFailed] = React.useState(false);
   const stateRef = useRef(state);
   const gridFocusBridgeRef = useRef<GridFocusBridge | undefined>(undefined);
   const studioFocusRef = useRef<GridCell | undefined>(undefined);
@@ -225,6 +226,7 @@ export function App(): React.JSX.Element {
   const schemaRequestKeyRef = useRef('');
   const schemaRequestIdRef = useRef('');
   const projectionRefreshAttemptRef = useRef('');
+  const failedRowsRequestOptionsRef = useRef<RowsRequestOptions | undefined>(undefined);
   const [schemaLoadFailed, setSchemaLoadFailed] = React.useState(false);
   const openNavigator = useCallback((): void => {
     // Route through the correlated client so NAVIGATOR_STATUS is accepted by
@@ -305,6 +307,10 @@ export function App(): React.JSX.Element {
       dispatch,
       cancelReadRequests,
       onPageInputChange: setPageInputState,
+      onRowsRequestStarted: () => {
+        failedRowsRequestOptionsRef.current = undefined;
+        setRowsProjectionFailed(false);
+      },
       fallbackColumns,
     }, state, PAGE_SIZE);
   }
@@ -465,6 +471,13 @@ export function App(): React.JSX.Element {
   const onMessage = useEffectEvent((event: MessageEvent<unknown>): void => {
       const message = clientRef.current.accept(event.data);
       if (!message) return;
+      if (message.type === 'ERROR' && stateRef.current.pending.rows?.id === message.requestId) {
+        failedRowsRequestOptionsRef.current = queryController.retryOptionsFor(message.requestId);
+        setRowsProjectionFailed(true);
+      } else if (message.type === 'ROWS') {
+        failedRowsRequestOptionsRef.current = undefined;
+        setRowsProjectionFailed(false);
+      }
       if (message.type === 'PREVIEW_STATUS') { setPreviewStatus(message.payload); return; }
       if (message.type === 'NAVIGATOR_VISIBILITY') { setNavigatorVisible(message.payload.visible); return; }
       if (message.type === 'NAVIGATOR_STATUS') setNavigatorBridgeState(navigatorUiState(message.payload));
@@ -866,6 +879,12 @@ export function App(): React.JSX.Element {
     [state.rows, partialScan],
   );
   const datasetProjectionAvailable = workspaceDatasetProjectionAvailable(state);
+  const showRowsProjectionFailure = rowsProjectionFailed && !state.pending.rows;
+  const showInsightsTransitionStatus = showRowsProjectionFailure
+    || (state.pending.rows && (bfclSummary !== undefined || !datasetProjectionAvailable))
+    || (!datasetProjectionAvailable && state.page !== undefined);
+  const showBfclInsights = bfclSummary !== undefined && datasetProjectionAvailable
+    && !state.pending.rows && !showRowsProjectionFailure;
   const hasPartialContinuation = workspaceHasPartialContinuation(partialScan, state.sort, state.page);
   const partialBannerIdentity = workspacePartialBannerIdentity(state.page);
   const showPageControls = workspaceShowsPageControls(state.activeTab, state.rows, state.page, hasPartialContinuation);
@@ -1236,32 +1255,54 @@ export function App(): React.JSX.Element {
           </div>
           <div {...workspaceTabs.getPanelProps('insights')} className="workspace-tab-panel">
           {state.activeTab === 'insights' ? (
-            <div className="insights-shell">
-              <InsightsToolbar
-                dimension={state.insightDimension} scope={state.insightScope}
-                disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.profile)}
-                pending={Boolean(state.pending.insights)}
-                result={state.insights}
-                onDimensionChange={(dimension) => {
-                  dispatch({ type: 'SET_INSIGHT_DIMENSION', dimension });
-                  requestInsights({ dimension, minimumRevision: state.analysisIntentRevision + 1 });
-                }}
-                onScopeChange={(scope) => {
-                  dispatch({ type: 'SET_INSIGHT_SCOPE', scope });
-                  requestInsights({ scope, minimumRevision: state.analysisIntentRevision + 1 });
-                }}
-                onRefresh={() => requestInsights()}
-              />
-              {bfclSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
-                ? <BfclInsights summary={bfclSummary} />
-                : datasetSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
-                  ? <DatasetInsights summary={datasetSummary} /> : null}
-              <InsightsView
-                categories={state.insights?.categories ?? []}
-                timeBuckets={state.insights?.timeBuckets ?? []}
-                loading={Boolean(state.pending.insights)}
-                error={state.error?.code === 'REQUEST_FAILED' ? state.error.message : undefined}
-              />
+            <div className={`insights-shell${showBfclInsights || showInsightsTransitionStatus ? ' insights-shell-single' : ''}`}>
+              {showInsightsTransitionStatus ? (
+                <div className="insights-transition-status" role="status">
+                  <span>{showRowsProjectionFailure
+                    ? 'The requested query page could not be loaded. The previous page is retained.'
+                    : 'Preparing current-query-page dataset insights...'}</span>
+                  {showRowsProjectionFailure ? (
+                    <button type="button" onClick={() => {
+                      const retryOptions = failedRowsRequestOptionsRef.current
+                        ?? queryController.currentViewportOptions();
+                      failedRowsRequestOptionsRef.current = undefined;
+                      setRowsProjectionFailed(false);
+                      requestRows({ ...retryOptions,
+                        projection: { conversation: false, dataset: true } }, { preserveOnRebuild: true });
+                    }}>Retry</button>
+                  ) : null}
+                </div>
+              ) : showBfclInsights ? (
+                <div className="bfcl-insights-scroll">
+                  <BfclInsights summary={bfclSummary} />
+                </div>
+              ) : (
+                <>
+                    <InsightsToolbar
+                      dimension={state.insightDimension} scope={state.insightScope}
+                      disabled={!canReadSnapshot(state.invalidationReason) || Boolean(state.pending.profile)}
+                      pending={Boolean(state.pending.insights)}
+                      result={state.insights}
+                      onDimensionChange={(dimension) => {
+                        dispatch({ type: 'SET_INSIGHT_DIMENSION', dimension });
+                        requestInsights({ dimension, minimumRevision: state.analysisIntentRevision + 1 });
+                      }}
+                      onScopeChange={(scope) => {
+                        dispatch({ type: 'SET_INSIGHT_SCOPE', scope });
+                        requestInsights({ scope, minimumRevision: state.analysisIntentRevision + 1 });
+                      }}
+                      onRefresh={() => requestInsights()}
+                    />
+                    {datasetSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
+                      ? <DatasetInsights summary={datasetSummary} /> : null}
+                    <InsightsView
+                      categories={state.insights?.categories ?? []}
+                      timeBuckets={state.insights?.timeBuckets ?? []}
+                      loading={Boolean(state.pending.insights)}
+                      error={state.error?.code === 'REQUEST_FAILED' ? state.error.message : undefined}
+                    />
+                </>
+              )}
             </div>
           ) : null}
           </div>

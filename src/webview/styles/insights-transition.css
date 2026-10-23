@@ -1,0 +1,18 @@
+.insights-shell-single {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.bfcl-insights-scroll {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.insights-transition-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--vscode-descriptionForeground);
+}

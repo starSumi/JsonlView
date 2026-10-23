@@ -6,7 +6,7 @@ import { WorkspaceHeader, type WorkspaceHeaderProps } from '../../src/webview/wo
 
 const workspaceHeaderStyles = readFileSync(new URL('../../src/webview/styles/workspace-header.css', import.meta.url), 'utf8');
 const accessibilityStyles = readFileSync(new URL('../../src/webview/styles/accessibility.css', import.meta.url), 'utf8');
-const styles = ['tokens', 'base', 'layout', 'workspace-header', 'record-query', 'views', 'source-intake', 'accessibility']
+const styles = ['tokens', 'base', 'layout', 'workspace-header', 'record-query', 'views', 'insights-transition', 'source-intake', 'accessibility']
   .map((module) => readFileSync(new URL('../../src/webview/styles/' + module + '.css', import.meta.url), 'utf8'))
   .join('\n');
 

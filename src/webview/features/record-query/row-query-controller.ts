@@ -49,6 +49,7 @@ export interface RowQueryControllerPorts {
   readonly dispatch: (action: WorkspaceAction) => void;
   readonly cancelReadRequests: () => void;
   readonly onPageInputChange: (value: string) => void;
+  readonly onRowsRequestStarted?: () => void;
   readonly fallbackColumns: (rows: RowProjection[]) => readonly ColumnSpec[];
 }
 
@@ -350,9 +351,22 @@ export class RowQueryController {
     );
   }
 
+  public retryOptionsFor(requestId: string): RowsRequestOptions | undefined {
+    const pending = this.#pendingViewport;
+    if (pending?.requestId !== requestId) return undefined;
+    return {
+      ...pending.options,
+      query: pending.query,
+      ...(pending.options.sort === undefined ? {} : { sort: { ...pending.options.sort } }),
+      ...(pending.options.scanWindow === undefined ? {} : { scanWindow: { ...pending.options.scanWindow } }),
+      ...(pending.options.scanBudget === undefined ? {} : { scanBudget: { ...pending.options.scanBudget } }),
+    };
+  }
+
   public requestRows(options?: RowsRequestOptions, metadata: RowsRequestMetadata = {}): PendingRequest | undefined {
     const context = this.#ports.getContext();
     if (!canReadSnapshot(context.invalidationReason) && metadata.allowWhileInvalidated !== true) return undefined;
+    this.#ports.onRowsRequestStarted?.();
     if (metadata.restoreAfterRebuild !== true && metadata.supersedesRestore !== false) this.abandonRestore();
     this.#releaseSubmission();
     for (const requestId of this.#ports.client.cancel('rows')) {

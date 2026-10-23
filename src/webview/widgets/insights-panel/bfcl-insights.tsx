@@ -11,7 +11,7 @@ export function BfclInsights({ summary }: { summary: BfclV3SampleSummary }): Rea
       <header className="insights-panel-header">
         <h2 className="insights-panel-title" id={headingId}>BFCL dataset insights</h2>
         <span className="insights-panel-meta">
-          {formatCount(coverage.sampledRecords)} of {formatCount(coverage.requestedRecords)} records{coverage.partial ? ' · partial sample' : ''}
+          Current query page · {formatCount(coverage.sampledRecords)} of {formatCount(coverage.requestedRecords)} records{coverage.partial ? ' · partial sample' : ''}
         </span>
       </header>
       <p className="insights-limit-note">Bounded structural observations only. Function names, prompts, arguments, configuration values and benchmark answers are not retained.</p>

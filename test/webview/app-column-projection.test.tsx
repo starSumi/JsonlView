@@ -2,13 +2,13 @@ import React, { type ComponentType, type ReactElement, type ReactNode } from 're
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_TABLE_COLUMNS, PROTOCOL_VERSION, keyPath, type ColumnSpec, type DocumentSummary,
   type ExtensionMessage, type RowPage, type WebviewRequest } from '../../src/shared/types';
-import { ColumnChooser, RecordPager, RecordQueryControls, RecordTable } from '../../src/webview/features/record-query';
+import { ColumnChooser, RecordPager, RecordQueryControls, RecordTable, TopQueryStudio } from '../../src/webview/features/record-query';
 import { getColumnText, recordColumnForPath } from '../../src/webview/format';
 import type { PersistedWorkspaceState } from '../../src/webview/state';
 import { WorkspaceHeader } from '../../src/webview/workspace-header';
 import { DetailDrawer } from '../../src/webview/detail-drawer';
 import { DatasetInsights } from '../../src/webview/dataset-insights';
-import { BfclInsights } from '../../src/webview/widgets/insights-panel';
+import { BfclInsights, InsightsView } from '../../src/webview/widgets/insights-panel';
 import { InsightsToolbar } from '../../src/webview/insights-toolbar';
 import { summarizeDatasetRecord } from '../../src/profiles/dataset-analysis';
 import { summarizeBfclV3Record } from '../../src/profiles/datasets/bfcl-v3';
@@ -155,6 +155,19 @@ function elementByClassName(className: string): ReactElement | undefined {
     return undefined;
   };
   return find(tree);
+}
+
+function buttonWithin(node: ReactNode, label: string): ReactElement<{ children?: ReactNode; onClick?: () => void }> | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = buttonWithin(child, label);
+      if (found !== undefined) return found;
+    }
+  } else if (React.isValidElement<{ children?: ReactNode; onClick?: () => void }>(node)) {
+    if (node.type === 'button' && node.props.children === label) return node;
+    return buttonWithin(node.props.children, label);
+  }
+  return undefined;
 }
 
 function last<Type extends WebviewRequest['type']>(type: Type): Extract<WebviewRequest, { type: Type }> {
@@ -355,7 +368,7 @@ describe('App column presentation and projection boundary', () => {
     expect(props(DatasetInsights).summary.scenes).toEqual({ pretraining: 20 });
   });
 
-  it('selects BFCL insights for dataset rows and keeps the generic panel as fallback', () => {
+  it('renders only BFCL-specific insights and controls for recognized BFCL rows', () => {
     commit();
     deliver('OPENED', { ...summary, profileId: 'generic', profileVersion: '1' }, last('READY'));
     const first = { ...page([prompt]), projection: { conversation: false, dataset: true } };
@@ -368,7 +381,67 @@ describe('App column presentation and projection boundary', () => {
     deliver('ROWS', first, last('GET_ROWS'));
     chooseWorkspaceTab('Insights');
     expect(props(BfclInsights).summary.coverage).toMatchObject({ requestedRecords: 20, sampledRecords: 20, recognizedRecords: 20 });
+    expect(elementByClassName('bfcl-insights-scroll')).toBeDefined();
     expect(() => props(DatasetInsights)).toThrow('App child missing');
+    expect(() => props(InsightsView)).toThrow('App child missing');
+    expect(() => props(InsightsToolbar)).toThrow('App child missing');
+
+    chooseWorkspaceTab('Table');
+    props(RecordPager).onNext();
+    commit();
+    const nextPageRequest = last('GET_ROWS');
+    chooseWorkspaceTab('Insights');
+    expect(elementByClassName('insights-transition-status')).toBeDefined();
+    expect(() => props(BfclInsights)).toThrow('App child missing');
+    expect(() => props(InsightsView)).toThrow('App child missing');
+    expect(() => props(InsightsToolbar)).toThrow('App child missing');
+
+    deliver('ERROR', { code: 'REQUEST_FAILED', message: 'Synthetic page failure', recoverable: true }, nextPageRequest);
+    const failedStatus = elementByClassName('insights-transition-status');
+    expect(failedStatus).toBeDefined();
+    expect(() => props(BfclInsights)).toThrow('App child missing');
+    expect(() => props(DatasetInsights)).toThrow('App child missing');
+    const failedStatusChildren = (failedStatus?.props as { children?: ReactNode } | undefined)?.children;
+    expect(buttonWithin(failedStatusChildren, 'Retry')).toBeDefined();
+
+    chooseWorkspaceTab('Table');
+    props(RecordPager).onInputChange('4');
+    props(RecordPager).onJump();
+    commit();
+    const pagedRequest = last('GET_ROWS');
+    expect(pagedRequest.payload.anchorOrdinal).not.toBe(nextPageRequest.payload.anchorOrdinal);
+    props(TopQueryStudio).onCancel();
+    commit();
+    chooseWorkspaceTab('Insights');
+    expect(elementByClassName('insights-transition-status')).toBeUndefined();
+    expect(props(BfclInsights).summary.coverage.sampledRecords).toBe(20);
+
+    chooseWorkspaceTab('Table');
+    props(RecordQueryControls).onSearchChange('newer query');
+    props(RecordQueryControls).onSearchSubmit();
+    commit();
+    const newerRequest = last('GET_ROWS');
+    expect(newerRequest.payload.predicate).toEqual({ op: 'text_search', value: 'newer query', caseSensitive: false });
+
+    chooseWorkspaceTab('Insights');
+    const pendingStatus = elementByClassName('insights-transition-status');
+    expect(pendingStatus).toBeDefined();
+    expect(buttonWithin((pendingStatus?.props as { children?: ReactNode } | undefined)?.children, 'Retry')).toBeUndefined();
+    expect(() => props(BfclInsights)).toThrow('App child missing');
+
+    deliver('ERROR', { code: 'REQUEST_FAILED', message: 'Synthetic newer query failure', recoverable: true }, newerRequest);
+    const newerFailedStatus = elementByClassName('insights-transition-status');
+    const newerFailedStatusChildren = (newerFailedStatus?.props as { children?: ReactNode } | undefined)?.children;
+    const retry = buttonWithin(newerFailedStatusChildren, 'Retry');
+    expect(retry).toBeDefined();
+    retry?.props.onClick?.();
+    commit();
+    const retriedPage = last('GET_ROWS');
+    expect(retriedPage.payload.projection).toEqual({ conversation: false, dataset: true });
+    expect(retriedPage.payload.predicate).toEqual(newerRequest.payload.predicate);
+    expect(retriedPage.payload.anchorOrdinal).toBe(newerRequest.payload.anchorOrdinal);
+    expect(retriedPage.payload.direction).toBe(newerRequest.payload.direction);
+    expect(retriedPage.payload.sortOffset).toBe(newerRequest.payload.sortOffset);
   });
 
   it('keeps generic dataset insights when a page only shares BFCL turns and ground truth fields', () => {
@@ -380,6 +453,8 @@ describe('App column presentation and projection boundary', () => {
     chooseWorkspaceTab('Insights');
     expect(props(DatasetInsights).summary).toMatchObject({ scope: 'visible-page', scenes: { qa: 20 } });
     expect(() => props(BfclInsights)).toThrow('App child missing');
+    expect(props(InsightsView)).toBeDefined();
+    expect(props(InsightsToolbar)).toBeDefined();
   });
 
   it('reprojects the same logical page when Insights first needs dataset scenes', () => {
@@ -398,6 +473,8 @@ describe('App column presentation and projection boundary', () => {
     expect(projectionRequest.payload.anchorOrdinal).toBe(initial.payload.anchorOrdinal);
     expect(projectionRequest.payload.predicate).toEqual(initial.payload.predicate);
     expect(() => props(DatasetInsights)).toThrow('App child missing');
+    expect(elementByClassName('insights-transition-status')).toBeDefined();
+    expect(() => props(InsightsToolbar)).toThrow('App child missing');
 
     const projected = { ...page([prompt]), projection: { conversation: false, dataset: true } };
     projected.rows.forEach((row) => { row.dataset = summarizeDatasetRecord({ question: 'q', answer: 'a' }); });
@@ -417,11 +494,17 @@ describe('App column presentation and projection boundary', () => {
 
     expect(rowRequests()).toHaveLength(countAfterRequest);
     expect(() => props(DatasetInsights)).toThrow('App child missing');
+    expect(elementByClassName('insights-transition-status')).toBeDefined();
+    expect(() => props(InsightsToolbar)).toThrow('App child missing');
 
-    chooseWorkspaceTab('Table');
-    chooseWorkspaceTab('Insights');
+    const retryStatus = elementByClassName('insights-transition-status');
+    const retryStatusChildren = (retryStatus?.props as { children?: ReactNode } | undefined)?.children;
+    const retry = buttonWithin(retryStatusChildren, 'Retry');
+    retry?.props.onClick?.();
+    commit();
     expect(rowRequests()).toHaveLength(countAfterRequest + 1);
     expect(last('GET_ROWS').payload.projection).toEqual({ conversation: false, dataset: true });
+    expect(last('GET_ROWS').payload.anchorOrdinal).toBe(failedProjectionRequest.payload.anchorOrdinal);
   });
 
   it('keeps legacy page capability bound to its profile when a profile refresh fails', () => {

@@ -9,6 +9,7 @@ describe('BfclInsights', () => {
     const summary = aggregateBfclV3Summaries([record], { partial: true });
     const markup = renderToStaticMarkup(<BfclInsights summary={summary} />);
     expect(markup).toContain('BFCL dataset insights');
+    expect(markup).toContain('Current query page · 1 of 1 records · partial sample');
     expect(markup).toContain('Function definitions');
     expect(markup).toContain('Expected and missed calls');
     expect(markup).toContain('partial sample');
