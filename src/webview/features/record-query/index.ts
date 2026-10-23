@@ -28,5 +28,7 @@ export * from './query-condition';
 export * from './row-projection-policy';
 export { ColumnChooser } from './ColumnChooser';
 export { RowTypeChooser } from './RowTypeChooser';
+export { CompactQueryHud } from './CompactQueryHud';
+export type { CompactQueryHudProps } from './CompactQueryHud';
 export { TableQueryToolbar } from './TableQueryToolbar';
 export type { TableQueryToolbarProps } from './TableQueryToolbar';

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { ColumnSpec } from '../../src/shared/types';
 import { ColumnChooser, type ColumnChooserProps } from '../../src/webview/features/record-query/ColumnChooser';
+import { CompactQueryHud } from '../../src/webview/features/record-query/CompactQueryHud';
 import { RecordQueryControls, type RecordQueryControlsProps } from '../../src/webview/features/record-query/RecordQueryControls';
 import { RowTypeChooser, type RowTypeChooserProps } from '../../src/webview/features/record-query/RowTypeChooser';
 import { TableQueryToolbar } from '../../src/webview/features/record-query/TableQueryToolbar';
@@ -56,7 +57,9 @@ function columns(): ColumnChooserProps {
   };
 }
 
-function childrenOf(element: ReactElement<{ children?: React.ReactNode }>): ReactElement[] {
+type ToolbarElementProps = { children?: React.ReactNode; className?: string; 'data-query-hud'?: string };
+
+function childrenOf(element: ReactElement<ToolbarElementProps>): ReactElement[] {
   return React.Children.toArray(element.props.children)
     .filter((child): child is ReactElement => React.isValidElement(child));
 }
@@ -72,7 +75,7 @@ describe('TableQueryToolbar render seam', () => {
       rowTypes: rowTypes(),
       showColumns: true,
       columns: columns(),
-    }) as ReactElement<{ children?: React.ReactNode; className?: string }>;
+    }) as ReactElement<ToolbarElementProps>;
     const children = childrenOf(toolbar);
     const queryElement = children.find((child) => child.type === RecordQueryControls) as ReactElement<RecordQueryControlsProps> | undefined;
     const rowTypesElement = children.find((child) => child.type === RowTypeChooser) as ReactElement<RowTypeChooserProps> | undefined;
@@ -80,6 +83,7 @@ describe('TableQueryToolbar render seam', () => {
 
     expect(toolbar.type).toBe('fieldset');
     expect(toolbar.props.className).toBe('table-query-toolbar');
+    expect(toolbar.props['data-query-hud']).toBe('compact');
     expect(queryElement?.props.query).toBe(query.query);
     expect(queryElement?.props.filterableColumns).toBe(query.filterableColumns);
     expect(queryElement?.props.onSearchSubmit).toBe(onSearchSubmit);
@@ -95,7 +99,7 @@ describe('TableQueryToolbar render seam', () => {
       rowTypes: rowTypes(),
       showColumns: false,
       columns: columns(),
-    }) as ReactElement<{ children?: React.ReactNode; className?: string }>;
+    }) as ReactElement<ToolbarElementProps>;
 
     expect(toolbar.props.className).toBe('table-query-toolbar');
     expect(childrenOf(toolbar).some((child) => child.type === ColumnChooser)).toBe(false);
@@ -111,11 +115,28 @@ describe('TableQueryToolbar render seam', () => {
       columns: columns(),
     }));
 
-    expect(markup).toMatch(/^<fieldset class="table-query-toolbar" aria-label="Table search and display">/);
+    expect(markup).toMatch(/^<fieldset class="table-query-toolbar" data-query-hud="compact" aria-label="Table search and display">/);
     expect(markup).toContain('Search and filters query this file together in bounded scans. Results appear in this view.');
     expect(markup.indexOf('Search records')).toBeLessThan(markup.indexOf('Record order'));
     expect(markup.indexOf('Record order')).toBeLessThan(markup.indexOf('Field filters'));
     expect(markup.indexOf('Field filters')).toBeLessThan(markup.indexOf('Row types'));
     expect(markup.indexOf('Field filters')).toBeLessThan(markup.indexOf('Columns'));
+  });
+
+  it('exposes the named HUD seam without adding a second query state owner', () => {
+    expect(TableQueryToolbar).toBe(CompactQueryHud);
+    const markup = renderToStaticMarkup(React.createElement(CompactQueryHud, {
+      previewStatus: undefined,
+      onSaveAs: vi.fn(),
+      queryControls: queryProps(),
+      rowTypes: rowTypes(),
+      showColumns: false,
+      columns: columns(),
+    }));
+
+    expect(markup).toContain('data-query-hud="compact"');
+    expect(markup).toContain('aria-label="Field filters"');
+    expect(markup).toContain('aria-label="Row types"');
+    expect(markup).not.toContain('data-query-draft');
   });
 });
