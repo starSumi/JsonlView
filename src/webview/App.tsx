@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useEffectEvent, useMemo, useReducer, useRef, type CSSProperties } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, type CSSProperties } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -51,8 +51,13 @@ import {
   compileQueryCondition,
   SCHEMA_PAGE_SIZE,
   selectedRecordColumns,
+  addQueryHistory,
+  TopQueryStudio,
   TableQueryToolbar,
 } from '@features/record-query';
+import type { QueryHistoryEntry, RecordQueryControlsProps } from '@features/record-query';
+import type { GridFocusBridge } from '@features/record-query/RecordTable';
+import type { GridCell } from './use-grid-focus';
 import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '@shared/row-projection';
 import { rowProjectionPlanForView } from '@features/record-query/row-projection-policy';
 import type { ViewportIdentity } from './paging';
@@ -168,15 +173,21 @@ export function App(): React.JSX.Element {
   );
   const [pageInput, setPageInputState] = React.useState('1');
   const [previewStatus, setPreviewStatus] = React.useState<TemporaryPreviewStatus>();
+  const [queryStudioOpen, setQueryStudioOpen] = React.useState(false);
+  const [queryHistory, setQueryHistory] = React.useState<readonly QueryHistoryEntry[]>([]);
   // A Webview restore is only UI state. Host authorization must be read back
   // for this document lifecycle before the detail can show an authorized
   // Navigator handoff again.
   const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>('disabled');
   const [navigatorVisible, setNavigatorVisible] = React.useState(false);
   const stateRef = useRef(state);
+  const gridFocusBridgeRef = useRef<GridFocusBridge | undefined>(undefined);
+  const studioFocusRef = useRef<GridCell | undefined>(undefined);
+  const priorStudioOpenRef = useRef(false);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
   const clientRef = useRef(new VsCodeMessageClient(vscode, bodySession()));
+  const studioGenerationRef = useRef(clientRef.current.session.generation);
   const startupErrorRef = useRef(false);
   const startupReadyIdsRef = useRef(new Set<string>());
   const startupStopRef = useRef<(() => void) | undefined>(undefined);
@@ -869,56 +880,56 @@ export function App(): React.JSX.Element {
       })()
   );
 
+  const queryControlProps: RecordQueryControlsProps = {
+    query: state.query,
+    searchDisabled: !summary || !canReadSnapshot(state.invalidationReason),
+    sortDirection: state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc',
+    descendingDisabled: summary?.indexingComplete !== true
+      || state.invalidationReason !== undefined
+      || Boolean(state.pending.rebuild)
+      || Boolean(state.pending.order),
+    descendingDisabledReason: state.invalidationReason !== undefined
+      ? 'Rebuild the changed source before reversing row order'
+      : state.pending.rebuild
+        ? 'Rebuilding the index'
+        : state.pending.order
+          ? 'Saving the row order preference'
+          : 'Indexing the file before reverse order is available',
+    onSortDirectionChange: setSortDirection,
+    onSearchSubmit: () => {
+      const query = queryController.query;
+      requestRows({ query });
+    },
+    onSearchChange: (query) => {
+      queryController.pauseFollowing();
+      queryController.editQuery(query);
+    },
+    onSearchClear: () => {
+      queryController.releasePageInputFocus();
+      queryController.editQuery('');
+      requestRows({ query: '' });
+    },
+    filterActive: state.filters.length > 0,
+    filters: state.filters,
+    filterableColumns,
+    filterColumnId,
+    filterOperator,
+    filterOperators: availableFilterOperators,
+    filterValue,
+    filterCaseSensitive,
+    onFilterColumnChange: setFilterColumnId,
+    onFilterOperatorChange: setFilterOperator,
+    onFilterValueChange: setFilterValue,
+    onFilterCaseSensitiveChange: setFilterCaseSensitive,
+    onFilterSubmit: submitStructuredFilter,
+    onFilterClear: () => queryController.applyFilters([]),
+    onFilterRemove: (index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index)),
+  };
+
   const tableQueryControls = state.activeTab === 'table' ? TableQueryToolbar({
     previewStatus,
     onSaveAs: savePreviewAs,
-    queryControls: {
-      query: state.query,
-      searchDisabled: !summary || !canReadSnapshot(state.invalidationReason),
-      sortDirection: state.sort?.columnId === '__ordinal' && state.sort.direction === 'desc' ? 'desc' : 'asc',
-      descendingDisabled: summary?.indexingComplete !== true
-        || state.invalidationReason !== undefined
-        || Boolean(state.pending.rebuild)
-        || Boolean(state.pending.order),
-      descendingDisabledReason: state.invalidationReason !== undefined
-        ? 'Rebuild the changed source before reversing row order'
-        : state.pending.rebuild
-          ? 'Rebuilding the index'
-          : state.pending.order
-            ? 'Saving the row order preference'
-            : 'Indexing the file before reverse order is available',
-      onSortDirectionChange: setSortDirection,
-      onSearchSubmit: () => {
-        const query = queryController.query;
-        requestRows({ query });
-      },
-      onSearchChange: (query) => {
-        queryController.pauseFollowing();
-        queryController.editQuery(query);
-      },
-      onSearchClear: () => {
-        // Clear is an explicit cross-control action. Release a stale
-        // Page focus gate even when the host did not deliver onBlur.
-        queryController.releasePageInputFocus();
-        queryController.editQuery('');
-        requestRows({ query: '' });
-      },
-      filterActive: state.filters.length > 0,
-      filters: state.filters,
-      filterableColumns,
-      filterColumnId,
-      filterOperator,
-      filterOperators: availableFilterOperators,
-      filterValue,
-      filterCaseSensitive,
-      onFilterColumnChange: setFilterColumnId,
-      onFilterOperatorChange: setFilterOperator,
-      onFilterValueChange: setFilterValue,
-      onFilterCaseSensitiveChange: setFilterCaseSensitive,
-      onFilterSubmit: submitStructuredFilter,
-      onFilterClear: () => queryController.applyFilters([]),
-      onFilterRemove: (index) => queryController.applyFilters(queryController.filters.filter((_, current) => current !== index)),
-    },
+    queryControls: queryControlProps,
     rowTypes: {
       sources: rowTypeSources(baseColumns, state.schema, state.rows, state.rowTypes),
       selection: state.rowTypes,
@@ -948,6 +959,73 @@ export function App(): React.JSX.Element {
       },
     },
   }) : null;
+
+  const openQueryStudio = (): void => {
+    studioFocusRef.current = gridFocusBridgeRef.current?.capture();
+    setQueryStudioOpen(true);
+  };
+  const closeQueryStudio = (): void => setQueryStudioOpen(false);
+  const recordQueryHistory = (): void => {
+    setQueryHistory((current) => addQueryHistory(current, queryController.query, queryController.filters));
+  };
+  const runQueryStudio = (): void => {
+    if (!summary || !canReadSnapshot(state.invalidationReason)) return;
+    recordQueryHistory();
+    requestRows({ query: queryController.query });
+  };
+  const cancelQueryStudio = (): void => {
+    queryController.cancelRows();
+    closeQueryStudio();
+  };
+  const selectQueryHistory = (entry: QueryHistoryEntry): void => {
+    // Applying a history item intentionally makes its query the active
+    // workspace query; only the bounded history collection remains ephemeral.
+    queryController.editQuery(entry.query);
+    queryController.applyFilters(entry.filters);
+  };
+
+  const studioQueryControlProps: RecordQueryControlsProps = {
+    ...queryControlProps,
+    onSearchSubmit: runQueryStudio,
+    onFilterSubmit: () => {
+      queryControlProps.onFilterSubmit();
+      recordQueryHistory();
+    },
+  };
+
+  const observedStudioGeneration = state.summary?.snapshot.generation;
+
+  useLayoutEffect(() => {
+    const rowCount = state.rows.length;
+    if (observedStudioGeneration !== undefined
+      && observedStudioGeneration !== studioGenerationRef.current
+      && queryStudioOpen) {
+      priorStudioOpenRef.current = queryStudioOpen;
+      return;
+    }
+    if (observedStudioGeneration !== undefined
+      && gridFocusBridgeRef.current?.generation !== observedStudioGeneration) {
+      priorStudioOpenRef.current = queryStudioOpen;
+      return;
+    }
+    if (rowCount === 0 && gridFocusBridgeRef.current === undefined) {
+      priorStudioOpenRef.current = queryStudioOpen;
+      return;
+    }
+    if (!queryStudioOpen && studioFocusRef.current !== undefined && gridFocusBridgeRef.current !== undefined) {
+      gridFocusBridgeRef.current?.restore(studioFocusRef.current);
+      studioFocusRef.current = undefined;
+    }
+    priorStudioOpenRef.current = queryStudioOpen;
+  }, [observedStudioGeneration, queryStudioOpen, state.rows]);
+
+  useEffect(() => {
+    const generation = observedStudioGeneration ?? clientRef.current.session.generation;
+    if (generation === studioGenerationRef.current) return;
+    studioGenerationRef.current = generation;
+    setQueryHistory([]);
+    setQueryStudioOpen(false);
+  }, [observedStudioGeneration]);
 
   const workspaceStyle = drawerOpen
     ? ({ '--detail-pane-width': `${displayedDetailWidth}px` } as CSSProperties)
@@ -1044,6 +1122,21 @@ export function App(): React.JSX.Element {
         </label>
       </WorkspaceHeader>
 
+      {state.activeTab === 'table' ? (
+        <TopQueryStudio
+          open={queryStudioOpen}
+          queryControls={studioQueryControlProps}
+          history={queryHistory}
+          pending={Boolean(state.pending.rows)}
+          disabled={!summary || !canReadSnapshot(state.invalidationReason)}
+          onToggle={() => queryStudioOpen ? closeQueryStudio() : openQueryStudio()}
+          onClose={closeQueryStudio}
+          onRun={runQueryStudio}
+          onCancel={cancelQueryStudio}
+          onHistorySelect={selectQueryHistory}
+        />
+      ) : null}
+
       {state.invalidationReason !== undefined && state.invalidationReason !== 'append' ? (
         <div className="workspace-banner invalidated-banner" role="alert">
           <AlertTriangle size={15} aria-hidden />
@@ -1095,6 +1188,7 @@ export function App(): React.JSX.Element {
               viewportRevision={state.viewportRevision}
               latestSeq={state.latestSeq}
               latestGeneration={state.summary?.snapshot.generation}
+              gridFocusBridgeRef={gridFocusBridgeRef}
               onReadingAnchor={pauseFollowing}
               onViewportAnchor={reportViewport}
               onTailVisible={reportTailVisible}

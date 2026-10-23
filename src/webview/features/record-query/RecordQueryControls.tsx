@@ -13,6 +13,7 @@ export interface FilterOperatorOption {
 }
 
 export interface RecordQueryControlsProps {
+  controlNamePrefix?: string;
   query: string;
   searchDisabled: boolean;
   sortDirection: SortDirection;
@@ -40,6 +41,7 @@ export interface RecordQueryControlsProps {
 }
 
 export function RecordQueryControls({
+  controlNamePrefix = 'record',
   query,
   searchDisabled,
   sortDirection,
@@ -111,7 +113,7 @@ export function RecordQueryControls({
         <label className={`row-order-option${sortDirection === 'asc' ? ' is-active' : ''}${searchDisabled ? ' is-disabled' : ''}`} title="Sort rows ascending; first line first">
           <input
             type="radio"
-            name="record-order"
+            name={`${controlNamePrefix}-order`}
             value="asc"
             aria-label="Ascending row order; first line first"
             checked={sortDirection === 'asc'}
@@ -125,7 +127,7 @@ export function RecordQueryControls({
           title={descendingDisabled ? descendingDisabledReason : 'Sort rows descending; last line first'}>
           <input
             type="radio"
-            name="record-order"
+            name={`${controlNamePrefix}-order`}
             value="desc"
             aria-label="Descending row order; last line first"
             aria-description={descendingDisabled ? descendingDisabledReason : undefined}

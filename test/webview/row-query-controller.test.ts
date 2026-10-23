@@ -1204,6 +1204,18 @@ describe('row query controller with real client and reducer', () => {
     expect(test.state.pending.rows).toBeUndefined();
   });
 
+  it('retires a cancelled Studio rows run and rejects its late response', () => {
+    const test = harness();
+    test.boot();
+    const pending = test.last('GET_ROWS');
+    test.controller.cancelRows();
+    expect(test.last('CANCEL').payload.targetRequestId).toBe(pending.requestId);
+    expect(test.client.hasPending('rows')).toBe(false);
+    expect(test.state.pending.rows).toBeUndefined();
+    expect(test.rows(pending, page(['99']))).toBe(false);
+    expect(test.state.rows).toEqual([]);
+  });
+
   it('captures page one before cancelling a jump from displayed page four', () => {
     const test = harness();
     test.boot();

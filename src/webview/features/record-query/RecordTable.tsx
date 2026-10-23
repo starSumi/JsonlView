@@ -4,7 +4,7 @@ import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { Braces, GripVertical, LoaderCircle } from 'lucide-react';
 import type { ColumnSpec, RecordRef, RowProjection, RowSort } from '@shared/types';
 import { columnGridTemplate, getColumnText, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from '@webview/format';
-import { gridCellId, gridCellRowIndex, pinActiveGridRow, useGridFocus, type GridCell } from '@webview/use-grid-focus';
+import { gridCellId, gridCellRowIndex, initialGridCell, pinActiveGridRow, reconcileGridCell, useGridFocus, type GridCell } from '@webview/use-grid-focus';
 import { captureViewportAnchor, GRID_HEADER_HEIGHT, GRID_ROW_HEIGHT, isRowVisible, latestRowIndex,
   physicalRowKey, resolveViewportAnchor, rowOffset, type ViewportAnchor } from './viewport-anchor';
 import { ConversationRow, conversationRowHeight } from './conversation-row';
@@ -52,6 +52,13 @@ export interface RecordTableProps {
   onViewportAnchor?: (ref: RecordRef) => void;
   onTailVisible?: (ref: RecordRef) => void;
   onManualTailVisible?: (ref: RecordRef) => boolean;
+  gridFocusBridgeRef?: React.MutableRefObject<GridFocusBridge | undefined>;
+}
+
+export interface GridFocusBridge {
+  readonly generation?: string | undefined;
+  capture: () => GridCell | undefined;
+  restore: (cell: GridCell | undefined) => void;
 }
 
 export function RecordTable({
@@ -76,6 +83,7 @@ export function RecordTable({
   onViewportAnchor,
   onTailVisible,
   onManualTailVisible,
+  gridFocusBridgeRef,
 }: RecordTableProps): React.JSX.Element {
   const compact = displayMode === 'conversation';
   const columns = compact ? CONVERSATION_COLUMNS : tableColumns;
@@ -204,11 +212,11 @@ export function RecordTable({
     programmaticScrollRef.current = undefined;
     manualIntentRef.current = { rows, sessionId, revision: viewportRevision, scrollTop: scrollRef.current?.scrollTop ?? 0 };
   };
-  const suppressManualScroll = (): void => {
+  const suppressManualScroll = useCallback((): void => {
     manualIntentRef.current = undefined;
     if (manualFrameRef.current !== undefined) cancelAnimationFrame(manualFrameRef.current);
     manualFrameRef.current = undefined;
-  };
+  }, []);
 
   useLayoutEffect(() => {
     const grid = scrollRef.current;
@@ -339,12 +347,39 @@ export function RecordTable({
     }
   }, [selectedIndex, selectedRecordKey, virtualizer, followMode]);
 
-  const revealCell = (cell: GridCell | undefined): void => {
+  const revealCell = useCallback((cell: GridCell | undefined): void => {
     suppressManualScroll();
     const index = gridCellRowIndex(cell, rows);
     if (index >= 0) virtualizer.scrollToIndex(index, { align: 'auto' });
     else if (cell?.kind === 'header') scrollRef.current?.scrollTo({ top: 0 });
-  };
+  }, [rows, suppressManualScroll, virtualizer]);
+  useLayoutEffect(() => {
+    if (gridFocusBridgeRef === undefined) return;
+    if (scrollRef.current === null) {
+      gridFocusBridgeRef.current = undefined;
+      return;
+    }
+    const restore = (cell: GridCell | undefined): void => {
+      const next = cell === undefined
+        ? initialGridCell({ sessionId, rows, columns, selectedOrdinal })
+        : reconcileGridCell(cell, { sessionId, rows, columns })
+          ?? initialGridCell({ sessionId, rows, columns, selectedOrdinal });
+      if (next !== undefined) {
+        focus.setActiveCell(next);
+        revealCell(next);
+      }
+      scrollRef.current?.focus({ preventScroll: true });
+    };
+    const bridge: GridFocusBridge = {
+      generation: rows[0]?.ref.generation,
+      capture: () => focus.activeCell ?? focus.enter(),
+      restore,
+    };
+    gridFocusBridgeRef.current = bridge;
+    return () => {
+      if (gridFocusBridgeRef.current === bridge) gridFocusBridgeRef.current = undefined;
+    };
+  }, [columns, focus, gridFocusBridgeRef, revealCell, rows, selectedOrdinal, sessionId]);
   const clearPointerFocus = (): void => {
     pointerFocusRef.current = false;
     pointerInteractionRef.current = false;

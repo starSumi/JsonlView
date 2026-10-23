@@ -20,6 +20,11 @@ function dismissOnEscape(event: KeyboardEvent): void {
   if (event.key !== 'Escape') {
     return;
   }
+  if (typeof Element !== 'undefined'
+    && event.target instanceof Element
+    && event.target.closest('[data-query-studio]') !== null) {
+    return;
+  }
 
   const openMenus = [...menus.entries()].filter(([menu]) => menu.open);
   if (openMenus.length === 0) {

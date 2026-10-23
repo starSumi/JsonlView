@@ -314,6 +314,16 @@ export class RowQueryController {
 
   public abandonRestore(): void { this.#restoreViewport = undefined; }
 
+  /** Cancel an explicit rows run while retiring its viewport intent. */
+  public cancelRows(): void {
+    this.abandonRestore();
+    this.#pendingViewport = undefined;
+    this.#releaseSubmission();
+    for (const requestId of this.#ports.client.cancel('rows')) {
+      this.#ports.dispatch({ type: 'REQUEST_FINISHED', kind: 'rows', requestId });
+    }
+  }
+
   public currentViewportOptions(): RecoveryRowsOptions {
     const pending = this.#pendingViewport;
     if (pending !== undefined && pending.preserveOnRebuild && pending.query === this.#query

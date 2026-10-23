@@ -1,0 +1,109 @@
+.query-studio-shell {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px 0;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+}
+
+.query-studio-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+  font: inherit;
+}
+
+.query-studio {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+}
+
+.query-studio-heading,
+.query-studio-actions,
+.query-studio-history {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.query-studio-heading {
+  justify-content: space-between;
+}
+
+.query-studio-heading small {
+  display: block;
+  margin-top: 2px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.query-studio-controls {
+  min-width: 0;
+  container-type: inline-size;
+  container-name: query-studio;
+}
+
+.query-studio-controls .table-query-toolbar {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.query-studio-actions button,
+.query-studio-history button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+  font: inherit;
+}
+
+.query-studio-history {
+  flex-wrap: wrap;
+  padding: 0;
+  border: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.query-studio-history-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.query-studio-history button {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container query-studio (max-width: 520px) {
+  .query-studio-controls .query-tool-label,
+  .query-studio-controls .row-order-option .query-tool-label {
+    display: none;
+  }
+
+  .query-studio-actions {
+    flex-wrap: wrap;
+  }
+}
