@@ -69,10 +69,60 @@ describe('BFCL v3 bounded adapter', () => {
     expect(result.issues).toContain('missing-field');
   });
 
-  it('does not classify generic rows that only share turns and ground truth', () => {
-    const generic = { id: 'sample-1', multi_turn: false, turns: '[]', ground_truth: '{}', language: 'Python' };
+  it.each(['id', 'multi_turn', 'functions', 'tools', 'turns', 'language', 'test_category', 'subset', 'ground_truth'] as const)(
+    'still recognizes BFCL rows with missing required %s when optional annotations identify the schema', (field) => {
+      const missing: Record<string, unknown> = { ...row() };
+      delete missing[field];
+      const result = summarizeBfclV3Record(missing);
+      expect(result.recognized).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toContain('missing-field');
+    },
+  );
+
+  it.each([
+    ['tool calls and turns with only the BFCL multi-turn field', {
+      id: 'sample-1', multi_turn: false, functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python',
+    }],
+    ['tool calls and turns with a generic subset label', {
+      id: 'sample-2', multi_turn: false, functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python', subset: 'train',
+    }],
+    ['tool calls and turns with only one BFCL-specific field', {
+      id: 'sample-3', functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python', test_category: 'evaluation',
+    }],
+  ] as const)('does not classify generic rows with %s', (_description, generic) => {
     expect(isBfclV3Candidate(generic)).toBe(false);
     expect(summarizeBfclV3Record(generic)).toMatchObject({ recognized: false, issues: ['not-bfcl'] });
+  });
+
+  it('recognizes valid BFCL category fields when optional annotations are absent', () => {
+    const minimal = {
+      id: 'irrelevance_0', multi_turn: false, functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}',
+      language: 'Python', test_category: 'irrelevance', subset: 'irrelevance',
+    };
+    expect(summarizeBfclV3Record(minimal)).toMatchObject({ recognized: true, valid: true });
+  });
+
+  it.each(['language', 'subset'] as const)(
+    'diagnoses missing %s when the BFCL test category still matches the id',
+    (field) => {
+      const minimal: Record<string, unknown> = {
+        id: 'multi_turn_long_context_159', multi_turn: false, functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}',
+        language: 'Python', test_category: 'multi_turn_long_context', subset: 'multi_turn_long_context',
+      };
+      delete minimal[field];
+      const result = summarizeBfclV3Record(minimal);
+      expect(result.recognized).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toContain('missing-field');
+    },
+  );
+
+  it('keeps a row with no test category generic when the id only matches subset', () => {
+    const ambiguous = {
+      id: 'train_1', functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python', subset: 'train',
+    };
+    expect(summarizeBfclV3Record(ambiguous)).toMatchObject({ recognized: false, issues: ['not-bfcl'] });
   });
 
   it('bounds native involved classes before counting values', () => {

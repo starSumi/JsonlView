@@ -41,13 +41,16 @@ describe('BFCL row projection', () => {
     }
   });
 
-  it('does not classify generic turn and ground-truth rows as BFCL', async () => {
+  it.each([
+    ['multi-turn tool calls', { id: 'sample-1', multi_turn: false, functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python' }],
+    ['a generic subset label', { id: 'sample-2', functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python', subset: 'train' }],
+    ['a training split id that matches subset', { id: 'train_1', functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python', subset: 'train' }],
+    ['one BFCL category field', { id: 'sample-3', functions: '[]', tools: '[]', turns: '[]', ground_truth: '{}', language: 'Python', test_category: 'evaluation' }],
+  ] as const)('keeps generic dataset rows with %s out of BFCL insights', async (_description, value) => {
     const directory = await mkdtemp(join(tmpdir(), 'jsonl-bfcl-collision-'));
     let engine: JsonlFileEngine | undefined;
     try {
-      await writeFile(join(directory, 'generic.jsonl'), JSON.stringify({
-        id: 'sample-1', multi_turn: false, turns: '[]', ground_truth: '{}', language: 'Python',
-      }));
+      await writeFile(join(directory, 'generic.jsonl'), JSON.stringify(value));
       engine = await JsonlFileEngine.open(join(directory, 'generic.jsonl'));
       const page = await engine.getRows({ limit: 1, columns: [], projection: { conversation: false, dataset: true } });
       expect(page.rows[0]?.datasetInsights).toBeUndefined();

@@ -23,7 +23,7 @@ import {
 // exporters may omit them, so their absence is represented as `missing`.
 const REQUIRED_FIELDS = ['id', 'multi_turn', 'functions', 'tools', 'turns', 'language', 'test_category', 'subset', 'ground_truth'] as const;
 export const BFCL_V3_OPTIONAL_FIELDS = ['missed_functions', 'initial_config', 'involved_classes'] as const;
-const BFCL_MARKER_FIELDS = ['multi_turn', 'missed_functions', 'initial_config', 'involved_classes', 'test_category', 'subset'] as const;
+const BFCL_CATEGORY_FIELDS = ['language', 'test_category', 'subset'] as const;
 const ROLES: readonly BfclV3Role[] = ['system', 'user', 'assistant', 'tool', 'function', 'other'];
 
 type ObjectValue = Record<string, unknown>;
@@ -118,9 +118,23 @@ export function aggregateBfclV3Summaries(
 
 export function isBfclV3Candidate(value: unknown): value is ObjectValue {
   if (!isObject(value)) return false;
-  return (has(value, 'functions') || has(value, 'tools'))
-    && (has(value, 'turns') || has(value, 'ground_truth'))
-    && BFCL_MARKER_FIELDS.some((field) => has(value, field));
+  if (!(has(value, 'functions') || has(value, 'tools'))
+    || !(has(value, 'turns') || has(value, 'ground_truth'))) return false;
+
+  let categoryFields = 0;
+  for (const field of BFCL_CATEGORY_FIELDS) if (has(value, field)) categoryFields += 1;
+  if (categoryFields === BFCL_CATEGORY_FIELDS.length) return true;
+
+  // Preserve malformed-row diagnostics when the BFCL category is encoded in its ID.
+  const id = value.id;
+  const testCategory = value.test_category;
+  if (typeof id === 'string' && typeof testCategory === 'string' && testCategory.length > 0 && id.startsWith(`${testCategory}_`)) return true;
+
+  let annotationFields = 0;
+  for (const field of BFCL_V3_OPTIONAL_FIELDS) {
+    if (has(value, field) && ++annotationFields === 2) return true;
+  }
+  return false;
 }
 
 function emptyRecord(): BfclV3RecordSummary {
