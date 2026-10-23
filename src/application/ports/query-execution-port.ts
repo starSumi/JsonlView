@@ -183,7 +183,7 @@ export function createQueryExecutionRequestV1(
       // RecordPageReader exposes examined-byte budgets separately. A DTO
       // request still carries a returned-byte ceiling for adapters that can
       // measure it; the portable page remains authoritative for execution.
-      maxBytes: String(QUERY_DTO_LIMITS.maxBytes),
+      maxBytes: page.maxReturnedBytes ?? String(QUERY_DTO_LIMITS.maxBytes),
       deadlineEpochMs,
       ...(scanBudget?.maxExaminedRecords === undefined ? {} : { maxExaminedRecords: scanBudget.maxExaminedRecords }),
       ...(scanBudget?.maxExaminedBytes === undefined ? {} : { maxExaminedBytes: String(scanBudget.maxExaminedBytes) }),
