@@ -1,6 +1,12 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { isAbsolute, relative, resolve } from 'node:path';
+import {
+  QueryExecutionPort,
+  QueryExecutionUnsupportedError,
+  type QueryExecutionSourceV1,
+} from '@application/ports/query-execution-port';
+import type { QueryRequestDtoV1, QuerySourceIdentityV1 } from '@shared/query-dto';
 
 export const RUST_QUERY_SCHEMA = 'jsonlview.rust-query.v1' as const;
 export const RUST_QUERY_CAPABILITY = 1 << 2;
@@ -86,8 +92,47 @@ export function createMcpRustQueryHandler(
   bridge: RustQueryBridge,
   sourcePaths: ReadonlyMap<string, string>,
 ): (request: { readonly arguments: Readonly<Record<string, unknown>>; readonly signal: AbortSignal }) => Promise<RustQueryResult> {
+  let requestSequence = 0;
+  const identityFor = (sourceId: string): QuerySourceIdentityV1 => ({
+    sourceId,
+    documentId: sourceId,
+    generation: 'mcp-session',
+    fingerprint: `mcp:${sourceId}`,
+  });
+  const port = new QueryExecutionPort((identity): QueryExecutionSourceV1 | undefined => {
+    const sourcePath = sourcePaths.get(identity.sourceId);
+    if (sourcePath === undefined) return undefined;
+    const expected = identityFor(identity.sourceId);
+    if (identity.documentId !== expected.documentId
+      || identity.generation !== expected.generation
+      || identity.fingerprint !== expected.fingerprint) return undefined;
+    return {
+      identity: expected,
+      recordPage: { getRows: async () => { throw new QueryExecutionUnsupportedError('MCP raw sources do not expose projected record pages.'); } },
+      rawRecords: {
+        execute: async (dto, signal) => {
+          if (signal.aborted) throw new Error('MCP query was cancelled.');
+          assertNativeAdmission(dto);
+          const result = bridge.query({
+            sourcePath,
+            startOrdinal: dto.cursor.anchorOrdinal ?? '0',
+            limit: dto.budget.limit,
+            maxBytes: Number(dto.budget.maxBytes),
+          });
+          return {
+            result,
+            ...(result.truncated ? {
+              truncation: {
+                reason: normalizeTruncationReason(result.truncationReason),
+                ...(result.nextOrdinal === null ? {} : { nextOrdinal: result.nextOrdinal }),
+              },
+            } : {}),
+          };
+        },
+      },
+    };
+  });
   return async ({ arguments: args, signal }) => {
-    if (signal.aborted) throw new Error('MCP query was cancelled.');
     const sourceId = args.sourceId;
     if (typeof sourceId !== 'string') throw new Error('sourceId is required.');
     const sourcePath = sourcePaths.get(sourceId);
@@ -95,8 +140,46 @@ export function createMcpRustQueryHandler(
     const startOrdinal = args.startOrdinal === undefined ? '0' : String(args.startOrdinal);
     const limit = args.limit === undefined ? undefined : Number(args.limit);
     const maxBytes = args.maxBytes === undefined ? undefined : Number(args.maxBytes);
-    return bridge.query({ sourcePath, startOrdinal, ...(limit === undefined ? {} : { limit }), ...(maxBytes === undefined ? {} : { maxBytes }) });
+    if (args.predicate !== undefined || args.sort !== undefined || args.direction !== undefined) {
+      throw new QueryExecutionUnsupportedError('The native MCP raw target does not support predicate or logical sorting.');
+    }
+    const requestId = `mcp-query-${++requestSequence}`;
+    const dto: QueryRequestDtoV1 = {
+      schema: 'jsonlview.query-dto.v1',
+      version: 1,
+      requestId,
+      source: identityFor(sourceId),
+      ast: { schema: 'jsonlview.query-ast.v1', version: 1 },
+      cursor: { anchorOrdinal: startOrdinal },
+      budget: {
+        limit: limit ?? 100,
+        maxBytes: String(maxBytes ?? 1024 * 1024),
+        deadlineEpochMs: Date.now() + 60_000,
+      },
+      cancellation: { requestId },
+    };
+    const execution = await port.execute({ target: 'raw-records', dto, page: { limit: dto.budget.limit } }, signal);
+    if (execution.target !== 'raw-records') throw new QueryExecutionUnsupportedError('MCP query resolved to a projected target.');
+    return execution.result as RustQueryResult;
   };
+}
+
+function assertNativeAdmission(dto: QueryRequestDtoV1): void {
+  if (dto.ast.predicate !== undefined
+    || dto.cursor.sort !== undefined
+    || dto.cursor.sortOffset !== undefined
+    || dto.cursor.direction === 'backward') {
+    throw new QueryExecutionUnsupportedError('The native MCP raw target cannot represent this query.');
+  }
+  if (dto.budget.limit > RUST_QUERY_MAX_LIMIT
+    || BigInt(dto.budget.maxBytes) > BigInt(RUST_QUERY_MAX_BYTES)) {
+    throw new QueryExecutionUnsupportedError('The native MCP raw target budget exceeds its bounded capability.');
+  }
+}
+
+function normalizeTruncationReason(reason: string | undefined): 'record_limit' | 'byte_limit' | 'page-limit' | 'max-bytes' {
+  if (reason === 'record_limit' || reason === 'byte_limit' || reason === 'page-limit' || reason === 'max-bytes') return reason;
+  return 'page-limit';
 }
 
 export function loadRustQueryBridge(extensionPath: string, allowedRoots?: readonly string[]): RustQueryBridge {

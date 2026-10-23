@@ -132,6 +132,59 @@ export interface QuerySettlementDtoV1 {
 export type QueryResultDtoV1 = QuerySettlementDtoV1;
 export type QueryResponseDtoV1 = QuerySettlementDtoV1;
 
+/**
+ * Fail-closed settlement guard for adapters that exchange only operation
+ * metadata. A terminal status must carry exactly the metadata that explains
+ * that status; this prevents a partial/native response from being mistaken
+ * for a completed query.
+ */
+export function isQuerySettlementDtoV1(value: unknown): value is QuerySettlementDtoV1 {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ['schema', 'version', 'source', 'requestId', 'status', 'truncation', 'error'])
+    || value.schema !== QUERY_DTO_SCHEMA
+    || value.version !== QUERY_DTO_VERSION
+    || !isSourceIdentity(value.source)
+    || !isBoundedString(value.requestId, QUERY_DTO_LIMITS.maxRequestIdLength)
+    || !isQueryExecutionStatus(value.status)
+    || (value.truncation !== undefined && !isTruncation(value.truncation))
+    || (value.error !== undefined && !isQueryError(value.error))) {
+    return false;
+  }
+  switch (value.status) {
+    case 'completed':
+      return value.truncation === undefined && value.error === undefined;
+    case 'truncated':
+      return value.truncation !== undefined && value.error === undefined;
+    case 'cancelled':
+      return value.truncation === undefined && value.error?.code === 'cancelled';
+    case 'stale':
+      return value.truncation === undefined
+        && (value.error?.code === 'source-changed' || value.error?.code === 'source-not-authorized');
+    case 'unsupported':
+      return value.truncation === undefined
+        && (value.error?.code === 'unsupported-query' || value.error?.code === 'native-unavailable');
+    case 'failed':
+      return value.truncation === undefined && value.error !== undefined;
+    default:
+      return false;
+  }
+}
+
+export function serializeQuerySettlementDtoV1(value: QuerySettlementDtoV1): string {
+  if (!isQuerySettlementDtoV1(value)) throw new TypeError('Invalid query settlement DTO v1.');
+  return JSON.stringify(value);
+}
+
+export function parseQuerySettlementDtoV1(value: string): QuerySettlementDtoV1 | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isQuerySettlementDtoV1(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function isQueryRequestDtoV1(value: unknown, nowEpochMs: number = Date.now()): value is QueryRequestDtoV1 {
   if (!isRecord(value)
     || !hasOnlyKeys(value, ['schema', 'version', 'requestId', 'source', 'ast', 'cursor', 'budget', 'cancellation'])
@@ -221,6 +274,36 @@ function isCancellation(value: unknown): value is QueryCancellationV1 {
   return isRecord(value)
     && hasOnlyKeys(value, ['requestId'])
     && isBoundedString(value.requestId, QUERY_DTO_LIMITS.maxRequestIdLength);
+}
+
+function isQueryExecutionStatus(value: unknown): value is QueryExecutionStatusV1 {
+  return value === 'completed' || value === 'truncated' || value === 'cancelled'
+    || value === 'stale' || value === 'unsupported' || value === 'failed';
+}
+
+function isQueryError(value: unknown): value is QueryErrorV1 {
+  return isRecord(value)
+    && hasOnlyKeys(value, ['code', 'recoverable'])
+    && isQueryErrorCode(value.code)
+    && typeof value.recoverable === 'boolean';
+}
+
+function isQueryErrorCode(value: unknown): value is QueryErrorCodeV1 {
+  return value === 'invalid-request' || value === 'source-not-authorized'
+    || value === 'source-changed' || value === 'cancelled'
+    || value === 'deadline-exceeded' || value === 'budget-exceeded'
+    || value === 'unsupported-query' || value === 'native-unavailable'
+    || value === 'native-failed' || value === 'io-failed';
+}
+
+function isTruncation(value: unknown): value is QueryTruncationV1 {
+  return isRecord(value)
+    && hasOnlyKeys(value, ['reason', 'nextOrdinal'])
+    && (value.reason === 'record_limit' || value.reason === 'byte_limit'
+      || value.reason === 'time_limit' || value.reason === 'hydration_limit'
+      || value.reason === 'uninspectable_record' || value.reason === 'page-limit'
+      || value.reason === 'max-bytes')
+    && (value.nextOrdinal === undefined || isDecimal(value.nextOrdinal));
 }
 
 function isRowSort(value: unknown): value is RowSort {

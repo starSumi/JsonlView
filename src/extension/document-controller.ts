@@ -13,7 +13,15 @@ import type {
   TemporaryPreviewStatus,
   WebviewRequest,
 } from '@shared/types';
-import { LoadProblemPage, LoadRecordPage, type ProblemPageReader, type ProblemPageRequest, type RecordPageReader, type RecordPageRequest } from '../application';
+import {
+  createQueryExecutionRequestV1,
+  LoadProblemPage,
+  QueryExecutionPort,
+  type ProblemPageReader,
+  type ProblemPageRequest,
+  type RecordPageReader,
+  type RecordPageRequest,
+} from '../application';
 import { createProtocolEnvelope, readProtocolIdentity } from '@shared/transport';
 import { isNavigatorBridgeResult } from '@shared/protocol/navigator-bridge';
 import { validateWebviewRequest } from './message-validation';
@@ -105,7 +113,7 @@ export class DocumentController {
   private readonly channel: MessageChannel;
   private readonly hooks: DocumentControllerHooks;
   private readonly requests = new RequestRegistry();
-  private readonly loadRecordPage: LoadRecordPage;
+  private readonly queryExecution: QueryExecutionPort;
   private readonly loadProblemPage: LoadProblemPage;
   private disposed = false;
   private rebuildRequestSequence = 0;
@@ -121,7 +129,11 @@ export class DocumentController {
     this.session = session;
     this.channel = channel;
     this.hooks = hooks;
-    this.loadRecordPage = new LoadRecordPage(session);
+    this.queryExecution = new QueryExecutionPort((identity) => {
+      const currentIdentity = querySourceIdentity(this.session.getSummary().snapshot);
+      if (!sameQuerySourceIdentity(currentIdentity, identity)) return undefined;
+      return { identity: currentIdentity, recordPage: this.session };
+    });
     this.loadProblemPage = new LoadProblemPage(session);
   }
 
@@ -218,7 +230,14 @@ export class DocumentController {
             }
           }
           signal = this.requests.startLatest('viewport', request.requestId);
-          const page = await this.loadRecordPage.execute(request.payload, signal);
+          const query = createQueryExecutionRequestV1(
+            querySourceIdentity(summary.snapshot),
+            request.requestId,
+            request.payload,
+          );
+          const execution = await this.queryExecution.execute(query, signal);
+          if (execution.target !== 'record-page') throw new Error('GET_ROWS resolved to a non-page query target.');
+          const page = execution.page;
           if (queryObservation !== undefined) queryObservation.rows = page.rows.length;
           const current = this.isCurrentIdentity(acceptedIdentity, queryObservation);
           const posted = current && await this.postIfCurrent(
@@ -519,6 +538,29 @@ function captureSnapshotIdentity(snapshot: SnapshotIdentity): AcceptedRequestIde
     generation: snapshot.generation,
     ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }),
   });
+}
+
+function querySourceIdentity(snapshot: SnapshotIdentity): import('@shared/query-dto').QuerySourceIdentityV1 {
+  return {
+    // The document id is the host-owned opaque source handle. Physical paths
+    // remain outside the DTO and are never resolved by the Webview.
+    sourceId: snapshot.documentId,
+    documentId: snapshot.documentId,
+    generation: snapshot.generation,
+    ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }),
+    fingerprint: snapshot.prefixFingerprint,
+  };
+}
+
+function sameQuerySourceIdentity(
+  left: import('@shared/query-dto').QuerySourceIdentityV1,
+  right: import('@shared/query-dto').QuerySourceIdentityV1,
+): boolean {
+  return left.sourceId === right.sourceId
+    && left.documentId === right.documentId
+    && left.generation === right.generation
+    && left.epoch === right.epoch
+    && left.fingerprint === right.fingerprint;
 }
 
 function isTransientSourceChange(error: unknown): boolean {

@@ -10,6 +10,21 @@ export {
 export type { RecordPageReader, RecordPageRequest } from './ports/record-page-reader';
 export { LoadRecordPage } from './use-cases/load-record-page';
 export {
+  createQueryExecutionRequestV1,
+  QueryExecutionPort,
+  QueryExecutionSourceError,
+  QueryExecutionUnsupportedError,
+} from './ports/query-execution-port';
+export type {
+  QueryExecutionRequestV1,
+  QueryExecutionResultV1,
+  QueryExecutionSourceResolverV1,
+  QueryExecutionSourceV1,
+  QueryExecutionTargetV1,
+  RawRecordReaderV1,
+  RawRecordExecutionV1,
+} from './ports/query-execution-port';
+export {
   assertProblemPageRequest,
   PROBLEM_PAGE_MAX_LIMIT,
   ProblemPageRequestError,

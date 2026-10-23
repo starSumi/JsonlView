@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   isQueryRequestDtoV1,
+  isQuerySettlementDtoV1,
   parseQueryRequestDtoV1,
+  parseQuerySettlementDtoV1,
   serializeQueryRequestDtoV1,
+  serializeQuerySettlementDtoV1,
   QUERY_DTO_SCHEMA,
   type QueryRequestDtoV1,
 } from '../../src/shared/query-dto';
@@ -42,6 +45,32 @@ describe('versioned query DTO', () => {
     const now = Date.now();
     expect(isQueryRequestDtoV1(value, now)).toBe(true);
     expect(parseQueryRequestDtoV1(serializeQueryRequestDtoV1(value, now), now)).toEqual(value);
+  });
+
+  it('accepts only status-consistent settlements and round-trips them', () => {
+    const source = request().source;
+    const truncated = {
+      schema: QUERY_DTO_SCHEMA,
+      version: 1 as const,
+      source,
+      requestId: 'query-1',
+      status: 'truncated' as const,
+      truncation: { reason: 'byte_limit' as const, nextOrdinal: '14' },
+    };
+    expect(isQuerySettlementDtoV1(truncated)).toBe(true);
+    expect(parseQuerySettlementDtoV1(serializeQuerySettlementDtoV1(truncated))).toEqual(truncated);
+    expect(isQuerySettlementDtoV1({ ...truncated, truncation: undefined })).toBe(false);
+    expect(isQuerySettlementDtoV1({
+      ...truncated,
+      status: 'completed',
+    })).toBe(false);
+    expect(isQuerySettlementDtoV1({
+      ...truncated,
+      status: 'cancelled',
+      truncation: undefined,
+      error: { code: 'io-failed', recoverable: true },
+    })).toBe(false);
+    expect(parseQuerySettlementDtoV1('{"schema":"jsonlview.query-dto.v1"}')).toBeUndefined();
   });
 
   it('rejects source paths, mismatched cancellation, invalid budgets, and malformed JSON', () => {
