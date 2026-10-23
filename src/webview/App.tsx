@@ -24,7 +24,7 @@ import {
   shouldAutomaticallyHydrateSelectedRecord,
 } from './full-record-intent';
 import { deferIdle } from './shared/utils/idle';
-import { DatasetInsights, InsightsToolbar, InsightsView } from '@widgets/insights-panel';
+import { BfclInsights, DatasetInsights, InsightsToolbar, InsightsView } from '@widgets/insights-panel';
 import { shouldIssueInsightRequest } from './insight-request';
 import {
   datasetProvenanceTooltip,
@@ -35,6 +35,7 @@ import {
   workspaceBaseColumns,
   workspaceDatasetProjectionAvailable,
   workspaceDatasetSummary,
+  workspaceBfclSummary,
   workspaceHasPartialContinuation,
   workspacePageRange,
   workspacePartialBannerIdentity,
@@ -860,6 +861,10 @@ export function App(): React.JSX.Element {
     () => workspaceDatasetSummary(state.rows, partialScan),
     [state.rows, partialScan],
   );
+  const bfclSummary = useMemo(
+    () => workspaceBfclSummary(state.rows, partialScan),
+    [state.rows, partialScan],
+  );
   const datasetProjectionAvailable = workspaceDatasetProjectionAvailable(state);
   const hasPartialContinuation = workspaceHasPartialContinuation(partialScan, state.sort, state.page);
   const partialBannerIdentity = workspacePartialBannerIdentity(state.page);
@@ -1247,8 +1252,10 @@ export function App(): React.JSX.Element {
                 }}
                 onRefresh={() => requestInsights()}
               />
-              {datasetSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
-                ? <DatasetInsights summary={datasetSummary} /> : null}
+              {bfclSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
+                ? <BfclInsights summary={bfclSummary} />
+                : datasetSummary !== undefined && datasetProjectionAvailable && !state.pending.rows
+                  ? <DatasetInsights summary={datasetSummary} /> : null}
               <InsightsView
                 categories={state.insights?.categories ?? []}
                 timeBuckets={state.insights?.timeBuckets ?? []}

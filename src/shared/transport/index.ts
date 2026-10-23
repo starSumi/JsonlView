@@ -1,6 +1,7 @@
 export { CancellationRegistry } from './cancellation';
 export { isExtensionMessage } from './extension-message';
 export { isDatasetRuntimeProvenance } from './dataset-provenance';
+export { isBfclV3RecordSummary, isBfclV3SampleSummary } from './bfcl-v3-insights';
 export {
   createProtocolEnvelope,
   isProtocolEnvelope,

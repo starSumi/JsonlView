@@ -11,7 +11,15 @@ import type {
 } from './types';
 
 /** Limits are deliberately stricter than the transport limits. */
-export const QUERY_DSL_LIMITS = Object.freeze({
+export const QUERY_DSL_LIMITS: Readonly<{
+  maxSourceLength: number;
+  maxTokens: number;
+  maxDepth: number;
+  maxNodes: number;
+  maxPathTokens: number;
+  maxPathKeyLength: number;
+  maxDiagnosticFoundLength: number;
+}> = Object.freeze({
   maxSourceLength: QUERY_AST_LIMITS.maxStringLength,
   maxTokens: 512,
   maxDepth: QUERY_AST_LIMITS.maxDepth,
@@ -116,8 +124,8 @@ export function parseQueryDsl(source: string): QueryParseResult {
 }
 
 /** Alias kept for callers that describe this operation as compilation. */
-export const compileQueryDsl = parseQueryDsl;
-export const parseQuery = parseQueryDsl;
+export const compileQueryDsl: typeof parseQueryDsl = parseQueryDsl;
+export const parseQuery: typeof parseQueryDsl = parseQueryDsl;
 
 function success(predicate: Predicate | undefined): QueryParseSuccess {
   return {

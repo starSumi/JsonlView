@@ -16,6 +16,11 @@ export {
   inspectLlamaFactoryDataset,
 } from './dataset-adapter';
 export { DATASET_HEAD_PLAN, DatasetHeadInspection, pendingDatasetProvenance } from './dataset-runtime';
+export {
+  aggregateBfclV3Summaries,
+  isBfclV3Candidate,
+  summarizeBfclV3Record,
+} from './datasets/bfcl-v3';
 export type {
   DatasetAdapter,
   DatasetCandidate,

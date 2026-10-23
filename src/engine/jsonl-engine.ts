@@ -3,6 +3,7 @@ import type { BigIntStats } from 'node:fs';
 import { open, stat, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { summarizeDatasetRecord } from '@profiles/dataset-analysis';
+import { isBfclV3Candidate, summarizeBfclV3Record } from '@profiles/datasets/bfcl-v3';
 import { pathToFileURL } from 'node:url';
 import { projectConversation } from '@profiles/conversation-projection';
 import type {
@@ -1791,6 +1792,9 @@ export class JsonlFileEngine {
       return [cellForValue(column.id, resolved.value, this.options.rowPreviewCharacters)];
     });
 
+    const bfclV3 = projection.dataset && hydrated.value !== undefined && isBfclV3Candidate(hydrated.value)
+      ? summarizeBfclV3Record(hydrated.value)
+      : undefined;
     return {
       ref: hydrated.ref,
       ...(hydrated.value === undefined ? {} : { kind: jsonKindOf(hydrated.value) }),
@@ -1799,6 +1803,7 @@ export class JsonlFileEngine {
       ...(projection.conversation ? { conversation: projectConversation(hydrated.value, profile) } : {}),
       ...(projection.dataset
         ? { dataset: summarizeDatasetRecord(hydrated.value, hydrated.ref.parseState) } : {}),
+      ...(bfclV3 === undefined ? {} : { datasetInsights: { bfclV3 } }),
       ...(profile === undefined ? {} : { profile }),
       ...(hydrated.problems.length === 0 ? {} : { problems: hydrated.problems }),
     };

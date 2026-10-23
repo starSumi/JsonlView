@@ -8,8 +8,10 @@ import type { PersistedWorkspaceState } from '../../src/webview/state';
 import { WorkspaceHeader } from '../../src/webview/workspace-header';
 import { DetailDrawer } from '../../src/webview/detail-drawer';
 import { DatasetInsights } from '../../src/webview/dataset-insights';
+import { BfclInsights } from '../../src/webview/widgets/insights-panel';
 import { InsightsToolbar } from '../../src/webview/insights-toolbar';
 import { summarizeDatasetRecord } from '../../src/profiles/dataset-analysis';
+import { summarizeBfclV3Record } from '../../src/profiles/datasets/bfcl-v3';
 
 type Effect = { deps?: readonly unknown[] | undefined; cleanup?: (() => void) | undefined };
 const hooks = vi.hoisted(() => ({
@@ -351,6 +353,33 @@ describe('App column presentation and projection boundary', () => {
     next.rows.forEach((row) => { row.dataset = summarizeDatasetRecord({ text: 'Training text' }); });
     deliver('ROWS', next, last('GET_ROWS'));
     expect(props(DatasetInsights).summary.scenes).toEqual({ pretraining: 20 });
+  });
+
+  it('selects BFCL insights for dataset rows and keeps the generic panel as fallback', () => {
+    commit();
+    deliver('OPENED', { ...summary, profileId: 'generic', profileVersion: '1' }, last('READY'));
+    const first = { ...page([prompt]), projection: { conversation: false, dataset: true } };
+    first.rows.forEach((row) => {
+      row.datasetInsights = { bfclV3: summarizeBfclV3Record({
+        id: 'simple_1', multi_turn: false, functions: '[]', tools: '[]', turns: '[]',
+        language: 'Python', test_category: 'simple', subset: 'simple', ground_truth: '{}',
+      }) };
+    });
+    deliver('ROWS', first, last('GET_ROWS'));
+    chooseWorkspaceTab('Insights');
+    expect(props(BfclInsights).summary.coverage).toMatchObject({ requestedRecords: 20, sampledRecords: 20, recognizedRecords: 20 });
+    expect(() => props(DatasetInsights)).toThrow('App child missing');
+  });
+
+  it('keeps generic dataset insights when a page only shares BFCL turns and ground truth fields', () => {
+    commit();
+    deliver('OPENED', { ...summary, profileId: 'generic', profileVersion: '1' }, last('READY'));
+    const first = { ...page([prompt]), projection: { conversation: false, dataset: true } };
+    first.rows.forEach((row) => { row.dataset = summarizeDatasetRecord({ question: 'q', answer: 'a' }); });
+    deliver('ROWS', first, last('GET_ROWS'));
+    chooseWorkspaceTab('Insights');
+    expect(props(DatasetInsights).summary).toMatchObject({ scope: 'visible-page', scenes: { qa: 20 } });
+    expect(() => props(BfclInsights)).toThrow('App child missing');
   });
 
   it('reprojects the same logical page when Insights first needs dataset scenes', () => {

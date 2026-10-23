@@ -1,4 +1,5 @@
 import type { DatasetRecordSummary } from './dataset-analysis';
+import type { BfclV3RecordSummary } from './bfcl-v3-insights';
 import type { NavigatorBridgeResultV1 } from './protocol/navigator-bridge';
 import type { SourceRegistrationFactsV1 } from './protocol/source-registration';
 
@@ -148,6 +149,8 @@ export interface RowProjection {
   conversation?: ConversationProjection;
   /** Generic record observations; never attached to provider session profiles. */
   dataset?: DatasetRecordSummary;
+  /** Optional profile-owned dataset observations; source bodies never cross IPC. */
+  datasetInsights?: { bfclV3?: BfclV3RecordSummary };
   profile?: AgentRowProjection;
   problems?: ProblemRef[];
 }

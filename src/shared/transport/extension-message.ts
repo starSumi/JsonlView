@@ -27,6 +27,7 @@ import {
 import { validateProtocolEnvelope } from './protocol';
 import { isDatasetRuntimeProvenance } from './dataset-provenance';
 import { isDatasetRecordSummary } from './dataset-summary';
+import { isBfclV3RecordSummary } from './bfcl-v3-insights';
 import { isNavigatorBridgeResult } from '../protocol/navigator-bridge';
 import { isSourceRegistrationFacts } from '../protocol/source-registration';
 
@@ -169,8 +170,13 @@ function isRowProjection(value: unknown): value is RowProjection {
     && isString(value.genericSummary)
     && (value.conversation === undefined || isConversationProjection(value.conversation))
     && (value.dataset === undefined || isDatasetRecordSummary(value.dataset))
+    && (value.datasetInsights === undefined || isDatasetInsights(value.datasetInsights))
     && (value.profile === undefined || isAgentRowProjection(value.profile))
     && (value.problems === undefined || isArray(value.problems, isProblemRef));
+}
+
+function isDatasetInsights(value: unknown): value is NonNullable<RowProjection['datasetInsights']> {
+  return isObject(value) && Object.keys(value).length === 1 && Object.hasOwn(value, 'bfclV3') && isBfclV3RecordSummary(value.bfclV3);
 }
 
 function isConversationProjection(value: unknown): value is ConversationProjection {

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Adapt BFCL v3-shaped JSONL records through bounded row summaries and show
+  dataset-aware Insights with sample coverage while retaining Generic JSONL
+  observations as the fallback.
 - Make Navigator source intake actionable for OS file and folder drops: single
   JSONL files open bounded temporary previews with Recent Previews / Save As,
   unsupported drops fall back to the native picker, compact Paste opens the

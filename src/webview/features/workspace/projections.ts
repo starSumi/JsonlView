@@ -1,3 +1,5 @@
+import type { BfclV3SampleSummary } from '@shared/bfcl-v3-insights';
+import { aggregateBfclV3Summaries } from '@profiles/datasets/bfcl-v3';
 import type { ColumnSpec, DatasetRuntimeProvenanceV1, FieldStats, RowProjection } from '@shared/types';
 import type { NavigatorBridgeResultV1 } from '@shared/protocol/navigator-bridge';
 import { MAX_TABLE_COLUMNS } from '@shared/types';
@@ -93,6 +95,15 @@ export function workspacePartialScan(page: WorkspaceState['page']): boolean {
 
 export function workspaceDatasetSummary(rows: readonly RowProjection[], partial: boolean) {
   return summarizeVisibleDatasetRows(rows, partial);
+}
+
+export function workspaceBfclSummary(rows: readonly RowProjection[], partial: boolean): BfclV3SampleSummary | undefined {
+  const samples = rows.slice(0, 256).flatMap((row) => row.datasetInsights?.bfclV3 === undefined ? [] : [row.datasetInsights.bfclV3]);
+  if (samples.length === 0) return undefined;
+  return aggregateBfclV3Summaries(samples, {
+    partial: partial || samples.length !== rows.length,
+    requestedRecords: rows.length,
+  });
 }
 
 export function workspaceDatasetProjectionAvailable(
