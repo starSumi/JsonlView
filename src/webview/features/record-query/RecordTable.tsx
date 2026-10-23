@@ -420,7 +420,7 @@ export function RecordTable({
       aria-colcount={columns.length}
       aria-busy={loading}
       aria-activedescendant={activeDescendant}
-      aria-description="Arrow keys move cell focus. Enter or Space opens a record. Enter on a header enables column resizing; Escape returns to grid navigation."
+      aria-description="Arrow keys move cell focus. Enter or Space opens a record. Enter on a header enables column resizing."
       tabIndex={0}
       style={{ overflowAnchor: 'none' }}
       onWheelCapture={(event) => {
