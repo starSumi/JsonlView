@@ -239,6 +239,9 @@ tokens, base, layout, workspace-header, record-query, views, source-intake,
 and accessibility modules in that order. CSS migrations move complete
 top-level blocks and keep source-intake bridge status separate from the
 standalone Add Source Webview's inline stylesheet.
+Transient Insights states may add a separately ordered stylesheet module; keep
+the existing views.css content immutable, register the import in this cascade,
+and update the stylesheet architecture hash test with the module.
 
 Within the Webview, keep App.tsx as the composition root, put record-query
 policies in features/record-query, provider-specific event projections in
