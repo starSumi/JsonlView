@@ -36,6 +36,12 @@ export function profileColumns(profileId: string): readonly ColumnSpec[] {
       column('severity', 'Severity', 86),
       column('summary', 'Summary', 320),
       column('service', 'Service', 140),
+      column('spanCount', 'Spans', 76),
+      column('traceCount', 'Traces', 76),
+      column('errorCount', 'Errors', 76),
+      column('durationMs', 'Duration (ms)', 110),
+      column('metricCount', 'Metrics', 86),
+      column('dataPointCount', 'Data points', 104),
     ];
   }
   if (profileId === 'structured-application-log') {
@@ -132,5 +138,13 @@ export function profilePredicateFields(
     usageOutput: projection.usage?.output,
     usageCached: projection.usage?.cached,
     usageTotal: projection.usage?.total,
+    ...(projection.profileId === 'opentelemetry' ? {
+      spanCount: projection.derivedFields?.spanCount,
+      traceCount: projection.derivedFields?.traceCount,
+      errorCount: projection.derivedFields?.errorCount,
+      durationMs: projection.derivedFields?.durationMs,
+      metricCount: projection.derivedFields?.metricCount,
+      dataPointCount: projection.derivedFields?.dataPointCount,
+    } : {}),
   };
 }

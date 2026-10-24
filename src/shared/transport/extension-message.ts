@@ -28,12 +28,13 @@ import { validateProtocolEnvelope } from './protocol';
 import { isDatasetRuntimeProvenance } from './dataset-provenance';
 import { isDatasetRecordSummary } from './dataset-summary';
 import { isBfclV3RecordSummary } from './bfcl-v3-insights';
+import { isOpenTelemetryRecordSummary } from './otel-insights';
 import { isNavigatorBridgeResult } from '../protocol/navigator-bridge';
 import { isSourceRegistrationFacts } from '../protocol/source-registration';
 
 const AGENT_EVENT_KINDS: ReadonlySet<string> = new Set([
   'session', 'turn', 'message', 'log', 'span', 'task', 'action', 'observation',
-  'patch', 'test', 'result', 'reasoning', 'tool_call', 'tool_result', 'subagent',
+  'patch', 'test', 'result', 'reasoning', 'tool_call', 'tool_result', 'subagent', 'metric',
   'approval', 'usage', 'error', 'checkpoint', 'other',
 ]);
 const JSON_KINDS: ReadonlySet<string> = new Set(['object', 'array', 'string', 'integer', 'number', 'boolean', 'null']);
@@ -176,7 +177,10 @@ function isRowProjection(value: unknown): value is RowProjection {
 }
 
 function isDatasetInsights(value: unknown): value is NonNullable<RowProjection['datasetInsights']> {
-  return isObject(value) && Object.keys(value).length === 1 && Object.hasOwn(value, 'bfclV3') && isBfclV3RecordSummary(value.bfclV3);
+  if (!isObject(value) || Object.keys(value).length !== 1) return false;
+  if (Object.hasOwn(value, 'bfclV3')) return isBfclV3RecordSummary(value.bfclV3);
+  if (Object.hasOwn(value, 'opentelemetry')) return isOpenTelemetryRecordSummary(value.opentelemetry);
+  return false;
 }
 
 function isConversationProjection(value: unknown): value is ConversationProjection {

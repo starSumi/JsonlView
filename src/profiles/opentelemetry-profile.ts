@@ -1,4 +1,5 @@
 import type { AgentRowProjection, FieldPath } from '@shared/types';
+import { summarizeOpenTelemetryRecord } from '@shared/otel-insights';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import {
   boundedSummary,
@@ -22,7 +23,7 @@ interface Located<T> {
   path: FieldPath;
 }
 
-type OtelRecordKind = 'log' | 'span' | 'resourceLogs' | 'resourceSpans' | 'unknown';
+type OtelRecordKind = 'log' | 'span' | 'metric' | 'resourceLogs' | 'resourceSpans' | 'resourceMetrics' | 'unknown';
 
 export class OpenTelemetryProfile implements AgentProfile {
   public readonly id = 'opentelemetry';
@@ -38,7 +39,7 @@ export class OpenTelemetryProfile implements AgentProfile {
     for (const entry of sample) {
       if (!isObject(entry.value)) continue;
       const kind = classifyRecord(entry.value);
-      if (kind === 'resourceLogs' || kind === 'resourceSpans') {
+      if (kind === 'resourceLogs' || kind === 'resourceSpans' || kind === 'resourceMetrics') {
         envelopes += 1;
         distinctive += 1;
         pushReason(reasons, keyPath(kind), `OTLP File Exporter ${kind} envelope`);
@@ -47,11 +48,13 @@ export class OpenTelemetryProfile implements AgentProfile {
         distinctive += 1;
         const path = own(entry.value, 'timeUnixNano') !== undefined ? keyPath('timeUnixNano') : keyPath('Timestamp');
         pushReason(reasons, path, 'OpenTelemetry log data-model field combination');
-      } else if (kind === 'span') {
+      } else if (kind === 'span' || kind === 'metric') {
         records += 1;
         distinctive += 1;
-        const path = own(entry.value, 'startTimeUnixNano') !== undefined ? keyPath('startTimeUnixNano') : keyPath('StartTime');
-        pushReason(reasons, path, 'OpenTelemetry span identity and timing field combination');
+        const path = kind === 'span'
+          ? (own(entry.value, 'startTimeUnixNano') !== undefined ? keyPath('startTimeUnixNano') : keyPath('StartTime'))
+          : keyPath('name');
+        pushReason(reasons, path, kind === 'span' ? 'OpenTelemetry span identity and timing field combination' : 'OpenTelemetry metric identity and aggregation field combination');
       }
     }
 
@@ -74,25 +77,28 @@ export class OpenTelemetryProfile implements AgentProfile {
       return createProjection(this.id, 'other', boundedSummary(record.value), undefined, keyPath());
     }
 
+    const insight = summarizeOpenTelemetryRecord(record.value);
+
     const kind = classifyRecord(record.value);
-    if (kind === 'resourceLogs' || kind === 'resourceSpans') {
-      return this.projectEnvelope(record.value, kind);
+    if (kind === 'resourceLogs' || kind === 'resourceSpans' || kind === 'resourceMetrics') {
+      return this.projectEnvelope(record.value, kind, insight);
     }
     if (kind === 'span') {
-      return this.projectSpan(record.value);
+      return this.projectSpan(record.value, insight);
     }
     if (kind === 'log') {
-      return this.projectLog(record.value);
+      return this.projectLog(record.value, insight);
     }
+    if (kind === 'metric') return this.projectMetric(record.value, insight);
     return createProjection(this.id, 'other', boundedSummary(record.value, 'Unknown OpenTelemetry record'), undefined, keyPath());
   }
 
-  private projectEnvelope(value: Record<string, unknown>, kind: 'resourceLogs' | 'resourceSpans'): AgentRowProjection {
+  private projectEnvelope(value: Record<string, unknown>, kind: 'resourceLogs' | 'resourceSpans' | 'resourceMetrics', insight: ReturnType<typeof summarizeOpenTelemetryRecord>): AgentRowProjection {
     const groups = Array.isArray(own(value, kind)) ? own(value, kind) as unknown[] : [];
-    const noun = kind === 'resourceLogs' ? 'logs' : 'spans';
+    const noun = kind === 'resourceLogs' ? 'logs' : kind === 'resourceSpans' ? 'spans' : 'metrics';
     const projection = createProjection(
       this.id,
-      kind === 'resourceLogs' ? 'log' : 'span',
+      kind === 'resourceLogs' ? 'log' : kind === 'resourceSpans' ? 'span' : 'metric',
       `OTLP ${noun} envelope: ${groups.length} resource group${groups.length === 1 ? '' : 's'}`,
       keyPath(kind),
       keyPath(kind),
@@ -107,10 +113,11 @@ export class OpenTelemetryProfile implements AgentProfile {
     if (service) setDerivedField(projection, 'service', service.value, service.path);
     const descriptor = resource ? describeResource(resource) : undefined;
     if (descriptor) setDerivedField(projection, 'resource', descriptor, resourcePath);
+    addInsightFields(projection, insight, keyPath(kind));
     return projection;
   }
 
-  private projectSpan(value: Record<string, unknown>): AgentRowProjection {
+  private projectSpan(value: Record<string, unknown>, insight: ReturnType<typeof summarizeOpenTelemetryRecord>): AgentRowProjection {
     const name = locateScalar(value, [['name'], ['Name']]);
     const status = locateStatus(value);
     const isError = statusIsError(status?.value);
@@ -129,10 +136,11 @@ export class OpenTelemetryProfile implements AgentProfile {
       setDerivedField(projection, 'spanStatus', status.value, status.path);
       if (isError) setStringField(projection, 'severity', 'error', status.path);
     }
+    addInsightFields(projection, insight, keyPath('status'));
     return projection;
   }
 
-  private projectLog(value: Record<string, unknown>): AgentRowProjection {
+  private projectLog(value: Record<string, unknown>, insight: ReturnType<typeof summarizeOpenTelemetryRecord>): AgentRowProjection {
     const body = locateBody(value);
     const eventName = locateScalar(value, [['eventName'], ['EventName']]);
     const severity = locateScalar(value, [['severityText'], ['SeverityText'], ['severityNumber'], ['SeverityNumber']]);
@@ -150,6 +158,20 @@ export class OpenTelemetryProfile implements AgentProfile {
     if (body) setDerivedField(projection, 'body', body.value, body.path);
     if (eventName) setDerivedField(projection, 'eventName', eventName.value, eventName.path);
     if (severity) setStringField(projection, 'severity', severity.value, severity.path);
+    addInsightFields(projection, insight, keyPath('severityText'));
+    return projection;
+  }
+
+  private projectMetric(value: Record<string, unknown>, insight: ReturnType<typeof summarizeOpenTelemetryRecord>): AgentRowProjection {
+    const name = locateScalar(value, [['name'], ['Name']]);
+    const unit = locateScalar(value, [['unit'], ['Unit']]);
+    const kind = metricKindLabel(value);
+    const projection = createProjection(this.id, 'metric', boundedSummary(name?.value ?? value, 'Metric'), name?.path, name?.path ?? keyPath());
+    setActor(projection, 'system', name?.path ?? keyPath());
+    if (name) setDerivedField(projection, 'name', name.value, name.path);
+    if (unit) setDerivedField(projection, 'unit', unit.value, unit.path);
+    setDerivedField(projection, 'metricKind', kind, keyPath(kind));
+    addInsightFields(projection, insight, keyPath(kind));
     return projection;
   }
 
@@ -192,11 +214,33 @@ export class OpenTelemetryProfile implements AgentProfile {
   }
 }
 
+function addInsightFields(
+  projection: AgentRowProjection,
+  insight: ReturnType<typeof summarizeOpenTelemetryRecord>,
+  path: FieldPath,
+): void {
+  if (!insight.recognized) return;
+  setDerivedField(projection, 'spanCount', insight.spanCount, path);
+  setDerivedField(projection, 'traceCount', insight.traceCount, path);
+  setDerivedField(projection, 'logCount', insight.logCount, path);
+  setDerivedField(projection, 'metricCount', insight.metricCount, path);
+  setDerivedField(projection, 'dataPointCount', insight.dataPointCount, path);
+  setDerivedField(projection, 'errorCount', insight.errorCount, path);
+  setDerivedField(projection, 'durationMs', insight.durationMs, path);
+  setDerivedField(projection, 'resourceGroupCount', insight.resourceGroupCount, path);
+  setDerivedField(projection, 'scopeCount', insight.scopeCount, path);
+  setDerivedField(projection, 'serviceCount', insight.services.length, path);
+  setDerivedField(projection, 'spanKinds', JSON.stringify(insight.spanKinds), path);
+  setDerivedField(projection, 'metricKinds', JSON.stringify(insight.metricKinds), path);
+}
+
 function classifyRecord(value: Record<string, unknown>): OtelRecordKind {
   if (hasEnvelopeEvidence(value, 'resourceLogs', 'scopeLogs', 'logRecords')) return 'resourceLogs';
   if (hasEnvelopeEvidence(value, 'resourceSpans', 'scopeSpans', 'spans')) return 'resourceSpans';
+  if (hasEnvelopeEvidence(value, 'resourceMetrics', 'scopeMetrics', 'metrics')) return 'resourceMetrics';
   if (isOtelSpanRecord(value)) return 'span';
   if (isOtelLogRecord(value)) return 'log';
+  if (isOtelMetricRecord(value)) return 'metric';
   return 'unknown';
 }
 
@@ -208,9 +252,9 @@ function classifyRecord(value: Record<string, unknown>): OtelRecordKind {
  */
 function hasEnvelopeEvidence(
   value: Record<string, unknown>,
-  envelopeKey: 'resourceLogs' | 'resourceSpans',
-  scopeKey: 'scopeLogs' | 'scopeSpans',
-  signalKey: 'logRecords' | 'spans',
+  envelopeKey: 'resourceLogs' | 'resourceSpans' | 'resourceMetrics',
+  scopeKey: 'scopeLogs' | 'scopeSpans' | 'scopeMetrics',
+  signalKey: 'logRecords' | 'spans' | 'metrics',
 ): boolean {
   const groups = own(value, envelopeKey);
   if (!Array.isArray(groups) || groups.length === 0) return false;
@@ -220,6 +264,18 @@ function hasEnvelopeEvidence(
     if (!Array.isArray(scopes) || scopes.length === 0) return false;
     return scopes.some((scope) => isObject(scope) && Array.isArray(own(scope, signalKey)) && (own(scope, signalKey) as unknown[]).length > 0);
   });
+}
+
+function isOtelMetricRecord(value: Record<string, unknown>): boolean {
+  const name = scalar(value, 'name') ?? scalar(value, 'Name');
+  return name !== undefined && metricKindLabel(value) !== 'unknown';
+}
+
+function metricKindLabel(value: Record<string, unknown>): string {
+  for (const key of ['gauge', 'sum', 'histogram', 'exponentialHistogram', 'summary']) {
+    if (isObject(own(value, key)) || isObject(own(value, key[0]!.toUpperCase() + key.slice(1)))) return key;
+  }
+  return 'unknown';
 }
 
 function isOtelSpanRecord(value: Record<string, unknown>): boolean {

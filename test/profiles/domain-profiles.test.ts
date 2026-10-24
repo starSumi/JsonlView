@@ -16,6 +16,38 @@ const samples = (values: readonly unknown[]): GenericRecordSample[] => values.ma
 const derived = (projection: AgentRowProjection): Record<string, unknown> => projection.derivedFields ?? {};
 
 describe('OpenTelemetry profile', () => {
+  it('summarizes OTLP resourceSpans without exposing nested payloads', () => {
+    const registry = new AgentProfileRegistry();
+    const row = registry.project('opentelemetry', { value: {
+      resourceSpans: [{
+        resource: { attributes: [{ key: 'service.name', value: { stringValue: 'codex-app-server' } }] },
+        scopeSpans: [{ spans: [
+          { traceId: 'trace-a', spanId: 'span-a', name: 'initialize', kind: 2, startTimeUnixNano: '1000000000', endTimeUnixNano: '1123000000', status: {} },
+          { traceId: 'trace-a', spanId: 'span-b', name: 'request', kind: 3, startTimeUnixNano: '2000000000', endTimeUnixNano: '2500000000', status: { code: 2 } },
+        ] }],
+      }],
+    } }, context);
+
+    expect(row).toMatchObject({ eventKind: 'span' });
+    expect(derived(row)).toMatchObject({
+      spanCount: 2, traceCount: 1, errorCount: 1, durationMs: 623, serviceCount: 1,
+    });
+    expect(derived(row)).not.toHaveProperty('attributes');
+    expect(derived(row)).not.toHaveProperty('body');
+  });
+
+  it('recognizes bounded resourceMetrics and exposes metric/data-point counts', () => {
+    const registry = new AgentProfileRegistry();
+    const values = [{ resourceMetrics: [{ resource: {}, scopeMetrics: [{ metrics: [
+      { name: 'request.duration', unit: 'ms', gauge: { dataPoints: [{ asDouble: 1 }, { asDouble: 2 }] } },
+      { name: 'requests.total', sum: { dataPoints: [{ asInt: '3' }] } },
+    ] }] }] }];
+    expect(registry.detect(samples(values)).selectedProfileId).toBe('opentelemetry');
+    const row = registry.project('opentelemetry', { value: values[0] }, context);
+    expect(row.eventKind).toBe('metric');
+    expect(derived(row)).toMatchObject({ metricCount: 2, dataPointCount: 3 });
+  });
+
   it('detects individual OTel logs and spans from protocol-specific field combinations', () => {
     const decision = new AgentProfileRegistry().detect(samples(otelFixture));
 

@@ -393,7 +393,7 @@ describe('IntegratedJsonlSession', () => {
       profileId: 'opentelemetry',
       records: otelFixture,
       row: 0,
-      expectedColumns: ['eventKind', 'timestamp', 'severity', 'summary', 'service'],
+      expectedColumns: ['eventKind', 'timestamp', 'severity', 'summary', 'service', 'spanCount', 'traceCount', 'errorCount', 'durationMs', 'metricCount', 'dataPointCount'],
       columnId: 'service',
       value: 'checkout-service',
     },

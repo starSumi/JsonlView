@@ -1,5 +1,7 @@
 import type { DatasetRecordSummary } from './dataset-analysis';
 import type { BfclV3RecordSummary } from './bfcl-v3-insights';
+import type { OpenTelemetryRecordSummary } from './otel-insights';
+export type { OpenTelemetryRecordSummary } from './otel-insights';
 import type { NavigatorBridgeResultV1 } from './protocol/navigator-bridge';
 import type { SourceRegistrationFactsV1 } from './protocol/source-registration';
 
@@ -88,6 +90,7 @@ export type AgentEventKind =
   | 'message'
   | 'log'
   | 'span'
+  | 'metric'
   | 'task'
   | 'action'
   | 'observation'
@@ -150,7 +153,7 @@ export interface RowProjection {
   /** Generic record observations; never attached to provider session profiles. */
   dataset?: DatasetRecordSummary;
   /** Optional profile-owned dataset observations; source bodies never cross IPC. */
-  datasetInsights?: { bfclV3?: BfclV3RecordSummary };
+  datasetInsights?: { bfclV3?: BfclV3RecordSummary; opentelemetry?: OpenTelemetryRecordSummary };
   profile?: AgentRowProjection;
   problems?: ProblemRef[];
 }
