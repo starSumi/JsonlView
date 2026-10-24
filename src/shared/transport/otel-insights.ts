@@ -22,8 +22,9 @@ export function isOpenTelemetryRecordSummary(value: unknown): value is OpenTelem
     && SIGNALS.includes(value.signal as OpenTelemetrySignal) && CONTAINERS.includes(value.containerKind as typeof CONTAINERS[number])
     && count(value.resourceGroupCount) && value.resourceGroupCount <= OPEN_TELEMETRY_LIMITS.resourceGroups
     && count(value.scopeCount) && value.scopeCount <= OPEN_TELEMETRY_LIMITS.scopes
-    && count(value.spanCount) && count(value.traceCount) && value.traceCount <= OPEN_TELEMETRY_LIMITS.traces
-    && count(value.logCount) && count(value.metricCount) && count(value.dataPointCount) && count(value.errorCount)
+    && boundedSignalCount(value.spanCount) && count(value.traceCount) && value.traceCount <= OPEN_TELEMETRY_LIMITS.traces
+    && boundedSignalCount(value.logCount) && boundedSignalCount(value.metricCount)
+    && boundedSignalCount(value.dataPointCount) && boundedSignalCount(value.errorCount)
     && count(value.durationMs) && spanKinds(value.spanKinds) && metricKinds(value.metricKinds)
     && Array.isArray(value.services) && value.services.length <= OPEN_TELEMETRY_LIMITS.services
     && value.services.every((item) => typeof item === 'string' && item.length <= OPEN_TELEMETRY_LIMITS.serviceNameLength)
@@ -48,6 +49,10 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
 
 function count(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function boundedSignalCount(value: unknown): value is number {
+  return count(value) && value <= OPEN_TELEMETRY_LIMITS.signalItems;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
