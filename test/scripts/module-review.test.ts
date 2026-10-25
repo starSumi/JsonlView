@@ -1,6 +1,10 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { parseArgs, parseTypeScriptMetrics } from '../../scripts/module-review.mjs';
+import { buildReport, parseArgs, parseTypeScriptMetrics } from '../../scripts/module-review.mjs';
+
+const productRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 describe('module review report', () => {
   it('keeps base/head and worktree scope explicit', () => {
@@ -32,5 +36,27 @@ describe('module review report', () => {
   it('reports parse failures instead of silently undercounting a source file', () => {
     const metrics = parseTypeScriptMetrics('fixture.ts', 'export function {');
     expect(metrics.parseError).toEqual(expect.any(String));
+  });
+
+  it('records Babel parser diagnostics produced during error recovery', () => {
+    const metrics = parseTypeScriptMetrics('fixture.ts', 'class Duplicate { #value; #value; }');
+    expect(metrics.parseError).toContain('Duplicate private name');
+    expect(metrics.parseDiagnostics).toEqual(expect.arrayContaining([expect.stringContaining('Duplicate private name')]));
+  });
+
+  it('anchors reports to the supplied product repository root', async () => {
+    await expect(buildReport({ directory: resolve(productRoot, 'src'), includeWorktree: false })).rejects.toThrow(/must be the product repository root/u);
+    const report = await buildReport({ directory: productRoot, includeWorktree: true });
+    expect(report.resolvedHead).toMatch(/^[0-9a-f]{40}$/u);
+    expect(report.entries.every((entry) => entry.path.startsWith('src/'))).toBe(true);
+    expect(report.entries.some((entry) => entry.path.startsWith('../'))).toBe(false);
+  });
+
+  it('rejects an invalid head revision instead of silently producing a report', async () => {
+    await expect(buildReport({ directory: productRoot, head: 'refs/heads/does-not-exist', includeWorktree: false })).rejects.toThrow(/--head revision does not resolve.*does-not-exist/u);
+  });
+
+  it('rejects a no-worktree report whose requested head is not the clean checkout', async () => {
+    await expect(buildReport({ directory: productRoot, head: 'HEAD^', includeWorktree: false })).rejects.toThrow(/--no-worktree requires checkout HEAD/u);
   });
 });

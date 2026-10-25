@@ -1,11 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from '@babel/parser';
 
-const root = process.cwd();
+const invocationDirectory = process.cwd();
 const sourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.css']);
 
 export function parseArgs(argv) {
@@ -45,20 +45,60 @@ async function collectSourceFiles(directory, extensions, files = []) {
   return files;
 }
 
-function git(args) {
+function git(repoRoot, args) {
   try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    return '';
+    return execFileSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    const stderr = error?.stderr?.toString().trim();
+    const detail = stderr || (error instanceof Error ? error.message : String(error));
+    throw new Error(`git ${args.join(' ')} failed in ${repoRoot}: ${detail}`, { cause: error });
   }
 }
 
-function revisionExists(revision) {
-  return Boolean(git(['rev-parse', '--verify', revision]).trim());
+function resolveRepoRoot(directory = invocationDirectory) {
+  const candidate = resolve(directory);
+  if (!existsSync(resolve(candidate, 'config/module-review.json')) || !existsSync(resolve(candidate, 'src'))) {
+    throw new Error(`module review directory must be the product repository root: ${candidate}`);
+  }
+  let repoRoot;
+  try {
+    repoRoot = resolve(git(candidate, ['rev-parse', '--show-toplevel']).trim());
+  } catch (error) {
+    throw new Error(`module review directory is not inside a Git repository: ${candidate}`, { cause: error });
+  }
+  if (repoRoot !== candidate || !statSync(resolve(candidate, 'src')).isDirectory()) {
+    throw new Error(`module review directory must be the product repository root: ${candidate}`);
+  }
+  return repoRoot;
 }
 
-function normalizeRelative(path) {
-  return relative(root, path).replaceAll('\\', '/');
+function resolveRevision(repoRoot, revision, label) {
+  if (typeof revision !== 'string' || revision.length === 0) {
+    throw new Error(`${label} requires a non-empty revision.`);
+  }
+  let resolved;
+  try {
+    resolved = git(repoRoot, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`]).trim();
+  } catch (error) {
+    throw new Error(`${label} revision does not resolve to a commit: ${revision}`, { cause: error });
+  }
+  if (!resolved) throw new Error(`${label} does not resolve to a commit: ${revision}`);
+  return resolved;
+}
+
+function assertCleanSnapshot(repoRoot, resolvedHead) {
+  const checkoutHead = resolveRevision(repoRoot, 'HEAD', 'checkout HEAD');
+  if (checkoutHead !== resolvedHead) {
+    throw new Error(`--no-worktree requires checkout HEAD ${checkoutHead} to match resolved head ${resolvedHead}`);
+  }
+  const status = git(repoRoot, ['status', '--porcelain', '--untracked-files=all']).trim();
+  if (status) {
+    throw new Error('--no-worktree requires a clean checkout; working-tree changes are present.');
+  }
+}
+
+function normalizeRelative(repoRoot, path) {
+  return relative(repoRoot, path).replaceAll('\\', '/');
 }
 
 function sourcePathCandidates(path) {
@@ -74,7 +114,7 @@ function resolveRelativeImport(importer, specifier, sourcePaths) {
 }
 
 export function parseTypeScriptMetrics(path, sourceText) {
-  if (extname(path) === '.css') return { functionCount: 0, maxFunctionLines: 0, branchCount: 0, directFanOut: 0, imports: [] };
+  if (extname(path) === '.css') return { functionCount: 0, maxFunctionLines: 0, branchCount: 0, directFanOut: 0, imports: [], parseDiagnostics: [] };
   const plugins = ['typescript', 'importAttributes', 'topLevelAwait'];
   if (path.endsWith('.tsx') || path.endsWith('.jsx')) plugins.push('jsx');
   const lineStarts = [0];
@@ -123,15 +163,22 @@ export function parseTypeScriptMetrics(path, sourceText) {
       }
     };
     visit(source);
+    const parseDiagnostics = (source.errors ?? []).map((diagnostic) => {
+      const location = diagnostic.loc ? `${diagnostic.loc.line}:${diagnostic.loc.column} ` : '';
+      return `${location}${diagnostic.message}`;
+    });
     return {
       functionCount: functions.length,
       maxFunctionLines: functions.reduce((maximum, item) => Math.max(maximum, item.end - item.start + 1), 0),
       branchCount,
       directFanOut: new Set(imports).size,
       imports,
+      parseDiagnostics,
+      ...(parseDiagnostics.length > 0 ? { parseError: parseDiagnostics.join('; ') } : {}),
     };
   } catch (error) {
-    return { functionCount: 0, maxFunctionLines: 0, branchCount: 0, directFanOut: 0, imports: [], parseError: error instanceof Error ? error.message : String(error) };
+    const parseError = error instanceof Error ? error.message : String(error);
+    return { functionCount: 0, maxFunctionLines: 0, branchCount: 0, directFanOut: 0, imports: [], parseDiagnostics: [parseError], parseError };
   }
 }
 
@@ -149,20 +196,20 @@ function parseNumstat(text) {
   return result;
 }
 
-function changedLineCounts(base, head, includeWorktree) {
+function changedLineCounts(repoRoot, base, head, includeWorktree) {
   const counts = new Map();
-  if (base && revisionExists(base) && revisionExists(head)) {
-    const committed = parseNumstat(git(['diff', '--numstat', `${base}...${head}`, '--', 'src']));
+  if (base && head) {
+    const committed = parseNumstat(git(repoRoot, ['diff', '--numstat', `${base}...${head}`, '--', 'src']));
     for (const [path, count] of committed) counts.set(path, (counts.get(path) ?? 0) + count);
   }
   if (includeWorktree) {
-    const working = parseNumstat(git(['diff', '--numstat', '--', 'src']));
-    const staged = parseNumstat(git(['diff', '--cached', '--numstat', '--', 'src']));
+    const working = parseNumstat(git(repoRoot, ['diff', '--numstat', '--', 'src']));
+    const staged = parseNumstat(git(repoRoot, ['diff', '--cached', '--numstat', '--', 'src']));
     for (const changes of [working, staged]) {
       for (const [path, count] of changes) counts.set(path, (counts.get(path) ?? 0) + count);
     }
-    for (const path of git(['ls-files', '--others', '--exclude-standard', '--', 'src']).split(/\r?\n/u).filter(Boolean)) {
-      const absolutePath = resolve(root, path);
+    for (const path of git(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', 'src']).split(/\r?\n/u).filter(Boolean)) {
+      const absolutePath = resolve(repoRoot, path);
       try {
         const text = readFileSync(absolutePath, 'utf8');
         counts.set(path.replaceAll('\\', '/'), text.split(/\r?\n/u).filter((line, index, lines) => index < lines.length - 1 || line.length > 0).length);
@@ -174,10 +221,10 @@ function changedLineCounts(base, head, includeWorktree) {
   return counts;
 }
 
-function recentCommitCounts(paths) {
+function recentCommitCounts(repoRoot, paths) {
   const counts = new Map([...paths].map((path) => [path, 0]));
   let currentFiles = new Set();
-  const log = git(['log', '--format=commit:%H', '--name-only', '--since=180 days ago', '--', 'src']);
+  const log = git(repoRoot, ['log', '--format=commit:%H', '--name-only', '--since=180 days ago', '--', 'src']);
   for (const line of log.split(/\r?\n/u)) {
     if (line.startsWith('commit:')) {
       for (const path of currentFiles) {
@@ -249,21 +296,26 @@ function priorityScore(metrics, config) {
   return Math.round(100 * (weights.size * size + weights.churn * churn + weights.coupling * coupling + weights.complexity * complexity + weights.boundary * boundary));
 }
 
-export async function buildReport({ directory = root, base, head = 'HEAD', includeWorktree = true, all = false } = {}) {
-  const config = JSON.parse(await readFile(resolve(directory, 'config/module-review.json'), 'utf8'));
-  const files = await collectSourceFiles(resolve(directory, config.roots[0]), new Set(config.extensions));
+export async function buildReport({ directory = invocationDirectory, base, head = 'HEAD', includeWorktree = true, all = false } = {}) {
+  const repoRoot = resolveRepoRoot(directory);
+  const config = JSON.parse(await readFile(resolve(repoRoot, 'config/module-review.json'), 'utf8'));
+  const sourceRoot = resolve(repoRoot, config.roots[0]);
+  const files = await collectSourceFiles(sourceRoot, new Set(config.extensions));
   const sourcePaths = new Set(files.map((path) => normalize(path)));
-  const changed = changedLineCounts(base, head, includeWorktree);
+  const resolvedHead = resolveRevision(repoRoot, head, '--head');
+  const resolvedBase = base === undefined ? null : resolveRevision(repoRoot, base, '--base');
+  if (!includeWorktree) assertCleanSnapshot(repoRoot, resolvedHead);
+  const changed = changedLineCounts(repoRoot, resolvedBase, resolvedHead, includeWorktree);
   const importsByFile = new Map();
   const metricsByPath = new Map();
-  const recentCommits = recentCommitCounts(files.map(normalizeRelative));
+  const recentCommits = recentCommitCounts(repoRoot, files.map((path) => normalizeRelative(repoRoot, path)));
 
   for (const path of files) {
     const sourceText = await readFile(path, 'utf8');
     const parsed = parseTypeScriptMetrics(path, sourceText);
     importsByFile.set(path, parsed.imports);
     metricsByPath.set(path, {
-      path: normalizeRelative(path),
+      path: normalizeRelative(repoRoot, path),
       lines: sourceText.split(/\r?\n/u).length - (sourceText.endsWith('\n') ? 1 : 0),
       bytes: Buffer.byteLength(sourceText),
       functionCount: parsed.functionCount,
@@ -271,9 +323,10 @@ export async function buildReport({ directory = root, base, head = 'HEAD', inclu
       branchCount: parsed.branchCount,
       directFanOut: parsed.directFanOut,
       directFanIn: 0,
-      changedLines: changed.get(normalizeRelative(path)) ?? 0,
-      recentCommits: recentCommits.get(normalizeRelative(path)) ?? 0,
+      changedLines: changed.get(normalizeRelative(repoRoot, path)) ?? 0,
+      recentCommits: recentCommits.get(normalizeRelative(repoRoot, path)) ?? 0,
       parseError: parsed.parseError,
+      parseDiagnostics: parsed.parseDiagnostics ?? [],
     });
   }
 
@@ -312,8 +365,14 @@ export async function buildReport({ directory = root, base, head = 'HEAD', inclu
     schemaVersion: 1,
     base: base ?? null,
     head,
+    resolvedBase,
+    resolvedHead,
+    revision: {
+      base: { requested: base ?? null, resolved: resolvedBase },
+      head: { requested: head, resolved: resolvedHead },
+    },
     includeWorktree,
-    dependencyGraph: { scope: 'relative-imports-only' },
+    dependencyGraph: { scope: 'relative-imports-only', fanOutScope: 'all-import-specifiers' },
     scope: all ? 'all-source' : 'changed-or-review-required',
     thresholds: config.reviewBands,
     entries,

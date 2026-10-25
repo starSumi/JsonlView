@@ -1130,8 +1130,8 @@
       "revisit": "when module-review signals, ownership boundaries, or CI enforcement changes",
       "rollback": "remove the report command and restore the previous review baseline without reverting product behavior",
       "summary": "ADR-057: Module Review Budget And Hotspot Governance",
-      "bytes": 5022,
-      "sha256": "165deeecd011963e37a13b64bf1851ca1fb3aade441bc08f402a8c8d672eaa5a"
+      "bytes": 5378,
+      "sha256": "0af100bfd700606a85345d5a6a0f198581b6811d6e8174cfb7073915caeb69ed"
     },
     {
       "id": "acceleration-roadmap",

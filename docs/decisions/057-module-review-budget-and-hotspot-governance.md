@@ -57,16 +57,21 @@ not prescribe the extraction seam.
 
 `scripts/module-review.mjs` is the first, non-mutating implementation. It
 parses TypeScript/JS with the repository parser, records file bytes and lines,
-function and branch signals, relative import fan-in/fan-out, recent churn, and
-changed lines from committed, staged, and working-tree diffs. It emits a
-human-readable ranking or a versioned JSON report.
+function and branch signals, relative import fan-in, all-import-specifier
+fan-out, recent churn, and changed lines from committed, staged, and
+working-tree diffs. It emits a human-readable ranking or a versioned JSON
+report. The JSON report declares these dependency scopes explicitly.
 
 The report uses two modes:
 
 1. `--all` gives a periodic whole-source inventory for architecture review.
 2. `--base <revision> --head <revision> --no-worktree` gives a reproducible
-   CI/PR comparison. Local runs include staged, unstaged, and untracked source
-   by default so a developer cannot accidentally omit a new module from review.
+   CI/PR comparison. Revision names are resolved to commit IDs and invalid
+   references fail closed. The no-worktree mode also requires the checkout
+   HEAD to match the requested head and the checkout to be clean; otherwise
+   the report would describe one revision while reading another. Local runs
+   include staged, unstaged, and untracked source by default so a developer
+   cannot accidentally omit a new module from review.
 
 Historical debt is visible but is not automatically rejected. Future
 enforcement must be incremental: new files and changed files may not increase
