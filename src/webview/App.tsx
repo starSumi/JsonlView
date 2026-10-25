@@ -19,6 +19,7 @@ import type {
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH } from '@shared/types';
 import { createProtocolEnvelope } from '@shared/transport';
 import { DetailDrawer, type NavigatorBridgeState } from '@widgets/detail-drawer';
+import { copyText } from '@widgets/detail-drawer/copy-button';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
@@ -66,6 +67,7 @@ import { VsCodeMessageClient } from './protocol-client';
 import { RowQueryController, type RowsRequestMetadata, type RowsRequestOptions } from './row-query-controller';
 import { snapshotIdentityChanged } from './snapshot-identity';
 import { createStartupStageReceipt, startStartupHandshake, type StartupStage } from './startup-handshake';
+import { formatStartupDiagnosticContext, formatStartupDiagnosticPrompt } from './startup-diagnostic';
 import { profileOptionList } from './profile-options';
 import { TemporaryPreviewActions, WorkspaceHeader } from '@widgets/workspace-header';
 import { useManualTabs } from './shared/hooks/use-manual-tabs';
@@ -182,6 +184,7 @@ export function App(): React.JSX.Element {
   const [navigatorBridgeState, setNavigatorBridgeState] = React.useState<NavigatorBridgeState>('disabled');
   const [navigatorVisible, setNavigatorVisible] = React.useState(false);
   const [rowsProjectionFailed, setRowsProjectionFailed] = React.useState(false);
+  const [diagnosticActionStatus, setDiagnosticActionStatus] = React.useState<string>();
   const stateRef = useRef(state);
   const gridFocusBridgeRef = useRef<GridFocusBridge | undefined>(undefined);
   const studioFocusRef = useRef<GridCell | undefined>(undefined);
@@ -245,23 +248,45 @@ export function App(): React.JSX.Element {
     }));
   }, []);
 
-  const diagnoseError = useCallback((error: NonNullable<WorkspaceState['error']>, action: 'explain' | 'copy'): void => {
+  const diagnoseError = useCallback(async (error: NonNullable<WorkspaceState['error']>, action: 'explain' | 'copy'): Promise<void> => {
+    const localText = action === 'explain'
+      ? formatStartupDiagnosticPrompt(error)
+      : formatStartupDiagnosticContext(error);
+    let copied = false;
+    try {
+      copied = await copyText(localText);
+    } catch {
+      copied = false;
+    }
+    setDiagnosticActionStatus(action === 'explain'
+      ? copied
+        ? 'Diagnostic prompt copied. If Chat does not open, paste it manually.'
+        : 'Chat handoff attempted. Clipboard unavailable; open diagnostic context and copy it manually.'
+      : copied
+        ? 'Diagnostic context copied.'
+        : 'Clipboard unavailable; open diagnostic context and copy it manually.');
     const session = clientRef.current.session;
     const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `diagnostic-${Date.now().toString(36)}`;
-    vscode.postMessage(createProtocolEnvelope({
-      type: 'DIAGNOSE_ERROR',
-      documentId: session.documentId,
-      generation: session.generation,
-      ...(session.epoch === undefined ? {} : { epoch: session.epoch }),
-      requestId,
-      payload: {
-        code: error.code.slice(0, MAX_DIAGNOSTIC_CODE_LENGTH),
-        message: error.message.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH),
-        action,
-      },
-    }));
+    try {
+      vscode.postMessage(createProtocolEnvelope({
+        type: 'DIAGNOSE_ERROR',
+        documentId: session.documentId,
+        generation: session.generation,
+        ...(session.epoch === undefined ? {} : { epoch: session.epoch }),
+        requestId,
+        payload: {
+          code: error.code.slice(0, MAX_DIAGNOSTIC_CODE_LENGTH),
+          message: error.message.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH),
+          action,
+        },
+      }));
+    } catch {
+      setDiagnosticActionStatus((current) => current === undefined
+        ? 'The host is unavailable. Open diagnostic context and copy it manually.'
+        : current);
+    }
   }, []);
 
   useEffect(() => {
@@ -1172,8 +1197,13 @@ export function App(): React.JSX.Element {
           <CircleAlert size={15} aria-hidden />
           <span><strong>{state.error.code}</strong> {state.error.message}</span>
           <>
-            <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'explain')}>Explain with VS Code Chat</button>
-            <button type="button" className="error-action" onClick={() => diagnoseError(state.error!, 'copy')}>Copy context</button>
+            <button type="button" className="error-action" onClick={() => { void diagnoseError(state.error!, 'explain'); }}>Explain with VS Code Chat</button>
+            <button type="button" className="error-action" onClick={() => { void diagnoseError(state.error!, 'copy'); }}>Copy context</button>
+            <details className="diagnostic-context-fallback">
+              <summary>View diagnostic context</summary>
+              <pre>{formatStartupDiagnosticContext(state.error)}</pre>
+            </details>
+            {diagnosticActionStatus ? <span className="diagnostic-action-status" role="status" aria-live="polite">{diagnosticActionStatus}</span> : null}
             {state.error.recoverable && state.summary !== undefined ? (
               <button type="button" aria-label="Dismiss error" title="Dismiss error" onClick={() => dispatch({ type: 'DISMISS_ERROR' })}>
                 <X size={14} aria-hidden />

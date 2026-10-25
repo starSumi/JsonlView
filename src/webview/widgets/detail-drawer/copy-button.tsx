@@ -5,27 +5,39 @@ export async function copyText(text: string): Promise<boolean> {
   if (!text) return false;
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
+      // A denied or suspended Webview clipboard must not hold the action
+      // hostage forever. Fall through to the focused textarea path after a
+      // short bound so diagnostic actions remain usable during host stalls.
+      const nativeWrite = navigator.clipboard.writeText(text).then(
+        () => true,
+        () => false,
+      );
+      const timedOut = new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), 500);
+      });
+      if (await Promise.race([nativeWrite, timedOut])) return true;
     }
   } catch {
     // The Webview clipboard may be unavailable until it has focus.
   }
 
   if (typeof document === 'undefined') return false;
+  let textarea: HTMLTextAreaElement | undefined;
   try {
-    const textarea = document.createElement('textarea');
+    textarea = document.createElement('textarea');
     textarea.value = text;
     textarea.setAttribute('readonly', '');
+    textarea.setAttribute('aria-hidden', 'true');
     textarea.style.position = 'fixed';
     textarea.style.insetInlineStart = '-10000px';
     document.body.appendChild(textarea);
+    textarea.focus();
     textarea.select();
-    const copied = document.execCommand('copy');
-    textarea.remove();
-    return copied;
+    return document.execCommand('copy');
   } catch {
     return false;
+  } finally {
+    textarea?.remove();
   }
 }
 

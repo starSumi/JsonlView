@@ -253,6 +253,36 @@
   background: var(--vscode-button-hoverBackground);
 }
 
+.diagnostic-context-fallback {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.diagnostic-context-fallback summary {
+  cursor: pointer;
+  color: var(--vscode-textLink-foreground);
+}
+
+.diagnostic-context-fallback pre {
+  position: absolute;
+  z-index: 2;
+  max-width: min(640px, 80vw);
+  max-height: 240px;
+  margin: 4px 10px 0;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+}
+
+.diagnostic-action-status {
+  flex: 0 1 auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
 .workspace-tabs,
 .detail-tabs {
   display: flex;
