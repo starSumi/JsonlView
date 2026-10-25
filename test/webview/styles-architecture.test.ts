@@ -8,7 +8,7 @@ const sourceHashes: Record<(typeof modules)[number], string> = {
   tokens: 'cdc1959a81fa8bdf16476db56f1dd0a80e8ba559e4c7e3a4dcd05f6bd58e5356',
   base: '7e96df3d2c29c1f065eaa22a85f277b1e10dd1af0c63ba7d2780e18cc260bbcb',
   layout: '927fd862193e64b5e0dfae6ee7cfeb3568ac8fcf6897553672eafd7b40411add',
-  'workspace-header': 'affaeec7f0c4c6a4124765ef6589dff04a9e586c7ecd4cdef2577393ec79bd90',
+  'workspace-header': '7ff836c32a60a2b1c1ed754c4f11ccbd017fe10ab8d813b52134a9dac26cb940',
   'record-query': '23e9ee63919717d9454100cb38f86fce51ed0f831594b5e6ec0d2d075dc09a91',
   'query-studio': 'a49350fdaac63f933cd386e47347c4f602eb58c3f6a3436fb11f3da1ca4e57b5',
   views: 'ef06501d5393523a79e12cb2e42be9cc4e261b6c0e221cb11a4c9a100a9d7ade',
