@@ -1113,6 +1113,27 @@
       "sha256": "7ca9dd97f31df6e4adf76c2acf1870aeb1b360d4a55e66e9c30052e27043909f"
     },
     {
+      "id": "057-module-review-budget-and-hotspot-governance",
+      "path": "docs/decisions/057-module-review-budget-and-hotspot-governance.md",
+      "title": "Module Review Budget And Hotspot Governance",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "complexity",
+        "coupling",
+        "governance",
+        "refactoring"
+      ],
+      "evidence": [],
+      "revisit": "when module-review signals, ownership boundaries, or CI enforcement changes",
+      "rollback": "remove the report command and restore the previous review baseline without reverting product behavior",
+      "summary": "ADR-057: Module Review Budget And Hotspot Governance",
+      "bytes": 5022,
+      "sha256": "165deeecd011963e37a13b64bf1851ca1fb3aade441bc08f402a8c8d672eaa5a"
+    },
+    {
       "id": "acceleration-roadmap",
       "path": "docs/acceleration-roadmap.md",
       "title": "Acceleration roadmap",
@@ -1209,8 +1230,8 @@
       "revisit": "when the decision record topology changes",
       "rollback": "restore the previous decision index",
       "summary": "JsonlView Decisions",
-      "bytes": 7059,
-      "sha256": "c6e28238f2250d025205760c2581340bddb301306e7d8809c3dfb2e5117f21ce"
+      "bytes": 7169,
+      "sha256": "d5bd127501980f20175c0ef31c00cbf380c4eb9a72755d7167af6c2e36a44179"
     },
     {
       "id": "docs-index",

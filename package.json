@@ -568,6 +568,7 @@
     "generate:cargo-notices": "node scripts/generate-cargo-notices.mjs",
     "check:runtime-notices": "node scripts/check-runtime-notices.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",
+    "review:modules": "node scripts/module-review.mjs --all",
     "check:typescript-erasable": "tsc --noEmit -p tsconfig.erasable-syntax.json",
     "check:typescript-gates": "node scripts/check-typescript-gates.mjs",
     "check:typescript-tests": "tsc --noEmit -p tsconfig.tests.json",

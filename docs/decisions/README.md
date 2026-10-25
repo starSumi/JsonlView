@@ -91,6 +91,7 @@ Read these before changing a shared boundary:
 55. [ADR-054 bounded forward-page read window](054-bounded-forward-page-read-window.md)
 56. [ADR-055 development query observation tap](055-development-query-observation-tap.md)
 57. [ADR-056 modern language and compiler gates](056-modern-language-and-compiler-gates.md)
+58. [ADR-057 module review budget and hotspot governance](057-module-review-budget-and-hotspot-governance.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

@@ -16,6 +16,7 @@
     { "script": "check:agent-spec", "text": "pnpm check:agent-spec" },
     { "script": "check:docs-index", "text": "pnpm check:docs-index" },
     { "script": "check:contract", "text": "pnpm check:contract" },
+    { "script": "review:modules", "text": "pnpm review:modules" },
     { "script": "check:typescript-erasable", "text": "pnpm check:typescript-erasable" },
     { "script": "check:typescript-gates", "text": "pnpm check:typescript-gates" },
     { "script": "check:typescript-tests", "text": "pnpm check:typescript-tests" },

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "roots": ["src"],
+  "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".css"],
+  "reviewBands": {
+    "fileLines": {
+      "review": 500,
+      "high": 800,
+      "critical": 1200
+    },
+    "functionLines": 50,
+    "changedLines": 100,
+    "directFanIn": 8,
+    "directFanOut": 12,
+    "branchCount": 40,
+    "recentCommits": 8
+  },
+  "priorityWeights": {
+    "size": 0.3,
+    "churn": 0.25,
+    "coupling": 0.2,
+    "complexity": 0.2,
+    "boundary": 0.05
+  },
+  "boundarySensitivity": [
+    { "pattern": "^src/engine/", "weight": 1.0 },
+    { "pattern": "^src/extension/", "weight": 0.95 },
+    { "pattern": "^src/shared/", "weight": 0.95 },
+    { "pattern": "^src/profiles/", "weight": 0.9 },
+    { "pattern": "^src/webview/", "weight": 0.8 },
+    { "pattern": "^src/experimental/", "weight": 0.6 }
+  ],
+  "exemptions": []
+}
