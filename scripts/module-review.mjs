@@ -313,6 +313,7 @@ export async function buildReport({ directory = root, base, head = 'HEAD', inclu
     base: base ?? null,
     head,
     includeWorktree,
+    dependencyGraph: { scope: 'relative-imports-only' },
     scope: all ? 'all-source' : 'changed-or-review-required',
     thresholds: config.reviewBands,
     entries,
@@ -321,7 +322,7 @@ export async function buildReport({ directory = root, base, head = 'HEAD', inclu
 }
 
 function formatHuman(report) {
-  const lines = [`Module review (${report.scope}; base=${report.base ?? 'working-tree'}; head=${report.head}; worktree=${report.includeWorktree ? 'included' : 'excluded'})`];
+  const lines = [`Module review (${report.scope}; base=${report.base ?? 'working-tree'}; head=${report.head}; worktree=${report.includeWorktree ? 'included' : 'excluded'}; graph=${report.dependencyGraph.scope})`];
   if (report.entries.length === 0) return `${lines[0]}\nNo changed or review-priority source modules.`;
   for (const entry of report.entries) {
     const reasons = entry.reasons.length > 0 ? ` [${entry.reasons.join(', ')}]` : '';
