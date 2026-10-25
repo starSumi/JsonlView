@@ -1,9 +1,11 @@
 .query-studio-shell {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
   min-width: 0;
-  width: 100%;
+  width: auto;
   box-sizing: border-box;
-  padding: 4px 8px 0;
-  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+  padding: 0;
 }
 
 .query-studio-toggle {
@@ -20,11 +22,18 @@
 }
 
 .query-studio {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  left: 0;
   display: grid;
   gap: 10px;
   min-width: 0;
+  width: min(760px, calc(100vw - 16px));
+  max-height: min(70vh, 640px);
+  overflow: auto;
   box-sizing: border-box;
-  margin-top: 4px;
+  margin-top: 0;
   padding: 10px;
   border: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-background);
@@ -63,6 +72,7 @@
 }
 
 .query-studio-actions button,
+.query-studio-presets button,
 .query-studio-history button {
   display: inline-flex;
   align-items: center;
@@ -74,6 +84,17 @@
   color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
   background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
   font: inherit;
+}
+
+.query-studio-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  color: var(--vscode-descriptionForeground);
 }
 
 .query-studio-history {

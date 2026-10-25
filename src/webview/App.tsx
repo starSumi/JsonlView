@@ -1118,7 +1118,23 @@ export function App(): React.JSX.Element {
             })}
           </nav>
         }
-        secondary={tableQueryControls}
+        secondary={state.activeTab === 'table' ? (
+          <>
+            <TopQueryStudio
+              open={queryStudioOpen}
+              queryControls={studioQueryControlProps}
+              history={queryHistory}
+              pending={Boolean(state.pending.rows)}
+              disabled={!summary || !canReadSnapshot(state.invalidationReason)}
+              onToggle={() => queryStudioOpen ? closeQueryStudio() : openQueryStudio()}
+              onClose={closeQueryStudio}
+              onRun={runQueryStudio}
+              onCancel={cancelQueryStudio}
+              onHistorySelect={selectQueryHistory}
+            />
+            {tableQueryControls}
+          </>
+        ) : undefined}
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
@@ -1170,21 +1186,6 @@ export function App(): React.JSX.Element {
           <span>Follow</span>
         </label>
       </WorkspaceHeader>
-
-      {state.activeTab === 'table' ? (
-        <TopQueryStudio
-          open={queryStudioOpen}
-          queryControls={studioQueryControlProps}
-          history={queryHistory}
-          pending={Boolean(state.pending.rows)}
-          disabled={!summary || !canReadSnapshot(state.invalidationReason)}
-          onToggle={() => queryStudioOpen ? closeQueryStudio() : openQueryStudio()}
-          onClose={closeQueryStudio}
-          onRun={runQueryStudio}
-          onCancel={cancelQueryStudio}
-          onHistorySelect={selectQueryHistory}
-        />
-      ) : null}
 
       {state.invalidationReason !== undefined && state.invalidationReason !== 'append' ? (
         <div className="workspace-banner invalidated-banner" role="alert">

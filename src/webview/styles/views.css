@@ -21,7 +21,7 @@
   flex: 0 0 auto;
   gap: 12px;
   min-height: 34px;
-  overflow: hidden;
+  overflow: visible;
   padding: 0 8px 3px 8px;
   border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
 }
@@ -35,12 +35,15 @@
   display: flex;
   flex: 1 1 auto;
   justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .workspace-query-controls > .table-query-toolbar {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;

@@ -142,6 +142,13 @@ function props<Props,>(component: ComponentType<Props>): Props {
   return found;
 }
 
+function componentCount(node: ReactNode, component: React.ElementType): number {
+  if (Array.isArray(node)) return node.reduce((count, child) => count + componentCount(child, component), 0);
+  if (!React.isValidElement<{ children?: ReactNode; secondary?: ReactNode }>(node)) return 0;
+  const own = node.type === component ? 1 : 0;
+  return own + componentCount(node.props.children, component) + componentCount(node.props.secondary, component);
+}
+
 function elementByClassName(className: string): ReactElement | undefined {
   const find = (node: ReactNode): ReactElement | undefined => {
     if (Array.isArray(node)) {
@@ -246,6 +253,14 @@ const visibleValues = (): string[] => {
 };
 
 describe('App column presentation and projection boundary', () => {
+  it('keeps Query Studio in the existing secondary header row', () => {
+    boot();
+    const header = props(WorkspaceHeader);
+
+    expect(componentCount(header.secondary, TopQueryStudio)).toBe(1);
+    expect(componentCount(tree, TopQueryStudio)).toBe(1);
+  });
+
   it('registers the window message listener once across state commits', () => {
     const addListener = vi.spyOn(browser, 'addEventListener');
     commit();

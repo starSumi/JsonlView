@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { WorkspaceHeader, type WorkspaceHeaderProps } from '../../src/webview/workspace-header';
 
 const workspaceHeaderStyles = readFileSync(new URL('../../src/webview/styles/workspace-header.css', import.meta.url), 'utf8');
+const queryStudioStyles = readFileSync(new URL('../../src/webview/styles/query-studio.css', import.meta.url), 'utf8');
 const accessibilityStyles = readFileSync(new URL('../../src/webview/styles/accessibility.css', import.meta.url), 'utf8');
 const styles = ['tokens', 'base', 'layout', 'workspace-header', 'record-query', 'views', 'insights-transition', 'source-intake', 'accessibility']
   .map((module) => readFileSync(new URL('../../src/webview/styles/' + module + '.css', import.meta.url), 'utf8'))
@@ -141,6 +142,24 @@ describe('workspace header status', () => {
     expect(markup.indexOf('<div class="status-strip"')).toBeLessThan(markup.indexOf('<div class="workspace-query-controls"'));
     expect(markup).toContain('Search records');
     expect(markup).toContain('role="status" aria-live="polite"');
+  });
+
+  it('keeps Query Studio in the existing secondary rail and floats expanded controls', () => {
+    const markup = render({
+      secondary: React.createElement(React.Fragment, null,
+        React.createElement('div', { className: 'query-studio-shell' }, 'Query Studio'),
+        React.createElement('fieldset', { className: 'table-query-toolbar' }, 'Search records'),
+      ),
+    });
+    const secondaryIndex = markup.indexOf('class="workspace-header-secondary');
+    const railIndex = markup.indexOf('class="workspace-query-controls"');
+    const studioIndex = markup.indexOf('class="query-studio-shell"');
+
+    expect(markup.match(/workspace-header-secondary/g)).toHaveLength(1);
+    expect(secondaryIndex).toBeLessThan(railIndex);
+    expect(railIndex).toBeLessThan(studioIndex);
+    expect(queryStudioStyles).toContain('position: absolute;');
+    expect(queryStudioStyles).toContain('top: calc(100% + 4px);');
   });
 
   it('keeps file identity outside the header and labels observed problems', () => {

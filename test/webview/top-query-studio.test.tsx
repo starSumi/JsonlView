@@ -1,7 +1,12 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { TopQueryStudio, type TopQueryStudioProps } from '../../src/webview/features/record-query/TopQueryStudio';
+import {
+  applyQueryStudioPreset,
+  QUERY_STUDIO_PRESETS,
+  TopQueryStudio,
+  type TopQueryStudioProps,
+} from '../../src/webview/features/record-query/TopQueryStudio';
 
 function render(overrides: Partial<TopQueryStudioProps> = {}): string {
   const props: TopQueryStudioProps = {
@@ -38,5 +43,20 @@ describe('Top Query Studio projection', () => {
     expect(markup).toContain('Run query');
     expect(markup).toContain('Cancel');
     expect(markup).toContain('error');
+  });
+
+  it('preloads bounded query templates without adding an execution side effect', () => {
+    const onSearchChange = vi.fn();
+    const onSearchSubmit = vi.fn();
+    const preset = QUERY_STUDIO_PRESETS[0]!;
+
+    applyQueryStudioPreset({ onSearchChange }, preset);
+
+    expect(onSearchChange).toHaveBeenCalledWith(preset.query);
+    expect(onSearchSubmit).not.toHaveBeenCalled();
+
+    const markup = render({ open: true });
+    expect(markup).toContain(`data-query-studio-preset="${preset.id}"`);
+    expect(markup).toContain(preset.label);
   });
 });
