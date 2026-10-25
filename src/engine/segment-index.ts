@@ -1,57 +1,25 @@
 import type { FileHandle } from 'node:fs/promises';
-import type { ParseState, RecordRef } from '@shared/types';
+import type { RecordRef } from '@shared/types';
 import { JsonlEngineError } from './errors';
 import {
   MAX_NEWLINE_SCAN_BYTES,
-  type NewlineScanner,
-  type NewlineScannerDiagnostics,
 } from './newline-scanner';
 import { readFileHandle, type ReadWaitObserver } from './snapshot-fingerprint';
+import type {
+  InternalRecordRef,
+  OperationGuard,
+  SegmentIndexDiagnostics,
+  SegmentIndexOptions,
+  SegmentLocation,
+  SegmentMeta,
+} from './segment-index-types';
 
-export interface InternalRecordRef {
-  ordinal: bigint;
-  byteStart: bigint;
-  byteEndExclusive: bigint;
-  contentByteLength: bigint;
-  delimiterByteLength: 0 | 1 | 2;
-  parseState: ParseState;
-}
-
-interface SegmentMeta {
-  id: number;
-  firstOrdinal: bigint;
-  recordCount: number;
-  byteStart: bigint;
-  physicalEndExclusive: bigint;
-}
-
-export interface SegmentLocation {
-  segmentId: number;
-  localIndex: number;
-  segmentCapacity: number;
-}
-
-export interface SegmentIndexOptions {
-  readChunkBytes: number;
-  segmentTargetBytes: number;
-  segmentTargetRecords: number;
-  exactCacheSegments: number;
-  maxRecordBytes: number;
-  newlineScanner: NewlineScanner;
-  validateSnapshot: () => Promise<void>;
-}
-
-export interface SegmentIndexDiagnostics {
-  segmentCount: number;
-  exactCachedSegments: number;
-  pendingExactRecords: number;
-  indexedBytes: string;
-  indexedRecords: string;
-  complete: boolean;
-  newlineScanner: NewlineScannerDiagnostics;
-}
-
-type OperationGuard = () => void;
+export type {
+  InternalRecordRef,
+  SegmentIndexDiagnostics,
+  SegmentIndexOptions,
+  SegmentLocation,
+} from './segment-index-types';
 
 /**
  * Stores one compact summary per segment. Exact refs are reconstructed only for
