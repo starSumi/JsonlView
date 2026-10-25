@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as vscode from 'vscode';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -45,7 +45,7 @@ vi.mock('vscode', () => ({
   window: { showSaveDialog: host.dialog, showErrorMessage: host.error, showInformationMessage: host.info, createTreeView: () => ({ dispose() {} }) },
   commands: { executeCommand: host.open, registerCommand: (id: string, handler: (node: unknown) => unknown) => { host.commands.set(id, handler); return { dispose() {} }; } },
 }));
-import { SessionPreviews } from '../../src/experimental/session-navigator/session-previews';
+import { derivePreviewFilename, SessionPreviews } from '../../src/experimental/session-navigator/session-previews';
 import { RecentPreviewsTreeProvider } from '../../src/experimental/session-navigator/recent-previews';
 
 let previews: SessionPreviews;
@@ -90,6 +90,31 @@ it('cancels without losing the original and saves exact UTF-8 Unicode and CRLF b
   await previews.dispose();
   expect(await readFile(target.fsPath, 'utf8')).toBe(text);
   await expect(readFile(preview.sourceUri.fsPath)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('opens Save As with a bounded default filename outside the owned temporary directory', async () => {
+  const preview = (await previews.create('{}\n', 1, signal()))!;
+  expect(await previews.saveAs(preview.sourceUri)).toBe('cancelled');
+  const options = host.dialog.mock.calls[0]?.[0] as { defaultUri?: vscode.Uri } | undefined;
+  expect(options?.defaultUri?.fsPath).toBe(join(dirname(dirname(preview.sourceUri.fsPath)), basename(preview.sourceUri.fsPath)));
+  expect(options?.defaultUri?.fsPath).toMatch(/\.jsonl$/iu);
+  expect(options?.defaultUri?.fsPath).not.toBe(preview.sourceUri.fsPath);
+});
+
+it.each([
+  ['sample.ndjson', 'sample.ndjson'],
+  ['sample.txt', 'sample.jsonl'],
+  ['CON', 'jsonlview-preview-preview-1.jsonl'],
+  ['', 'jsonlview-preview-preview-1.jsonl'],
+] as const)('normalizes the Save As filename for %s', (name, expected) => {
+  expect(derivePreviewFilename(name === '' ? uri('') : uri(join(directory, name)), 'preview-1')).toBe(expected);
+});
+
+it('bounds a hostile source basename without dropping the JSONL extension', () => {
+  const longName = 'x'.repeat(240) + '.jsonl';
+  const filename = derivePreviewFilename(uri(join(directory, longName)), 'preview-1');
+  expect(filename).toHaveLength(120);
+  expect(filename).toMatch(/\.jsonl$/u);
 });
 
 it('refuses an existing destination and preserves the temporary preview', async () => {

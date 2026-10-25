@@ -7,6 +7,9 @@ import type { TemporaryPreviewStatus } from '@shared/types';
 
 export const MAX_SESSION_PREVIEWS = 20;
 const MAX_BYTES = 1_048_576;
+const MAX_DEFAULT_FILENAME_LENGTH = 120;
+const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/gu;
+const RESERVED_FILENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 interface FileIdentity { readonly dev: number; readonly ino: number; readonly size: number; readonly mtimeMs: number }
 export interface SessionPreview {
   readonly id: string;
@@ -22,6 +25,21 @@ export type PreviewSaveOutcome = 'cancelled' | 'failed' | 'saved' | 'saved-open-
 interface OwnedPreview { metadata: SessionPreview; identity: FileIdentity; saving?: Promise<PreviewSaveOutcome> }
 const sameFile = (a: FileIdentity, b: FileIdentity): boolean => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 const pathKey = (path: string): string => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+
+/** Derive a bounded, portable filename for a temporary preview Save As dialog. */
+export function derivePreviewFilename(sourceUri: vscode.Uri, previewId = ''): string {
+  const identity = previewId.replace(/[^a-z0-9_-]/giu, '').slice(0, 16);
+  const fallback = `jsonlview-preview${identity === '' ? '' : '-' + identity}.jsonl`;
+  const raw = basename(sourceUri.fsPath).trim();
+  if (raw === '') return fallback;
+  const sanitized = raw.replace(INVALID_FILENAME_CHARS, '-').replace(/[ .]+$/u, '').trim();
+  if (sanitized === '' || sanitized === '.' || sanitized === '..' || RESERVED_FILENAME.test(sanitized)) return fallback;
+  const extensionMatch = sanitized.match(/(\.jsonl|\.ndjson)$/iu);
+  const extension = extensionMatch?.[1] ?? '.jsonl';
+  const stem = (extensionMatch === null ? sanitized.replace(/\.[^.]*$/u, '') : sanitized.slice(0, -extension.length)).replace(/[ .]+$/u, '');
+  const boundedStem = stem.slice(0, Math.max(1, MAX_DEFAULT_FILENAME_LENGTH - extension.length)).replace(/[ .]+$/u, '');
+  return boundedStem === '' ? fallback : boundedStem + extension;
+}
 
 /** In-memory metadata and exact ownership for this extension-host session only. */
 export class SessionPreviews implements vscode.Disposable {
@@ -112,10 +130,17 @@ export class SessionPreviews implements vscode.Disposable {
     return operation;
   }
 
-  private async chooseDestination(): Promise<vscode.Uri | undefined> {
+  private async chooseDestination(item: OwnedPreview): Promise<vscode.Uri | undefined> {
     const signal = this.#lifetime.signal;
     if (signal.aborted) return undefined;
-    const dialog = Promise.resolve(vscode.window.showSaveDialog({ title: 'Save temporary preview as', saveLabel: 'Save As', filters: { 'JSONL / NDJSON': ['jsonl', 'ndjson'] } }));
+    const filename = derivePreviewFilename(item.metadata.sourceUri, item.metadata.id);
+    const directory = this.#directory === undefined ? tmpdir() : dirname(this.#directory);
+    const dialog = Promise.resolve(vscode.window.showSaveDialog({
+      title: 'Save temporary preview as',
+      saveLabel: 'Save As',
+      defaultUri: vscode.Uri.file(join(directory, filename)),
+      filters: { 'JSONL / NDJSON': ['jsonl', 'ndjson'] },
+    }));
     return new Promise((complete, reject) => {
       const aborted = (): void => complete(undefined);
       signal.addEventListener('abort', aborted, { once: true });
@@ -127,7 +152,7 @@ export class SessionPreviews implements vscode.Disposable {
   private async save(item: OwnedPreview, isCurrent: () => boolean): Promise<PreviewSaveOutcome> {
     let destination: vscode.Uri | undefined;
     try {
-      destination = await this.chooseDestination();
+      destination = await this.chooseDestination(item);
       if (destination === undefined || this.#lifetime.signal.aborted || !isCurrent()) return 'cancelled';
       if (destination.scheme !== 'file' || destination.authority !== '' || destination.query !== '' || destination.fragment !== '' || !isAbsolute(destination.fsPath) || /^[\\/]{2}/u.test(destination.fsPath)) throw new Error('invalid target');
       const parent = await realpath(dirname(destination.fsPath));
