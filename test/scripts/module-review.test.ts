@@ -17,6 +17,16 @@ describe('module review report', () => {
     });
   });
 
+  it('accepts package-manager argument separators between script options', () => {
+    expect(parseArgs(['--all', '--', '--json'])).toEqual({
+      all: true,
+      json: true,
+      base: undefined,
+      head: 'HEAD',
+      includeWorktree: true,
+    });
+  });
+
   it('extracts imports, functions, and branch signals through the parser', () => {
     const metrics = parseTypeScriptMetrics('fixture.ts', [
       "import value from './value.js';",

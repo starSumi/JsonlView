@@ -9,8 +9,7 @@ const invocationDirectory = process.cwd();
 const sourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.css']);
 
 export function parseArgs(argv) {
-  const args = [...argv];
-  if (args[0] === '--') args.shift();
+  const args = argv.filter((argument) => argument !== '--');
   const result = { all: false, json: false, base: undefined, head: 'HEAD', includeWorktree: true };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
