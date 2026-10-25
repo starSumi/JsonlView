@@ -4,6 +4,7 @@ import { buildClaudeEventSections, type ClaudeEventBuilderContext } from './clau
 import { buildGenericAgentEventSections, type GenericEventBuilderContext } from './generic-event-builder';
 import { buildKimiEventSections, type KimiEventBuilderContext } from './kimi-event-builder';
 import { buildPiEventSections, type PiEventBuilderContext } from './pi-event-builder';
+import { buildOpenTelemetryEventSections } from './otel-event-builder';
 
 export type PresentationEventObject = Record<string, unknown>;
 
@@ -48,6 +49,10 @@ const PRESENTATION_STRATEGIES = new Map<string, PresentationStrategy>([
       envelopeType,
       context.generic,
     ),
+  ],
+  [
+    'opentelemetry',
+    ({ envelope, payload, profile }) => buildOpenTelemetryEventSections(envelope, payload, profile),
   ],
 ]);
 

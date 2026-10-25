@@ -88,10 +88,20 @@ const ALLOWED_KEYS = new Set([
 ]);
 const BLOCKED_KEY = /(body|content|prompt|response|path|uri|workspace|token|secret|header|user|account|credential)/iu;
 const QUERY_KEYS = new Set(['stage', 'request_seq', 'outcome', 'delivery', 'abort_observed',
-  'duration_ms', 'rows', 'stale_reason', 'error_name']);
+  'duration_ms', 'rows', 'stale_reason', 'error_name', 'queue_wait_ms', 'engine_exec_ms',
+  'queue_blocked_by', 'index_work_ms', 'read_wait_ms', 'parse_ms', 'projection_ms', 'snapshot_check_ms']);
 const QUERY_OUTCOMES = new Set(['completed', 'stale', 'cancelled', 'failed']);
 const QUERY_DELIVERIES = new Set(['accepted', 'rejected', 'skipped', 'failed']);
 const QUERY_STALE_REASONS = new Set(['document', 'generation', 'epoch']);
+const QUERY_TIMING_NUMERIC_KEYS = [
+  'queue_wait_ms', 'engine_exec_ms', 'index_work_ms', 'read_wait_ms',
+  'parse_ms', 'projection_ms', 'snapshot_check_ms',
+] as const;
+const QUERY_TIMING_KEYS = [...QUERY_TIMING_NUMERIC_KEYS, 'queue_blocked_by'] as const;
+const QUERY_QUEUE_BLOCKERS = new Set([
+  'none', 'index_more', 'finish_indexing', 'get_rows', 'inspect_rows', 'get_problems',
+  'get_detail', 'get_schema', 'classify_refresh',
+]);
 const EVENT_NAMES = new Set<ObservabilityEventName>([
   'jsonlview.index.completed',
   'jsonlview.query.completed',
@@ -186,6 +196,13 @@ function nonnegativeSafeInteger(value: unknown): value is number {
 function validQueryAttributes(name: ObservabilityEventName, value: Readonly<Record<string, unknown>>): boolean {
   if (value.stage !== 'get_rows' || !nonnegativeSafeInteger(value.request_seq) || value.request_seq === 0) return false;
   if (name === 'jsonlview.query.started') return Object.keys(value).length === 2;
+  const timingKeysPresent = QUERY_TIMING_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(value, key));
+  if (timingKeysPresent.length !== 0) {
+    if (timingKeysPresent.length !== QUERY_TIMING_KEYS.length
+      || !QUERY_TIMING_NUMERIC_KEYS.every((key) => nonnegativeSafeInteger(value[key]))
+      || typeof value.queue_blocked_by !== 'string'
+      || !QUERY_QUEUE_BLOCKERS.has(value.queue_blocked_by)) return false;
+  }
   if (typeof value.outcome !== 'string' || !QUERY_OUTCOMES.has(value.outcome)
     || typeof value.delivery !== 'string' || !QUERY_DELIVERIES.has(value.delivery)
     || typeof value.abort_observed !== 'boolean' || !nonnegativeSafeInteger(value.duration_ms)) return false;

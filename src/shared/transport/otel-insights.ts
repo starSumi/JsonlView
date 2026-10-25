@@ -16,7 +16,7 @@ const SPAN_KINDS: readonly OpenTelemetrySpanKind[] = ['unspecified', 'internal',
 const METRIC_KINDS: readonly OpenTelemetryMetricKind[] = ['gauge', 'sum', 'histogram', 'exponentialHistogram', 'summary', 'unknown'];
 
 export function isOpenTelemetryRecordSummary(value: unknown): value is OpenTelemetryRecordSummary {
-  if (!object(value) || !exact(value, ['version', 'adapterId', 'adapterVersion', 'recognized', 'valid', 'signal', 'containerKind', 'resourceGroupCount', 'scopeCount', 'spanCount', 'traceCount', 'logCount', 'metricCount', 'dataPointCount', 'errorCount', 'durationMs', 'spanKinds', 'metricKinds', 'services', 'truncated'])) return false;
+  if (!object(value) || !exact(value, ['version', 'adapterId', 'adapterVersion', 'recognized', 'valid', 'signal', 'containerKind', 'resourceGroupCount', 'scopeCount', 'spanCount', 'traceCount', 'logCount', 'metricCount', 'dataPointCount', 'errorCount', 'durationMs', 'spanKinds', 'metricKinds', 'services', 'operations', 'truncated'])) return false;
   return value.version === 1 && value.adapterId === OPEN_TELEMETRY_ADAPTER_ID && value.adapterVersion === OPEN_TELEMETRY_ADAPTER_VERSION
     && typeof value.recognized === 'boolean' && typeof value.valid === 'boolean'
     && SIGNALS.includes(value.signal as OpenTelemetrySignal) && CONTAINERS.includes(value.containerKind as typeof CONTAINERS[number])
@@ -28,6 +28,8 @@ export function isOpenTelemetryRecordSummary(value: unknown): value is OpenTelem
     && count(value.durationMs) && spanKinds(value.spanKinds) && metricKinds(value.metricKinds)
     && Array.isArray(value.services) && value.services.length <= OPEN_TELEMETRY_LIMITS.services
     && value.services.every((item) => typeof item === 'string' && item.length <= OPEN_TELEMETRY_LIMITS.serviceNameLength)
+    && Array.isArray(value.operations) && value.operations.length <= OPEN_TELEMETRY_LIMITS.operations
+    && value.operations.every((item) => typeof item === 'string' && item.length <= OPEN_TELEMETRY_LIMITS.operationNameLength)
     && typeof value.truncated === 'boolean';
 }
 

@@ -20,6 +20,7 @@ import {
   type ProblemPageReader,
   type ProblemPageRequest,
   type RecordPageReader,
+  type RecordPageExecutionTiming,
   type RecordPageRequest,
 } from '../application';
 import { createProtocolEnvelope, readProtocolIdentity } from '@shared/transport';
@@ -47,6 +48,7 @@ interface QueryObservation {
   rows?: number;
   staleReason?: QueryStaleReason;
   errorName?: string;
+  timing?: RecordPageExecutionTiming;
 }
 
 /** @deprecated Import RecordPageRequest from application ports for new code. */
@@ -235,7 +237,11 @@ export class DocumentController {
             request.requestId,
             request.payload,
           );
-          const execution = await this.queryExecution.execute(query, signal);
+          const observedQuery = queryObservation;
+          const onTiming = observedQuery === undefined ? undefined : (timing: RecordPageExecutionTiming): void => {
+            observedQuery.timing = timing;
+          };
+          const execution = await this.queryExecution.execute(query, signal, onTiming);
           if (execution.target !== 'record-page') throw new Error('GET_ROWS resolved to a non-page query target.');
           const page = execution.page;
           if (queryObservation !== undefined) queryObservation.rows = page.rows.length;
@@ -477,6 +483,16 @@ export class DocumentController {
       ...(observation.rows === undefined ? {} : { rows: observation.rows }),
       ...(observation.outcome === 'stale' ? { stale_reason: observation.staleReason! } : {}),
       ...(observation.outcome === 'failed' ? { error_name: observation.errorName ?? 'UnknownError' } : {}),
+      ...(observation.timing === undefined ? {} : {
+        queue_wait_ms: observation.timing.queueWaitMs,
+        engine_exec_ms: observation.timing.engineExecMs,
+        queue_blocked_by: observation.timing.queueBlockedBy,
+        index_work_ms: observation.timing.indexWorkMs,
+        read_wait_ms: observation.timing.readWaitMs,
+        parse_ms: observation.timing.parseMs,
+        projection_ms: observation.timing.projectionMs,
+        snapshot_check_ms: observation.timing.snapshotCheckMs,
+      }),
     });
   }
 

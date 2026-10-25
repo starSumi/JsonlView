@@ -2,10 +2,17 @@
 
 ## Unreleased
 
+- Add bounded GET_ROWS timing receipts for queue wait, index work, reads,
+  parsing, projection, and snapshot checks; keep overlapping phase semantics
+  explicit and timing out of the ROWS payload.
 - Adapt BFCL v3-shaped JSONL records through bounded row summaries and show a
   BFCL-specific Insights view scoped to the current query page, without mixing
   in unrelated generic aggregates; retain Generic JSONL observations as the
   fallback for other data.
+- Render OpenTelemetry File Exporter rows as bounded semantic projections:
+  signal, time/severity, nested records, service, operation, trace/error and
+  duration columns; add envelope-aware detail and current-page Insights while
+  preserving one physical JSONL row per source line.
 - Make Navigator source intake actionable for OS file and folder drops: single
   JSONL files open bounded temporary previews with Recent Previews / Save As,
   unsupported drops fall back to the native picker, compact Paste opens the

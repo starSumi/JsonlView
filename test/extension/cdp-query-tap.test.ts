@@ -70,6 +70,8 @@ describe('development-only CDP query tap', () => {
     tap.record(queryEvent('jsonlview.query.settled', {
       stage: 'get_rows', request_seq: 9, outcome: 'failed', delivery: 'failed',
       abort_observed: false, duration_ms: 18, rows: 0, error_name: 'TypeError',
+      queue_wait_ms: 12, engine_exec_ms: 6, queue_blocked_by: 'index_more',
+      index_work_ms: 4, read_wait_ms: 2, parse_ms: 1, projection_ms: 0, snapshot_check_ms: 2,
       uri: 'file:///private.jsonl', payload: 'private',
     }));
 

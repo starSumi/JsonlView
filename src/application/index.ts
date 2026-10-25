@@ -8,7 +8,13 @@ export {
   RECORD_PAGE_MAX_SORT_WINDOW,
   RecordPageRequestError,
 } from './ports/record-page-reader';
-export type { RecordPageReader, RecordPageRequest } from './ports/record-page-reader';
+export type {
+  RecordPageExecutionTiming,
+  RecordPageQueueBlocker,
+  RecordPageReader,
+  RecordPageRequest,
+  RecordPageTimingObserver,
+} from './ports/record-page-reader';
 export { LoadRecordPage } from './use-cases/load-record-page';
 export {
   createQueryExecutionRequestV1,

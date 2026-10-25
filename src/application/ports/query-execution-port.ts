@@ -17,6 +17,7 @@ import {
   assertRecordPageRequest,
   type RecordPageReader,
   type RecordPageRequest,
+  type RecordPageTimingObserver,
 } from './record-page-reader';
 
 /** Explicit result targets prevent a raw MCP page from being confused with a projected Webview page. */
@@ -88,6 +89,7 @@ export class QueryExecutionPort {
   public async execute(
     request: QueryExecutionRequestV1,
     signal: AbortSignal,
+    onTiming?: RecordPageTimingObserver,
   ): Promise<QueryExecutionResultV1> {
     if (!isQueryRequestDtoV1(request.dto)) {
       throw new TypeError('Invalid query request DTO v1.');
@@ -126,6 +128,7 @@ export class QueryExecutionPort {
       ...(request.dto.cursor.sort === undefined ? {} : { sort: request.dto.cursor.sort }),
       ...(request.dto.cursor.sortOffset === undefined ? {} : { sortOffset: request.dto.cursor.sortOffset }),
       maxReturnedBytes: request.dto.budget.maxBytes,
+      ...(onTiming === undefined ? {} : { onTiming }),
       ...(request.dto.budget.maxExaminedRecords === undefined && request.dto.budget.maxExaminedBytes === undefined
         ? {}
         : {

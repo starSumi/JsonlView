@@ -172,6 +172,39 @@ describe('GET_ROWS local operation observations', () => {
     expect(second.events[0]?.attributes.request_seq).toBe(1);
   });
 
+  it('carries internal engine timings to the local terminal event, never the ROWS message', async () => {
+    const f = fixture();
+    const page = await f.session.getRows({ limit: 10 }, new AbortController().signal);
+    f.session.getRows = async (pageRequest) => {
+      pageRequest.onTiming?.({
+        queueWaitMs: 3,
+        engineExecMs: 7,
+        queueBlockedBy: 'index_more',
+        indexWorkMs: 2,
+        readWaitMs: 1,
+        parseMs: 1,
+        projectionMs: 0,
+        snapshotCheckMs: 1,
+      });
+      return page;
+    };
+
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+
+    expect(f.events[1]?.attributes).toMatchObject({
+      queue_wait_ms: 3,
+      engine_exec_ms: 7,
+      queue_blocked_by: 'index_more',
+      index_work_ms: 2,
+      read_wait_ms: 1,
+      parse_ms: 1,
+      projection_ms: 0,
+      snapshot_check_ms: 1,
+    });
+    expect(f.messages[0]?.type).toBe('ROWS');
+    expect(JSON.stringify(f.messages)).not.toMatch(/queue_wait_ms|engine_exec_ms|queue_blocked_by/u);
+  });
+
   it('does not observe rejected identities, invalid requests, or non-query operations', async () => {
     const f = fixture();
     await f.controller.handleMessage(request('GET_ROWS', { limit: 0 }));

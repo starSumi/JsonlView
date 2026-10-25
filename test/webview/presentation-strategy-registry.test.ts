@@ -58,4 +58,18 @@ describe('presentation strategy registry', () => {
     expect(hasPresentationStrategy(undefined)).toBe(false);
     expect(buildProviderEventSections({ ...input('unknown-agent'), profile: undefined }, context)).toEqual([]);
   });
+
+  it('dispatches OpenTelemetry envelopes to the semantic envelope builder', () => {
+    const sections = buildProviderEventSections({
+      envelope: { resourceSpans: [{ scopeSpans: [{ spans: [{ name: 'checkout' }] }] }] },
+      payload: {},
+      profile: {
+        profileId: 'opentelemetry', eventKind: 'span', summary: 'OTLP spans envelope',
+        evidence: [], confidence: 'source',
+      },
+      envelopeType: undefined,
+    }, context);
+
+    expect(sections).toEqual([expect.objectContaining({ title: 'OTLP envelope', text: expect.stringContaining('Nested span records: 1') })]);
+  });
 });

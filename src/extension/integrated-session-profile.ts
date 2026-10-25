@@ -33,10 +33,11 @@ export function profileColumns(profileId: string): readonly ColumnSpec[] {
     return [
       column('eventKind', 'Signal', 88),
       column('timestamp', 'Timestamp', 190),
-      column('severity', 'Severity', 86),
+      column('severity', 'Severity', 88),
       column('summary', 'Summary', 320),
+      column('nestedCount', 'Nested', 86),
       column('service', 'Service', 140),
-      column('spanCount', 'Spans', 76),
+      column('operation', 'Operation', 180),
       column('traceCount', 'Traces', 76),
       column('errorCount', 'Errors', 76),
       column('durationMs', 'Duration (ms)', 110),

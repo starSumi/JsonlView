@@ -109,10 +109,38 @@ this slice has no SDK, span, propagation, or outbound telemetry.
 
 The event attributes are limited to `stage=get_rows`, `request_seq`, and, for
 the terminal, `outcome`, `delivery`, `abort_observed`, `duration_ms`, optional
-`rows`, `stale_reason`, and a fixed `error_name`. Raw request/document/generation
-identifiers, epochs, query terms, values, paths, error messages, stacks and
-causes never enter these events. Error classification reuses the descriptor-only
-lifecycle classifier and its fixed name allowlist.
+`rows`, `stale_reason`, a fixed `error_name`, and the all-or-none timing bundle
+`queue_wait_ms`, `engine_exec_ms`, `queue_blocked_by`, `index_work_ms`,
+`read_wait_ms`, `parse_ms`, `projection_ms`, and `snapshot_check_ms`. Raw
+request/document/generation identifiers, epochs, query terms, values, paths,
+error messages, stacks and causes never enter these events. Error
+classification reuses the descriptor-only lifecycle classifier and its fixed
+name allowlist.
+
+The timing bundle is supplied through an in-process callback on the record-page
+request; it is not added to the versioned query DTO or ROWS payload. Values are
+non-negative integer milliseconds from Node's monotonic high-resolution clock.
+`queue_wait_ms` spans engine enqueue to task start, and `engine_exec_ms` spans
+the queued operation itself. `queue_blocked_by` names the immediate prior FIFO
+operation observed when this query entered the queue (`none` when no predecessor
+was pending); it is a scheduling fact, not a root-cause claim. `read_wait_ms`
+accumulates the time awaiting `FileHandle.read()` calls and does not identify
+physical disk, antivirus, or filesystem latency by itself. `parse_ms` includes
+UTF-8 decode and JSON parsing. `projection_ms` includes profile projection,
+predicate matching, and returned-row projection. `snapshot_check_ms` measures
+the query-level pre/post `assertSnapshotUnchanged` checks; per-chunk metadata
+validation performed during indexing is included in `index_work_ms`. Both may
+include time also counted by `read_wait_ms`, so phase values overlap and must
+not be summed as a wall-clock breakdown. `duration_ms` remains the host-side request
+duration through the ROWS post; it is not interchangeable with
+`engine_exec_ms`.
+
+Measurement is explicit at the engine operations and read boundary. Direct
+engine callers pay no timing accumulation cost unless they provide the timing
+callback. The existing observed GET_ROWS path provides that callback so the
+local terminal receipt can identify where time was spent; no timer, exporter,
+queue, retained context, or persisted telemetry is introduced. A query that
+never settles still has only its existing start event and no timing receipt.
 
 `outcome` is `completed`, `stale`, `cancelled`, or `failed`. Independently,
 `delivery` describes the ROWS host post: `accepted`, `rejected`, `skipped`, or

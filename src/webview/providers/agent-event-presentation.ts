@@ -325,6 +325,7 @@ function presentationProduct(profile?: AgentRowProjection): string {
   if (profile?.profileId === 'claude-code-session') return 'Claude';
   if (profile?.profileId === 'pi-coding-agent') return 'Pi';
   if (profile?.profileId === 'kimi-code-session') return 'Kimi';
+  if (profile?.profileId === 'opentelemetry') return 'OpenTelemetry';
   return 'Agent';
 }
 

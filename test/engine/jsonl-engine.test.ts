@@ -149,6 +149,77 @@ describe('JsonlFileEngine indexing and hydration', () => {
     });
   });
 
+  it('reports opt-in phase timings without changing rows or allowing observer failures to escape', async () => {
+    const { engine } = await fixture('{"id":1,"value":"sample"}\n{"id":2,"value":"next"}');
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const originalRead = handle.read.bind(handle) as PositionalRead;
+    const reads = spyOnPositionalReads(engine);
+    reads.mockImplementation(async (buffer, offset, length, position) => {
+      const result = await originalRead(buffer, offset, length, position);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return result;
+    });
+    const originalParse = JSON.parse;
+    const parse = vi.spyOn(JSON, 'parse').mockImplementation((text: string) => {
+      const until = performance.now() + 6;
+      while (performance.now() < until) { /* Make the parse span observable in this focused test. */ }
+      return originalParse(text);
+    });
+    let observed: { queueWaitMs: number; queueBlockedBy: string; readWaitMs: number; parseMs: number } | undefined;
+
+    let page: Awaited<ReturnType<typeof engine.getRows>>;
+    try {
+      page = await engine.getRows({
+        limit: 1,
+        onTiming: (timing) => {
+          observed = timing;
+          throw new Error('diagnostic observer failure');
+        },
+      });
+    } finally {
+      parse.mockRestore();
+    }
+
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]?.genericSummary).toBe('{"id":1,"value":"sample"}');
+    expect(observed).toEqual(expect.objectContaining({ queueBlockedBy: 'none' }));
+    expect(observed?.readWaitMs).toBeGreaterThan(0);
+    expect(observed?.parseMs).toBeGreaterThanOrEqual(6);
+    expect(Object.values(observed ?? {}).filter((value) => typeof value === 'number')
+      .every((value) => Number.isSafeInteger(value) && value >= 0)).toBe(true);
+  });
+
+  it('attributes queue wait to the immediately preceding FIFO operation', async () => {
+    const { engine } = await fixture('{"id":1}\n{"id":2}', { readChunkBytes: 64 });
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const originalRead = handle.read.bind(handle) as PositionalRead;
+    const reads = spyOnPositionalReads(engine);
+    let notifyReadStarted!: () => void;
+    let releaseRead!: () => void;
+    const readStarted = new Promise<void>((resolve) => { notifyReadStarted = resolve; });
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    reads.mockImplementation(async (buffer, offset, length, position) => {
+      notifyReadStarted();
+      await readGate;
+      return originalRead(buffer, offset, length, position);
+    });
+
+    const indexing = engine.indexMore({ maxBytes: 64 });
+    await readStarted;
+    const schema = engine.getSchema();
+    let observed: { queueWaitMs: number; queueBlockedBy: string } | undefined;
+    const querying = engine.getRows({ limit: 1, onTiming: (timing) => { observed = timing; } });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      releaseRead();
+    }
+    await Promise.all([indexing, schema, querying]);
+
+    expect(observed).toEqual(expect.objectContaining({ queueBlockedBy: 'get_schema' }));
+    expect(observed?.queueWaitMs).toBeGreaterThan(0);
+  });
+
   it('coalesces eligible forward-page reads without changing physical row semantics', async () => {
     const records = Array.from({ length: 120 }, (_, ordinal) => {
       if (ordinal === 0) return Buffer.from('\uFEFF{"id":0}');

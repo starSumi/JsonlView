@@ -11,16 +11,50 @@ export interface FullSourceFingerprint {
   hash: string;
 }
 
+export type ReadWaitObserver = (elapsedMs: number) => void;
+
+export async function readFileHandle(
+  handle: FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number | bigint | null,
+  onReadWait?: ReadWaitObserver,
+): Promise<number> {
+  if (onReadWait === undefined) {
+    return (await handle.read(buffer, offset, length, position)).bytesRead;
+  }
+
+  const startedAt = performance.now();
+  try {
+    return (await handle.read(buffer, offset, length, position)).bytesRead;
+  } finally {
+    try {
+      onReadWait(performance.now() - startedAt);
+    } catch {
+      // Diagnostic observers must never change file-read behavior.
+    }
+  }
+}
+
 export async function fingerprintRange(
   handle: FileHandle,
   start: bigint,
   length: number,
+  onReadWait?: ReadWaitObserver,
 ): Promise<SourceFingerprint> {
   if (length === 0) return { length: 0, hash: createHash('sha256').digest('hex') };
   const buffer = Buffer.allocUnsafe(length);
   let offset = 0;
   while (offset < length) {
-    const { bytesRead } = await handle.read(buffer, offset, length - offset, start + BigInt(offset));
+    const bytesRead = await readFileHandle(
+      handle,
+      buffer,
+      offset,
+      length - offset,
+      start + BigInt(offset),
+      onReadWait,
+    );
     if (bytesRead <= 0) break;
     offset += bytesRead;
   }
@@ -36,6 +70,7 @@ export async function fingerprintStableRange(
   baselineMtimeNs: bigint,
   baselineCtimeNs: bigint,
   signal?: AbortSignal,
+  onReadWait?: ReadWaitObserver,
 ): Promise<FullSourceFingerprint | undefined> {
   try {
     const before = await handle.stat({ bigint: true });
@@ -47,7 +82,7 @@ export async function fingerprintStableRange(
       || before.mtimeNs !== baselineMtimeNs
       || before.ctimeNs !== baselineCtimeNs
     ) return undefined;
-    const fingerprint = await fingerprintWholeRange(handle, length, signal);
+    const fingerprint = await fingerprintWholeRange(handle, length, signal, undefined, onReadWait);
     const after = await handle.stat({ bigint: true });
     if (
       after.size !== length
@@ -70,6 +105,7 @@ export async function fingerprintWholeRange(
   length: bigint,
   signal?: AbortSignal,
   guard?: () => void,
+  onReadWait?: ReadWaitObserver,
 ): Promise<FullSourceFingerprint> {
   const hash = createHash('sha256');
   const chunk = Buffer.allocUnsafe(1024 * 1024);
@@ -81,11 +117,13 @@ export async function fingerprintWholeRange(
     const requested = Number(remaining < BigInt(chunk.length) ? remaining : BigInt(chunk.length));
     let filled = 0;
     while (filled < requested) {
-      const { bytesRead } = await handle.read(
+      const bytesRead = await readFileHandle(
+        handle,
         chunk,
         filled,
         requested - filled,
         offset + BigInt(filled),
+        onReadWait,
       );
       if (bytesRead <= 0) break;
       filled += bytesRead;

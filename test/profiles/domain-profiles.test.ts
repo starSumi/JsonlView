@@ -61,11 +61,11 @@ describe('OpenTelemetry profile', () => {
 
     const logs = registry.project('opentelemetry', { value: otelEnvelopeFixture[0] }, context);
     const spans = registry.project('opentelemetry', { value: otelEnvelopeFixture[1] }, context);
-    expect(logs).toMatchObject({ eventKind: 'log', summary: 'OTLP logs envelope: 1 resource group' });
+    expect(logs).toMatchObject({ eventKind: 'log', summary: 'OTLP logs envelope: 1 resource group · 2 nested logs · service=api-service' });
     expect(derived(logs)).toMatchObject({ containerKind: 'resourceLogs', resourceGroupCount: 1, service: 'api-service' });
     expect(derived(logs)).not.toHaveProperty('traceId');
     expect(derived(logs)).not.toHaveProperty('spanId');
-    expect(spans).toMatchObject({ eventKind: 'span', summary: 'OTLP spans envelope: 2 resource groups' });
+    expect(spans).toMatchObject({ eventKind: 'span', summary: 'OTLP spans envelope: 2 resource groups · 2 nested spans · service=worker-service' });
     expect(derived(spans)).toMatchObject({ containerKind: 'resourceSpans', resourceGroupCount: 2, service: 'worker-service' });
   });
 

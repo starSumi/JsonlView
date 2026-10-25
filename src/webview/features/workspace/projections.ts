@@ -1,5 +1,7 @@
 import type { BfclV3SampleSummary } from '@shared/bfcl-v3-insights';
 import { aggregateBfclV3Summaries } from '@profiles/datasets/bfcl-v3';
+import type { OpenTelemetrySampleSummary } from '@shared/otel-insights';
+import { aggregateOpenTelemetrySummaries } from '@shared/otel-insights';
 import type { ColumnSpec, DatasetRuntimeProvenanceV1, FieldStats, RowProjection } from '@shared/types';
 import type { NavigatorBridgeResultV1 } from '@shared/protocol/navigator-bridge';
 import { MAX_TABLE_COLUMNS } from '@shared/types';
@@ -101,6 +103,15 @@ export function workspaceBfclSummary(rows: readonly RowProjection[], partial: bo
   const samples = rows.slice(0, 256).flatMap((row) => row.datasetInsights?.bfclV3 === undefined ? [] : [row.datasetInsights.bfclV3]);
   if (samples.length === 0) return undefined;
   return aggregateBfclV3Summaries(samples, {
+    partial: partial || samples.length !== rows.length,
+    requestedRecords: rows.length,
+  });
+}
+
+export function workspaceOpenTelemetrySummary(rows: readonly RowProjection[], partial: boolean): OpenTelemetrySampleSummary | undefined {
+  const samples = rows.slice(0, 256).flatMap((row) => row.datasetInsights?.opentelemetry === undefined ? [] : [row.datasetInsights.opentelemetry]);
+  if (samples.length === 0) return undefined;
+  return aggregateOpenTelemetrySummaries(samples, {
     partial: partial || samples.length !== rows.length,
     requestedRecords: rows.length,
   });

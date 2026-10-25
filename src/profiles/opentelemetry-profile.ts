@@ -96,23 +96,47 @@ export class OpenTelemetryProfile implements AgentProfile {
   private projectEnvelope(value: Record<string, unknown>, kind: 'resourceLogs' | 'resourceSpans' | 'resourceMetrics', insight: ReturnType<typeof summarizeOpenTelemetryRecord>): AgentRowProjection {
     const groups = Array.isArray(own(value, kind)) ? own(value, kind) as unknown[] : [];
     const noun = kind === 'resourceLogs' ? 'logs' : kind === 'resourceSpans' ? 'spans' : 'metrics';
+    const nestedCount = insight.spanCount + insight.logCount + insight.metricCount;
+    const operation = insight.operations[0];
+    const firstGroup = isObject(groups[0]) ? groups[0] : undefined;
+    const resource = firstGroup ? objectAt(firstGroup, 'resource') : undefined;
+    const resourcePath = indexedPath([kind], 0, 'resource');
+    const service = resource ? serviceFromResource(resource, resourcePath) : undefined;
+    const semanticSuffix = [
+      service?.value === undefined ? undefined : `service=${service.value}`,
+      operation === undefined ? undefined : `op=${operation}`,
+    ].filter((value): value is string => value !== undefined);
     const projection = createProjection(
       this.id,
       kind === 'resourceLogs' ? 'log' : kind === 'resourceSpans' ? 'span' : 'metric',
-      `OTLP ${noun} envelope: ${groups.length} resource group${groups.length === 1 ? '' : 's'}`,
+      `OTLP ${noun} envelope: ${groups.length} resource group${groups.length === 1 ? '' : 's'} · ${nestedCount} nested ${noun}${semanticSuffix.length === 0 ? '' : ` · ${semanticSuffix.join(' · ')}`}`,
       keyPath(kind),
       keyPath(kind),
     );
     setDerivedField(projection, 'containerKind', kind, keyPath(kind));
     setDerivedField(projection, 'resourceGroupCount', groups.length, keyPath(kind));
 
-    const firstGroup = isObject(groups[0]) ? groups[0] : undefined;
-    const resource = firstGroup ? objectAt(firstGroup, 'resource') : undefined;
-    const resourcePath = indexedPath([kind], 0, 'resource');
-    const service = resource ? serviceFromResource(resource, resourcePath) : undefined;
     if (service) setDerivedField(projection, 'service', service.value, service.path);
     const descriptor = resource ? describeResource(resource) : undefined;
     if (descriptor) setDerivedField(projection, 'resource', descriptor, resourcePath);
+    const firstSignal = firstEnvelopeSignal(value, kind);
+    if (firstSignal !== undefined) {
+      const timestamp = locateScalar(firstSignal.value, kind === 'resourceSpans'
+        ? [['startTimeUnixNano'], ['StartTime'], ['Timestamp']]
+        : [['timeUnixNano'], ['Timestamp'], ['observedTimeUnixNano'], ['ObservedTimestamp']]);
+      if (timestamp) setStringField(projection, 'timestamp', timestamp.value, timestamp.path);
+      const severity = kind === 'resourceSpans'
+        ? locateStatus(firstSignal.value)
+        : locateScalar(firstSignal.value, [['severityText'], ['SeverityText'], ['severityNumber'], ['SeverityNumber']]);
+      if (severity) {
+        if (kind === 'resourceSpans') {
+          setStringField(projection, 'status', severity.value, severity.path);
+          if (statusIsError(severity.value)) setStringField(projection, 'severity', 'error', severity.path);
+        } else {
+          setStringField(projection, 'severity', severity.value, severity.path);
+        }
+      }
+    }
     addInsightFields(projection, insight, keyPath(kind));
     return projection;
   }
@@ -227,11 +251,45 @@ function addInsightFields(
   setDerivedField(projection, 'dataPointCount', insight.dataPointCount, path);
   setDerivedField(projection, 'errorCount', insight.errorCount, path);
   setDerivedField(projection, 'durationMs', insight.durationMs, path);
+  setDerivedField(projection, 'nestedCount', insight.spanCount + insight.logCount + insight.metricCount, path);
   setDerivedField(projection, 'resourceGroupCount', insight.resourceGroupCount, path);
   setDerivedField(projection, 'scopeCount', insight.scopeCount, path);
   setDerivedField(projection, 'serviceCount', insight.services.length, path);
+  if (insight.operations[0] !== undefined) setDerivedField(projection, 'operation', insight.operations[0], path);
   setDerivedField(projection, 'spanKinds', JSON.stringify(insight.spanKinds), path);
   setDerivedField(projection, 'metricKinds', JSON.stringify(insight.metricKinds), path);
+}
+
+function firstEnvelopeSignal(
+  value: Record<string, unknown>,
+  kind: 'resourceLogs' | 'resourceSpans' | 'resourceMetrics',
+): Located<Record<string, unknown>> | undefined {
+  const scopeKey = kind === 'resourceLogs' ? 'scopeLogs' : kind === 'resourceSpans' ? 'scopeSpans' : 'scopeMetrics';
+  const signalKey = kind === 'resourceLogs' ? 'logRecords' : kind === 'resourceSpans' ? 'spans' : 'metrics';
+  const groups = own(value, kind);
+  if (!Array.isArray(groups)) return undefined;
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex];
+    if (!isObject(group)) continue;
+    const scopes = own(group, scopeKey);
+    if (!Array.isArray(scopes)) continue;
+    for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex += 1) {
+      const scope = scopes[scopeIndex];
+      if (!isObject(scope)) continue;
+      const signals = own(scope, signalKey);
+      if (!Array.isArray(signals)) continue;
+      for (let signalIndex = 0; signalIndex < signals.length; signalIndex += 1) {
+        const signal = signals[signalIndex];
+        if (isObject(signal)) {
+          return {
+            value: signal,
+            path: appendPath(keyPath(kind), groupIndex, scopeKey, scopeIndex, signalKey, signalIndex),
+          };
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 function classifyRecord(value: Record<string, unknown>): OtelRecordKind {

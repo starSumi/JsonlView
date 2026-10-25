@@ -180,12 +180,12 @@ arbitrary application fields named `text` are not promoted to rich content.
 
 An OpenTelemetry Protocol File Exporter line can contain `resourceLogs`,
 `resourceSpans`, or `resourceMetrics` with multiple nested signal records. The
-current profile recognizes non-empty `resourceLogs` and `resourceSpans`; a
-`resourceMetrics`-only envelope remains Generic JSONL. The next scoped semantic
-slice is bounded metrics recognition and projection over this same JSONL
-adapter. Every envelope remains one physical row and receives a bounded
-summary. The viewer does not pretend nested signals have independent source
-offsets.
+profile recognizes all three envelope kinds plus bounded individual log, span,
+and metric records. Table columns expose signal, timestamp/severity, nested
+record count, service, first observed operation, trace/error counts, and
+duration. Detail renders a semantic envelope summary, while Insights aggregates
+the current physical page. Every envelope remains one physical row and receives
+a bounded summary; nested signals never acquire invented source offsets.
 
 ## Not supported by the current adapter
 

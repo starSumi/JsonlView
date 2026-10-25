@@ -15,6 +15,31 @@ export const RECORD_PAGE_MAX_SCAN_BYTES = 512n * 1024n * 1024n;
 export const RECORD_PAGE_MAX_RESULT_BYTES = 512n * 1024n * 1024n;
 export const RECORD_PAGE_MAX_SCAN_AHEAD_MS = 60_000;
 
+export type RecordPageQueueBlocker =
+  | 'none'
+  | 'index_more'
+  | 'finish_indexing'
+  | 'get_rows'
+  | 'inspect_rows'
+  | 'get_problems'
+  | 'get_detail'
+  | 'get_schema'
+  | 'classify_refresh';
+
+/** Internal timing side channel; it is not part of the Webview query DTO or ROWS page. */
+export interface RecordPageExecutionTiming {
+  readonly queueWaitMs: number;
+  readonly engineExecMs: number;
+  readonly queueBlockedBy: RecordPageQueueBlocker;
+  readonly indexWorkMs: number;
+  readonly readWaitMs: number;
+  readonly parseMs: number;
+  readonly projectionMs: number;
+  readonly snapshotCheckMs: number;
+}
+
+export type RecordPageTimingObserver = (timing: RecordPageExecutionTiming) => void;
+
 /** Request owned by the record-page application use case, independent of VS Code transport. */
 export interface RecordPageRequest {
   anchorOrdinal?: string;
@@ -28,6 +53,8 @@ export interface RecordPageRequest {
   sort?: RowSort;
   sortOffset?: string;
   scanBudget?: RowScanBudget;
+  /** Host-local diagnostics only; omitted from versioned query and Webview payloads. */
+  onTiming?: RecordPageTimingObserver;
 }
 
 /** Read-only port implemented by the current session adapter. */
@@ -42,6 +69,9 @@ export interface RecordPageReader {
  */
 export function assertRecordPageRequest(request: RecordPageRequest): void {
   if (!isObject(request)) fail('Record page request must be an object.');
+  if (request.onTiming !== undefined && typeof request.onTiming !== 'function') {
+    fail('Record page timing observer must be a function.');
+  }
   if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > RECORD_PAGE_MAX_LIMIT) {
     fail(`Record page limit must be between 1 and ${String(RECORD_PAGE_MAX_LIMIT)}.`);
   }

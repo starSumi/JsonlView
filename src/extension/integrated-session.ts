@@ -201,6 +201,18 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
         columns: mergeRequestedColumns(enricher.columns ?? [], request.columns),
       }),
       ...(request.projection === undefined ? {} : { projection: request.projection }),
+      ...(request.onTiming === undefined ? {} : {
+        onTiming: (timing) => request.onTiming?.({
+          queueWaitMs: timing.queueWaitMs,
+          engineExecMs: timing.engineExecMs,
+          queueBlockedBy: timing.queueBlockedBy,
+          indexWorkMs: timing.indexWorkMs,
+          readWaitMs: timing.readWaitMs,
+          parseMs: timing.parseMs,
+          projectionMs: timing.projectionMs,
+          snapshotCheckMs: timing.snapshotCheckMs,
+        }),
+      }),
       enricher,
       generation: this.engine.snapshot.generation,
       signal,

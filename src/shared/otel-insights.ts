@@ -8,13 +8,26 @@
 export const OPEN_TELEMETRY_ADAPTER_ID = 'opentelemetry' as const;
 export const OPEN_TELEMETRY_ADAPTER_VERSION = '1.0.0' as const;
 
-export const OPEN_TELEMETRY_LIMITS = Object.freeze({
+export interface OpenTelemetryLimits {
+  readonly resourceGroups: number;
+  readonly scopes: number;
+  readonly signalItems: number;
+  readonly traces: number;
+  readonly services: number;
+  readonly serviceNameLength: number;
+  readonly operations: number;
+  readonly operationNameLength: number;
+}
+
+export const OPEN_TELEMETRY_LIMITS: Readonly<OpenTelemetryLimits> = Object.freeze({
   resourceGroups: 64,
   scopes: 128,
   signalItems: 2048,
   traces: 512,
   services: 16,
   serviceNameLength: 96,
+  operations: 32,
+  operationNameLength: 96,
 });
 
 export type OpenTelemetrySignal = 'logs' | 'spans' | 'metrics' | 'unknown';
@@ -46,6 +59,35 @@ export interface OpenTelemetryRecordSummary {
   spanKinds: OpenTelemetrySpanKindCounts;
   metricKinds: OpenTelemetryMetricKindCounts;
   services: string[];
+  operations: string[];
+  truncated: boolean;
+}
+
+export interface OpenTelemetrySampleSummary {
+  version: 1;
+  adapterId: typeof OPEN_TELEMETRY_ADAPTER_ID;
+  adapterVersion: typeof OPEN_TELEMETRY_ADAPTER_VERSION;
+  coverage: {
+    requestedRecords: number;
+    sampledRecords: number;
+    recognizedRecords: number;
+    validRecords: number;
+    invalidRecords: number;
+    partial: boolean;
+  };
+  signals: { logs: number; spans: number; metrics: number; unknown: number };
+  nestedRecords: number;
+  spanCount: number;
+  traceCount: number;
+  logCount: number;
+  metricCount: number;
+  dataPointCount: number;
+  errorCount: number;
+  durationMs: number;
+  services: Array<{ value: string; count: number }>;
+  operations: Array<{ value: string; count: number }>;
+  spanKinds: OpenTelemetrySpanKindCounts;
+  metricKinds: OpenTelemetryMetricKindCounts;
   truncated: boolean;
 }
 
@@ -162,6 +204,8 @@ function summarizeEnvelope(
 
 function summarizeSpan(value: Record<string, unknown>, summary: OpenTelemetryRecordSummary): void {
   summary.spanCount += 1;
+  const operation = scalar(value, 'name') ?? scalar(value, 'Name');
+  if (operation !== undefined) addBoundedName(summary, 'operations', operation, OPEN_TELEMETRY_LIMITS.operations, OPEN_TELEMETRY_LIMITS.operationNameLength);
   const traceId = scalar(value, 'traceId') ?? scalar(value, 'TraceId');
   if (traceId !== undefined) addBoundedSet(summary, traceId);
   const kind = normalizeSpanKind(scalar(value, 'kind') ?? scalar(value, 'Kind'));
@@ -296,8 +340,77 @@ function emptySummary(): OpenTelemetryRecordSummary {
     spanKinds: emptyCounts(SPAN_KINDS),
     metricKinds: emptyCounts(METRIC_KINDS),
     services: [],
+    operations: [],
     truncated: false,
   };
+}
+
+export function aggregateOpenTelemetrySummaries(
+  records: readonly OpenTelemetryRecordSummary[],
+  options: { partial?: boolean; requestedRecords?: number } = {},
+): OpenTelemetrySampleSummary {
+  const sampled = records.slice(0, 256);
+  const result: OpenTelemetrySampleSummary = {
+    version: 1,
+    adapterId: OPEN_TELEMETRY_ADAPTER_ID,
+    adapterVersion: OPEN_TELEMETRY_ADAPTER_VERSION,
+    coverage: {
+      requestedRecords: Math.max(sampled.length, options.requestedRecords ?? records.length),
+      sampledRecords: sampled.length,
+      recognizedRecords: 0,
+      validRecords: 0,
+      invalidRecords: 0,
+      partial: options.partial === true || sampled.length < records.length,
+    },
+    signals: { logs: 0, spans: 0, metrics: 0, unknown: 0 },
+    nestedRecords: 0,
+    spanCount: 0,
+    traceCount: 0,
+    logCount: 0,
+    metricCount: 0,
+    dataPointCount: 0,
+    errorCount: 0,
+    durationMs: 0,
+    services: [],
+    operations: [],
+    spanKinds: emptyCounts(SPAN_KINDS),
+    metricKinds: emptyCounts(METRIC_KINDS),
+    truncated: false,
+  };
+  const services = new Map<string, number>();
+  const operations = new Map<string, number>();
+  for (const record of sampled) {
+    if (record.recognized) result.coverage.recognizedRecords += 1;
+    if (record.valid) result.coverage.validRecords += 1; else result.coverage.invalidRecords += 1;
+    result.signals[record.signal] += 1;
+    result.nestedRecords += record.spanCount + record.logCount + record.metricCount;
+    result.spanCount += record.spanCount;
+    result.traceCount += record.traceCount;
+    result.logCount += record.logCount;
+    result.metricCount += record.metricCount;
+    result.dataPointCount += record.dataPointCount;
+    result.errorCount += record.errorCount;
+    result.durationMs += record.durationMs;
+    result.truncated ||= record.truncated;
+    for (const [kind, count] of Object.entries(record.spanKinds) as Array<[OpenTelemetrySpanKind, number]>) result.spanKinds[kind] += count;
+    for (const [kind, count] of Object.entries(record.metricKinds) as Array<[OpenTelemetryMetricKind, number]>) result.metricKinds[kind] += count;
+    for (const service of record.services) services.set(service, (services.get(service) ?? 0) + 1);
+    for (const operation of record.operations) operations.set(operation, (operations.get(operation) ?? 0) + 1);
+  }
+  result.services = [...services.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, OPEN_TELEMETRY_LIMITS.services).map(([value, count]) => ({ value, count }));
+  result.operations = [...operations.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, OPEN_TELEMETRY_LIMITS.operations).map(([value, count]) => ({ value, count }));
+  return result;
+}
+
+function addBoundedName(summary: OpenTelemetryRecordSummary, field: 'operations' | 'services', value: string, limit: number, length: number): void {
+  const bounded = value.slice(0, length);
+  const values = summary[field];
+  if (values.includes(bounded)) return;
+  if (values.length >= limit) {
+    summary.truncated = true;
+    return;
+  }
+  values.push(bounded);
 }
 
 function emptyCounts<T extends string>(keys: readonly T[]): Record<T, number> {

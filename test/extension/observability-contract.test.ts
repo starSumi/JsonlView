@@ -90,6 +90,24 @@ describe('local query operation event contract', () => {
       .toBeDefined();
   });
 
+  it('accepts a complete timing receipt and rejects partial or invalid timing metadata', () => {
+    const timing = {
+      queue_wait_ms: 10,
+      engine_exec_ms: 20,
+      queue_blocked_by: 'index_more',
+      index_work_ms: 8,
+      read_wait_ms: 3,
+      parse_ms: 2,
+      projection_ms: 1,
+      snapshot_check_ms: 4,
+    };
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, ...timing }))
+      .toMatchObject({ attributes: { ...terminal, ...timing } });
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, queue_wait_ms: 10 })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, ...timing, parse_ms: 1.5 })).toBeUndefined();
+    expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, ...timing, queue_blocked_by: 'private_operation' })).toBeUndefined();
+  });
+
   it.each(['requestId', 'documentId', 'generation', 'epoch', 'correlationId', 'trace_id', 'span_id', 'query', 'path', 'message', 'stack'])(
     'rejects raw identity or source key %s', (key) => {
       expect(createObservabilityEvent('jsonlview.query.settled', { ...terminal, [key]: 'private' })).toBeUndefined();
