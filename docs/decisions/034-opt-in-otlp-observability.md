@@ -1,3 +1,15 @@
+---
+id: "034-opt-in-otlp-observability"
+path: "docs/decisions/034-opt-in-otlp-observability.md"
+title: "Opt-In OTLP Observability Boundary"
+kind: "decision"
+status: "proposed"
+owner: "product"
+tags: ["observability","opt-in","otlp"]
+evidence: []
+revisit: "when telemetry privacy or transport evidence changes"
+rollback: "keep outbound telemetry disabled by default"
+---
 # ADR-034: Opt-In OTLP Observability Boundary
 
 Status: proposed

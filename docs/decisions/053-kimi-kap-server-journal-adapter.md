@@ -1,3 +1,15 @@
+---
+id: "053-kimi-kap-server-journal-adapter"
+path: "docs/decisions/053-kimi-kap-server-journal-adapter.md"
+title: "Kimi KAP server journal adapter"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["jsonl","kimi","profiles","read-only","session-navigator"]
+evidence: []
+revisit: "when the pinned KAP server journal contract changes"
+rollback: "disable the KAP server layout while retaining wire and Generic profiles"
+---
 # ADR-053: Kimi KAP Server Journal Adapter
 
 Status: accepted

@@ -1,3 +1,15 @@
+---
+id: "016-otlp-metrics-and-columnar-format-gates"
+path: "docs/decisions/016-otlp-metrics-and-columnar-format-gates.md"
+title: "OTLP Metrics Semantics and Columnar Format Gates"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["columnar","otlp","telemetry"]
+evidence: []
+revisit: "when telemetry or conversion contracts change"
+rollback: "keep conversion opt-in and bounded"
+---
 # ADR-016: OTLP Metrics Semantics and Columnar Format Gates
 
 Status: accepted

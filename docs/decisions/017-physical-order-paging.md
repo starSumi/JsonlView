@@ -1,3 +1,15 @@
+---
+id: "017-physical-order-paging"
+path: "docs/decisions/017-physical-order-paging.md"
+title: "Physical Order Paging"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["ordering","paging","query"]
+evidence: []
+revisit: "when paging or order semantics change"
+rollback: "restore physical-order navigation"
+---
 # 017: Physical order paging and incomplete filtered results
 
 Status: Accepted

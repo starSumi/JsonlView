@@ -1,3 +1,15 @@
+---
+id: "010-toolchain-baseline"
+path: "docs/decisions/010-toolchain-baseline.md"
+title: "Development Toolchain Baseline"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["node","pnpm","toolchain"]
+evidence: []
+revisit: "when supported runtime or package manager changes"
+rollback: "restore the pinned toolchain contract"
+---
 # ADR-010: Development Toolchain Baseline
 
 ## Pressure

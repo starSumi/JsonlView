@@ -1,3 +1,15 @@
+---
+id: "055-development-query-observation-tap"
+path: "docs/decisions/055-development-query-observation-tap.md"
+title: "Development query observation tap"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["bounds","cdp","extension","observability","testing","webview"]
+evidence: ["focused-host-tap-tests","focused-cdp-temporal-association-tests"]
+revisit: "when the query event schema, Webview delivery contract, or request-intent correlation changes"
+rollback: "remove the development tap and Harness temporal-association mode while retaining existing observers"
+---
 # ADR-055: Development Query Observation Tap
 
 Status: accepted

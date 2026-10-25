@@ -1,3 +1,15 @@
+---
+id: "acceleration-roadmap"
+path: "docs/acceleration-roadmap.md"
+title: "Acceleration roadmap"
+kind: "roadmap"
+status: "active"
+owner: "product"
+tags: ["fallback","native","performance","roadmap"]
+evidence: []
+revisit: "when a measured workload changes the acceleration boundary"
+rollback: "supersede the roadmap entry and retain the prior record"
+---
 # Acceleration roadmap
 
 The machine-readable roadmap and deferred-tag registry live in roadmap.yaml.

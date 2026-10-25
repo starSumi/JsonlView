@@ -1,3 +1,15 @@
+---
+id: "004-webview-rendering"
+path: "docs/decisions/004-webview-rendering.md"
+title: "Webview Rendering And Bounded Detail"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["bounds","rendering","webview"]
+evidence: []
+revisit: "when rendering or detail budgets change"
+rollback: "restore the bounded rendering contract"
+---
 # ADR-004: Webview Rendering And Bounded Detail
 
 Status: accepted

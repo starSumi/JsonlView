@@ -1,3 +1,15 @@
+---
+id: "rust-engineering-rules"
+path: "docs/rust-engineering-rules.md"
+title: "Rust Native Engineering Rules"
+kind: "policy"
+status: "active"
+owner: "product"
+tags: ["abi","bounds","fallback","native","rust"]
+evidence: []
+revisit: "when native ownership or promotion gates change"
+rollback: "disable native selection and use the portable scanner"
+---
 # Rust Native Engineering Rules
 
 These rules govern `native/jsonl-core/`. They are intentionally narrower than a

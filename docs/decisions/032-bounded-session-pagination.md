@@ -1,3 +1,15 @@
+---
+id: "032-bounded-session-pagination"
+path: "docs/decisions/032-bounded-session-pagination.md"
+title: "Bounded Session Pagination and Source-State Continuations"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["bounds","pagination","session-navigator"]
+evidence: []
+revisit: "when source-state continuation semantics change"
+rollback: "restore bounded pagination and discard stale continuations"
+---
 # ADR-032: Bounded Session Pagination and Source-State Continuations
 
 Status: experimental; accepted for the opt-in Session Navigator.

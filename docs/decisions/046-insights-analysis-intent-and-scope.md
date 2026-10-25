@@ -1,3 +1,15 @@
+---
+id: "046-insights-analysis-intent-and-scope"
+path: "docs/decisions/046-insights-analysis-intent-and-scope.md"
+title: "Insights Analysis Intent And Scope"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["bounded-scan","insights","lifecycle","query"]
+evidence: []
+revisit: "when adapter revision or analysis source watermark contracts change"
+rollback: "revert shared analysis protocol and host and webview together"
+---
 # ADR-046: Insights Analysis Intent and Scope
 
 Status: accepted for the isolated query-scope experiment

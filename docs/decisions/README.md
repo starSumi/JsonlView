@@ -1,3 +1,15 @@
+---
+id: "decisions-index"
+path: "docs/decisions/README.md"
+title: "JsonlView Decisions"
+kind: "index"
+status: "active"
+owner: "product"
+tags: ["architecture","decisions","documentation"]
+evidence: []
+revisit: "when the decision record topology changes"
+rollback: "restore the previous decision index"
+---
 # JsonlView Decisions
 
 These records capture durable engineering choices for the product. They are
@@ -85,5 +97,7 @@ is recorded in config/docs-index.json and is checked by pnpm check:docs-index.
 New or modified records must use a unique standard ADR-NNN heading and a
 matching filename/link.
 
-Every ADR uses the same fields: pressure, invariant, owner, alternatives,
-probe, decision, evidence, boundary, revisit trigger, and rollback.
+Every ADR uses the same front matter fields and keeps its decision body focused
+on pressure, invariant, owner, alternatives, probe, decision, evidence,
+boundary, revisit trigger, and rollback. The generated `docs/index.json` is the
+only lookup projection; the Markdown file remains authoritative.

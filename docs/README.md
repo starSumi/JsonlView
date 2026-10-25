@@ -1,3 +1,15 @@
+---
+id: "docs-index"
+path: "docs/README.md"
+title: "Product Documentation"
+kind: "index"
+status: "active"
+owner: "product"
+tags: ["documentation","ownership","public-surface"]
+evidence: []
+revisit: "when the documentation topology changes"
+rollback: "remove this catalog entry in a reviewed metadata migration"
+---
 # Product Documentation
 
 This directory is the public documentation surface for JsonlView. It describes
@@ -28,8 +40,8 @@ release input.
 3. Read `designs/theme-adaptation.md` for the accepted host-theme and Webview
    interaction baseline.
 4. Read `decisions/README.md` before changing a shared boundary.
-5. Read `metadata/README.md` and `metadata/index.yaml` when classifying or
-   locating a public document.
+5. Read `metadata/README.md` for the per-file front matter contract and use
+   `index.json` for generated lookup, summaries, and integrity checks.
 6. Read `reliability/service-levels.md` and `security/threat-model.md` when a
    change affects performance, failure handling, paths, or data exposure.
 7. Read `operations/postmortem-policy.md` when a failure needs corrective

@@ -1,3 +1,15 @@
+---
+id: "theme-adaptation"
+path: "docs/designs/theme-adaptation.md"
+title: "Theme Adaptation Design"
+kind: "design"
+status: "accepted"
+owner: "product"
+tags: ["accessibility","content-fidelity","design","vscode-theme","webview"]
+evidence: []
+revisit: "when host-theme ownership or interaction tokens change"
+rollback: "restore the accepted design baseline"
+---
 # Theme Adaptation Design
 
 Status: accepted

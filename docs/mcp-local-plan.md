@@ -1,3 +1,15 @@
+---
+id: "mcp-local-plan"
+path: "docs/mcp-local-plan.md"
+title: "Local MCP and Audit Plan"
+kind: "guide"
+status: "proposed"
+owner: "product"
+tags: ["audit","mcp","otel","redaction","staging"]
+evidence: []
+revisit: "when the read-only MCP transport or trust boundary gains evidence"
+rollback: "keep MCP disabled and retain local read-only navigation"
+---
 # Local MCP and Audit Plan
 
 MCP is a host adapter, not a second source of truth. The first shipped boundary

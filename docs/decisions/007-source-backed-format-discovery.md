@@ -1,3 +1,15 @@
+---
+id: "007-source-backed-format-discovery"
+path: "docs/decisions/007-source-backed-format-discovery.md"
+title: "Source-Backed Format Discovery"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["discovery","formats","provider"]
+evidence: []
+revisit: "when source-backed format discovery changes"
+rollback: "restore the previous discovery rules"
+---
 # ADR-007: Source-Backed Format Discovery
 
 Status: accepted

@@ -1,4 +1,16 @@
 ---
+id: "044-data-format-ecosystem-boundary"
+path: "docs/decisions/044-data-format-ecosystem-boundary.md"
+title: "Data Format Ecosystem Boundary"
+kind: "decision"
+status: "planned"
+owner: "product"
+tags: ["conversion","datasets","formats","streaming"]
+evidence: []
+revisit: "when a format contract gains conformance evidence"
+rollback: "keep JSONL authoritative and disable the adapter"
+---
+---
 adr: "044"
 status: planned
 owner: product-format-boundary

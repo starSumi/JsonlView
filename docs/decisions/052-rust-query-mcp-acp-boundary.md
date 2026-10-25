@@ -1,3 +1,15 @@
+---
+id: "052-rust-query-mcp-acp-boundary"
+path: "docs/decisions/052-rust-query-mcp-acp-boundary.md"
+title: "Rust Query, MCP, and ACP Boundary"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["acp","json-rpc","mcp","query","rust"]
+evidence: []
+revisit: "when a second native query consumer or remote ACP transport is promoted"
+rollback: "disable the native capability and omit the opt-in MCP or ACP entrypoints"
+---
 # ADR-052: Rust Query, MCP, and ACP Boundary
 
 Status: accepted

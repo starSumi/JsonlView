@@ -1,3 +1,15 @@
+---
+id: "056-modern-language-and-compiler-gates"
+path: "docs/decisions/056-modern-language-and-compiler-gates.md"
+title: "Modern Language And Compiler Gates"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["build","compiler","declarations","react","rust","typescript"]
+evidence: []
+revisit: "when language gates, compiler allowlists, native lifetime APIs, or benchmark triggers change"
+rollback: "revert the coordinated language and compiler gate commits and invalidate affected receipts"
+---
 # ADR-056: Modern Language And Compiler Gates
 
 Status: accepted

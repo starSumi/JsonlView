@@ -1,3 +1,15 @@
+---
+id: "014-large-module-boundary-governance"
+path: "docs/decisions/014-large-module-boundary-governance.md"
+title: "Large Module Boundary Governance"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","governance","refactor"]
+evidence: []
+revisit: "when module ownership or extraction budgets change"
+rollback: "restore the prior module boundary"
+---
 # ADR-014: Large Module Boundary Governance
 
 Status: accepted

@@ -1,3 +1,15 @@
+---
+id: "promotion-runbook"
+path: "docs/promotion-runbook.md"
+title: "Promotion Runbook"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["promotion","release","rollback"]
+evidence: []
+revisit: "when a public distribution target changes"
+rollback: "revert the runbook change and retain the old gate"
+---
 # Promotion Runbook
 
 This runbook keeps a reviewed update synchronized without turning a file save

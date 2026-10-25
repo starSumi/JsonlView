@@ -1,3 +1,15 @@
+---
+id: "architecture-v2-roadmap"
+path: "docs/architecture-v2-roadmap.md"
+title: "JsonlView V2 Architecture Roadmap"
+kind: "roadmap"
+status: "accepted"
+owner: "product"
+tags: ["architecture","control-plane","mcp","native","projection","staged-mutation"]
+evidence: []
+revisit: "when a V2 capability passes its stage gate or a plane boundary changes"
+rollback: "disable the capability and retain the portable read-only path"
+---
 # JsonlView V2 Architecture Roadmap
 
 Status: accepted planning boundary

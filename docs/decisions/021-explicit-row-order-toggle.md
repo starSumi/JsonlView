@@ -1,3 +1,15 @@
+---
+id: "021-explicit-row-order-toggle"
+path: "docs/decisions/021-explicit-row-order-toggle.md"
+title: "Explicit Row-Order Toggle"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["navigation","ordering","webview"]
+evidence: []
+revisit: "when row-order controls change"
+rollback: "restore the prior row-order behavior"
+---
 # ADR-021: Explicit Row-Order Toggle
 
 Status: accepted

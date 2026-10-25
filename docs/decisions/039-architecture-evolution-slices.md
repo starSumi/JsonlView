@@ -1,3 +1,15 @@
+---
+id: "039-architecture-evolution-slices"
+path: "docs/decisions/039-architecture-evolution-slices.md"
+title: "Architecture Evolution Slices"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","migration","vertical-slice"]
+evidence: []
+revisit: "when a migration boundary or consumer changes"
+rollback: "revert one vertical slice and retain the facade"
+---
 # ADR-039: Architecture Evolution Slices
 
 Status: accepted

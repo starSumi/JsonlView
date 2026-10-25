@@ -1,3 +1,15 @@
+---
+id: "037-mcp-july-2026-compatibility-boundary"
+path: "docs/decisions/037-mcp-july-2026-compatibility-boundary.md"
+title: "MCP July 2026 Compatibility Boundary"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["compatibility","mcp","protocol"]
+evidence: []
+revisit: "when the MCP protocol contract changes"
+rollback: "pin the last compatible MCP surface"
+---
 # ADR-037: MCP July 2026 Compatibility Boundary
 
 Status: accepted for the experimental contract only

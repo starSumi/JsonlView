@@ -1,3 +1,15 @@
+---
+id: "029-opt-in-session-navigator-treeview"
+path: "docs/decisions/029-opt-in-session-navigator-treeview.md"
+title: "Opt-In Session Navigator TreeView"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["opt-in","session-navigator","treeview"]
+evidence: []
+revisit: "when session navigator ownership changes"
+rollback: "disable the opt-in TreeView"
+---
 # ADR-029: Opt-In Session Navigator TreeView and Local Catalog
 
 Status: experimental (provider-native details superseded by ADR-030)

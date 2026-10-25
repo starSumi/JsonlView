@@ -574,6 +574,7 @@
     "agent-spec-lint": "node scripts/check-agent-spec.mjs",
     "check:agent-spec": "pnpm agent-spec-lint",
     "check:docs-index": "node scripts/check-docs-index.mjs",
+    "docs:index": "node scripts/docs-index.mjs",
     "audit:cargo": "cargo audit --file native/jsonl-core/Cargo.lock",
     "check:cargo-policy": "cargo deny --manifest-path native/jsonl-core/Cargo.toml --config deny.toml check advisories licenses bans sources",
     "discover:producers": "node scripts/discover-producer-surfaces.mjs",

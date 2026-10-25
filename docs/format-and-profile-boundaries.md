@@ -1,3 +1,15 @@
+---
+id: "format-and-profile-boundaries"
+path: "docs/format-and-profile-boundaries.md"
+title: "Format and profile boundaries"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["contracts","jsonl","profiles"]
+evidence: []
+revisit: "when a source format or profile contract changes"
+rollback: "restore the prior contract and supersede this guide"
+---
 # Format and profile boundaries
 
 JsonlView is an event data studio. JSONL/NDJSON is its first physical format

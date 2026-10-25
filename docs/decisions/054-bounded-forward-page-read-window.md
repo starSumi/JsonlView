@@ -1,3 +1,15 @@
+---
+id: "054-bounded-forward-page-read-window"
+path: "docs/decisions/054-bounded-forward-page-read-window.md"
+title: "Bounded forward-page read window"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["engine","file-io","performance","query"]
+evidence: []
+revisit: "when representative record spans are measured or a supported workload shows read amplification or latency regression"
+rollback: "remove the query-local window and retain direct row reads"
+---
 # ADR-054: Bounded Forward-Page Read Window
 
 Status: accepted

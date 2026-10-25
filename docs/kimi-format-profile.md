@@ -1,3 +1,15 @@
+---
+id: "kimi-format-profile"
+path: "docs/kimi-format-profile.md"
+title: "Kimi persisted session profile"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["jsonl","kimi","profiles","read-only"]
+evidence: []
+revisit: "when the upstream Kimi wire storage contract changes"
+rollback: "remove the Kimi registration and retain Generic access"
+---
 # Kimi persisted session profile
 
 The `kimi-code-session` profile reads Kimi Code's agent-core-v2 persisted wire

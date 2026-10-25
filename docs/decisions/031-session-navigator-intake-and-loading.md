@@ -1,3 +1,15 @@
+---
+id: "031-session-navigator-intake-and-loading"
+path: "docs/decisions/031-session-navigator-intake-and-loading.md"
+title: "Session Loading, Native Metadata, and Source Intake"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["freshness","loading","session-navigator"]
+evidence: []
+revisit: "when loading or freshness behavior changes"
+rollback: "restore the previous intake behavior"
+---
 # ADR-031: Session Loading, Native Metadata, and Source Intake
 
 Status: experimental; supersedes the initial-load, metadata freshness, and

@@ -1,3 +1,15 @@
+---
+id: "024-vsix-archive-reproducibility"
+path: "docs/decisions/024-vsix-archive-reproducibility.md"
+title: "VSIX Archive Reproducibility"
+kind: "decision"
+status: "proposed"
+owner: "product"
+tags: ["release","reproducibility","vsix"]
+evidence: []
+revisit: "when archive reproducibility evidence changes"
+rollback: "withdraw the proposal without rewriting history"
+---
 # ADR-024: VSIX Archive Reproducibility
 
 Status: proposed

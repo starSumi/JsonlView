@@ -1,3 +1,15 @@
+---
+id: "005-release-provenance"
+path: "docs/decisions/005-release-provenance.md"
+title: "Release Provenance"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["artifacts","provenance","release"]
+evidence: []
+revisit: "when a release artifact or target changes"
+rollback: "stop promotion and use the prior provenance gate"
+---
 # ADR-005: Release Provenance
 
 Status: accepted

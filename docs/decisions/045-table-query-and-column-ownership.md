@@ -1,3 +1,15 @@
+---
+id: "045-table-query-and-column-ownership"
+path: "docs/decisions/045-table-query-and-column-ownership.md"
+title: "Table Query And Column Ownership"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["bounded-scan","columns","query","webview"]
+evidence: []
+revisit: "when query, profile Event or scan continuation contracts change"
+rollback: "revert the table controls and retain source bytes"
+---
 # ADR-045: Table Query and Column Ownership
 
 Status: accepted

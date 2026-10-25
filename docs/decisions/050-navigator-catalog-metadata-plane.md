@@ -1,3 +1,15 @@
+---
+id: "050-navigator-catalog-metadata-plane"
+path: "docs/decisions/050-navigator-catalog-metadata-plane.md"
+title: "Navigator Catalog Metadata Plane"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["checkpoints","metadata","session-navigator","sqlite"]
+evidence: []
+revisit: "when Save As registration or a second catalog consumer is promoted"
+rollback: "disable metadata-plane callers and retain the additive migration"
+---
 # ADR-050: Navigator Catalog Metadata Plane
 
 Status: accepted

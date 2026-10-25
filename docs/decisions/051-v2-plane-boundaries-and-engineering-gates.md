@@ -1,3 +1,15 @@
+---
+id: "051-v2-plane-boundaries-and-engineering-gates"
+path: "docs/decisions/051-v2-plane-boundaries-and-engineering-gates.md"
+title: "V2 Plane Boundaries and Engineering Gates"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","evaluation","mcp","native","otel","rollback"]
+evidence: []
+revisit: "when a V2 plane boundary or capability gate changes"
+rollback: "supersede ADR-051 with an explicit replacement and disable the affected capability"
+---
 # ADR-051: V2 Plane Boundaries and Engineering Gates
 
 Status: accepted

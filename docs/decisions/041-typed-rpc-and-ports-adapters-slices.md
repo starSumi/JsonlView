@@ -1,3 +1,15 @@
+---
+id: "041-typed-rpc-and-ports-adapters-slices"
+path: "docs/decisions/041-typed-rpc-and-ports-adapters-slices.md"
+title: "Typed RPC And Ports-Adapters Slices"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","ports-adapters","rpc"]
+evidence: []
+revisit: "when a second runtime consumer or protocol change appears"
+rollback: "revert one vertical slice and keep the prior facade"
+---
 # ADR-041: Typed RPC And Ports-Adapters Slices
 
 Status: accepted

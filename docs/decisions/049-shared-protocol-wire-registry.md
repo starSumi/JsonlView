@@ -1,3 +1,15 @@
+---
+id: "049-shared-protocol-wire-registry"
+path: "docs/decisions/049-shared-protocol-wire-registry.md"
+title: "Shared Protocol Wire Registry"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["lifecycle","navigator","protocol","source-registration","transport"]
+evidence: []
+revisit: "when a second wire consumer needs a new direction or protocol version"
+rollback: "remove the new registry exports and result message cases before consumer rollback"
+---
 # ADR-049: Shared Protocol Wire Registry
 
 Status: accepted for the next implementation slice

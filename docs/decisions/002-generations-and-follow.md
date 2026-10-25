@@ -1,3 +1,15 @@
+---
+id: "002-generations-and-follow"
+path: "docs/decisions/002-generations-and-follow.md"
+title: "Generations And Follow Handoff"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["follow","generations","lifecycle"]
+evidence: []
+revisit: "when source refresh or follow semantics change"
+rollback: "supersede ADR-002 and restore prior lifecycle behavior"
+---
 # ADR-002: Generations And Follow Handoff
 
 Status: accepted

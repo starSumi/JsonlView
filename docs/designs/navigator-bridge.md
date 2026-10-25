@@ -1,3 +1,15 @@
+---
+id: "navigator-bridge"
+path: "docs/designs/navigator-bridge.md"
+title: "Navigator Bridge in Record Detail"
+kind: "design"
+status: "proposed"
+owner: "product"
+tags: ["accessibility","authorization","navigator","webview"]
+evidence: []
+revisit: "when the Host publishes Navigator authorization status"
+rollback: "remove the bridge and retain the top-level Navigator action"
+---
 # Navigator bridge in the record detail
 
 The record detail keeps its selected physical record as the primary surface.

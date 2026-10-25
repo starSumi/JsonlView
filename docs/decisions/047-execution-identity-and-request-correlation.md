@@ -1,3 +1,15 @@
+---
+id: "047-execution-identity-and-request-correlation"
+path: "docs/decisions/047-execution-identity-and-request-correlation.md"
+title: "Execution Identity And Request Correlation"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["build","correlation","identity","lifecycle"]
+evidence: []
+revisit: "when runtime bundles, build inputs or epoch semantics change"
+rollback: "revert identity distribution while retaining request correlation"
+---
 # ADR-047: Execution Identity and Request Correlation
 
 Status: accepted

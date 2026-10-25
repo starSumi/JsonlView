@@ -1,3 +1,15 @@
+---
+id: "dataset-observations"
+path: "docs/dataset-observations.md"
+title: "Dataset observations"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["bounded-scan","datasets","insights","projection"]
+evidence: []
+revisit: "when dataset observation fields, budgets or scope change"
+rollback: "remove optional dataset observations while retaining Generic inspection"
+---
 # Dataset observations
 
 Dataset records are samples, not agent events. Their detail preview uses a

@@ -1,3 +1,15 @@
+---
+id: "048-bounded-conversation-and-dataset-scenes"
+path: "docs/decisions/048-bounded-conversation-and-dataset-scenes.md"
+title: "Bounded Conversation And Dataset Scenes"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["bounded-scan","conversation","datasets","projection"]
+evidence: []
+revisit: "when projection budgets or dataset observation semantics change"
+rollback: "disable the optional projections and retain the physical record table"
+---
 # ADR-048: Bounded Conversation and Dataset Scenes
 
 Status: accepted

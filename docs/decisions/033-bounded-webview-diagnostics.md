@@ -1,3 +1,15 @@
+---
+id: "033-bounded-webview-diagnostics"
+path: "docs/decisions/033-bounded-webview-diagnostics.md"
+title: "Bounded Webview Diagnostics and Agent Handoff"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["diagnostics","handoff","webview"]
+evidence: []
+revisit: "when diagnostics or agent handoff changes"
+rollback: "retain bounded diagnostics without external handoff"
+---
 # ADR-033: Bounded Webview Diagnostics and Agent Handoff
 
 Status: experimental

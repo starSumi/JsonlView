@@ -1,3 +1,15 @@
+---
+id: "015-changelog-ci-guard"
+path: "docs/decisions/015-changelog-ci-guard.md"
+title: "Guard Curated Release Notes in CI"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["changelog","ci","release"]
+evidence: []
+revisit: "when release-note policy changes"
+rollback: "restore the prior release-note guard"
+---
 # ADR-015: Guard Curated Release Notes in CI
 
 Status: accepted
