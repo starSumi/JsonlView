@@ -18,14 +18,13 @@ import type {
 } from '@shared/types';
 import { MAX_DIAGNOSTIC_CODE_LENGTH, MAX_DIAGNOSTIC_MESSAGE_LENGTH } from '@shared/types';
 import { createProtocolEnvelope } from '@shared/transport';
-import { DetailDrawer, type NavigatorBridgeState } from '@widgets/detail-drawer';
-import { copyText } from '@widgets/detail-drawer/copy-button';
+import { copyText, DetailDrawer, type NavigatorBridgeState } from '@widgets/detail-drawer';
 import { recordRefKey, sameRecordRef } from './record-identity';
 import {
   shouldAutomaticallyHydrateSelectedRecord,
 } from './full-record-intent';
 import { deferIdle } from './shared/utils/idle';
-import { BfclInsights, DatasetInsights, InsightsToolbar, InsightsView } from '@widgets/insights-panel';
+import { BfclInsights, DatasetInsights, InsightsToolbar, InsightsView, OpenTelemetryInsights } from '@widgets/insights-panel';
 import { shouldIssueInsightRequest } from './insight-request';
 import {
   datasetProvenanceTooltip,
@@ -37,6 +36,7 @@ import {
   workspaceDatasetProjectionAvailable,
   workspaceDatasetSummary,
   workspaceBfclSummary,
+  workspaceOpenTelemetrySummary,
   workspaceHasPartialContinuation,
   workspacePageRange,
   workspacePartialBannerIdentity,
@@ -903,12 +903,20 @@ export function App(): React.JSX.Element {
     () => workspaceBfclSummary(state.rows, partialScan),
     [state.rows, partialScan],
   );
+  const opentelemetrySummary = useMemo(
+    () => workspaceOpenTelemetrySummary(state.rows, partialScan),
+    [state.rows, partialScan],
+  );
   const datasetProjectionAvailable = workspaceDatasetProjectionAvailable(state);
+  const profileOwnInsightsAvailable = state.summary?.profileId === 'opentelemetry' || datasetProjectionAvailable;
   const showRowsProjectionFailure = rowsProjectionFailed && !state.pending.rows;
   const showInsightsTransitionStatus = showRowsProjectionFailure
-    || (state.pending.rows && (bfclSummary !== undefined || !datasetProjectionAvailable))
-    || (!datasetProjectionAvailable && state.page !== undefined);
+    || (state.pending.rows && (bfclSummary !== undefined || opentelemetrySummary !== undefined || !profileOwnInsightsAvailable))
+    || (!profileOwnInsightsAvailable && state.page !== undefined);
   const showBfclInsights = bfclSummary !== undefined && datasetProjectionAvailable
+    && !state.pending.rows && !showRowsProjectionFailure;
+  const showOpenTelemetryInsights = opentelemetrySummary !== undefined
+    && state.summary?.profileId === 'opentelemetry'
     && !state.pending.rows && !showRowsProjectionFailure;
   const hasPartialContinuation = workspaceHasPartialContinuation(partialScan, state.sort, state.page);
   const partialBannerIdentity = workspacePartialBannerIdentity(state.page);
@@ -1286,7 +1294,7 @@ export function App(): React.JSX.Element {
           </div>
           <div {...workspaceTabs.getPanelProps('insights')} className="workspace-tab-panel">
           {state.activeTab === 'insights' ? (
-            <div className={`insights-shell${showBfclInsights || showInsightsTransitionStatus ? ' insights-shell-single' : ''}`}>
+            <div className={`insights-shell${showBfclInsights || showOpenTelemetryInsights || showInsightsTransitionStatus ? ' insights-shell-single' : ''}`}>
               {showInsightsTransitionStatus ? (
                 <div className="insights-transition-status" role="status">
                   <span>{showRowsProjectionFailure
@@ -1306,6 +1314,10 @@ export function App(): React.JSX.Element {
               ) : showBfclInsights ? (
                 <div className="bfcl-insights-scroll">
                   <BfclInsights summary={bfclSummary} />
+                </div>
+              ) : showOpenTelemetryInsights ? (
+                <div className="bfcl-insights-scroll">
+                  <OpenTelemetryInsights summary={opentelemetrySummary} />
                 </div>
               ) : (
                 <>
