@@ -50,3 +50,5 @@ export type {
 export * from './catalog/catalog-model';
 export * from './catalog/catalog-port';
 export * from './catalog/catalog-identity';
+export * from './catalog/migrations';
+export * from './catalog/catalog-persistence';

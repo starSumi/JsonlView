@@ -1214,6 +1214,26 @@
       "sha256": "11e31f7dcac1370e0cebe7bd366704f5ad40770f13b17d5efc81754209708039"
     },
     {
+      "id": "062-catalog-versioned-persistence-contract",
+      "path": "docs/decisions/062-catalog-versioned-persistence-contract.md",
+      "title": "Catalog Versioned Persistence Contract",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "catalog",
+        "migration",
+        "persistence",
+        "validation"
+      ],
+      "evidence": [],
+      "revisit": "when the catalog schema, storage medium, or validation boundary changes",
+      "rollback": "stop the new catalog write path, retain the previous snapshot, and use the last validated schema version",
+      "summary": "ADR-062: Catalog Versioned Persistence Contract",
+      "bytes": 3502,
+      "sha256": "b047a3658e2608017e6c02c24c4f7cf0552f5d3068b81678d88ec0246b70fb77"
+    },
+    {
       "id": "acceleration-roadmap",
       "path": "docs/acceleration-roadmap.md",
       "title": "Acceleration roadmap",
@@ -1310,8 +1330,8 @@
       "revisit": "when the decision record topology changes",
       "rollback": "restore the previous decision index",
       "summary": "JsonlView Decisions",
-      "bytes": 7567,
-      "sha256": "10190cd020329a61f7a603713d7354a4598d46c363fc754490357f999aca243c"
+      "bytes": 7667,
+      "sha256": "3acb3b656268d5fc052c3d50125308ca11a00aa0127de12f664bae604ecf52c0"
     },
     {
       "id": "docs-index",
