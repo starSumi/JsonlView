@@ -11,7 +11,7 @@ const sourceHashes: Record<(typeof modules)[number], string> = {
   'workspace-header': 'd3537e79ccb5d5215711f3f824e3b71ce8e4ca232b59d9a5b115740c4d0a7eff',
   'record-query': '23e9ee63919717d9454100cb38f86fce51ed0f831594b5e6ec0d2d075dc09a91',
   'query-studio': 'c83e5de70732a7d9f1f48625aa8a1608966c0cd60086882c8233c72acdfe6a09',
-  views: 'ef06501d5393523a79e12cb2e42be9cc4e261b6c0e221cb11a4c9a100a9d7ade',
+  views: 'd1e25b3afefc9d0de05f215ff4259034bf1df7569fb35a7d90dafa8c48932e27',
   'insights-transition': '641e8bc2e891665933bc800cbcef77cf425bcbc1c76010c40923d3733a1f3c0e',
   'source-intake': 'e78c9a13a3d01b00885f5c907e5f5f5363b92f7dd7e003687dd28400dc4276b8',
   accessibility: '721c9a831fdd153d6524dc521682e117f3e29dda9a6aee8f302b77dd2c33f38d',
