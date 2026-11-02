@@ -55,7 +55,8 @@ export interface CatalogLocation {
 }
 
 export interface CatalogSnapshot {
-  readonly schemaVersion: 1;
+  /** The persisted shape version; migrations advance this one step at a time. */
+  readonly schemaVersion: number;
   readonly provider: CatalogProviderId;
   readonly sourceId: string;
   readonly sourceGeneration: string;
@@ -69,6 +70,9 @@ export interface CatalogSnapshot {
   readonly truncatedReason?: 'entity_limit' | 'relation_limit' | 'record_limit' | 'diagnostic_limit' | 'time_limit';
   readonly nextCursor?: string;
 }
+
+export type CatalogSnapshotV1 = CatalogSnapshot & { readonly schemaVersion: 1 };
+export type CatalogSnapshotV2 = CatalogSnapshot & { readonly schemaVersion: 2 };
 
 export interface CatalogStoredSnapshot extends Omit<CatalogSnapshot, 'entities'> {
   readonly entities: readonly CatalogEntity[];
