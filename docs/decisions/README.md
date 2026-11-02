@@ -95,6 +95,7 @@ Read these before changing a shared boundary:
 59. [ADR-058 priority scheduling for background index slices](058-priority-background-index-slices.md)
 60. [ADR-059 Webview style attribute CSP boundary](059-webview-style-attribute-csp-boundary.md)
 61. [ADR-060 shared query anchor and Treemap metadata](060-shared-query-anchor-and-treemap-metadata.md)
+62. [ADR-061 virtualized list accessibility semantics](061-virtualized-list-a11y-semantics.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

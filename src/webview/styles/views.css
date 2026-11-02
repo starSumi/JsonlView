@@ -917,6 +917,26 @@
   box-shadow: inset 2px 0 var(--vscode-editorWarning-foreground);
 }
 
+.timeline-list,
+.problems-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-list-item,
+.problem-list-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.timeline-list-item > .timeline-row,
+.problem-list-item > .problem-row {
+  height: 100%;
+}
+
 .timeline-row,
 .problem-row {
   position: absolute;

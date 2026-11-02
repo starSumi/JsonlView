@@ -1195,6 +1195,25 @@
       "sha256": "f61d11abf81418775bc81b72ed1777de04b6f8b8066a12cffeef3c3c1c50bee9"
     },
     {
+      "id": "061-virtualized-list-a11y-semantics",
+      "path": "docs/decisions/061-virtualized-list-a11y-semantics.md",
+      "title": "Virtualized List Accessibility Semantics",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "webview",
+        "virtualization"
+      ],
+      "evidence": [],
+      "revisit": "when Timeline or Problems virtualization or keyboard interaction changes",
+      "rollback": "restore the prior list containers and role mapping while retaining the focused semantic tests",
+      "summary": "ADR-061: Virtualized List Accessibility Semantics",
+      "bytes": 4247,
+      "sha256": "11e31f7dcac1370e0cebe7bd366704f5ad40770f13b17d5efc81754209708039"
+    },
+    {
       "id": "acceleration-roadmap",
       "path": "docs/acceleration-roadmap.md",
       "title": "Acceleration roadmap",
@@ -1291,8 +1310,8 @@
       "revisit": "when the decision record topology changes",
       "rollback": "restore the previous decision index",
       "summary": "JsonlView Decisions",
-      "bytes": 7472,
-      "sha256": "c07a83f2b0e81dd71b64fd12e28781f776577192f637470d35caa5c9c84bbb06"
+      "bytes": 7567,
+      "sha256": "10190cd020329a61f7a603713d7354a4598d46c363fc754490357f999aca243c"
     },
     {
       "id": "docs-index",
