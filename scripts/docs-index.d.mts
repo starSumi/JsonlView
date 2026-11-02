@@ -9,6 +9,12 @@ export interface DocumentationEntry {
   readonly evidence: readonly string[];
   readonly revisit: string;
   readonly rollback: string;
+  readonly 'x-priority'?: string;
+  readonly 'x-freshness'?: string;
+  readonly 'x-review-cadence'?: string;
+  readonly 'x-last-reviewed'?: string;
+  readonly 'x-supersedes'?: string;
+  readonly 'x-superseded-by'?: string;
   readonly summary: string;
   readonly bytes: number;
   readonly sha256: string;

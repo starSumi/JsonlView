@@ -1249,8 +1249,8 @@
       "revisit": "when the documentation topology changes",
       "rollback": "remove this catalog entry in a reviewed metadata migration",
       "summary": "Product Documentation",
-      "bytes": 2962,
-      "sha256": "4fe15119eab5a1abba11ad354406daa7546c3634d21e1cb8a73c2ff569267918"
+      "bytes": 3188,
+      "sha256": "0f44c6e283bfcd03f086c91e15e998f0d26c9979bdc6c0fefd074d24bc5900b2"
     },
     {
       "id": "format-and-profile-boundaries",
@@ -1348,8 +1348,8 @@
       "revisit": "when the document schema or lifecycle operations change",
       "rollback": "restore the previous validator and regenerate the index from the last accepted revision",
       "summary": "Documentation Metadata Contract",
-      "bytes": 2434,
-      "sha256": "ffbdf2396ecd26c2a88b3593e16dd14473def62fed8b770b34f738e89006297f"
+      "bytes": 2983,
+      "sha256": "3d89605b2329429900c26aceff60e5a639569f59d5c9ad396af8b322c60b2de2"
     },
     {
       "id": "navigator-bridge",
@@ -1370,6 +1370,221 @@
       "summary": "Navigator bridge in the record detail",
       "bytes": 1958,
       "sha256": "2a48a6cfd0aa024bd94f022eb8735bb51df40e2d06815fc57e615e8ce9087995"
+    },
+    {
+      "id": "navigator-collections",
+      "path": "docs/designs/navigator-collections.md",
+      "title": "Navigator Collections Overview",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "navigator",
+        "overview",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "x-supersedes": "docs/archive/navigator-collections-20261031/navigator-collections-pre-split.md",
+      "summary": "Navigator collections overview",
+      "bytes": 3821,
+      "sha256": "df046bbea01f339ae1b9e6130e6f3a7941e87a2ed03e4ec2a6bc6e19d9194027"
+    },
+    {
+      "id": "navigator-collections-20261031-index",
+      "path": "docs/archive/navigator-collections-20261031/README.md",
+      "title": "Navigator Collections Documentation Migration Record",
+      "kind": "index",
+      "status": "archived",
+      "owner": "product",
+      "tags": [
+        "archive",
+        "collections",
+        "documentation",
+        "migration"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "when the replacement document set changes or historical traceability is audited",
+      "rollback": "restore the prior document path through a reviewed documentation migration and regenerate docs/index.json",
+      "x-priority": "P2",
+      "x-freshness": "current",
+      "x-review-cadence": "review when replacement links or archive policy changes",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Navigator collections documentation migration",
+      "bytes": 1542,
+      "sha256": "a5ac06fd23eab7737888eea2e0564dcd0aed51db3cc591e04d67df14fcf69140"
+    },
+    {
+      "id": "navigator-collections-actions",
+      "path": "docs/designs/navigator-collections-actions.md",
+      "title": "Navigator Collections VS Code Actions and Context Menus",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "actions",
+        "collections",
+        "context-menu",
+        "navigator"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f",
+        "https://code.visualstudio.com/api/references/contribution-points#contributes.menus",
+        "https://code.visualstudio.com/api/extension-guides/tree-view#view-actions",
+        "https://code.visualstudio.com/api/extension-guides/webview#context-menus"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "5. VS Code actions, display and state",
+      "bytes": 16715,
+      "sha256": "254c10d0865294aa5b10b96febe4b04028c4dd3b77a7c8e0285c50f6f5b7929e"
+    },
+    {
+      "id": "navigator-collections-contracts",
+      "path": "docs/designs/navigator-collections-contracts.md",
+      "title": "Navigator Collections Domain Types and Store API",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "application-contract",
+        "collections",
+        "store-api",
+        "types"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "2. Domain types (proposed)",
+      "bytes": 22510,
+      "sha256": "9e9c30b1b609790c8a73cadbcf068a4b7cd3d05120ccc2526b8ba8c291d1f7dc"
+    },
+    {
+      "id": "navigator-collections-domain",
+      "path": "docs/designs/navigator-collections-domain.md",
+      "title": "Navigator Collections Domain Model and DAG",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "domain-model",
+        "navigator",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "0. Entity DAG, data flow, and state model",
+      "bytes": 10307,
+      "sha256": "0e010e24f15ae147978a3b1447008526e0179ca29a7dd5afbb45d45ed03a5faf"
+    },
+    {
+      "id": "navigator-collections-pre-split",
+      "path": "docs/archive/navigator-collections-20261031/navigator-collections-pre-split.md",
+      "title": "Navigator Collections Metadata and Application Contract (pre-split)",
+      "kind": "design",
+      "status": "archived",
+      "owner": "product",
+      "tags": [
+        "application-contract",
+        "archive",
+        "collections",
+        "navigator",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "when the split document set or migration record changes",
+      "rollback": "restore the archived source at its prior path only through a reviewed documentation migration",
+      "x-priority": "P2",
+      "x-freshness": "stale",
+      "x-review-cadence": "review only when tracing historical design decisions",
+      "x-last-reviewed": "2026-11-01",
+      "x-superseded-by": "docs/designs/navigator-collections.md",
+      "summary": "Navigator collections: metadata and application contract",
+      "bytes": 98499,
+      "sha256": "7c61f2bf679ab5cba791d329e08be54228cc058e6d26d388b36626a4ac9c8b11"
+    },
+    {
+      "id": "navigator-collections-sqlite",
+      "path": "docs/designs/navigator-collections-sqlite.md",
+      "title": "Navigator Collections SQLite DDL and WAL",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "sqlite",
+        "transactions",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f",
+        "https://nodejs.org/docs/latest-v24.x/api/sqlite.html"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "1. SQLite reference DDL",
+      "bytes": 31385,
+      "sha256": "91ca84f348e9c6ee2e67429596abed9e541d266e32581e20a71bddf2f20cb3e2"
+    },
+    {
+      "id": "navigator-collections-validation",
+      "path": "docs/designs/navigator-collections-validation.md",
+      "title": "Navigator Collections Validation, Migration, and Rollback",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "migration",
+        "rollback",
+        "validation"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Recovery, migration, and rollback boundaries",
+      "bytes": 10434,
+      "sha256": "d5e405341d0e1c09f9ec54f6e8ab198135d74bb31ddee26e055fd13e92d69b68"
     },
     {
       "id": "postmortem-policy",

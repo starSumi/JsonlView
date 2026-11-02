@@ -30,6 +30,15 @@ domain, phase, and lifecycle information such as `p2` or `completed`. Evidence
 contains only bounded receipt identifiers or public URLs; private paths and raw
 transcripts stay in the external harness.
 
+Documents that need maintenance ranking may use the approved `x-` extensions
+`x-priority` (`P0` through `P3`), `x-freshness` (`current`, `watch`, or
+`stale`), `x-review-cadence`, and `x-last-reviewed`. `x-last-reviewed` records
+the last substantive content review; it must not be populated from a file move
+or migration timestamp. A replacement relationship uses `x-supersedes` on the
+new document or `x-superseded-by` on the archived document. These fields guide
+maintenance only and do not increase evidence strength or change runtime
+authority.
+
 ## Lifecycle operations
 
 - `create`: create a unique file with valid front matter and a non-empty body.

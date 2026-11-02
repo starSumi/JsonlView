@@ -56,6 +56,9 @@ release input.
   Neutral Contrast direction, Compact Focus density guidance for dark host
   themes, semantic VS Code token contract, and visual acceptance boundary.
   It is product documentation, not runtime configuration or harness evidence.
+- [Navigator collections overview](designs/navigator-collections.md) routes the
+  proposed source-preserving collection contract to its domain, storage,
+  application, action, and validation documents. Its status is proposed.
 
 Claims about measured performance, installed-host behavior, or release output
 must link to an immutable external evidence receipt containing an ID, source
