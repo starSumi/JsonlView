@@ -59,6 +59,10 @@ release input.
 - [Navigator collections overview](designs/navigator-collections.md) routes the
   proposed source-preserving collection contract to its domain, storage,
   application, action, and validation documents. Its status is proposed.
+- [Query Studio and Navigator contract](designs/query-studio-and-navigator.md)
+  records the selected shared-anchor interactions, candidate/queued states,
+  Host defaults, Curated/Runtime separation and owner-specific implementation
+  gates; the newer Navigator composition remains pending visual review.
 
 Claims about measured performance, installed-host behavior, or release output
 must link to an immutable external evidence receipt containing an ID, source
