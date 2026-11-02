@@ -413,6 +413,10 @@
   border-bottom: 0;
 }
 
+.workspace-tabs button:not(.is-active) {
+  border-right-color: color-mix(in srgb, var(--vscode-panel-border) 45%, transparent);
+}
+
 .workspace-tabs button:hover,
 .detail-tabs button:hover {
   color: var(--vscode-tab-activeForeground);
@@ -423,7 +427,9 @@
   border-color: var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
   color: var(--vscode-tab-activeForeground);
   background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
-  box-shadow: inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder)),
+    inset 0 -2px 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
 }
 
 .detail-tabs button.is-active {

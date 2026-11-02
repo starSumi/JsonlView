@@ -1251,7 +1251,6 @@ export function App(): React.JSX.Element {
         <div className={`workspace-banner error-banner${state.error.recoverable ? ' is-recoverable' : ''}`} role="alert">
           <CircleAlert size={15} aria-hidden />
           <span><strong>{state.error.code}</strong> {state.error.message}</span>
-          <>
             <button type="button" className="error-action" onClick={() => { void diagnoseError(state.error!, 'explain'); }}>Explain with VS Code Chat</button>
             <button type="button" className="error-action" onClick={() => { void diagnoseError(state.error!, 'copy'); }}>Copy context</button>
             <details className="diagnostic-context-fallback">
@@ -1276,7 +1275,6 @@ export function App(): React.JSX.Element {
                 <X size={14} aria-hidden />
               </button>
             ) : null}
-          </>
         </div>
       ) : null}
 
@@ -1287,9 +1285,7 @@ export function App(): React.JSX.Element {
       >
         <section className="workspace-primary" aria-label={`${state.activeTab} view`}>
           <div {...workspaceTabs.getPanelProps('table')} className="workspace-tab-panel">
-          {state.activeTab === 'table' ? <>
-        <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} />
-          </> : null}
+          {state.activeTab === 'table' ? <RecordQueryBanner scan={state.page?.scan} sort={state.sort} pageIdentity={partialBannerIdentity} /> : null}
           {state.activeTab === 'table' ? (
             <RecordTable
               sessionId={clientRef.current.session.documentId}

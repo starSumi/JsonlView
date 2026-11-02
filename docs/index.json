@@ -1174,6 +1174,27 @@
       "sha256": "229a76ede43f8f3a218bab025a54bcb7e6ae0245728512583cb341c9c7445abd"
     },
     {
+      "id": "060-shared-query-anchor-and-treemap-metadata",
+      "path": "docs/decisions/060-shared-query-anchor-and-treemap-metadata.md",
+      "title": "Shared Query Anchor And Treemap Metadata",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounded-metadata",
+        "insights",
+        "query",
+        "transport",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "before a Treemap producer or consumer is connected, or a panel setting changes",
+      "rollback": "revert the task-owned shared contract, layout and anchor composition together",
+      "summary": "ADR-060: Shared Query Anchor and Treemap Metadata",
+      "bytes": 9617,
+      "sha256": "f61d11abf81418775bc81b72ed1777de04b6f8b8066a12cffeef3c3c1c50bee9"
+    },
+    {
       "id": "acceleration-roadmap",
       "path": "docs/acceleration-roadmap.md",
       "title": "Acceleration roadmap",
@@ -1270,8 +1291,8 @@
       "revisit": "when the decision record topology changes",
       "rollback": "restore the previous decision index",
       "summary": "JsonlView Decisions",
-      "bytes": 7368,
-      "sha256": "15f3ae8112515d218cb025a08c24b5110be211e0a88f66f2cbd13c1ab123eddd"
+      "bytes": 7472,
+      "sha256": "c07a83f2b0e81dd71b64fd12e28781f776577192f637470d35caa5c9c84bbb06"
     },
     {
       "id": "docs-index",
@@ -1289,8 +1310,8 @@
       "revisit": "when the documentation topology changes",
       "rollback": "remove this catalog entry in a reviewed metadata migration",
       "summary": "Product Documentation",
-      "bytes": 3188,
-      "sha256": "0f44c6e283bfcd03f086c91e15e998f0d26c9979bdc6c0fefd074d24bc5900b2"
+      "bytes": 3493,
+      "sha256": "80bd53fa6ee288b009acbb2e9fd8dc5eb818ef5186942995c30b2aff3b692a44"
     },
     {
       "id": "format-and-profile-boundaries",
@@ -1663,6 +1684,27 @@
       "summary": "Promotion Runbook",
       "bytes": 6930,
       "sha256": "885e37d6305b5ae334817b521b4ef7fc933d50faf03907d53984aba888e46603"
+    },
+    {
+      "id": "query-studio-and-navigator",
+      "path": "docs/designs/query-studio-and-navigator.md",
+      "title": "Query Studio And Navigator Interaction Contract",
+      "kind": "design",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "insights",
+        "navigator",
+        "query",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when a queued interaction or native Navigator composition is accepted",
+      "rollback": "restore the previous header composition and retain physical sources",
+      "summary": "Query Studio and Navigator interaction contract",
+      "bytes": 16182,
+      "sha256": "e852524c21dd364bcc0bc205e2a727b77e88735d6608216e9ff16f0c0353434a"
     },
     {
       "id": "rust-engineering-rules",

@@ -68,10 +68,10 @@ describe('module review report', () => {
     expect(report.ratchet?.maxGrowthLines).toBe(0);
     expect(report.ratchet?.violations).toEqual([]);
     expect(report.ratchet?.trackedFiles).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'src/engine/jsonl-engine.ts', baselineLines: 2263, currentLines: 2263, lineDelta: 0, violation: false }),
+      expect.objectContaining({ path: 'src/engine/jsonl-engine.ts', baselineLines: 2270, currentLines: 2270, lineDelta: 0, violation: false }),
       expect.objectContaining({ path: 'src/webview/state.ts', baselineLines: 960, currentLines: 960, lineDelta: 0, violation: false }),
       expect.objectContaining({ path: 'src/webview/features/record-query/row-query-controller.ts', baselineLines: 864, currentLines: 864, lineDelta: 0, violation: false }),
-      expect.objectContaining({ path: 'src/webview/App.tsx', baselineLines: 1477, currentLines: 1477, lineDelta: 0, violation: false }),
+      expect.objectContaining({ path: 'src/webview/App.tsx', baselineLines: 1486, currentLines: 1486, lineDelta: 0, violation: false }),
     ]));
   });
 

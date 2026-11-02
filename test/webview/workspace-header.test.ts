@@ -73,7 +73,11 @@ describe('workspace header status', () => {
   it('uses the selected compact bordered rail with an accent-shaped active tab', () => {
     expect(workspaceHeaderStyles).toContain('padding: 2px;');
     expect(workspaceHeaderStyles).toContain('border: 1px solid var(--vscode-panel-border);');
-    expect(workspaceHeaderStyles).toContain('box-shadow: inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));');
+    expect(workspaceHeaderStyles).toContain('inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder))');
+    expect(workspaceHeaderStyles).toContain('.workspace-tabs button:not(.is-active)');
+    expect(workspaceHeaderStyles).toContain('border-right-color: color-mix(in srgb, var(--vscode-panel-border) 45%, transparent);');
+    expect(workspaceHeaderStyles).toContain('font-weight: 600;');
+    expect(workspaceHeaderStyles).toContain('inset 0 -2px 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));');
     expect(workspaceHeaderStyles).not.toContain('.workspace-tabs button.is-active {\n  border-bottom-color:');
   });
 

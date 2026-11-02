@@ -6,7 +6,6 @@ import { ColumnChooser, RecordPager, RecordQueryControls, RecordTable, TopQueryS
 import { getColumnText, recordColumnForPath } from '../../src/webview/format';
 import type { PersistedWorkspaceState } from '../../src/webview/state';
 import { WorkspaceHeader } from '../../src/webview/workspace-header';
-import { DetailDrawer } from '../../src/webview/detail-drawer';
 import { DatasetInsights } from '../../src/webview/dataset-insights';
 import { BfclInsights, InsightsView } from '../../src/webview/widgets/insights-panel';
 import { InsightsToolbar } from '../../src/webview/insights-toolbar';
@@ -53,7 +52,7 @@ vi.mock('react', async (importOriginal) => {
     if (prior === undefined || !same(prior.deps, deps)) hooks.slots[index] = { value: factory(), deps };
     return (hooks.slots[index] as { value: Value }).value;
   };
-  const useEffect = (setup: () => (() => void) | void, deps?: readonly unknown[]) => {
+  const useEffect = (setup: () => (() => void) | undefined, deps?: readonly unknown[]) => {
     const index = hooks.cursor++;
     const previous = hooks.slots[index] as Effect | undefined;
     if (previous !== undefined && same(previous.deps, deps)) return;
@@ -96,7 +95,7 @@ beforeAll(async () => {
   vi.stubGlobal('document', { body: {
     dataset: { documentId: 'doc', generation: 'bootstrap', pageSize: '20' },
     classList: { add: (name: string) => bodyClasses.add(name), remove: (name: string) => bodyClasses.delete(name) },
-  } });
+  }, addEventListener: () => undefined, removeEventListener: () => undefined });
   browser = Object.assign(new EventTarget(), { innerWidth: 1400,
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     __jsonlViewVscodeApi: { getState: () => persisted, setState: vi.fn(),
@@ -244,18 +243,6 @@ function chooseWorkspaceTab(label: string): void {
   expect(visit(props(WorkspaceHeader).navigation)).toBe(true);
   commit();
 }
-function chooseDisplay(label: string): void {
-  const visit = (node: ReactNode): boolean => {
-    if (Array.isArray(node)) return node.some(visit);
-    if (!React.isValidElement<{ children?: ReactNode; onClick?: () => void; 'aria-pressed'?: boolean }>(node)) return false;
-    if (node.type === 'button' && node.props.children === label && node.props['aria-pressed'] !== undefined) {
-      node.props.onClick?.(); return true;
-    }
-    return visit(node.props.children);
-  };
-  expect(visit(tree)).toBe(true);
-  commit();
-}
 const visibleValues = (): string[] => {
   const table = props(RecordTable);
   return table.columns.map((column) => getColumnText(table.rows[0]!, column.id));
@@ -306,7 +293,7 @@ describe('App column presentation and projection boundary', () => {
     const trigger = new StudioElement();
     Object.assign(document, { activeElement: trigger });
     const capture = vi.fn(() => cell);
-    const restore = vi.fn();
+    const restore = vi.fn(() => true);
     const bridge = props(RecordTable).gridFocusBridgeRef;
     if (bridge === undefined) throw new Error('Grid focus bridge missing');
     bridge.current = { generation: 'g1', capture, restore };
@@ -314,6 +301,8 @@ describe('App column presentation and projection boundary', () => {
     props(TopQueryStudio).onToggle();
     commit();
     expect(capture).toHaveBeenCalledOnce();
+    props(TopQueryStudio).onTogglePin();
+    commit();
 
     const studio = TopQueryStudio(props(TopQueryStudio));
     const overlay = React.Children.toArray(studio.props.children).find((node) =>
@@ -376,13 +365,15 @@ describe('App column presentation and projection boundary', () => {
     const bridge = props(RecordTable).gridFocusBridgeRef;
     if (bridge === undefined) throw new Error('Grid focus bridge missing');
     const cell = { kind: 'data', sessionId: 'doc', generation: 'g1', ordinal: '7', columnId: status.id } as const;
-    const restore = vi.fn();
+    const restore = vi.fn(() => false);
     bridge.current = from === 'Table' ? { generation: 'g1', capture: () => cell, restore } : undefined;
     chooseWorkspaceTab(from);
     const trigger = new StudioElement();
     Object.assign(document, { activeElement: trigger });
     const requestsBeforeOpen = rowRequests().length;
     props(TopQueryStudio).onToggle();
+    commit();
+    props(TopQueryStudio).onTogglePin();
     commit();
     chooseWorkspaceTab(to);
     bridge.current = to === 'Table' ? { generation: 'g1', capture: () => undefined, restore } : undefined;
@@ -415,11 +406,13 @@ describe('App column presentation and projection boundary', () => {
     const bridge = props(RecordTable).gridFocusBridgeRef;
     if (bridge === undefined) throw new Error('Grid focus bridge missing');
     const cell = { kind: 'data', sessionId: 'doc', generation: 'g1', ordinal: '7', columnId: status.id } as const;
-    const restore = vi.fn();
+    const restore = vi.fn(() => false);
     bridge.current = { generation: 'g1', capture: () => cell, restore };
     const trigger = new StudioElement();
     Object.assign(document, { activeElement: trigger });
     props(TopQueryStudio).onToggle();
+    commit();
+    props(TopQueryStudio).onTogglePin();
     commit();
     // The live bridge has moved to g2 but still exposes the old captured cell;
     // generation validation must reject the restore before it reaches the grid.
@@ -746,7 +739,7 @@ describe('App column presentation and projection boundary', () => {
     deliverBroadcast('PROFILE_CHANGED', {
       profileId: 'generic', profileVersion: '2', profileEpoch: 2, columns: [prompt],
     });
-    let refreshed = last('GET_ROWS');
+    const refreshed = last('GET_ROWS');
     expect(refreshed.payload.projection?.dataset).toBe(true);
     const requestCount = rowRequests().length;
     deliver('ERROR', { code: 'REQUEST_FAILED', message: 'Synthetic projection failure', recoverable: true }, refreshed);
