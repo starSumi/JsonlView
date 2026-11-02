@@ -105,6 +105,9 @@ export async function buildIndex(root) {
       evidence: metadata.evidence,
       revisit: metadata.revisit,
       rollback: metadata.rollback,
+      ...Object.fromEntries(['x-priority', 'x-freshness', 'x-review-cadence', 'x-last-reviewed', 'x-supersedes', 'x-superseded-by']
+        .filter((field) => Object.hasOwn(metadata, field))
+        .map((field) => [field, metadata[field]])),
       summary: summaryFromBody(parsed.body),
       bytes: Buffer.byteLength(text),
       sha256: sha256(text),

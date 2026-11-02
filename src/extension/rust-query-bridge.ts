@@ -8,7 +8,7 @@ import {
   QueryExecutionUnsupportedError,
   type QueryExecutionSourceV1,
 } from '@application/ports/query-execution-port';
-import { isQuerySettlementDtoV1, type QueryRequestDtoV1, type QuerySourceIdentityV1 } from '@shared/query-dto';
+import { isQuerySettlementDtoV1, type QueryRequestDtoV1, type QuerySourceIdentityV1 } from '@shared/contracts/query-dto';
 
 export const RUST_QUERY_SCHEMA = 'jsonlview.rust-query.v1' as const;
 export const RUST_QUERY_CAPABILITY = 1 << 2;

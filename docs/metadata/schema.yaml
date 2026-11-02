@@ -11,3 +11,10 @@ index:
   path: docs/index.json
   generated: true
   integrity: [bytes, sha256]
+extensions:
+  x-priority: "Maintenance priority (P0-P3); it does not change evidence strength."
+  x-freshness: "Currentness label for the document contract."
+  x-review-cadence: "Trigger or interval for the next review."
+  x-last-reviewed: "Date of the last substantive review, not the file migration date."
+  x-supersedes: "Repository-relative document path replaced by this document."
+  x-superseded-by: "Repository-relative document path that replaces this document."

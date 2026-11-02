@@ -556,7 +556,7 @@ function captureSnapshotIdentity(snapshot: SnapshotIdentity): AcceptedRequestIde
   });
 }
 
-function querySourceIdentity(snapshot: SnapshotIdentity): import('@shared/query-dto').QuerySourceIdentityV1 {
+function querySourceIdentity(snapshot: SnapshotIdentity): import('@shared/contracts/query-dto').QuerySourceIdentityV1 {
   return {
     // The document id is the host-owned opaque source handle. Physical paths
     // remain outside the DTO and are never resolved by the Webview.
@@ -569,8 +569,8 @@ function querySourceIdentity(snapshot: SnapshotIdentity): import('@shared/query-
 }
 
 function sameQuerySourceIdentity(
-  left: import('@shared/query-dto').QuerySourceIdentityV1,
-  right: import('@shared/query-dto').QuerySourceIdentityV1,
+  left: import('@shared/contracts/query-dto').QuerySourceIdentityV1,
+  right: import('@shared/contracts/query-dto').QuerySourceIdentityV1,
 ): boolean {
   return left.sourceId === right.sourceId
     && left.documentId === right.documentId

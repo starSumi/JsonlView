@@ -3,8 +3,11 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildIndex, expectedId, KINDS, parseDocument, REQUIRED_FIELDS, stableJson, STATUSES } from './document-metadata.mjs';
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-const failures = [];
+const args = process.argv.slice(2);
+const defaultRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const validRootArgument = args.length === 0 || (args.length === 2 && args[0] === '--root');
+const root = args.length === 2 ? resolve(args[1]) : defaultRoot;
+const failures = validRootArgument ? [] : ['usage: node scripts/check-doc-metadata.mjs [--root <repository-root>]'];
 const indexPath = join(root, 'docs', 'index.json');
 let index;
 try { index = JSON.parse(await readFile(indexPath, 'utf8')); } catch (error) { failures.push(`docs/index.json cannot be read: ${error.message}`); }
@@ -12,6 +15,7 @@ try { index = JSON.parse(await readFile(indexPath, 'utf8')); } catch (error) { f
 let actual;
 try {
   actual = await buildIndex(root);
+  const documentPaths = new Set(actual.documents.map((document) => document.path));
   const seenIds = new Set();
   const seenPaths = new Set();
   for (const document of actual.documents) {
@@ -35,6 +39,27 @@ try {
     if (!Array.isArray(metadata.evidence) || metadata.evidence.some((item) => typeof item !== 'string')) failures.push(`${document.path} evidence must be a string array`);
     if (typeof metadata.revisit !== 'string' || metadata.revisit.trim().length < 8) failures.push(`${document.path} must state a revisit trigger`);
     if (typeof metadata.rollback !== 'string' || metadata.rollback.trim().length < 8) failures.push(`${document.path} must state a rollback action`);
+    if (metadata['x-priority'] !== undefined && !/^P[0-3]$/.test(metadata['x-priority'])) failures.push(`${document.path} x-priority must be P0, P1, P2, or P3`);
+    if (metadata['x-freshness'] !== undefined && !['current', 'watch', 'stale'].includes(metadata['x-freshness'])) failures.push(`${document.path} x-freshness must be current, watch, or stale`);
+    if (metadata['x-review-cadence'] !== undefined && (typeof metadata['x-review-cadence'] !== 'string' || metadata['x-review-cadence'].trim().length < 8)) failures.push(`${document.path} x-review-cadence must describe a review trigger`);
+    if (metadata['x-last-reviewed'] !== undefined) {
+      const reviewed = metadata['x-last-reviewed'];
+      const reviewedAt = typeof reviewed === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(reviewed)
+        ? new Date(`${reviewed}T00:00:00.000Z`)
+        : null;
+      if (!reviewedAt || Number.isNaN(reviewedAt.valueOf()) || reviewedAt.toISOString().slice(0, 10) !== reviewed) {
+        failures.push(`${document.path} x-last-reviewed must be a valid YYYY-MM-DD date`);
+      }
+    }
+    for (const field of ['x-supersedes', 'x-superseded-by']) {
+      if (metadata[field] === undefined) continue;
+      const target = metadata[field];
+      if (typeof target !== 'string' || !target.startsWith('docs/') || !/\.(?:md|mdx)$/.test(target)) {
+        failures.push(`${document.path} ${field} must be a repository-relative Markdown path`);
+      } else if (!documentPaths.has(target)) {
+        failures.push(`${document.path} ${field} must point to an indexed Markdown document (found ${target})`);
+      }
+    }
     if (!parsed.body.trim()) failures.push(`${document.path} must have a non-empty Markdown/MDX body`);
   }
 } catch (error) { failures.push(error.message); }

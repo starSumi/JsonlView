@@ -188,6 +188,8 @@ export function App(): React.JSX.Element {
   const stateRef = useRef(state);
   const gridFocusBridgeRef = useRef<GridFocusBridge | undefined>(undefined);
   const studioFocusRef = useRef<GridCell | undefined>(undefined);
+  const studioTriggerRef = useRef<HTMLElement | null>(null);
+  const studioFocusGenerationRef = useRef<string | undefined>(undefined);
   const priorStudioOpenRef = useRef(false);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
@@ -1018,7 +1020,12 @@ export function App(): React.JSX.Element {
   }) : null;
 
   const openQueryStudio = (): void => {
-    studioFocusRef.current = gridFocusBridgeRef.current?.capture();
+    const invokingElement = document.activeElement;
+    studioTriggerRef.current = invokingElement instanceof HTMLElement ? invokingElement : null;
+    const bridge = state.activeTab === 'table' ? gridFocusBridgeRef.current : undefined;
+    studioFocusRef.current = bridge?.capture();
+    studioFocusGenerationRef.current = bridge?.generation
+      ?? (studioFocusRef.current?.kind === 'data' ? studioFocusRef.current.generation : undefined);
     setQueryStudioOpen(true);
   };
   const closeQueryStudio = (): void => setQueryStudioOpen(false);
@@ -1053,28 +1060,29 @@ export function App(): React.JSX.Element {
   const observedStudioGeneration = state.summary?.snapshot.generation;
 
   useLayoutEffect(() => {
-    const rowCount = state.rows.length;
-    if (observedStudioGeneration !== undefined
-      && observedStudioGeneration !== studioGenerationRef.current
-      && queryStudioOpen) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (observedStudioGeneration !== undefined
-      && gridFocusBridgeRef.current?.generation !== observedStudioGeneration) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (rowCount === 0 && gridFocusBridgeRef.current === undefined) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (!queryStudioOpen && studioFocusRef.current !== undefined && gridFocusBridgeRef.current !== undefined) {
-      gridFocusBridgeRef.current?.restore(studioFocusRef.current);
+    const wasOpen = priorStudioOpenRef.current;
+    if (!queryStudioOpen && wasOpen) {
+      const capturedCell = studioFocusRef.current;
+      const capturedGeneration = studioFocusGenerationRef.current;
+      const bridge = gridFocusBridgeRef.current;
+      const canRestoreGrid = capturedCell !== undefined
+        && bridge !== undefined
+        && capturedGeneration !== undefined
+        && (capturedCell.kind !== 'data' || capturedCell.generation === capturedGeneration)
+        && bridge.generation === capturedGeneration
+        && (observedStudioGeneration === undefined || observedStudioGeneration === capturedGeneration);
+      if (canRestoreGrid) {
+        bridge.restore(capturedCell);
+      } else {
+        const trigger = studioTriggerRef.current;
+        if (trigger?.isConnected === true) trigger.focus({ preventScroll: true });
+      }
       studioFocusRef.current = undefined;
+      studioTriggerRef.current = null;
+      studioFocusGenerationRef.current = undefined;
     }
     priorStudioOpenRef.current = queryStudioOpen;
-  }, [observedStudioGeneration, queryStudioOpen, state.rows]);
+  }, [observedStudioGeneration, queryStudioOpen]);
 
   useEffect(() => {
     const generation = observedStudioGeneration ?? clientRef.current.session.generation;
@@ -1126,7 +1134,7 @@ export function App(): React.JSX.Element {
             })}
           </nav>
         }
-        secondary={state.activeTab === 'table' ? (
+        secondary={(
           <>
             <TopQueryStudio
               open={queryStudioOpen}
@@ -1142,7 +1150,7 @@ export function App(): React.JSX.Element {
             />
             {tableQueryControls}
           </>
-        ) : undefined}
+        )}
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
