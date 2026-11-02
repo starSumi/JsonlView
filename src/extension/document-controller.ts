@@ -1,13 +1,7 @@
 import type {
-  ColumnSpec,
   DocumentSummary,
   ExtensionMessage,
-  FieldStats,
   AnalysisIntentV1,
-  InsightSummary,
-  ProblemPage,
-  RecordDetail,
-  RecordRef,
   RowSort,
   SnapshotIdentity,
   TemporaryPreviewStatus,
@@ -17,11 +11,10 @@ import {
   createQueryExecutionRequestV1,
   LoadProblemPage,
   QueryExecutionPort,
-  type ProblemPageReader,
   type ProblemPageRequest,
-  type RecordPageReader,
   type RecordPageExecutionTiming,
   type RecordPageRequest,
+  type IJsonlSessionPort,
 } from '../application';
 import { createProtocolEnvelope, readProtocolIdentity } from '@shared/transport';
 import { isNavigatorBridgeResult } from '@shared/protocol/navigator-bridge';
@@ -51,30 +44,14 @@ interface QueryObservation {
   timing?: RecordPageExecutionTiming;
 }
 
+/** @deprecated Import IJsonlSessionPort from application ports for new code. */
+export type JsonlSessionPort = IJsonlSessionPort;
+
 /** @deprecated Import RecordPageRequest from application ports for new code. */
 export type RowsRequest = RecordPageRequest;
 
 /** @deprecated Import ProblemPageRequest from application ports for new code. */
 export type ProblemsRequest = ProblemPageRequest;
-
-export interface JsonlSessionPort extends RecordPageReader, ProblemPageReader {
-  getSummary(): DocumentSummary;
-  getProfileColumns(): readonly ColumnSpec[];
-  getProblems(request: ProblemsRequest, signal: AbortSignal): Promise<ProblemPage>;
-  getDetail(ref: RecordRef, full: boolean, signal: AbortSignal): Promise<RecordDetail>;
-  getSchema(offset: number, limit: number, signal: AbortSignal): Promise<{
-    fields: FieldStats[];
-    totalFields: number;
-    complete: boolean;
-  }>;
-  getInsights(
-    intent: AnalysisIntentV1,
-    signal: AbortSignal,
-  ): Promise<InsightSummary>;
-  setProfile(profileId: string, signal: AbortSignal): Promise<DocumentSummary>;
-  setFollowMode(enabled: boolean): Promise<DocumentSummary>;
-  rebuild(signal: AbortSignal): Promise<DocumentSummary>;
-}
 
 export interface MessageChannel {
   postMessage(message: ExtensionMessage): PromiseLike<boolean>;

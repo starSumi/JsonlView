@@ -30,6 +30,7 @@ import type {
 } from '@shared/types';
 import { resolveRowProjectionPlan } from '@shared/row-projection';
 import { MAX_TABLE_COLUMNS } from '@shared/types';
+import { MAX_SOURCE_FILE_BYTES } from '@shared/source-limits';
 import { JsonlEngineError, isAbortError } from './errors';
 import { createNewlineScanner } from './newline-scanner';
 import { evaluatePredicate, jsonKindOf, resolveFieldPath } from './predicate';
@@ -108,6 +109,7 @@ const HARD_SORT_MAX_MILLISECONDS = 60_000;
 const MAX_SORT_WINDOW = 2_048;
 const FORWARD_PAGE_READ_WINDOW_BYTES = 16 * 1024;
 const FORWARD_PAGE_READ_WINDOW_MIN_LIMIT = 100;
+const BACKGROUND_PROGRESS_THROTTLE_MS = 100;
 // Problems are an independent bounded scan. They are not folded into the
 // row page or DocumentSummary, so an explicit request can disclose progress
 // without retaining the complete source or a global problem array in the UI.
@@ -158,11 +160,22 @@ interface SortCandidate {
   key: unknown;
 }
 
+interface SerialExecutorTask {
+  name: JsonlEngineQueueOperation;
+  operation: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+  blockedBy: JsonlEngineQueueOperation;
+  enqueuedAt: number | undefined;
+  onTiming: ((queueWaitMs: number, engineExecMs: number, blockedBy: JsonlEngineQueueOperation) => void) | undefined;
+}
+
 class SerialExecutor {
-  private tail: Promise<void> = Promise.resolve();
   private pending = 0;
   private activeOperation: JsonlEngineQueueOperation | undefined;
-  private readonly queuedOperations: JsonlEngineQueueOperation[] = [];
+  private readonly interactiveQueue: SerialExecutorTask[] = [];
+  private readonly backgroundQueue: SerialExecutorTask[] = [];
+  private readonly idleWaiters: Array<() => void> = [];
   private readonly maximumPending: number;
 
   constructor(maximumPending: number) {
@@ -180,42 +193,87 @@ class SerialExecutor {
         `The JSONL engine already has ${String(this.pending)} pending operations.`,
       ));
     }
-    this.pending += 1;
-    const blockedBy = this.queuedOperations[this.queuedOperations.length - 1] ?? this.activeOperation ?? 'none';
+    const isBackground = isBackgroundQueueOperation(name);
+    const blockedBy = isBackground
+      ? this.backgroundQueue.at(-1)?.name
+        ?? this.interactiveQueue.at(-1)?.name
+        ?? this.activeOperation
+        ?? 'none'
+      : this.interactiveQueue.at(-1)?.name ?? this.activeOperation ?? 'none';
     const enqueuedAt = onTiming === undefined ? undefined : performance.now();
-    this.queuedOperations.push(name);
-    const task = async (): Promise<T> => {
-      const queued = this.queuedOperations.shift();
-      if (queued !== name) {
-        const queuedIndex = this.queuedOperations.indexOf(name);
-        if (queuedIndex >= 0) this.queuedOperations.splice(queuedIndex, 1);
-      }
-      this.activeOperation = name;
-      const startedAt = onTiming === undefined ? undefined : performance.now();
-      try {
-        return await operation();
-      } finally {
-        this.activeOperation = undefined;
-        if (enqueuedAt !== undefined && startedAt !== undefined) {
-          try {
-            onTiming?.(performance.now() - enqueuedAt, performance.now() - startedAt, blockedBy);
-          } catch {
-            // A diagnostic callback must never change the operation result.
-          }
-        }
-      }
-    };
-    const result = this.tail.then(task, task);
-    this.tail = result.then(
-      () => { this.pending -= 1; },
-      () => { this.pending -= 1; },
-    );
-    return result;
+    this.pending += 1;
+
+    return new Promise<T>((resolve, reject) => {
+      const task: SerialExecutorTask = {
+        name,
+        operation,
+        resolve: (value) => resolve(value as T),
+        reject,
+        blockedBy,
+        enqueuedAt,
+        onTiming,
+      };
+      (isBackground ? this.backgroundQueue : this.interactiveQueue).push(task);
+      this.dispatch();
+    });
   }
 
   idle(): Promise<void> {
-    return this.tail;
+    if (this.pending === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
+
+  private dispatch(): void {
+    if (this.activeOperation !== undefined) return;
+    const task = this.interactiveQueue.shift() ?? this.backgroundQueue.shift();
+    if (task === undefined) return;
+
+    this.activeOperation = task.name;
+    const startedAt = task.onTiming === undefined ? undefined : performance.now();
+    const queueWaitMs = task.enqueuedAt === undefined || startedAt === undefined
+      ? undefined
+      : startedAt - task.enqueuedAt;
+    let result: Promise<unknown>;
+    try {
+      result = task.operation();
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    void result.then(
+      (value) => this.complete(task, startedAt, queueWaitMs, () => task.resolve(value)),
+      (error: unknown) => this.complete(task, startedAt, queueWaitMs, () => task.reject(error)),
+    );
+  }
+
+  private complete(
+    task: SerialExecutorTask,
+    startedAt: number | undefined,
+    queueWaitMs: number | undefined,
+    settle: () => void,
+  ): void {
+    this.activeOperation = undefined;
+    try {
+      if (queueWaitMs !== undefined && startedAt !== undefined) {
+        try {
+          const engineExecMs = performance.now() - startedAt;
+          task.onTiming?.(queueWaitMs, engineExecMs, task.blockedBy);
+        } catch {
+          // A diagnostic callback must never change the operation result.
+        }
+      }
+    } finally {
+      settle();
+      this.pending -= 1;
+      if (this.pending === 0) {
+        for (const resolve of this.idleWaiters.splice(0)) resolve();
+      }
+      this.dispatch();
+    }
+  }
+}
+
+function isBackgroundQueueOperation(name: JsonlEngineQueueOperation): boolean {
+  return name === 'index_more';
 }
 
 type QueryPhase = 'indexWorkMs' | 'readWaitMs' | 'parseMs' | 'projectionMs' | 'snapshotCheckMs';
@@ -435,6 +493,12 @@ export class JsonlFileEngine {
       if (!sourceStat.isFile()) {
         throw new JsonlEngineError('NOT_A_FILE', `JSONL source is not a regular file: ${absolutePath}`);
       }
+      if (sourceStat.size > MAX_SOURCE_FILE_BYTES) {
+        throw new JsonlEngineError(
+          'SOURCE_TOO_LARGE',
+          `JSONL source exceeds the ${String(MAX_SOURCE_FILE_BYTES / (1024n * 1024n * 1024n))} GiB hard limit: ${absolutePath}`,
+        );
+      }
 
       const prefixLength = Number(sourceStat.size < BigInt(DEFAULT_FINGERPRINT_BYTES)
         ? sourceStat.size
@@ -559,6 +623,7 @@ export class JsonlFileEngine {
       resolveDone = resolvePromise;
       rejectDone = rejectPromise;
     });
+    let lastProgressReportedAt: number | undefined;
 
     const settle = (error?: unknown): void => {
       if (settled) return;
@@ -579,7 +644,21 @@ export class JsonlFileEngine {
         ...(context.generation === undefined ? {} : { generation: context.generation }),
         signal: controller.signal,
       }).then((summary) => {
-        onProgress?.(summary);
+        if (onProgress !== undefined) {
+          const now = performance.now();
+          if (
+            summary.indexingComplete
+            || lastProgressReportedAt === undefined
+            || now - lastProgressReportedAt >= BACKGROUND_PROGRESS_THROTTLE_MS
+          ) {
+            lastProgressReportedAt = now;
+            try {
+              onProgress(summary);
+            } catch {
+              // Progress observers cannot interrupt indexing.
+            }
+          }
+        }
         if (summary.indexingComplete) settle();
         else setImmediate(step);
       }).catch(settle);
@@ -825,7 +904,7 @@ export class JsonlFileEngine {
       const hasAfter = direction === 'forward'
         ? canContinue
         : lastOrdinal !== undefined ? (total === undefined || lastOrdinal + 1n < total)
-          : anchor !== undefined && anchor + 1n < (total ?? this.index.indexedRecords);
+          : anchor !== undefined && (total === undefined || anchor + 1n < total);
       // The scan selects an adjacent physical window; the ordinal sort controls presentation.
       if (sort?.direction === 'desc') rows.reverse();
 

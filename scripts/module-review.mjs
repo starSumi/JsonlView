@@ -295,6 +295,43 @@ function priorityScore(metrics, config) {
   return Math.round(100 * (weights.size * size + weights.churn * churn + weights.coupling * coupling + weights.complexity * complexity + weights.boundary * boundary));
 }
 
+function evaluateRatchet(repoRoot, config, metricsByPath) {
+  const ratchet = config.ratchet;
+  if (!ratchet) {
+    return {
+      enabled: false,
+      baselineRevision: null,
+      maxGrowthLines: null,
+      trackedFiles: [],
+      violations: [],
+    };
+  }
+
+  const trackedFiles = Object.entries(ratchet.trackedFiles ?? {}).map(([path, baselineLines]) => {
+    const metrics = metricsByPath.get(normalize(resolve(repoRoot, path)));
+    const currentLines = metrics?.lines ?? null;
+    const lineDelta = currentLines === null ? null : currentLines - baselineLines;
+    const violation = currentLines !== null && lineDelta > ratchet.maxGrowthLines;
+    return {
+      path,
+      baselineLines,
+      currentLines,
+      lineDelta,
+      allowedGrowthLines: ratchet.maxGrowthLines,
+      violation,
+    };
+  });
+
+  return {
+    enabled: true,
+    version: ratchet.version ?? 1,
+    baselineRevision: ratchet.baselineRevision ?? null,
+    maxGrowthLines: ratchet.maxGrowthLines,
+    trackedFiles,
+    violations: trackedFiles.filter((entry) => entry.violation).map((entry) => entry.path),
+  };
+}
+
 export async function buildReport({ directory = invocationDirectory, base, head = 'HEAD', includeWorktree = true, all = false } = {}) {
   const repoRoot = resolveRepoRoot(directory);
   const config = JSON.parse(await readFile(resolve(repoRoot, 'config/module-review.json'), 'utf8'));
@@ -345,6 +382,8 @@ export async function buildReport({ directory = invocationDirectory, base, head 
     if (metrics) metrics.directFanIn = importers.size;
   }
 
+  const ratchet = evaluateRatchet(repoRoot, config, metricsByPath);
+
   const entries = [...metricsByPath.values()].map((metrics) => {
     const exemption = isExempt(metrics.path, config.exemptions ?? []);
     const reasons = reviewReasons(metrics, config.reviewBands);
@@ -374,6 +413,7 @@ export async function buildReport({ directory = invocationDirectory, base, head 
     dependencyGraph: { scope: 'relative-imports-only', fanOutScope: 'all-import-specifiers' },
     scope: all ? 'all-source' : 'changed-or-review-required',
     thresholds: config.reviewBands,
+    ratchet,
     entries,
     reviewRequired: entries.filter((entry) => entry.reviewRequired).map((entry) => entry.path),
   };
@@ -381,6 +421,15 @@ export async function buildReport({ directory = invocationDirectory, base, head 
 
 function formatHuman(report) {
   const lines = [`Module review (${report.scope}; base=${report.base ?? 'working-tree'}; head=${report.head}; worktree=${report.includeWorktree ? 'included' : 'excluded'}; graph=${report.dependencyGraph.scope})`];
+  if (report.ratchet?.enabled) {
+    const status = report.ratchet.violations.length === 0 ? 'pass' : 'FAIL';
+    lines.push(`Ratchet: ${status} (baseline=${report.ratchet.baselineRevision ?? 'unbound'}; max-growth=${report.ratchet.maxGrowthLines} lines)`);
+    for (const entry of report.ratchet.trackedFiles) {
+      const current = entry.currentLines === null ? 'missing' : `${entry.currentLines} lines`;
+      const delta = entry.lineDelta === null ? 'n/a' : `${entry.lineDelta >= 0 ? '+' : ''}${entry.lineDelta}`;
+      lines.push(`  ${entry.violation ? 'FAIL' : 'pass'} ${entry.path}: ${current} (baseline ${entry.baselineLines}; delta ${delta})`);
+    }
+  }
   if (report.entries.length === 0) return `${lines[0]}\nNo changed or review-priority source modules.`;
   for (const entry of report.entries) {
     const reasons = entry.reasons.length > 0 ? ` [${entry.reasons.join(', ')}]` : '';
@@ -393,6 +442,7 @@ export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   const report = await buildReport({ base: args.base, head: args.head, includeWorktree: args.includeWorktree, all: args.all });
   process.stdout.write(args.json ? `${JSON.stringify(report, null, 2)}\n` : `${formatHuman(report)}\n`);
+  if (report.ratchet?.violations.length > 0) process.exitCode = 1;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

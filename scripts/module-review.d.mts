@@ -49,6 +49,21 @@ export interface ModuleReviewReport {
   readonly dependencyGraph: { readonly scope: string; readonly fanOutScope: string };
   readonly scope: string;
   readonly thresholds: unknown;
+  readonly ratchet?: {
+    readonly enabled: boolean;
+    readonly version?: number;
+    readonly baselineRevision: string | null;
+    readonly maxGrowthLines: number | null;
+    readonly trackedFiles: readonly {
+      readonly path: string;
+      readonly baselineLines: number;
+      readonly currentLines: number | null;
+      readonly lineDelta: number | null;
+      readonly allowedGrowthLines: number | null;
+      readonly violation: boolean;
+    }[];
+    readonly violations: readonly string[];
+  };
   readonly entries: readonly ModuleReviewEntry[];
   readonly reviewRequired: readonly string[];
 }

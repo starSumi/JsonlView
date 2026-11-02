@@ -80,16 +80,9 @@
 }
 
 @container workspace (max-width: 700px) {
-  .workspace-header-primary > .workspace-tabs .workspace-tab-label,
-  .workspace-header-primary > .workspace-tabs .tab-count-unit {
-    display: none;
-  }
-
   .workspace-header-primary > .workspace-tabs button {
-    justify-content: center;
-    gap: 4px;
-    min-width: 32px;
-    padding-inline: 7px;
+    min-width: 68px;
+    padding-inline: 8px;
   }
 
   .workspace-header-primary > .workspace-tabs {

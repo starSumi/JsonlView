@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
+import { JSONL_EXTENSION_PATTERN_SOURCE } from './source-intake-contract';
 import type { DetectedAgentProviderId } from './types';
 
 const DETECTED_AGENT_BUTTONS = [
@@ -13,6 +14,7 @@ const DETECTED_AGENT_BUTTONS = [
 ] as const satisfies readonly (readonly [DetectedAgentProviderId, string])[];
 
 const DEFAULT_DETECTED_AGENTS = DETECTED_AGENT_BUTTONS.map(([provider]) => provider);
+const JSONL_URI_VALIDATION_HELPER = `function hasJsonlExtension(value) { let path = String(value); try { path = decodeURIComponent(new URL(path).pathname); } catch {} return new RegExp(${JSON.stringify(JSONL_EXTENSION_PATTERN_SOURCE)}, 'iu').test(path.split(/[?#]/u, 1)[0] || ''); }`;
 
 function formatMiB(bytes: number): string {
   const value = bytes / (1024 * 1024);
@@ -147,6 +149,7 @@ export function getSourceIntakeHtml(availableProviders: readonly DetectedAgentPr
       function setStatus(message, state) { status.textContent = message; status.dataset.state = state; }
       function setBusy(value) { busy = value; document.querySelectorAll('button').forEach(button => { button.disabled = value; }); text.readOnly = value; }
       function send(message) { if (busy) return; setBusy(true); vscode.postMessage(message); }
+      ${JSONL_URI_VALIDATION_HELPER}
       function showDiagnostic(name, message) {
         const safeName = String(name || 'Error').slice(0, 128);
         const safeMessage = String(message || 'Unknown webview error').replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 512);
@@ -197,6 +200,7 @@ export function getSourceIntakeHtml(availableProviders: readonly DetectedAgentPr
           if (rawUris.length > 65536) { setStatus('Choose up to 32 local sources at a time.', 'error'); return; }
           const uris = rawUris.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#'));
           if (uris.length !== 1) { setStatus('Drop one JSONL file for a temporary preview, or choose Files to add several sources.', 'error'); return; }
+          if (!hasJsonlExtension(uris[0])) { setStatus('Drop a JSONL or NDJSON file, or choose Files.', 'error'); return; }
           send({ type: 'preview-uris', uris }); return;
         }
         const entries = Array.from(transfer.items || []).map(item => { try { return typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null; } catch { return null; } });
@@ -208,7 +212,7 @@ export function getSourceIntakeHtml(availableProviders: readonly DetectedAgentPr
         if (files.length !== 1) { setStatus('Drop one file for a temporary preview, or choose Files to add several sources.', 'error'); return; }
         const file = files[0];
         if (file.size > maxBytes) { setStatus('Dropped previews are limited to 1 MiB. Choose Files to open a larger source.', 'error'); return; }
-        if (!/\.(jsonl|ndjson)$/iu.test(file.name)) { setStatus('Drop a JSONL or NDJSON file, or choose Files.', 'error'); return; }
+        if (!hasJsonlExtension(file.name)) { setStatus('Drop a JSONL or NDJSON file, or choose Files.', 'error'); return; }
         setBusy(true);
         try {
           const buffer = await file.arrayBuffer();
@@ -238,6 +242,9 @@ export function getSourceDropHtml(): string {
     * { box-sizing: border-box; }
     body { margin: 0; min-width: 0; padding: 2px 8px 5px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: var(--vscode-font-size)/1.35 var(--vscode-font-family); }
     button { min-width: 0; font: inherit; cursor: pointer; }
+    .source-card { container: source-card / inline-size; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px; padding: 4px; transition: border-color 80ms ease, background-color 80ms ease; }
+    .source-card.dragging { border-color: var(--vscode-focusBorder); background: var(--vscode-list-dropBackground); }
+    .source-card.invalid-drag { border-color: var(--vscode-errorForeground); background: var(--vscode-inputValidation-errorBackground); }
     .toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 4px 5px; border: 0; border-radius: 3px; color: var(--vscode-foreground); background: transparent; text-align: left; }
     .toggle:hover { background: var(--vscode-list-hoverBackground); }
     .toggle:focus-visible, .drop:focus-visible, .source-action:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
@@ -253,10 +260,12 @@ export function getSourceDropHtml(): string {
     .drop strong { display: block; font-weight: 600; }
     .hint { display: block; margin-top: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; line-height: 1.35; }
     .source-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 0 5px; }
-    .source-action { width: 100%; padding: 3px 4px; border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 3px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); font-size: 11px; line-height: 1.35; white-space: nowrap; }
+    .source-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 100%; min-height: 24px; padding: 3px 8px; border: 1px solid var(--vscode-button-secondaryBorder, var(--vscode-widget-border, var(--vscode-panel-border))); border-radius: 999px; color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); background: var(--vscode-button-secondaryBackground, var(--vscode-sideBar-background)); font-size: 11px; line-height: 1.35; white-space: nowrap; }
+    .source-action .codicon { font-family: codicon; font-size: 14px; line-height: 1; }
     .source-action:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
     .source-action:active, .toggle:active { background: var(--vscode-list-activeSelectionBackground); }
     @media (max-width: 240px) { .source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @container source-card (max-width: 240px) { .source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .source-action { padding-inline: 5px; } .source-action-label { display: none; } }
     @media (forced-colors: active) { .source-action { border-color: ButtonText; color: ButtonText; background: ButtonFace; } .source-action:active { color: HighlightText; background: Highlight; } .toggle:focus-visible, .drop:focus-visible, .source-action:focus-visible { outline-color: Highlight; } .drop { border-color: ButtonText; } }
     [hidden] { display: none !important; }
     #status { min-height: 14px; margin: 4px 0 0; overflow-wrap: anywhere; font-size: 10px; }
@@ -264,12 +273,13 @@ export function getSourceDropHtml(): string {
   </style>
 </head>
 <body>
+  <section class="source-card" id="source-card" aria-label="Add source">
   <button class="toggle" id="toggle" type="button" aria-expanded="true" aria-controls="source-actions">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
     <strong>Add source</strong><small>JSONL / folder</small><span class="chevron" aria-hidden="true">⌄</span>
   </button>
   <section class="actions" id="source-actions" aria-label="Source options">
-    <div class="source-actions"><button class="source-action" id="files" type="button">Files</button><button class="source-action" id="folder" type="button">Folder</button><button class="source-action" id="paste" type="button">Paste</button><button class="source-action" id="connect" type="button">Connect</button></div>
+    <div class="source-actions"><button class="source-action" id="files" type="button" aria-label="Files"><span class="codicon codicon-file" aria-hidden="true"></span><span class="source-action-label">Files</span></button><button class="source-action" id="folder" type="button" aria-label="Folder"><span class="codicon codicon-folder" aria-hidden="true"></span><span class="source-action-label">Folder</span></button><button class="source-action" id="paste" type="button" aria-label="Paste"><span class="codicon codicon-edit" aria-hidden="true"></span><span class="source-action-label">Paste</span></button><button class="source-action" id="connect" type="button" aria-label="Connect"><span class="codicon codicon-plug" aria-hidden="true"></span><span class="source-action-label">Connect</span></button></div>
     <button class="drop" id="drop" type="button">
       <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 15v4h16v-4"/></svg>
       <strong>Drop JSONL for a temporary preview</strong><span class="hint">or choose a source</span>
@@ -277,15 +287,18 @@ export function getSourceDropHtml(): string {
     <span class="hint">Files and folders stay read-only. Drop or Paste opens a temporary preview; Files and Folder authorize sources.</span>
     <span id="status" role="status" aria-live="polite"></span>
   </section>
+  </section>
   <script nonce="${nonce}">
     (() => {
       const v = acquireVsCodeApi();
       const toggle = document.getElementById('toggle');
       const actions = document.getElementById('source-actions');
+      const card = document.getElementById('source-card');
       const drop = document.getElementById('drop');
       const statusNode = document.getElementById('status');
       let busy = false;
-      let depth = 0;
+      function resetDrag() { card.classList.remove('dragging'); card.classList.remove('invalid-drag'); }
+      ${JSONL_URI_VALIDATION_HELPER}
       function status(text, state) { statusNode.textContent = text; statusNode.dataset.state = state; }
       function send(message) { if (busy) return; busy = true; status('Adding source…', 'busy'); Promise.resolve(v.postMessage(message)).catch(() => { busy = false; status('Source view was closed. Reopen it and try again.', 'error'); }); }
       toggle.addEventListener('click', () => { const expanded = toggle.getAttribute('aria-expanded') === 'true'; toggle.setAttribute('aria-expanded', String(!expanded)); actions.hidden = expanded; toggle.querySelector('.chevron').textContent = expanded ? '›' : '⌄'; if (!expanded) drop.focus(); });
@@ -302,10 +315,12 @@ export function getSourceDropHtml(): string {
         });
       });
       document.getElementById('connect').addEventListener('click', () => send({ type: 'connect-agent' }));
-      document.addEventListener('dragenter', event => { event.preventDefault(); if (actions.hidden) { actions.hidden = false; toggle.setAttribute('aria-expanded', 'true'); toggle.querySelector('.chevron').textContent = '⌄'; } depth++; drop.classList.add('dragging'); });
-      document.addEventListener('dragleave', event => { event.preventDefault(); if (--depth <= 0) { depth = 0; drop.classList.remove('dragging'); } });
-      document.addEventListener('dragover', event => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; });
-      document.addEventListener('drop', event => { event.preventDefault(); depth = 0; drop.classList.remove('dragging'); if (busy || !event.dataTransfer) return; const transfer = event.dataTransfer; const raw = transfer.getData('text/uri-list'); if (raw) { const uris = raw.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#')); if (uris.length !== 1) { status('Drop one JSONL file for a temporary preview, or choose Files to add several sources.', 'error'); return; } send({ type: 'preview-uris', uris }); return; } const entries = Array.from(transfer.items || []).map(item => { try { return typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null; } catch { return null; } }); if (entries.some(entry => entry && entry.isDirectory)) { status('Choose the dropped folder in the folder picker.', 'idle'); send({ type: 'pick-folder' }); return; } const files = Array.from(transfer.files || []); if (files.length === 1 && /\.(jsonl|ndjson)$/iu.test(files[0].name) && typeof files[0].arrayBuffer === 'function') { const file = files[0]; if (file.size > ${maxBytes}) { status('Dropped previews are limited to ${maxMiB} MiB. Choose Files to open a larger source.', 'error'); return; } busy = true; status('Opening preview…', 'busy'); Promise.resolve(file.arrayBuffer()).then(buffer => { if (buffer.byteLength > ${maxBytes}) throw new Error('oversized'); const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer); busy = false; send({ type: 'import-jsonl', text: content }); }).catch(() => { busy = false; status('The dropped file could not be read as UTF-8 JSONL. Choose Files to open it directly.', 'error'); }); return; } if (files.length > 0) { status('Choose the dropped file in the file picker.', 'idle'); send({ type: 'pick-files' }); return; } status('Drop from the VS Code Explorer or click this box to choose files.', 'idle'); });
+      card.addEventListener('dragenter', event => { event.preventDefault(); if (event.relatedTarget && card.contains(event.relatedTarget)) return; if (actions.hidden) { actions.hidden = false; toggle.setAttribute('aria-expanded', 'true'); toggle.querySelector('.chevron').textContent = '⌄'; } card.classList.add('dragging'); });
+      card.addEventListener('dragleave', event => { event.preventDefault(); if (!event.relatedTarget || !card.contains(event.relatedTarget)) resetDrag(); });
+      card.addEventListener('dragend', resetDrag);
+      window.addEventListener('blur', resetDrag);
+      card.addEventListener('dragover', event => { event.preventDefault(); if (!event.dataTransfer) return; const raw = event.dataTransfer.getData('text/uri-list'); const uris = raw.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#')); const invalidUri = uris.length === 1 && !hasJsonlExtension(uris[0]); card.classList.toggle('invalid-drag', invalidUri); event.dataTransfer.dropEffect = busy || invalidUri ? 'none' : 'copy'; });
+      card.addEventListener('drop', event => { event.preventDefault(); resetDrag(); if (busy || !event.dataTransfer) return; const transfer = event.dataTransfer; const raw = transfer.getData('text/uri-list'); if (raw) { const uris = raw.split(/\r?\n/u).map(value => value.trim()).filter(value => value && !value.startsWith('#')); if (uris.length !== 1) { status('Drop one JSONL file for a temporary preview, or choose Files to add several sources.', 'error'); return; } if (!hasJsonlExtension(uris[0])) { status('Drop a JSONL or NDJSON file, or choose Files.', 'error'); return; } send({ type: 'preview-uris', uris }); return; } const entries = Array.from(transfer.items || []).map(item => { try { return typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null; } catch { return null; } }); if (entries.some(entry => entry && entry.isDirectory)) { status('Choose the dropped folder in the folder picker.', 'idle'); send({ type: 'pick-folder' }); return; } const files = Array.from(transfer.files || []); if (files.length === 1 && hasJsonlExtension(files[0].name) && typeof files[0].arrayBuffer === 'function') { const file = files[0]; if (file.size > ${maxBytes}) { status('Dropped previews are limited to ${maxMiB} MiB. Choose Files to open a larger source.', 'error'); return; } busy = true; status('Opening preview…', 'busy'); Promise.resolve(file.arrayBuffer()).then(buffer => { if (buffer.byteLength > ${maxBytes}) throw new Error('oversized'); const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer); busy = false; send({ type: 'import-jsonl', text: content }); }).catch(() => { busy = false; status('The dropped file could not be read as UTF-8 JSONL. Choose Files to open it directly.', 'error'); }); return; } if (files.length > 0) { status('Choose the dropped file in the file picker.', 'idle'); send({ type: 'pick-files' }); return; } status('Drop from the VS Code Explorer or click this box to choose files.', 'idle'); });
       window.addEventListener('message', event => { const message = event.data; if (!message || message.type !== 'status' || typeof message.text !== 'string') return; busy = message.state === 'busy'; status(message.text, message.state); });
     })();
   </script>

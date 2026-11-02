@@ -42,6 +42,7 @@ type PositionalRead = (
 interface PositionalReadSpy {
   mock: { calls: Array<[Buffer, number, number, number | bigint | null]> };
   mockImplementation(implementation: PositionalRead): this;
+  mockRestore(): void;
 }
 
 function spyOnPositionalReads(engine: JsonlFileEngine): PositionalReadSpy {
@@ -189,6 +190,36 @@ describe('JsonlFileEngine indexing and hydration', () => {
       .every((value) => Number.isSafeInteger(value) && value >= 0)).toBe(true);
   });
 
+  it('reports queue wait and engine execution as separate spans', async () => {
+    const { engine } = await fixture('{"id":1}');
+    let clock = 0;
+    const timestamps: number[] = [];
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => {
+      clock += 10;
+      timestamps.push(clock);
+      return clock;
+    });
+    let observed: { queueWaitMs: number; engineExecMs: number } | undefined;
+
+    try {
+      await engine.getRows({ limit: 1, onTiming: (timing) => { observed = timing; } });
+    } finally {
+      now.mockRestore();
+    }
+
+    const enqueuedAt = timestamps[0];
+    const startedAt = timestamps[1];
+    const finishedAt = timestamps.at(-1);
+    expect(enqueuedAt).toBeDefined();
+    expect(startedAt).toBeDefined();
+    expect(finishedAt).toBeDefined();
+    expect(observed).toMatchObject({
+      queueWaitMs: startedAt! - enqueuedAt!,
+      engineExecMs: finishedAt! - startedAt!,
+    });
+    expect(observed?.queueWaitMs).not.toBe(observed?.engineExecMs);
+  });
+
   it('attributes queue wait to the immediately preceding FIFO operation', async () => {
     const { engine } = await fixture('{"id":1}\n{"id":2}', { readChunkBytes: 64 });
     const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
@@ -265,6 +296,29 @@ describe('JsonlFileEngine indexing and hydration', () => {
     );
     expect(secondPage.rows.at(-1)?.ref.delimiterByteLength).toBe(0);
     expect(secondPage.hasAfter).toBe(false);
+  });
+
+  it('returns the default first page before the full index completes and resumes after its visible boundary', async () => {
+    const source = Array.from({ length: 500 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source);
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const stats = vi.spyOn(handle, 'stat');
+
+    const firstPage = await engine.getRows({ limit: 100 });
+
+    expect(firstPage.rows.map(({ ref }) => ref.ordinal)).toEqual(
+      Array.from({ length: 100 }, (_, ordinal) => String(ordinal)),
+    );
+    expect(firstPage.anchorOrdinal).toBe('99');
+    expect(firstPage.hasAfter).toBe(true);
+    expect(engine.getSummary()).toMatchObject({ indexedRecords: '101', indexingComplete: false });
+    expect(stats.mock.calls.length).toBeLessThanOrEqual(4);
+
+    const secondPage = await engine.getRows({ anchorOrdinal: firstPage.anchorOrdinal, limit: 100 });
+
+    expect(secondPage.rows.map(({ ref }) => ref.ordinal)).toEqual(
+      Array.from({ length: 100 }, (_, ordinal) => String(ordinal + 100)),
+    );
   });
 
   it('matches direct hydration across read-window refills and a row boundary', async () => {
@@ -1137,6 +1191,44 @@ describe('JsonlFileEngine querying and pagination', () => {
     expect(backward.hasAfter).toBe(true);
   });
 
+  it('continues an empty forward scan exclusively from a partially indexed boundary', async () => {
+    const source = Array.from({ length: 20 }, (_, id) => JSON.stringify({ id })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 8 });
+    const partial = await engine.indexMore({ maxBytes: 9 });
+    expect(partial).toMatchObject({ indexedRecords: '1', indexingComplete: false });
+
+    const predicate: Predicate = { op: 'compare', path: keyPath('id'), cmp: 'eq', value: 19 };
+    const first = await engine.getRows({
+      anchorOrdinal: '0',
+      direction: 'forward',
+      limit: 2,
+      predicate,
+      scanBudget: { maxExaminedRecords: 2 },
+    });
+
+    expect(first.rows).toEqual([]);
+    expect(first.scan).toMatchObject({
+      examinedRecords: '2',
+      cursorOrdinal: '2',
+      direction: 'forward',
+      truncatedReason: 'record_limit',
+    });
+    expect(first.hasAfter).toBe(true);
+
+    const continuation = first.scan?.cursorOrdinal;
+    if (continuation === undefined) throw new Error('Expected a physical continuation cursor.');
+    const resumed = await engine.getRows({
+      anchorOrdinal: continuation,
+      direction: 'forward',
+      limit: 2,
+      predicate,
+      scanBudget: { maxExaminedRecords: 2 },
+    });
+    expect(resumed.rows).toEqual([]);
+    expect(resumed.scan?.cursorOrdinal).toBe('4');
+    expect(resumed.hasAfter).toBe(true);
+  });
+
   it('advances an oversized matching record on the next page without looping', async () => {
     const source = [
       JSON.stringify({ id: 0, text: 'a'.repeat(30) }),
@@ -1433,5 +1525,148 @@ describe('JsonlFileEngine refresh classification and lifecycle', () => {
     if (index >= 0) engines.splice(index, 1);
     expect(engine.getDiagnostics().open).toBe(false);
     expect(() => engine.getRows()).toThrow(JsonlEngineError);
+  });
+
+  it('throttles background progress reports while always reporting completion', async () => {
+    const source = Array.from({ length: 500 }, (_, index) => JSON.stringify({ index })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 64 });
+    let clock = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock++);
+    const updates: boolean[] = [];
+
+    try {
+      const background = engine.startBackgroundIndexing((summary) => {
+        updates.push(summary.indexingComplete);
+      });
+      await background.done;
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(updates.length).toBeLessThan(20);
+    expect(updates[0]).toBe(false);
+    expect(updates.at(-1)).toBe(true);
+  });
+
+  it('prioritizes foreground work and records its scheduler blocker', async () => {
+    const source = Array.from({ length: 100 }, (_, index) => JSON.stringify({ index })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 64 });
+    const handle = (engine as unknown as { handle: Awaited<ReturnType<typeof open>> }).handle;
+    const originalRead = handle.read.bind(handle) as PositionalRead;
+    const reads = spyOnPositionalReads(engine);
+    let notifyReadStarted!: () => void;
+    let releaseRead!: () => void;
+    const readStarted = new Promise<void>((resolve) => { notifyReadStarted = resolve; });
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    reads.mockImplementation(async (buffer, offset, length, position) => {
+      notifyReadStarted();
+      await readGate;
+      return originalRead(buffer, offset, length, position);
+    });
+    const executor = (engine as unknown as {
+      executor: { activeOperation: string | undefined; dispatch: () => void };
+    }).executor;
+    const dispatch = executor.dispatch.bind(executor);
+    const operationOrder: string[] = [];
+    let queryBlockedBy: string | undefined;
+    const dispatchSpy = vi.spyOn(executor, 'dispatch').mockImplementation(() => {
+      const idle = executor.activeOperation === undefined;
+      dispatch();
+      if (idle && executor.activeOperation !== undefined) operationOrder.push(executor.activeOperation);
+    });
+
+    try {
+      const firstBackground = engine.startBackgroundIndexing();
+      await readStarted;
+      const secondBackground = engine.startBackgroundIndexing();
+      const refresh = engine.classifyRefresh();
+      const interactive = engine.getRows({
+        limit: 1,
+        onTiming: (timing) => { queryBlockedBy = timing.queueBlockedBy; },
+      });
+      releaseRead();
+      await Promise.all([firstBackground.done, secondBackground.done, refresh, interactive]);
+    } finally {
+      releaseRead();
+      dispatchSpy.mockRestore();
+      reads.mockRestore();
+    }
+
+    expect(operationOrder[0]).toBe('index_more');
+    expect(operationOrder[1]).toBe('classify_refresh');
+    expect(operationOrder[2]).toBe('get_rows');
+    expect(operationOrder.indexOf('get_rows')).toBeLessThan(operationOrder.lastIndexOf('index_more'));
+    expect(queryBlockedBy).toBe('classify_refresh');
+  });
+
+  it('does not let a throwing progress observer stop background indexing', async () => {
+    const source = Array.from({ length: 50 }, (_, index) => JSON.stringify({ index })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 64 });
+    const background = engine.startBackgroundIndexing(() => {
+      throw new Error('observer failed');
+    });
+
+    await expect(background.done).resolves.toBeUndefined();
+    expect(engine.getSummary().indexingComplete).toBe(true);
+  });
+
+  it('runs an interactive query before scheduling the next background index slice', async () => {
+    const source = Array.from({ length: 500 }, (_, index) => JSON.stringify({ index })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 64 });
+    let clock = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock += 100);
+    const order: string[] = [];
+    let interactive: Promise<unknown> | undefined;
+    let progressCount = 0;
+
+    try {
+      const background = engine.startBackgroundIndexing(() => {
+        progressCount += 1;
+        order.push(`progress-${progressCount}`);
+        if (progressCount === 1) {
+          interactive = engine.getRows({ limit: 1 }).then((page) => {
+            order.push('interactive');
+            return page;
+          });
+        }
+      });
+      await background.done;
+      await interactive;
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(order.indexOf('interactive')).toBeGreaterThan(-1);
+    expect(order.indexOf('interactive')).toBeLessThan(order.indexOf('progress-2'));
+  });
+
+  it('lets an interactive query run between 1 MiB background index slices', async () => {
+    const source = Array.from({ length: 150_000 }, (_, index) => JSON.stringify({ index })).join('\n');
+    const { engine } = await fixture(source, { readChunkBytes: 1024 * 1024 });
+    let clock = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock += 100);
+    const order: string[] = [];
+    let interactive: Promise<unknown> | undefined;
+    let progressCount = 0;
+
+    try {
+      const background = engine.startBackgroundIndexing(() => {
+        progressCount += 1;
+        order.push(`progress-${progressCount}`);
+        if (progressCount === 1) {
+          interactive = engine.getRows({ limit: 1 }).then((page) => {
+            order.push('interactive');
+            return page;
+          });
+        }
+      });
+      await background.done;
+      await interactive;
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(order.indexOf('interactive')).toBeGreaterThan(-1);
+    expect(order.indexOf('interactive')).toBeLessThan(order.indexOf('progress-2'));
   });
 });

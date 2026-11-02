@@ -40,6 +40,13 @@ export {
 } from './ports/problem-page-reader';
 export type { ProblemPageReader, ProblemPageRequest } from './ports/problem-page-reader';
 export { LoadProblemPage } from './use-cases/load-problem-page';
+export type {
+  IJsonlSessionPort,
+  JsonlSessionPort,
+  ProblemsRequest,
+  RowsRequest,
+  SessionPreviewStatus,
+} from './ports/session';
 export * from './catalog/catalog-model';
 export * from './catalog/catalog-port';
 export * from './catalog/catalog-identity';

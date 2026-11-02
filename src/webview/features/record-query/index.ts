@@ -36,5 +36,12 @@ export { addQueryHistory, MAX_QUERY_HISTORY_ENTRIES } from './query-history';
 export type { QueryHistoryEntry } from './query-history';
 export { queryStudioShortcut } from './query-studio-keyboard';
 export type { QueryStudioKeyEvent, QueryStudioShortcut } from './query-studio-keyboard';
+export { useNativePopoverAnchor } from './use-native-popover-anchor';
+export type {
+  NativePopoverAnchorResult,
+  NativePopoverAnchorSize,
+  NativePopoverAnchorStyle,
+  UseNativePopoverAnchorOptions,
+} from './use-native-popover-anchor';
 export { TableQueryToolbar } from './TableQueryToolbar';
 export type { TableQueryToolbarProps } from './TableQueryToolbar';

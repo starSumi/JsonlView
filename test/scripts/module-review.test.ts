@@ -62,6 +62,19 @@ describe('module review report', () => {
     expect(report.entries.some((entry) => entry.path.startsWith('../'))).toBe(false);
   });
 
+  it('reports the core-file line-count ratchet and keeps the current baseline bounded', async () => {
+    const report = await buildReport({ directory: productRoot, includeWorktree: true, all: true });
+    expect(report.ratchet?.enabled).toBe(true);
+    expect(report.ratchet?.maxGrowthLines).toBe(0);
+    expect(report.ratchet?.violations).toEqual([]);
+    expect(report.ratchet?.trackedFiles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'src/engine/jsonl-engine.ts', baselineLines: 2263, currentLines: 2263, lineDelta: 0, violation: false }),
+      expect.objectContaining({ path: 'src/webview/state.ts', baselineLines: 960, currentLines: 960, lineDelta: 0, violation: false }),
+      expect.objectContaining({ path: 'src/webview/features/record-query/row-query-controller.ts', baselineLines: 864, currentLines: 864, lineDelta: 0, violation: false }),
+      expect.objectContaining({ path: 'src/webview/App.tsx', baselineLines: 1477, currentLines: 1477, lineDelta: 0, violation: false }),
+    ]));
+  });
+
   it('rejects an invalid head revision instead of silently producing a report', async () => {
     await expect(buildReport({ directory: productRoot, head: 'refs/heads/does-not-exist', includeWorktree: false })).rejects.toThrow(/--head revision does not resolve.*does-not-exist/u);
   });

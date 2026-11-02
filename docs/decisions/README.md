@@ -92,6 +92,8 @@ Read these before changing a shared boundary:
 56. [ADR-055 development query observation tap](055-development-query-observation-tap.md)
 57. [ADR-056 modern language and compiler gates](056-modern-language-and-compiler-gates.md)
 58. [ADR-057 module review budget and hotspot governance](057-module-review-budget-and-hotspot-governance.md)
+59. [ADR-058 priority scheduling for background index slices](058-priority-background-index-slices.md)
+60. [ADR-059 Webview style attribute CSP boundary](059-webview-style-attribute-csp-boundary.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.

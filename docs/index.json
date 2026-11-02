@@ -665,8 +665,8 @@
       "revisit": "when telemetry privacy or transport evidence changes",
       "rollback": "keep outbound telemetry disabled by default",
       "summary": "ADR-034: Opt-In OTLP Observability Boundary",
-      "bytes": 10810,
-      "sha256": "384b0fda38b508676dc843d6fbe34e4ea2678a082935b870989e306a573ee18b"
+      "bytes": 11077,
+      "sha256": "9c99780663a422dbfe26695d295f92d9b626d5ee030c6ede2e516f1dc10d01b1"
     },
     {
       "id": "035-architecture-decomposition-and-toolchain-ownership",
@@ -1134,6 +1134,46 @@
       "sha256": "0af100bfd700606a85345d5a6a0f198581b6811d6e8174cfb7073915caeb69ed"
     },
     {
+      "id": "058-priority-background-index-slices",
+      "path": "docs/decisions/058-priority-background-index-slices.md",
+      "title": "Priority Scheduling For Background Index Slices",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "concurrency",
+        "engine",
+        "indexing",
+        "scheduler"
+      ],
+      "evidence": [],
+      "revisit": "when foreground queue latency, indexing delay, or supported workloads change",
+      "rollback": "restore FIFO dispatch while retaining serialized access and bounded index slices",
+      "summary": "ADR-058: Priority Scheduling for Background Index Slices",
+      "bytes": 4839,
+      "sha256": "cd0bbb00c8db9547374efce0f64a789371fed6b89eb37c924af23965cba50305"
+    },
+    {
+      "id": "059-webview-style-attribute-csp-boundary",
+      "path": "docs/decisions/059-webview-style-attribute-csp-boundary.md",
+      "title": "Webview Style Attribute CSP Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "security",
+        "webview",
+        "csp",
+        "nonce"
+      ],
+      "evidence": [],
+      "revisit": "when runtime style attributes are removed from the Webview render path",
+      "rollback": "restore the previous CSP policy while retaining nonce-bound scripts and style elements",
+      "summary": "ADR-059: Webview Style Attribute CSP Boundary",
+      "bytes": 2423,
+      "sha256": "229a76ede43f8f3a218bab025a54bcb7e6ae0245728512583cb341c9c7445abd"
+    },
+    {
       "id": "acceleration-roadmap",
       "path": "docs/acceleration-roadmap.md",
       "title": "Acceleration roadmap",
@@ -1230,8 +1270,8 @@
       "revisit": "when the decision record topology changes",
       "rollback": "restore the previous decision index",
       "summary": "JsonlView Decisions",
-      "bytes": 7169,
-      "sha256": "d5bd127501980f20175c0ef31c00cbf380c4eb9a72755d7167af6c2e36a44179"
+      "bytes": 7368,
+      "sha256": "15f3ae8112515d218cb025a08c24b5110be211e0a88f66f2cbd13c1ab123eddd"
     },
     {
       "id": "docs-index",

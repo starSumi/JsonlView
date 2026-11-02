@@ -4,6 +4,7 @@ export type EngineErrorCode =
   | 'INVALID_ARGUMENT'
   | 'INVALID_RECORD_REF'
   | 'NOT_A_FILE'
+  | 'SOURCE_TOO_LARGE'
   | 'QUEUE_FULL'
   | 'SOURCE_CHANGED'
   | 'STALE_GENERATION'

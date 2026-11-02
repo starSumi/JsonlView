@@ -8,13 +8,13 @@ const sourceHashes: Record<(typeof modules)[number], string> = {
   tokens: 'cdc1959a81fa8bdf16476db56f1dd0a80e8ba559e4c7e3a4dcd05f6bd58e5356',
   base: '7e96df3d2c29c1f065eaa22a85f277b1e10dd1af0c63ba7d2780e18cc260bbcb',
   layout: '927fd862193e64b5e0dfae6ee7cfeb3568ac8fcf6897553672eafd7b40411add',
-  'workspace-header': '7ff836c32a60a2b1c1ed754c4f11ccbd017fe10ab8d813b52134a9dac26cb940',
+  'workspace-header': '861318aad74628c2af75d2a6afd59616d0725a58998530e3003e16bd54d9ca05',
   'record-query': '23e9ee63919717d9454100cb38f86fce51ed0f831594b5e6ec0d2d075dc09a91',
-  'query-studio': 'a49350fdaac63f933cd386e47347c4f602eb58c3f6a3436fb11f3da1ca4e57b5',
+  'query-studio': 'c83e5de70732a7d9f1f48625aa8a1608966c0cd60086882c8233c72acdfe6a09',
   views: 'ef06501d5393523a79e12cb2e42be9cc4e261b6c0e221cb11a4c9a100a9d7ade',
   'insights-transition': '641e8bc2e891665933bc800cbcef77cf425bcbc1c76010c40923d3733a1f3c0e',
   'source-intake': 'e78c9a13a3d01b00885f5c907e5f5f5363b92f7dd7e003687dd28400dc4276b8',
-  accessibility: '9945ed897b9758efc7c7985497652887bc4a0cb5753e6f9efc29e47258d038be',
+  accessibility: '721c9a831fdd153d6524dc521682e117f3e29dda9a6aee8f302b77dd2c33f38d',
 };
 
 function parseTopLevelBlocks(source: string): string[] {
@@ -92,5 +92,10 @@ describe('webview stylesheet architecture', () => {
       }
       if (module === 'source-intake') expect(blocks).toHaveLength(5);
     }
+  });
+
+  it('keeps diagnostic banners above modal detail drawers', () => {
+    const source = readFileSync(new URL('styles/workspace-header.css', root), 'utf8');
+    expect(source).toMatch(/\.workspace-banner\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*10;/su);
   });
 });

@@ -5,6 +5,7 @@ import {
   BarChart3,
   Braces,
   CircleAlert,
+  Copy,
   Table2,
   X,
 } from 'lucide-react';
@@ -58,6 +59,8 @@ import {
   TableQueryToolbar,
 } from '@features/record-query';
 import type { QueryHistoryEntry, RecordQueryControlsProps } from '@features/record-query';
+import { clampQueryStudioSize, QUERY_STUDIO_DEFAULT_SIZE } from '@features/record-query/TopQueryStudio';
+import type { QueryStudioSize } from '@features/record-query/TopQueryStudio';
 import type { GridFocusBridge } from '@features/record-query/RecordTable';
 import type { GridCell } from './use-grid-focus';
 import { legacyRowProjectionPlan, rowProjectionPlanCovers } from '@shared/row-projection';
@@ -177,6 +180,9 @@ export function App(): React.JSX.Element {
   const [pageInput, setPageInputState] = React.useState('1');
   const [previewStatus, setPreviewStatus] = React.useState<TemporaryPreviewStatus>();
   const [queryStudioOpen, setQueryStudioOpen] = React.useState(false);
+  const [queryStudioPinned, setQueryStudioPinned] = React.useState(false);
+  const [queryStudioSize, setQueryStudioSize] = React.useState<QueryStudioSize>(QUERY_STUDIO_DEFAULT_SIZE);
+  const [queryStudioMaximized, setQueryStudioMaximized] = React.useState(false);
   const [queryHistory, setQueryHistory] = React.useState<readonly QueryHistoryEntry[]>([]);
   // A Webview restore is only UI state. Host authorization must be read back
   // for this document lifecycle before the detail can show an authorized
@@ -188,6 +194,9 @@ export function App(): React.JSX.Element {
   const stateRef = useRef(state);
   const gridFocusBridgeRef = useRef<GridFocusBridge | undefined>(undefined);
   const studioFocusRef = useRef<GridCell | undefined>(undefined);
+  const studioTriggerRef = useRef<HTMLElement | null>(null);
+  const studioFocusGenerationRef = useRef<string | undefined>(undefined);
+  const studioRestoreFocusRef = useRef(true);
   const priorStudioOpenRef = useRef(false);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
@@ -205,6 +214,7 @@ export function App(): React.JSX.Element {
     activeId: state.activeTab,
     onActivate: (tab) => {
       if (tab !== 'table') queryController.pauseFollowing();
+      if (tab !== state.activeTab && queryStudioOpen && !queryStudioPinned) closeQueryStudio(false);
       dispatch({ type: 'SET_ACTIVE_TAB', tab });
     },
     idPrefix: 'workspace-views',
@@ -1018,10 +1028,29 @@ export function App(): React.JSX.Element {
   }) : null;
 
   const openQueryStudio = (): void => {
-    studioFocusRef.current = gridFocusBridgeRef.current?.capture();
+    studioRestoreFocusRef.current = true;
+    const invokingElement = document.activeElement;
+    studioTriggerRef.current = invokingElement instanceof HTMLElement ? invokingElement : null;
+    const bridge = state.activeTab === 'table' ? gridFocusBridgeRef.current : undefined;
+    studioFocusRef.current = bridge?.capture();
+    studioFocusGenerationRef.current = bridge?.generation
+      ?? (studioFocusRef.current?.kind === 'data' ? studioFocusRef.current.generation : undefined);
+    setQueryStudioSize(QUERY_STUDIO_DEFAULT_SIZE);
+    setQueryStudioMaximized(false);
+    setQueryStudioPinned(false);
     setQueryStudioOpen(true);
   };
-  const closeQueryStudio = (): void => setQueryStudioOpen(false);
+  const closeQueryStudio = (restoreFocus = true): void => {
+    studioRestoreFocusRef.current = restoreFocus;
+    setQueryStudioSize(QUERY_STUDIO_DEFAULT_SIZE);
+    setQueryStudioMaximized(false);
+    setQueryStudioPinned(false);
+    setQueryStudioOpen(false);
+  };
+  const resizeQueryStudio = (size: QueryStudioSize): void => {
+    const next = clampQueryStudioSize(size);
+    setQueryStudioSize((current) => current.width === next.width && current.height === next.height ? current : next);
+  };
   const recordQueryHistory = (): void => {
     setQueryHistory((current) => addQueryHistory(current, queryController.query, queryController.filters));
   };
@@ -1029,6 +1058,7 @@ export function App(): React.JSX.Element {
     if (!summary || !canReadSnapshot(state.invalidationReason)) return;
     recordQueryHistory();
     requestRows({ query: queryController.query });
+    if (!queryStudioPinned) closeQueryStudio();
   };
   const cancelQueryStudio = (): void => {
     queryController.cancelRows();
@@ -1053,34 +1083,44 @@ export function App(): React.JSX.Element {
   const observedStudioGeneration = state.summary?.snapshot.generation;
 
   useLayoutEffect(() => {
-    const rowCount = state.rows.length;
-    if (observedStudioGeneration !== undefined
-      && observedStudioGeneration !== studioGenerationRef.current
-      && queryStudioOpen) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (observedStudioGeneration !== undefined
-      && gridFocusBridgeRef.current?.generation !== observedStudioGeneration) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (rowCount === 0 && gridFocusBridgeRef.current === undefined) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (!queryStudioOpen && studioFocusRef.current !== undefined && gridFocusBridgeRef.current !== undefined) {
-      gridFocusBridgeRef.current?.restore(studioFocusRef.current);
+    const wasOpen = priorStudioOpenRef.current;
+    if (!queryStudioOpen && wasOpen) {
+      const capturedCell = studioFocusRef.current;
+      const capturedGeneration = studioFocusGenerationRef.current;
+      const bridge = gridFocusBridgeRef.current;
+      const canRestoreGrid = capturedCell !== undefined
+        && bridge !== undefined
+        && capturedGeneration !== undefined
+        && (capturedCell.kind !== 'data' || capturedCell.generation === capturedGeneration)
+        && bridge.generation === capturedGeneration
+        && (observedStudioGeneration === undefined || observedStudioGeneration === capturedGeneration);
+      if (studioRestoreFocusRef.current) {
+        if (canRestoreGrid) {
+          if (!bridge.restore(capturedCell)) {
+            const trigger = studioTriggerRef.current;
+            if (trigger?.isConnected === true) trigger.focus({ preventScroll: true });
+          }
+        } else {
+          const trigger = studioTriggerRef.current;
+          if (trigger?.isConnected === true) trigger.focus({ preventScroll: true });
+        }
+      }
       studioFocusRef.current = undefined;
+      studioTriggerRef.current = null;
+      studioFocusGenerationRef.current = undefined;
     }
     priorStudioOpenRef.current = queryStudioOpen;
-  }, [observedStudioGeneration, queryStudioOpen, state.rows]);
+  }, [observedStudioGeneration, queryStudioOpen]);
 
   useEffect(() => {
     const generation = observedStudioGeneration ?? clientRef.current.session.generation;
     if (generation === studioGenerationRef.current) return;
     studioGenerationRef.current = generation;
+    studioRestoreFocusRef.current = false;
+    setQueryStudioSize(QUERY_STUDIO_DEFAULT_SIZE);
+    setQueryStudioMaximized(false);
     setQueryHistory([]);
+    setQueryStudioPinned(false);
     setQueryStudioOpen(false);
   }, [observedStudioGeneration]);
 
@@ -1126,15 +1166,21 @@ export function App(): React.JSX.Element {
             })}
           </nav>
         }
-        secondary={state.activeTab === 'table' ? (
+        secondary={(
           <>
             <TopQueryStudio
               open={queryStudioOpen}
+              pinned={queryStudioPinned}
+              size={queryStudioSize}
+              maximized={queryStudioMaximized}
               queryControls={studioQueryControlProps}
               history={queryHistory}
               pending={Boolean(state.pending.rows)}
               disabled={!summary || !canReadSnapshot(state.invalidationReason)}
               onToggle={() => queryStudioOpen ? closeQueryStudio() : openQueryStudio()}
+              onTogglePin={() => setQueryStudioPinned((current) => !current)}
+              onSizeChange={resizeQueryStudio}
+              onToggleMaximize={() => setQueryStudioMaximized((current) => !current)}
               onClose={closeQueryStudio}
               onRun={runQueryStudio}
               onCancel={cancelQueryStudio}
@@ -1142,7 +1188,7 @@ export function App(): React.JSX.Element {
             />
             {tableQueryControls}
           </>
-        ) : undefined}
+        )}
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
@@ -1210,7 +1256,19 @@ export function App(): React.JSX.Element {
             <button type="button" className="error-action" onClick={() => { void diagnoseError(state.error!, 'copy'); }}>Copy context</button>
             <details className="diagnostic-context-fallback">
               <summary>View diagnostic context</summary>
-              <pre>{formatStartupDiagnosticContext(state.error)}</pre>
+              <div className="diagnostic-context-panel">
+                <pre>{formatStartupDiagnosticContext(state.error)}</pre>
+                <button
+                  type="button"
+                  className="diagnostic-context-copy"
+                  aria-label="Copy diagnostic context"
+                  title="Copy diagnostic context"
+                  onClick={() => { void diagnoseError(state.error!, 'copy'); }}
+                >
+                  <Copy size={13} aria-hidden />
+                  <span>Copy context</span>
+                </button>
+              </div>
             </details>
             {diagnosticActionStatus ? <span className="diagnostic-action-status" role="status" aria-live="polite">{diagnosticActionStatus}</span> : null}
             {state.error.recoverable && state.summary !== undefined ? (

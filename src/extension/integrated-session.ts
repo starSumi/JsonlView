@@ -4,13 +4,11 @@ import type {
   FieldStats,
   AnalysisIntentV1,
   InsightSummary,
-  JsonScalar,
   ProfileSuggestion,
   ProblemPage,
   RecordDetail,
   RecordRef,
   RowPage,
-  RowScanBudget,
   DatasetRuntimeProvenanceV1,
   DatasetDetectionStageV1,
   DatasetDetectionTerminalStatusV1,
@@ -25,7 +23,7 @@ import {
   type SourceRefreshResult,
 } from '../engine';
 import { createProfileRegistry, type AgentProfileRegistry, type GenericRecordSample } from '../profiles';
-import type { JsonlSessionPort, ProblemsRequest, RowsRequest } from './document-controller';
+import type { IJsonlSessionPort, ProblemPageRequest, RecordPageRequest } from '../application';
 import { runInsightQuery } from './insight-query';
 import {
   FollowRecoveryTerminalError,
@@ -43,7 +41,6 @@ const DETECTION_HEAD_SAMPLE_LIMIT = 32;
 const DETECTION_TAIL_SAMPLE_LIMIT = 32;
 const DETECTION_STRATUM_SAMPLE_LIMIT = 8;
 const DETECTION_STRATUM_PERCENTAGES = [25n, 50n, 75n] as const;
-const PROGRESS_THROTTLE_MS = 100;
 const DETECTION_MAX_MILLISECONDS = 5_000;
 
 /** Local metadata only; never carries values, paths, fingerprints or free-form errors. */
@@ -89,7 +86,7 @@ interface DetectedProfileState {
   datasetProvenance: DatasetRuntimeProvenanceV1;
 }
 
-export class IntegratedJsonlSession implements JsonlSessionPort {
+export class IntegratedJsonlSession implements IJsonlSessionPort {
   private readonly filePath: string;
   private readonly options: IntegratedSessionOptions;
   private readonly registry: AgentProfileRegistry;
@@ -112,7 +109,6 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
   private nextDetectionOperationId = 0;
   private tailDetectionGeneration: string | undefined;
   private tailDetectionRequested = false;
-  private lastProgressAt = 0;
   private disposed = false;
   private followEnabled = false;
 
@@ -187,7 +183,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     return profileColumns(this.profileId);
   }
 
-  public async getRows(request: RowsRequest, signal: AbortSignal): Promise<RowPage> {
+  public async getRows(request: RecordPageRequest, signal: AbortSignal): Promise<RowPage> {
     const enricher = this.createEnricher();
     const page = await this.engine.getRows({
       ...(request.anchorOrdinal === undefined ? {} : { anchorOrdinal: request.anchorOrdinal }),
@@ -221,7 +217,7 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     return page;
   }
 
-  public async getProblems(request: ProblemsRequest, signal: AbortSignal): Promise<ProblemPage> {
+  public async getProblems(request: ProblemPageRequest, signal: AbortSignal): Promise<ProblemPage> {
     return this.engine.getProblems({
       ...(request.anchorOrdinal === undefined ? {} : { anchorOrdinal: request.anchorOrdinal }),
       ...(request.direction === undefined ? {} : { direction: request.direction }),
@@ -813,9 +809,6 @@ export class IntegratedJsonlSession implements JsonlSessionPort {
     const engine = this.engine;
     this.background = engine.startBackgroundIndexing((summary) => {
       if (this.engine !== engine || this.disposed) return;
-      const now = Date.now();
-      if (!summary.indexingComplete && now - this.lastProgressAt < PROGRESS_THROTTLE_MS) return;
-      this.lastProgressAt = now;
       const current = this.getSummary();
       for (const listener of this.listeners) listener(current);
       if (summary.indexingComplete) this.startDeferredProfileDetection();
