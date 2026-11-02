@@ -85,7 +85,14 @@ let tree: ReactElement;
 let App: () => React.JSX.Element;
 let browser: EventTarget;
 
+class StudioElement {
+  readonly isConnected = true;
+  readonly focus = vi.fn();
+  contains(target: unknown): boolean { return target === this; }
+}
+
 beforeAll(async () => {
+  vi.stubGlobal('HTMLElement', StudioElement);
   vi.stubGlobal('document', { body: {
     dataset: { documentId: 'doc', generation: 'bootstrap', pageSize: '20' },
     classList: { add: (name: string) => bodyClasses.add(name), remove: (name: string) => bodyClasses.delete(name) },
@@ -104,6 +111,7 @@ beforeEach(() => {
   hooks.slots = []; hooks.layoutEffects = []; hooks.effects = []; hooks.cursor = 0;
   bodyClasses.clear();
   sent.length = 0; persisted = undefined;
+  Object.assign(document, { activeElement: undefined });
 });
 afterEach(() => {
   for (const slot of hooks.slots) (slot as Effect | undefined)?.cleanup?.();
@@ -259,6 +267,180 @@ describe('App column presentation and projection boundary', () => {
 
     expect(componentCount(header.secondary, TopQueryStudio)).toBe(1);
     expect(componentCount(tree, TopQueryStudio)).toBe(1);
+  });
+
+  it.each(['Timeline', 'Schema', 'Problems', 'Insights'])(
+    'keeps the shared Query Studio anchor visible in %s while leaving quick controls Table-only', (tab) => {
+      boot();
+      chooseWorkspaceTab(tab);
+
+      const header = props(WorkspaceHeader);
+      expect(componentCount(header.secondary, TopQueryStudio)).toBe(1);
+      expect(componentCount(header.secondary, RecordQueryControls)).toBe(0);
+
+      props(TopQueryStudio).onToggle();
+      commit();
+      expect(props(TopQueryStudio).open).toBe(true);
+      props(TopQueryStudio).onClose();
+      commit();
+      expect(props(TopQueryStudio).open).toBe(false);
+    });
+
+  it('keeps Table quick controls and Query Studio close behavior in the shared secondary row', () => {
+    boot();
+    const header = props(WorkspaceHeader);
+    expect(componentCount(header.secondary, RecordQueryControls)).toBe(1);
+
+    props(TopQueryStudio).onToggle();
+    commit();
+    expect(props(TopQueryStudio).open).toBe(true);
+    props(TopQueryStudio).onClose();
+    commit();
+    expect(props(TopQueryStudio).open).toBe(false);
+  });
+
+  it('closes Query Studio on Escape and restores the captured Table cell focus', () => {
+    boot();
+    const cell = { kind: 'data', sessionId: 'doc', generation: 'g1', ordinal: '7', columnId: status.id } as const;
+    const trigger = new StudioElement();
+    Object.assign(document, { activeElement: trigger });
+    const capture = vi.fn(() => cell);
+    const restore = vi.fn();
+    const bridge = props(RecordTable).gridFocusBridgeRef;
+    if (bridge === undefined) throw new Error('Grid focus bridge missing');
+    bridge.current = { generation: 'g1', capture, restore };
+
+    props(TopQueryStudio).onToggle();
+    commit();
+    expect(capture).toHaveBeenCalledOnce();
+
+    const studio = TopQueryStudio(props(TopQueryStudio));
+    const overlay = React.Children.toArray(studio.props.children).find((node) =>
+      React.isValidElement<{ 'data-query-studio'?: boolean }>(node) && node.props['data-query-studio']);
+    if (!React.isValidElement<{ onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void }>(overlay)) {
+      throw new Error('Query Studio overlay missing');
+    }
+    const target = new StudioElement();
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    overlay.props.onKeyDown({ key: 'Escape', ctrlKey: false, metaKey: false,
+      nativeEvent: { isComposing: false }, currentTarget: target, target,
+      preventDefault, stopPropagation } as unknown as React.KeyboardEvent<HTMLElement>);
+    commit();
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(props(TopQueryStudio).open).toBe(false);
+    expect(restore).toHaveBeenCalledExactlyOnceWith(cell);
+    expect(trigger.focus).not.toHaveBeenCalled();
+  });
+
+  it.each(['close', 'Escape'])(
+    'returns focus to the shared trigger after %s from a non-Table view', (action) => {
+      boot();
+      chooseWorkspaceTab('Timeline');
+      const trigger = new StudioElement();
+      Object.assign(document, { activeElement: trigger });
+
+      props(TopQueryStudio).onToggle();
+      commit();
+      Object.assign(document, { activeElement: new StudioElement() });
+      if (action === 'close') {
+        props(TopQueryStudio).onClose();
+      } else {
+        const studio = TopQueryStudio(props(TopQueryStudio));
+        const overlay = React.Children.toArray(studio.props.children).find((node) =>
+          React.isValidElement<{ 'data-query-studio'?: boolean }>(node) && node.props['data-query-studio']);
+        if (!React.isValidElement<{ onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void }>(overlay)) {
+          throw new Error('Query Studio overlay missing');
+        }
+        const target = new StudioElement();
+        overlay.props.onKeyDown({ key: 'Escape', ctrlKey: false, metaKey: false,
+          nativeEvent: { isComposing: false }, currentTarget: target, target,
+          preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.KeyboardEvent<HTMLElement>);
+      }
+      commit();
+
+      expect(props(TopQueryStudio).open).toBe(false);
+      expect(trigger.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    });
+
+  it.each([
+    ['Timeline', 'Table', 'close'],
+    ['Timeline', 'Table', 'Escape'],
+    ['Table', 'Schema', 'close'],
+    ['Table', 'Schema', 'Escape'],
+  ] as const)('returns focus to the trigger after %s → %s → %s when the captured grid cannot restore', (from, to, action) => {
+    boot();
+    const bridge = props(RecordTable).gridFocusBridgeRef;
+    if (bridge === undefined) throw new Error('Grid focus bridge missing');
+    const cell = { kind: 'data', sessionId: 'doc', generation: 'g1', ordinal: '7', columnId: status.id } as const;
+    const restore = vi.fn();
+    bridge.current = from === 'Table' ? { generation: 'g1', capture: () => cell, restore } : undefined;
+    chooseWorkspaceTab(from);
+    const trigger = new StudioElement();
+    Object.assign(document, { activeElement: trigger });
+    const requestsBeforeOpen = rowRequests().length;
+    props(TopQueryStudio).onToggle();
+    commit();
+    chooseWorkspaceTab(to);
+    bridge.current = to === 'Table' ? { generation: 'g1', capture: () => undefined, restore } : undefined;
+    Object.assign(document, { activeElement: new StudioElement() });
+
+    if (action === 'close') {
+      props(TopQueryStudio).onClose();
+    } else {
+      const studio = TopQueryStudio(props(TopQueryStudio));
+      const overlay = React.Children.toArray(studio.props.children).find((node) =>
+        React.isValidElement<{ 'data-query-studio'?: boolean }>(node) && node.props['data-query-studio']);
+      if (!React.isValidElement<{ onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void }>(overlay)) {
+        throw new Error('Query Studio overlay missing');
+      }
+      const target = new StudioElement();
+      overlay.props.onKeyDown({ key: 'Escape', ctrlKey: false, metaKey: false,
+        nativeEvent: { isComposing: false }, currentTarget: target, target,
+        preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as React.KeyboardEvent<HTMLElement>);
+    }
+    commit();
+
+    expect(props(TopQueryStudio).open).toBe(false);
+    expect(trigger.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(restore).not.toHaveBeenCalled();
+    expect(rowRequests()).toHaveLength(requestsBeforeOpen);
+  });
+
+  it('falls back to the trigger instead of restoring a grid from a stale generation', () => {
+    boot();
+    const bridge = props(RecordTable).gridFocusBridgeRef;
+    if (bridge === undefined) throw new Error('Grid focus bridge missing');
+    const cell = { kind: 'data', sessionId: 'doc', generation: 'g1', ordinal: '7', columnId: status.id } as const;
+    const restore = vi.fn();
+    bridge.current = { generation: 'g1', capture: () => cell, restore };
+    const trigger = new StudioElement();
+    Object.assign(document, { activeElement: trigger });
+    props(TopQueryStudio).onToggle();
+    commit();
+    bridge.current = { generation: 'g2', capture: () => undefined, restore };
+    props(TopQueryStudio).onClose();
+    commit();
+
+    expect(trigger.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it('does not focus a disconnected invoking trigger when no grid snapshot was captured', () => {
+    boot();
+    chooseWorkspaceTab('Timeline');
+    const trigger = new StudioElement();
+    Object.assign(document, { activeElement: trigger });
+    props(TopQueryStudio).onToggle();
+    commit();
+    Object.assign(trigger, { isConnected: false });
+    props(TopQueryStudio).onClose();
+    commit();
+
+    expect(props(TopQueryStudio).open).toBe(false);
+    expect(trigger.focus).not.toHaveBeenCalled();
   });
 
   it('registers the window message listener once across state commits', () => {
