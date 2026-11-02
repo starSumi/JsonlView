@@ -595,6 +595,7 @@
     "watch": "node esbuild.mjs --watch",
     "check:contract": "node scripts/check-engineering-contract.mjs",
     "check:biome": "node scripts/check-biome.mjs",
+    "check:biome:plugin": "node scripts/check-biome-plugin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
