@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep the existing Query Studio trigger in the shared second toolbar row
+  across all five views while reusing the current bounded query controller.
+- Add bounded metadata-only Treemap contracts and a pure selected-level layout
+  with exact decimal weights; Host aggregation and Insights rendering remain
+  separate integration work.
+
 - Add bounded GET_ROWS timing receipts for queue wait, index work, reads,
   parsing, projection, and snapshot checks; keep overlapping phase semantics
   explicit and timing out of the ROWS payload.

@@ -56,6 +56,10 @@ release input.
   Neutral Contrast direction, Compact Focus density guidance for dark host
   themes, semantic VS Code token contract, and visual acceptance boundary.
   It is product documentation, not runtime configuration or harness evidence.
+- [Query Studio and Navigator contract](designs/query-studio-and-navigator.md)
+  records the selected shared-anchor interactions, candidate/queued states,
+  Host defaults, Curated/Runtime separation and owner-specific implementation
+  gates; the newer Navigator composition remains pending visual review.
 
 Claims about measured performance, installed-host behavior, or release output
 must link to an immutable external evidence receipt containing an ID, source
