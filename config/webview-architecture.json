@@ -25,5 +25,27 @@
       "path": "src/webview/widgets/detail-drawer",
       "entry": "src/webview/widgets/detail-drawer/index.ts"
     }
+  ],
+  "boundaryRules": [
+    {
+      "name": "application-is-independent-of-runtime-adapters",
+      "from": "src/application",
+      "forbiddenTargets": ["src/extension", "src/webview"]
+    },
+    {
+      "name": "session-adapters-do-not-import-each-other",
+      "from": "src/extension/document-controller.ts",
+      "forbiddenTargets": ["src/extension/integrated-session.ts"]
+    },
+    {
+      "name": "integrated-session-does-not-import-controller",
+      "from": "src/extension/integrated-session.ts",
+      "forbiddenTargets": ["src/extension/document-controller.ts"]
+    },
+    {
+      "name": "record-query-does-not-import-app",
+      "from": "src/webview/features/record-query/row-query-controller.ts",
+      "forbiddenTargets": ["src/webview/App.tsx"]
+    }
   ]
 }

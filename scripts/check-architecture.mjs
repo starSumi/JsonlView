@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, extname, join, normalize, relative, resolve } from 'node:path';
 
 const root = process.cwd();
-const sourceRoot = resolve(root, 'src/webview');
+const sourceRoot = resolve(root, 'src');
 const config = JSON.parse(await readFile(resolve(root, 'config/webview-architecture.json'), 'utf8'));
 const tsconfig = JSON.parse(await readFile(resolve(root, 'tsconfig.json'), 'utf8'));
 const pathAliases = Object.entries(tsconfig.compilerOptions?.paths ?? {}).flatMap(([pattern, targets]) => {
@@ -88,9 +88,40 @@ for (const importer of sourceFiles) {
   }
 }
 
+function normalizedRelative(path) {
+  return relative(root, path).replaceAll('\\', '/');
+}
+
+function matchesBoundaryPath(candidate, configured) {
+  const relativePath = normalizedRelative(candidate);
+  const normalizedConfigured = configured.replaceAll('\\', '/').replace(/\/$/u, '');
+  return relativePath === normalizedConfigured || relativePath.startsWith(`${normalizedConfigured}/`);
+}
+
+for (const rule of config.boundaryRules ?? []) {
+  const importers = sourceFiles.filter((path) => matchesBoundaryPath(path, rule.from));
+  for (const importer of importers) {
+    const content = await readFile(importer, 'utf8');
+    for (const match of content.matchAll(importPattern)) {
+      const specifier = match[1] ?? match[2] ?? match[3];
+      const target = resolveImport(importer, specifier, sourcePaths);
+      if (!target) continue;
+      const forbiddenTarget = rule.forbiddenTargets.find((configured) => matchesBoundaryPath(target, configured));
+      if (!forbiddenTarget) continue;
+      failures.push({
+        kind: 'boundary-import',
+        rule: rule.name,
+        importer: normalizedRelative(importer),
+        target: normalizedRelative(target),
+        forbiddenTarget,
+      });
+    }
+  }
+}
+
 if (failures.length > 0) {
-  console.error(JSON.stringify({ ok: false, rule: 'production webview modules must import facade owners directly and widgets through their public entry', failures }, null, 2));
+  console.error(JSON.stringify({ ok: false, rule: 'architecture-boundaries', failures }, null, 2));
   process.exitCode = 1;
 } else {
-  console.log(JSON.stringify({ ok: true, checked: { sourceRoot: 'src/webview', facades: facadePaths.size, privateRoots: privateRoots.length } }));
+  console.log(JSON.stringify({ ok: true, checked: { sourceRoot: 'src', facades: facadePaths.size, privateRoots: privateRoots.length, boundaryRules: config.boundaryRules?.length ?? 0 } }));
 }

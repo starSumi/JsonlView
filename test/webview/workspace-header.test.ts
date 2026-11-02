@@ -61,14 +61,20 @@ describe('workspace header status', () => {
     expect(accessibilityStyles).not.toContain('.workspace-query-controls .table-query-toolbar::-webkit-scrollbar-thumb {');
   });
 
-  it('uses icon-only workspace tabs at narrow widths while retaining their accessible labels', () => {
+  it('keeps workspace tab labels visible at narrow widths inside the scrollable rail', () => {
     const compactHeaderRules = styles.slice(styles.indexOf('@container workspace (max-width: 700px)'), styles.indexOf('@container workspace (max-width: 520px)'));
 
-    expect(compactHeaderRules).toContain('.workspace-tab-label');
-    expect(compactHeaderRules).toContain('display: none');
     expect(compactHeaderRules).toContain('.workspace-tabs button');
+    expect(compactHeaderRules).toContain('min-width: 68px');
     expect(compactHeaderRules).toContain('scrollbar-color: var(--vscode-scrollbarSlider-background) transparent');
     expect(styles).not.toContain('.follow-toggle > span');
+  });
+
+  it('uses the selected compact bordered rail with an accent-shaped active tab', () => {
+    expect(workspaceHeaderStyles).toContain('padding: 2px;');
+    expect(workspaceHeaderStyles).toContain('border: 1px solid var(--vscode-panel-border);');
+    expect(workspaceHeaderStyles).toContain('box-shadow: inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));');
+    expect(workspaceHeaderStyles).not.toContain('.workspace-tabs button.is-active {\n  border-bottom-color:');
   });
 
   it('allows a second primary row instead of clipping controls at the smallest workspace widths', () => {
@@ -158,8 +164,9 @@ describe('workspace header status', () => {
     expect(markup.match(/workspace-header-secondary/g)).toHaveLength(1);
     expect(secondaryIndex).toBeLessThan(railIndex);
     expect(railIndex).toBeLessThan(studioIndex);
-    expect(queryStudioStyles).toContain('position: absolute;');
-    expect(queryStudioStyles).toContain('top: calc(100% + 4px);');
+    expect(queryStudioStyles).toContain('position: fixed;');
+    expect(queryStudioStyles).toContain('top: var(--query-studio-anchor-top, 8px);');
+    expect(queryStudioStyles).toContain('left: var(--query-studio-anchor-left, 8px);');
   });
 
   it('keeps file identity outside the header and labels observed problems', () => {

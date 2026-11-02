@@ -3,6 +3,7 @@ import { isAbsolute } from 'node:path';
 import { TextDecoder } from 'node:util';
 import * as vscode from 'vscode';
 import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
+import { hasJsonlExtension } from './source-intake-contract';
 import { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
 import { sessionNavigatorProviderLabel, type DetectedAgentProviderId } from './types';
 import { SessionPreviews } from './session-previews';
@@ -263,6 +264,7 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       if (message.type === 'preview-uris') {
         if (message.uris.length !== 1) throw new Error('Drop one JSONL file for a temporary preview, or choose Files to add several sources.');
         const uri = await validateLocalSourceUri(message.uris[0]!);
+        if (!hasJsonlExtension(uri.fsPath) || (await lstat(uri.fsPath)).isDirectory()) throw new Error('Drop a JSONL or NDJSON file for a temporary preview.');
         const { text, records } = await readPreviewSource(uri, signal);
         await this.openPreview(text, records, signal);
         await this.post(webview, signal, `success`, `Opened a temporary preview with ${String(records)} records. Save As is available under Recent Previews.`);

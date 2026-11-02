@@ -266,6 +266,15 @@ describe('Add Source panel host lifecycle', () => {
     expect(host.post.mock.calls.at(-1)?.[0].text).toContain('Save As');
   });
 
+  it('rejects non-JSONL URI previews before reading the file', async () => {
+    const file = join(directory, 'dropped.txt');
+    await writeFile(file, '{}\n');
+    intake.show();
+    await send({ type: 'preview-uris', uris: [pathToFileURL(file).toString()] });
+    expect(host.open).not.toHaveBeenCalled();
+    expect(host.post.mock.calls.at(-1)?.[0]).toMatchObject({ state: 'error' });
+  });
+
   it('creates a private session preview, keeps it when intake closes, and cleans only owned files on disposal', async () => {
     const content = '{"text":"<img src=x onerror=alert(1)>"}\n';
     intake.show();
@@ -431,6 +440,7 @@ describe('persistent sidebar source drop view', () => {
       const attrs = new Map<string, string>();
       const element = (initialHidden = false) => ({
         hidden: initialHidden, textContent: '', dataset: {} as Record<string, string>,
+        classList: { add() {}, remove() {} },
         listeners: new Map<string, ((event: unknown) => void)[]>(),
         addEventListener(type: string, listener: (event: unknown) => void) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); },
         getAttribute(name: string) { return attrs.get(name) ?? null; },
@@ -438,7 +448,7 @@ describe('persistent sidebar source drop view', () => {
         querySelector() { return { textContent: '' }; },
         focus() {},
       });
-      const elements = new Map(['toggle', 'source-actions', 'drop', 'status', 'files', 'folder', 'paste', 'connect'].map((name) => [name, element(name === 'source-actions')]));
+      const elements = new Map(['source-card', 'toggle', 'source-actions', 'drop', 'status', 'files', 'folder', 'paste', 'connect'].map((name) => [name, element(name === 'source-actions')]));
       const posted: unknown[] = [];
       const document = {
         getElementById(id: string) { return elements.get(id)!; },
@@ -459,13 +469,14 @@ describe('persistent sidebar source drop view', () => {
       hidden, textContent: '', dataset: {} as Record<string, string>,
       classList: { add() {}, remove() {} },
       listeners: new Map<string, ((event: unknown) => void)[]>(),
+      contains() { return false; },
       addEventListener(type: string, listener: (event: unknown) => void) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); },
       getAttribute() { return 'true'; },
       setAttribute() {},
       querySelector() { return { textContent: '' }; },
       focus() {},
     });
-    const elements = new Map(['toggle', 'source-actions', 'drop', 'status', 'files', 'folder', 'paste', 'connect'].map((name) => [name, makeElement(name === 'source-actions')]));
+    const elements = new Map(['source-card', 'toggle', 'source-actions', 'drop', 'status', 'files', 'folder', 'paste', 'connect'].map((name) => [name, makeElement(name === 'source-actions')]));
     const posted: unknown[] = [];
     const document = {
       getElementById(id: string) { return elements.get(id)!; },
@@ -473,7 +484,7 @@ describe('persistent sidebar source drop view', () => {
       querySelectorAll() { return []; },
     };
     new Script(source).runInNewContext({ document, window: { addEventListener(type: string, listener: (event: any) => void) { windowListeners.set(type, listener); } }, TextDecoder, TextEncoder, acquireVsCodeApi: () => ({ postMessage(message: unknown) { posted.push(message); } }) });
-    const drop = listeners.get('drop')!;
+    const drop = elements.get('source-card')!.listeners.get('drop')!.at(-1)!;
     drop({ preventDefault() {}, dataTransfer: { getData: () => '', items: [], files: [{ name: 'sample.jsonl', size: 3, arrayBuffer: () => Promise.resolve(new TextEncoder().encode('{}\n').buffer) }] } });
     await vi.waitFor(() => expect(posted).toEqual([{ type: 'import-jsonl', text: '{}\n' }]));
     windowListeners.get('message')!({ data: { type: 'status', state: 'idle', text: 'Preview opened.' } });

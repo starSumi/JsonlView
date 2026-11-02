@@ -37,6 +37,12 @@ export class AdaptiveSegmentIndex {
   private previousByte: number | undefined;
   private nextOrdinal = 0n;
   private complete = false;
+  private readAhead: {
+    bytes: Buffer;
+    newlineOffsets: number[];
+    consumedBytes: number;
+    newlineCursor: number;
+  } | undefined;
 
   constructor(
     handle: FileHandle,
@@ -104,7 +110,7 @@ export class AdaptiveSegmentIndex {
     if (ordinal < 0n) return false;
     while (!this.complete && this.nextOrdinal <= ordinal) {
       guard();
-      await this.scanNextChunk(guard, undefined, onReadWait);
+      await this.scanNextChunk(guard, undefined, onReadWait, ordinal + 1n - this.nextOrdinal);
     }
     return ordinal < this.nextOrdinal;
   }
@@ -165,8 +171,9 @@ export class AdaptiveSegmentIndex {
     guard: OperationGuard,
     budgetBytes?: number,
     onReadWait?: ReadWaitObserver,
+    maxRecords?: bigint,
   ): Promise<void> {
-    if (this.scanOffset >= this.fileSize) {
+    if (this.readAhead === undefined && this.scanOffset >= this.fileSize) {
       this.finishAtEof();
       return;
     }
@@ -177,34 +184,58 @@ export class AdaptiveSegmentIndex {
       ? configuredReadBytes
       : Math.min(configuredReadBytes, budgetBytes);
     if (readBudget <= 0) return;
-    const length = Number(remaining < BigInt(readBudget)
-      ? remaining
-      : BigInt(readBudget));
-    const buffer = Buffer.allocUnsafe(length);
-    const bytesRead = await readFileHandle(this.handle, buffer, 0, length, this.scanOffset, onReadWait);
-    guard();
-    if (bytesRead <= 0) {
-      throw new JsonlEngineError(
-        'UNEXPECTED_EOF',
-        'The JSONL source became shorter while its snapshot was being indexed.',
-      );
+    let readAhead = this.readAhead;
+    if (readAhead === undefined) {
+      const length = Number(remaining < BigInt(readBudget)
+        ? remaining
+        : BigInt(readBudget));
+      const buffer = Buffer.allocUnsafe(length);
+      const bytesRead = await readFileHandle(this.handle, buffer, 0, length, this.scanOffset, onReadWait);
+      guard();
+      if (bytesRead <= 0) {
+        throw new JsonlEngineError(
+          'UNEXPECTED_EOF',
+          'The JSONL source became shorter while its snapshot was being indexed.',
+        );
+      }
+
+      const bytes = buffer.subarray(0, bytesRead);
+      const newlineOffsets: number[] = [];
+      this.options.newlineScanner.scan(bytes).forEach((offset) => {
+        newlineOffsets.push(offset);
+      });
+      readAhead = { bytes, newlineOffsets, consumedBytes: 0, newlineCursor: 0 };
+      await this.options.validateSnapshot();
+      guard();
     }
 
-    const base = this.scanOffset;
-    const chunk = buffer.subarray(0, bytesRead);
-    const newlineOffsets = this.options.newlineScanner.scan(chunk);
-    await this.options.validateSnapshot();
-    guard();
-    newlineOffsets.forEach((index) => {
-      const absolute = base + BigInt(index);
+    const availableBytes = readAhead.bytes.byteLength - readAhead.consumedBytes;
+    const chunkLength = Math.min(availableBytes, readBudget);
+    const chunkEnd = readAhead.consumedBytes + chunkLength;
+    const chunk = readAhead.bytes.subarray(readAhead.consumedBytes, chunkEnd);
+    let consumedLength = chunkLength;
+    let recordsEmitted = 0n;
+    while (readAhead.newlineCursor < readAhead.newlineOffsets.length) {
+      const offset = readAhead.newlineOffsets[readAhead.newlineCursor];
+      if (offset === undefined || offset >= chunkEnd) break;
+      const index = offset - readAhead.consumedBytes;
+      const absolute = this.scanOffset + BigInt(index);
       const precedingByte = index === 0 ? this.previousByte : chunk[index - 1];
       const hasCarriageReturn = precedingByte === 0x0d;
       const contentEnd = hasCarriageReturn ? absolute - 1n : absolute;
       this.emitRecord(contentEnd, hasCarriageReturn ? 2 : 1, absolute + 1n);
-    });
-    this.previousByte = chunk[bytesRead - 1];
+      readAhead.newlineCursor += 1;
+      recordsEmitted += 1n;
+      if (maxRecords !== undefined && recordsEmitted >= maxRecords) {
+        consumedLength = index + 1;
+        break;
+      }
+    }
 
-    this.scanOffset += BigInt(bytesRead);
+    this.previousByte = chunk[consumedLength - 1];
+    this.scanOffset += BigInt(consumedLength);
+    readAhead.consumedBytes += consumedLength;
+    this.readAhead = readAhead.consumedBytes >= readAhead.bytes.byteLength ? undefined : readAhead;
     if (this.scanOffset >= this.fileSize) this.finishAtEof();
   }
 

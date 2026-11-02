@@ -40,4 +40,23 @@ describe('getWebviewHtml', () => {
     expect(html).toContain('JSONLVIEW_DIAGNOSTIC');
     expect(html).toContain('UnhandledRejection');
   });
+
+  it('does not broaden the bounded style exception to scripts or style elements', () => {
+    const webview = {
+      cspSource: 'vscode-webview://unit-test',
+      asWebviewUri: (uri: { toString(): string }) => uri,
+    };
+    const vscodeUri = {
+      path: '/jsonl-view',
+      with: ({ path }: { path: string }) => ({ toString: () => `vscode-extension://${path}` }),
+    };
+
+    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot);
+
+    expect(html).toContain("style-src-elem vscode-webview://unit-test");
+    expect(html).toContain("style-src-attr 'unsafe-inline'");
+    expect(html).not.toContain("style-src 'unsafe-inline'");
+    expect(html).not.toContain("script-src 'unsafe-inline'");
+    expect(html.match(/<script nonce="[^"]+"/gu)).toHaveLength(2);
+  });
 });

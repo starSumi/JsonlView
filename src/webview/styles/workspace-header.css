@@ -5,7 +5,7 @@
   flex-direction: column;
   align-items: stretch;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
   padding: 0;
   border-bottom: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
@@ -218,6 +218,8 @@
 }
 
 .workspace-banner {
+  position: relative;
+  z-index: 10;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -263,7 +265,7 @@
   color: var(--vscode-textLink-foreground);
 }
 
-.diagnostic-context-fallback pre {
+.diagnostic-context-panel {
   position: absolute;
   z-index: 2;
   max-width: min(640px, 80vw);
@@ -275,6 +277,15 @@
   color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+}
+
+.diagnostic-context-panel pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.diagnostic-context-copy {
+  margin-top: 8px;
 }
 
 .diagnostic-action-status {
@@ -294,6 +305,15 @@
   background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+
+.workspace-tabs {
+  gap: 3px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
 }
 
 .workspace-tabs:hover,
@@ -386,6 +406,13 @@
   background: transparent;
 }
 
+.workspace-tabs button {
+  min-height: 26px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  border-bottom: 0;
+}
+
 .workspace-tabs button:hover,
 .detail-tabs button:hover {
   color: var(--vscode-tab-activeForeground);
@@ -393,9 +420,10 @@
 }
 
 .workspace-tabs button.is-active {
-  border-bottom-color: var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
+  border-color: var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
   color: var(--vscode-tab-activeForeground);
   background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+  box-shadow: inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
 }
 
 .detail-tabs button.is-active {

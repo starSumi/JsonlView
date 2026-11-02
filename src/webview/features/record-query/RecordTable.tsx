@@ -58,7 +58,7 @@ export interface RecordTableProps {
 export interface GridFocusBridge {
   readonly generation?: string | undefined;
   capture: () => GridCell | undefined;
-  restore: (cell: GridCell | undefined) => void;
+  restore: (cell: GridCell | undefined) => boolean;
 }
 
 export function RecordTable({
@@ -359,16 +359,15 @@ export function RecordTable({
       gridFocusBridgeRef.current = undefined;
       return;
     }
-    const restore = (cell: GridCell | undefined): void => {
+    const restore = (cell: GridCell | undefined): boolean => {
       const next = cell === undefined
         ? initialGridCell({ sessionId, rows, columns, selectedOrdinal })
-        : reconcileGridCell(cell, { sessionId, rows, columns })
-          ?? initialGridCell({ sessionId, rows, columns, selectedOrdinal });
-      if (next !== undefined) {
-        focus.setActiveCell(next);
-        revealCell(next);
-      }
+        : reconcileGridCell(cell, { sessionId, rows, columns });
+      if (next === undefined) return false;
+      focus.setActiveCell(next);
+      revealCell(next);
       scrollRef.current?.focus({ preventScroll: true });
+      return true;
     };
     const bridge: GridFocusBridge = {
       generation: rows[0]?.ref.generation,

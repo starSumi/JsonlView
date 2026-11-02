@@ -22,6 +22,17 @@
     "complexity": 0.2,
     "boundary": 0.05
   },
+  "ratchet": {
+    "version": 1,
+    "baselineRevision": "14f7bfcd75edf25232c932da0dddf58a3682896f",
+    "maxGrowthLines": 0,
+    "trackedFiles": {
+      "src/engine/jsonl-engine.ts": 2263,
+      "src/webview/state.ts": 960,
+      "src/webview/features/record-query/row-query-controller.ts": 864,
+      "src/webview/App.tsx": 1477
+    }
+  },
   "boundarySensitivity": [
     { "pattern": "^src/engine/", "weight": 1.0 },
     { "pattern": "^src/extension/", "weight": 0.95 },

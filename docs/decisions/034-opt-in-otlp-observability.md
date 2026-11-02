@@ -133,9 +133,13 @@ The timing bundle is supplied through an in-process callback on the record-page
 request; it is not added to the versioned query DTO or ROWS payload. Values are
 non-negative integer milliseconds from Node's monotonic high-resolution clock.
 `queue_wait_ms` spans engine enqueue to task start, and `engine_exec_ms` spans
-the queued operation itself. `queue_blocked_by` names the immediate prior FIFO
-operation observed when this query entered the queue (`none` when no predecessor
-was pending); it is a scheduling fact, not a root-cause claim. `read_wait_ms`
+the queued operation itself. At initial acceptance, `queue_blocked_by` named
+the preceding FIFO operation. With the priority lanes in ADR-058, it now names
+the last queued interactive predecessor, or the active operation when no such
+predecessor exists (`none` when neither exists). A background task queued
+between those operations is intentionally not reported as a blocker because a
+later interactive request can pass it. This is an enqueue-time scheduling fact,
+not a root-cause claim. `read_wait_ms`
 accumulates the time awaiting `FileHandle.read()` calls and does not identify
 physical disk, antivirus, or filesystem latency by itself. `parse_ms` includes
 UTF-8 decode and JSON parsing. `projection_ms` includes profile projection,
