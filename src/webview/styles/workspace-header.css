@@ -424,12 +424,12 @@
 }
 
 .workspace-tabs button.is-active {
-  border-color: var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
+  border-color: var(--vscode-focusBorder, var(--vscode-tab-activeBorder, var(--vscode-panel-border)));
+  border-bottom: 2px solid var(--vscode-focusBorder, var(--vscode-tab-activeBorder, var(--vscode-panel-border)));
   color: var(--vscode-tab-activeForeground);
-  background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+  background: color-mix(in srgb, var(--vscode-focusBorder, var(--vscode-tab-activeBorder, transparent)) 12%, var(--vscode-tab-activeBackground, var(--vscode-editor-background)));
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder)),
-    inset 0 -2px 0 var(--vscode-tab-activeBorder, var(--vscode-focusBorder));
+  box-shadow: inset 3px 0 0 var(--vscode-focusBorder, var(--vscode-tab-activeBorder, var(--vscode-panel-border)));
 }
 
 .detail-tabs button.is-active {

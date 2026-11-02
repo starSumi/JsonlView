@@ -265,7 +265,7 @@ export function getSourceDropHtml(): string {
     .source-action:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground)); }
     .source-action:active, .toggle:active { background: var(--vscode-list-activeSelectionBackground); }
     @media (max-width: 240px) { .source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @container source-card (max-width: 240px) { .source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .source-action { padding-inline: 5px; } .source-action-label { display: none; } }
+    @container source-card (max-width: 240px) { .source-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .source-action { padding-inline: 5px; } }
     @media (forced-colors: active) { .source-action { border-color: ButtonText; color: ButtonText; background: ButtonFace; } .source-action:active { color: HighlightText; background: Highlight; } .toggle:focus-visible, .drop:focus-visible, .source-action:focus-visible { outline-color: Highlight; } .drop { border-color: ButtonText; } }
     [hidden] { display: none !important; }
     #status { min-height: 14px; margin: 4px 0 0; overflow-wrap: anywhere; font-size: 10px; }

@@ -413,6 +413,7 @@ describe('persistent sidebar source drop view', () => {
     expect(html).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))');
     expect(html).toContain('max-width: 240px');
     expect(html).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
+    expect(html).not.toContain('.source-action-label { display: none; }');
     expect(html).toContain('--vscode-button-secondaryBorder');
     expect(html).toContain('@media (forced-colors: active)');
     expect(html).toContain('border-color: ButtonText');
