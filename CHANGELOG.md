@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Move the query execution DTO to its canonical shared contract owner while
+  preserving the v1 wire shape and deprecated compatibility facade.
 - Add bounded GET_ROWS timing receipts for queue wait, index work, reads,
   parsing, projection, and snapshot checks; keep overlapping phase semantics
   explicit and timing out of the ROWS payload.

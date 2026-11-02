@@ -11,7 +11,7 @@ import {
   type QuerySettlementDtoV1,
   type QuerySourceIdentityV1,
   type QueryTruncationV1,
-} from '@shared/query-dto';
+} from '@shared/contracts/query-dto';
 import type { RowPage } from '@shared/types';
 import {
   assertRecordPageRequest,

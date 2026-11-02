@@ -1,6 +1,7 @@
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkDeprecatedQueryDtoImports } from './check-query-dto-facade.mjs';
 import { loadReleaseTargets } from './release-targets.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -72,6 +73,10 @@ const pinnedWorkflowActions = [
 ];
 
 const failures = [];
+const queryDtoImports = await checkDeprecatedQueryDtoImports();
+for (const violation of queryDtoImports.violations) {
+  failures.push(`${violation.file}:${violation.line} imports deprecated ${violation.specifier}; use @shared/contracts/query-dto`);
+}
 const text = async (relativePath) => readFile(join(root, relativePath), 'utf8');
 const exists = async (relativePath) => {
   try {

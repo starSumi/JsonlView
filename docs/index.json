@@ -760,8 +760,8 @@
       "revisit": "when a migration boundary or consumer changes",
       "rollback": "revert one vertical slice and retain the facade",
       "summary": "ADR-039: Architecture Evolution Slices",
-      "bytes": 4974,
-      "sha256": "5532189aa9ad361e74e8e9450ba423ac331deca95db150ed07b07a5ee47b41e2"
+      "bytes": 5468,
+      "sha256": "6f0c23e3484a91886dd643c992888ead04884939db1ebdad9107b562cd6ad25f"
     },
     {
       "id": "040-native-scanner-measurement-boundary",
