@@ -188,6 +188,7 @@ export function App(): React.JSX.Element {
   const stateRef = useRef(state);
   const gridFocusBridgeRef = useRef<GridFocusBridge | undefined>(undefined);
   const studioFocusRef = useRef<GridCell | undefined>(undefined);
+  const studioTriggerFocusRef = useRef<HTMLElement | undefined>(undefined);
   const priorStudioOpenRef = useRef(false);
   const analysisIntentRevisionRef = useRef(state.analysisIntentRevision);
   const persistedStateRef = useRef<PersistedWorkspaceState>(toPersistedState(state));
@@ -1019,6 +1020,7 @@ export function App(): React.JSX.Element {
 
   const openQueryStudio = (): void => {
     studioFocusRef.current = gridFocusBridgeRef.current?.capture();
+    studioTriggerFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     setQueryStudioOpen(true);
   };
   const closeQueryStudio = (): void => setQueryStudioOpen(false);
@@ -1053,28 +1055,19 @@ export function App(): React.JSX.Element {
   const observedStudioGeneration = state.summary?.snapshot.generation;
 
   useLayoutEffect(() => {
-    const rowCount = state.rows.length;
-    if (observedStudioGeneration !== undefined
-      && observedStudioGeneration !== studioGenerationRef.current
-      && queryStudioOpen) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (observedStudioGeneration !== undefined
-      && gridFocusBridgeRef.current?.generation !== observedStudioGeneration) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (rowCount === 0 && gridFocusBridgeRef.current === undefined) {
-      priorStudioOpenRef.current = queryStudioOpen;
-      return;
-    }
-    if (!queryStudioOpen && studioFocusRef.current !== undefined && gridFocusBridgeRef.current !== undefined) {
-      gridFocusBridgeRef.current?.restore(studioFocusRef.current);
+    if (!queryStudioOpen && priorStudioOpenRef.current) {
+      const bridge = gridFocusBridgeRef.current;
+      if (studioFocusRef.current !== undefined && bridge !== undefined
+        && (observedStudioGeneration === undefined || bridge.generation === observedStudioGeneration)) {
+        bridge.restore(studioFocusRef.current);
+      } else if (studioTriggerFocusRef.current?.isConnected) {
+        studioTriggerFocusRef.current.focus({ preventScroll: true });
+      }
       studioFocusRef.current = undefined;
+      studioTriggerFocusRef.current = undefined;
     }
     priorStudioOpenRef.current = queryStudioOpen;
-  }, [observedStudioGeneration, queryStudioOpen, state.rows]);
+  }, [observedStudioGeneration, queryStudioOpen]);
 
   useEffect(() => {
     const generation = observedStudioGeneration ?? clientRef.current.session.generation;
@@ -1126,7 +1119,7 @@ export function App(): React.JSX.Element {
             })}
           </nav>
         }
-        secondary={state.activeTab === 'table' ? (
+        secondary={(
           <>
             <TopQueryStudio
               open={queryStudioOpen}
@@ -1142,7 +1135,7 @@ export function App(): React.JSX.Element {
             />
             {tableQueryControls}
           </>
-        ) : undefined}
+        )}
       >
         <div className="toolbar-context" title="File identity is provided by the VS Code editor tab">
           <span className="toolbar-context-mark" aria-hidden>JSONL</span>
