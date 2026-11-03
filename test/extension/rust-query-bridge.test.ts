@@ -97,6 +97,40 @@ describe('RustQueryBridge', () => {
     }
   });
 
+  it('processes complete rows in a large read chunk before enforcing the unfinished-line cap', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jsonlview-portable-small-budget-'));
+    const file = join(root, 'events.jsonl');
+    const rows = Array.from({ length: 10_000 }, (_, index) => `{"n":${index}}\n`).join('');
+    expect(Buffer.byteLength(rows)).toBeGreaterThan(64 * 1024);
+    writeFileSync(file, rows, 'utf8');
+    try {
+      const result = await readPortableRustQuery(
+        { sourcePath: file, limit: 100, maxBytes: 64 },
+        new AbortController().signal,
+      );
+
+      expect(result.records).toHaveLength(9);
+      expect(result.records.map(({ raw }) => raw)).toEqual(Array.from({ length: 9 }, (_, index) => `{"n":${index}}`));
+      expect(result).toMatchObject({ nextOrdinal: '9', truncated: true, truncationReason: 'max-bytes' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an unfinished portable record that exceeds maxBytes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jsonlview-portable-oversized-line-'));
+    const file = join(root, 'events.jsonl');
+    writeFileSync(file, 'x'.repeat(67), 'utf8');
+    try {
+      await expect(readPortableRustQuery(
+        { sourcePath: file, maxBytes: 64 },
+        new AbortController().signal,
+      )).rejects.toThrow('jsonl-query:record-exceeds-max-bytes');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects invalid UTF-8 instead of rewriting source bytes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'jsonlview-invalid-utf8-'));
     const file = join(root, 'events.jsonl');

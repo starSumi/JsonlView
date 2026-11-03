@@ -352,7 +352,6 @@ export async function readPortableRustQuery(
       scannedBytes += BigInt(read.bytesRead);
       if (scannedBytes > BigInt(PORTABLE_RAW_QUERY_MAX_SCAN_BYTES)) throw new Error('jsonl-query:scan-budget-exceeded');
       pending = pending.length === 0 ? Buffer.from(bytes) : Buffer.concat([pending, bytes]);
-      if (pending.length > maxBytes + 2) throw new Error('jsonl-query:record-exceeds-max-bytes');
       let newline = pending.indexOf(10);
       while (newline >= 0 && !done) {
         const physical = pending.subarray(0, newline);
@@ -362,6 +361,10 @@ export async function readPortableRustQuery(
         pending = pending.subarray(newline + 1);
         newline = pending.indexOf(10);
       }
+      // Complete records can share a read chunk and exceed the output budget
+      // in aggregate. Enforce the line cap only on the unfinished tail after
+      // those complete records have been consumed.
+      if (!done && pending.length > maxBytes + 2) throw new Error('jsonl-query:record-exceeds-max-bytes');
     }
     if (signal.aborted) throw new Error('MCP query was cancelled.');
     const after = await file.stat();
