@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Verify published Open VSX and npm artifacts against candidate SHA-256 digests, redact common POSIX absolute paths without matching URL paths, and bound/cancel portable MCP stdio queries.
 - Move the query execution DTO to its canonical shared contract owner while
   preserving the v1 wire shape and deprecated compatibility facade.
 - Keep the existing Query Studio trigger in the shared second toolbar row

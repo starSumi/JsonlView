@@ -33,6 +33,38 @@ host acceptance evidence, screenshots awaiting review, release readbacks, and
 postmortem instances. Its state is never a product runtime dependency or a
 release input.
 
+## Diátaxis navigation
+
+Use the documentation by intent before opening a decision record:
+
+- **Tutorials** guide a new user through a first real JSONL/NDJSON workflow; start at
+  [A Real Use Path](../README.md#a-real-use-path) in the repository README.
+- **How-to guides** give steps for a concrete task: use the [Marketplace publication
+  guide](marketplace-publishing.md) for a read-only plan or manual handoff, and the
+  [promotion runbook](promotion-runbook.md) for the release sequence.
+- **Reference** documents state stable formats, protocol fields, limits, and
+  commands; begin with [format and profile boundaries](format-and-profile-boundaries.md),
+  [metadata governance](metadata/README.md), or the applicable reference document.
+- **Explanation** documents record why the architecture has its current shape; use
+  [decision records](decisions/README.md) for durable trade-offs and invariants.
+
+The four quadrants are navigation labels, not new document kinds.
+`docs/index.json` remains the generated lookup projection, and Markdown remains
+authoritative.
+
+## Architecture domains
+
+For architecture work, use these verified domain entry points before the chronological ADR list:
+
+| Domain | Start with |
+| --- | --- |
+| Core engine and physical framing | [format and profile boundaries](format-and-profile-boundaries.md), [Rust engineering rules](rust-engineering-rules.md), [acceleration roadmap](acceleration-roadmap.md) |
+| Presentation and Webview | [theme adaptation](designs/theme-adaptation.md), [Query Studio and Navigator](designs/query-studio-and-navigator.md) |
+| Catalog, persistence, and storage | [Navigator collections (proposed)](designs/navigator-collections.md), [V2 architecture roadmap](architecture-v2-roadmap.md) |
+| Protocols, distribution, and agent interfaces | [local MCP and audit plan (proposed)](mcp-local-plan.md), [marketplace publishing](marketplace-publishing.md), [promotion runbook](promotion-runbook.md) |
+
+These domain links provide progressive disclosure; they do not reclassify or duplicate the underlying ADR files.
+
 ## Reading order
 
 1. Start with the repository `README.md` for product scope and user flow.

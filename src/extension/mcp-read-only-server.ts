@@ -1,12 +1,16 @@
 /** Explicit opt-in, host-owned MCP JSON-RPC server for read-only queries. */
 
+import { performance } from 'node:perf_hooks';
+
 export const MCP_READ_ONLY_PROTOCOL_VERSIONS = Object.freeze(['2026-07-28', '2025-11-25', '2025-06-18'] as const);
 export type McpReadOnlyProtocolVersion = (typeof MCP_READ_ONLY_PROTOCOL_VERSIONS)[number];
 export const MCP_READ_ONLY_TOOL_NAME = 'jsonlview_query_records' as const;
 export const MCP_READ_ONLY_SERVER_NAME = 'JsonlView' as const;
 export const MCP_READ_ONLY_SERVER_VERSION = '0.1.0' as const;
 
-const DEFAULT_TIMEOUT = 10_000;
+const DEFAULT_BUDGET_MS = 3_000;
+const DEFAULT_MAX_CONCURRENCY = 2;
+const DEFAULT_MAX_QUEUED_REQUESTS = 8;
 export const MCP_READ_ONLY_MAX_LINE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_LINE = MCP_READ_ONLY_MAX_LINE_BYTES;
 const DEFAULT_MAX_RESPONSE = 4 * 1024 * 1024;
@@ -53,10 +57,16 @@ export interface McpReadOnlyServerOptions {
   readonly tools?: readonly McpReadOnlyToolDefinition[];
   readonly protocolVersions?: readonly string[];
   readonly allowedSourceIds?: readonly string[];
-  /** Enforced only for cooperative queries; bounded synchronous native queries do not yield to the event loop. */
+  /** Total arrival-to-finish budget, including queue wait. The default is 3000ms. */
+  readonly budgetMs?: number;
+  /** @deprecated Use budgetMs. Kept as an alias for existing embedders. */
   readonly requestTimeoutMs?: number;
-  /** Defaults to unsupported; opt in only when the query observes AbortSignal and yields to the event loop. */
+  /** Defaults to unsupported; marks whether the query adapter cooperatively observes AbortSignal. */
   readonly cancellationMode?: 'cooperative' | 'unsupported';
+  /** Maximum number of tool queries executing at once. Defaults to 2. */
+  readonly maxConcurrency?: number;
+  /** Maximum number of waiting tool queries. Defaults to 8. */
+  readonly maxQueuedRequests?: number;
   readonly maxLineBytes?: number;
   readonly maxResponseBytes?: number;
 }
@@ -65,7 +75,7 @@ export type McpJsonRpcId = string | number | null;
 
 export const MCP_READ_ONLY_TOOL: McpReadOnlyToolDefinition = Object.freeze({
   name: MCP_READ_ONLY_TOOL_NAME,
-  description: 'Read a bounded page of raw physical JSONL records from the explicitly authorized JsonlView source. Records are not split: a single record larger than maxBytes fails explicitly. The packaged Rust stdio adapter performs a synchronous read with a 64 MiB ordinal-scan cap and cannot be cancelled or timed out mid-read.',
+  description: 'Read a bounded page of raw physical JSONL records from the explicitly authorized JsonlView source. Records are not split: a single record larger than maxBytes fails explicitly. Stdio defaults are two active and eight waiting queries with a 3000ms total request budget. Set JSONLVIEW_MCP_MAX_CONCURRENCY (1..8; 1 serializes scans) and JSONLVIEW_MCP_BUDGET_MS (1..60000) to override the active-query limit and budget. Packaged stdio uses the cancellable portable reader; native synchronous reads remain available to other adapters and cannot be interrupted mid-read.',
   inputSchema: Object.freeze({
     type: 'object',
     additionalProperties: false,
@@ -79,7 +89,7 @@ export const MCP_READ_ONLY_TOOL: McpReadOnlyToolDefinition = Object.freeze({
   annotations: Object.freeze({ readOnlyHint: true, destructiveHint: false }),
 });
 
-export type McpReadOnlyServerErrorCode = 'not_initialized' | 'already_initialized' | 'invalid_request' | 'invalid_params' | 'method_not_found' | 'unknown_tool' | 'unsupported_protocol_version' | 'query_failed' | 'query_cancelled' | 'request_timeout' | 'response_too_large' | 'line_too_large' | 'server_stopped';
+export type McpReadOnlyServerErrorCode = 'not_initialized' | 'already_initialized' | 'invalid_request' | 'invalid_params' | 'method_not_found' | 'unknown_tool' | 'unsupported_protocol_version' | 'query_failed' | 'query_cancelled' | 'request_timeout' | 'server_busy' | 'response_too_large' | 'line_too_large' | 'server_stopped';
 
 export class McpReadOnlyServerError extends Error {
   public readonly code: McpReadOnlyServerErrorCode;
@@ -94,7 +104,19 @@ export class McpReadOnlyServerError extends Error {
   }
 }
 
-interface PendingRequest { readonly controller: AbortController; readonly timeoutHandle: ReturnType<typeof setTimeout>; }
+interface PendingRequest {
+  readonly key: string;
+  readonly toolName: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly controller: AbortController;
+  readonly resolve: (value: unknown | undefined) => void;
+  readonly reject: (reason: unknown) => void;
+  timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  readonly deadlineAt: number;
+  state: 'queued' | 'running' | 'finished';
+  timedOut: boolean;
+  responseSettled: boolean;
+}
 
 /** Construction is inert. Calling start() is the explicit connection boundary. */
 export class McpReadOnlyServer {
@@ -103,13 +125,18 @@ export class McpReadOnlyServer {
   readonly #tools: readonly McpReadOnlyToolDefinition[];
   readonly #versions: readonly McpReadOnlyProtocolVersion[];
   readonly #allowedSourceIds: ReadonlySet<string> | undefined;
-  readonly #timeoutMs: number;
+  readonly #budgetMs: number;
   readonly #cancellationMode: 'cooperative' | 'unsupported';
+  readonly #maxConcurrency: number;
+  readonly #maxQueuedRequests: number;
   readonly #maxLineBytes: number;
   readonly #maxResponseBytes: number;
   readonly #pending = new Map<string, PendingRequest>();
+  readonly #queue: PendingRequest[] = [];
+  #activeCount = 0;
   #unsubscribe: (() => void) | undefined;
   #started = false;
+  #stoppedOnce = false;
   #initialized = false;
   #version: McpReadOnlyProtocolVersion | undefined;
 
@@ -119,8 +146,10 @@ export class McpReadOnlyServer {
     this.#tools = freezeTools(options.tools ?? [MCP_READ_ONLY_TOOL]);
     this.#versions = normalizeVersions(options.protocolVersions);
     this.#allowedSourceIds = options.allowedSourceIds === undefined ? undefined : new Set(options.allowedSourceIds);
-    this.#timeoutMs = bounded(options.requestTimeoutMs ?? DEFAULT_TIMEOUT, 1, 60_000, 'requestTimeoutMs');
+    this.#budgetMs = bounded(options.budgetMs ?? options.requestTimeoutMs ?? DEFAULT_BUDGET_MS, 1, 60_000, 'budgetMs');
     this.#cancellationMode = options.cancellationMode ?? 'unsupported';
+    this.#maxConcurrency = bounded(options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY, 1, 8, 'maxConcurrency');
+    this.#maxQueuedRequests = bounded(options.maxQueuedRequests ?? DEFAULT_MAX_QUEUED_REQUESTS, 0, 256, 'maxQueuedRequests');
     this.#maxLineBytes = bounded(options.maxLineBytes ?? DEFAULT_MAX_LINE, 256, 16 * 1024 * 1024, 'maxLineBytes');
     this.#maxResponseBytes = bounded(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE, 256, 16 * 1024 * 1024, 'maxResponseBytes');
   }
@@ -131,17 +160,19 @@ export class McpReadOnlyServer {
 
   public start(): void {
     if (this.#started) return;
+    if (this.#stoppedOnce) throw new McpReadOnlyServerError('server_stopped', 'MCP server instances cannot be restarted after stop().');
     this.#started = true;
-    this.#unsubscribe = this.#transport.onLine((line) => { void this.handleLine(line).then((response) => { if (response !== undefined) void this.#transport.sendLine(response); }).catch(() => undefined); });
+    this.#unsubscribe = this.#transport.onLine((line) => { void this.handleLine(line).then((response) => { if (response !== undefined && this.#started) void this.#transport.sendLine(response); }).catch(() => undefined); });
   }
 
   public stop(): void {
     if (!this.#started) return;
     this.#started = false;
+    this.#stoppedOnce = true;
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
-    for (const pending of this.#pending.values()) { pending.controller.abort(); clearTimeout(pending.timeoutHandle); }
-    this.#pending.clear();
+    for (const pending of [...this.#pending.values()]) this.cancelPending(pending);
+    this.#queue.length = 0;
     this.#initialized = false;
     this.#version = undefined;
   }
@@ -186,32 +217,38 @@ export class McpReadOnlyServer {
     throw new McpReadOnlyServerError('method_not_found', 'Unsupported MCP method: ' + method);
   }
 
-  private async callTool(id: McpJsonRpcId, params: unknown): Promise<unknown> {
+  private callTool(id: McpJsonRpcId, params: unknown): Promise<unknown | undefined> {
     const parsed = parseToolCall(params, this.#tools);
     if (this.#allowedSourceIds !== undefined) {
       const sourceId = parsed.arguments.sourceId;
       if (typeof sourceId !== 'string' || !this.#allowedSourceIds.has(sourceId)) throw new McpReadOnlyServerError('invalid_params', 'sourceId is not allowlisted for this MCP session.');
     }
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeout = this.#cancellationMode === 'cooperative'
-      ? setTimeout(() => { timedOut = true; controller.abort(); }, this.#timeoutMs)
-      : undefined;
-    if (timeout !== undefined) this.#pending.set(requestKey(id), { controller, timeoutHandle: timeout });
-    try {
-      const value = await this.#query({ toolName: parsed.name, arguments: parsed.arguments, protocolVersion: this.#version!, signal: controller.signal, cancellationSupported: this.#cancellationMode === 'cooperative' });
-      if (controller.signal.aborted) throw new McpReadOnlyServerError(timedOut ? 'request_timeout' : 'query_cancelled', timedOut ? 'MCP query exceeded the configured timeout.' : 'MCP query was cancelled.');
-      const result = isQueryResult(value) ? value : { structuredContent: value };
-      const content = result.content ?? [{ type: 'text' as const, text: safeJson(result.structuredContent) }];
-      return { content, ...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }), ...(result.isError === true ? { isError: true } : {}) };
-    } catch (error) {
-      if (controller.signal.aborted) throw new McpReadOnlyServerError(timedOut ? 'request_timeout' : 'query_cancelled', timedOut ? 'MCP query exceeded the configured timeout.' : 'MCP query was cancelled.');
-      if (error instanceof McpReadOnlyServerError) throw error;
-      throw new McpReadOnlyServerError('query_failed', error instanceof Error ? error.message : 'MCP query failed.');
-    } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
-      if (this.#cancellationMode === 'cooperative') this.#pending.delete(requestKey(id));
+    const key = requestKey(id);
+    if (this.#pending.has(key)) throw new McpReadOnlyServerError('invalid_request', 'MCP request ID is already in use.');
+    if (this.#activeCount >= this.#maxConcurrency && this.#queue.length >= this.#maxQueuedRequests) {
+      throw new McpReadOnlyServerError('server_busy', 'MCP query queue is full.');
     }
+    let resolveRequest!: (value: unknown | undefined) => void;
+    let rejectRequest!: (reason: unknown) => void;
+    const response = new Promise<unknown | undefined>((resolve, reject) => { resolveRequest = resolve; rejectRequest = reject; });
+    const pending: PendingRequest = {
+      key,
+      toolName: parsed.name,
+      arguments: parsed.arguments,
+      controller: new AbortController(),
+      resolve: resolveRequest,
+      reject: rejectRequest,
+      timeoutHandle: undefined,
+      deadlineAt: performance.now() + this.#budgetMs,
+      state: 'queued',
+      timedOut: false,
+      responseSettled: false,
+    };
+    this.#pending.set(key, pending);
+    pending.timeoutHandle = setTimeout(() => this.timeoutPending(pending), this.#budgetMs);
+    this.#queue.push(pending);
+    this.pumpQueue();
+    return response;
   }
 
   private fitResponse(id: McpJsonRpcId, result: unknown): string {
@@ -223,7 +260,108 @@ export class McpReadOnlyServer {
   private cancel(params: unknown): void {
     if (!isRecord(params)) return;
     const id = normalizeId(params.requestId);
-    if (id !== undefined) this.#pending.get(requestKey(id))?.controller.abort();
+    if (id !== undefined) {
+      const pending = this.#pending.get(requestKey(id));
+      if (pending !== undefined) this.cancelPending(pending);
+    }
+  }
+
+  private pumpQueue(): void {
+    while (this.#started && this.#activeCount < this.#maxConcurrency && this.#queue.length > 0) {
+      const pending = this.#queue.shift()!;
+      if (pending.state !== 'queued' || pending.controller.signal.aborted) continue;
+      if (this.expireIfPastDue(pending)) continue;
+      pending.state = 'running';
+      this.#activeCount += 1;
+      void this.runPending(pending);
+    }
+  }
+
+  private async runPending(pending: PendingRequest): Promise<void> {
+    try {
+      const value = await this.#query({
+        toolName: pending.toolName,
+        arguments: pending.arguments,
+        protocolVersion: this.#version!,
+        signal: pending.controller.signal,
+        cancellationSupported: this.#cancellationMode === 'cooperative',
+      });
+      if (this.expireIfPastDue(pending)) return;
+      if (pending.controller.signal.aborted) {
+        this.settlePending(pending, pending.timedOut
+          ? { kind: 'reject', reason: new McpReadOnlyServerError('request_timeout', 'MCP query exceeded its total request budget.') }
+          : { kind: 'resolve', value: undefined });
+        return;
+      }
+      const result = isQueryResult(value) ? value : { structuredContent: value };
+      const content = result.content ?? [{ type: 'text' as const, text: safeJson(result.structuredContent) }];
+      this.settlePending(pending, { kind: 'resolve', value: { content, ...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }), ...(result.isError === true ? { isError: true } : {}) } });
+    } catch (error) {
+      if (pending.controller.signal.aborted) {
+        this.settlePending(pending, pending.timedOut
+          ? { kind: 'reject', reason: new McpReadOnlyServerError('request_timeout', 'MCP query exceeded its total request budget.') }
+          : { kind: 'resolve', value: undefined });
+      } else {
+        this.settlePending(pending, { kind: 'reject', reason: error instanceof McpReadOnlyServerError
+          ? error
+          : new McpReadOnlyServerError('query_failed', error instanceof Error ? error.message : 'MCP query failed.') });
+      }
+    } finally {
+      pending.state = 'finished';
+      this.clearPending(pending);
+      this.#activeCount -= 1;
+      this.pumpQueue();
+    }
+  }
+
+  private timeoutPending(pending: PendingRequest): void {
+    if (pending.responseSettled) return;
+    const remainingMs = pending.deadlineAt - performance.now();
+    if (remainingMs > 0) {
+      pending.timeoutHandle = setTimeout(() => this.timeoutPending(pending), remainingMs);
+      return;
+    }
+    pending.timedOut = true;
+    pending.controller.abort();
+    if (pending.state === 'queued') {
+      this.removeQueued(pending);
+      pending.state = 'finished';
+    }
+    this.settlePending(pending, { kind: 'reject', reason: new McpReadOnlyServerError('request_timeout', 'MCP query exceeded its total request budget.') });
+  }
+
+  private expireIfPastDue(pending: PendingRequest): boolean {
+    if (pending.responseSettled || performance.now() < pending.deadlineAt) return false;
+    this.timeoutPending(pending);
+    return true;
+  }
+
+  private cancelPending(pending: PendingRequest): void {
+    pending.controller.abort();
+    if (pending.state === 'queued') {
+      this.removeQueued(pending);
+      pending.state = 'finished';
+    }
+    this.settlePending(pending, { kind: 'resolve', value: undefined });
+  }
+
+  private settlePending(pending: PendingRequest, outcome: { readonly kind: 'resolve'; readonly value: unknown | undefined } | { readonly kind: 'reject'; readonly reason: unknown }): void {
+    if (pending.responseSettled) return;
+    pending.responseSettled = true;
+    this.clearPending(pending);
+    if (outcome.kind === 'resolve') pending.resolve(outcome.value);
+    else pending.reject(outcome.reason);
+  }
+
+  private clearPending(pending: PendingRequest): void {
+    if (pending.timeoutHandle !== undefined) clearTimeout(pending.timeoutHandle);
+    pending.timeoutHandle = undefined;
+    if (this.#pending.get(pending.key) === pending) this.#pending.delete(pending.key);
+  }
+
+  private removeQueued(pending: PendingRequest): void {
+    const index = this.#queue.indexOf(pending);
+    if (index >= 0) this.#queue.splice(index, 1);
   }
 }
 
@@ -296,7 +434,7 @@ function isQueryResult(value: unknown): value is McpReadOnlyQueryResult { return
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function normalizeId(value: unknown): McpJsonRpcId | undefined { return value === null || typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value)) ? value : undefined; }
 function requestKey(id: McpJsonRpcId): string { return typeof id + ':' + String(id); }
-function rpcCodeFor(code: McpReadOnlyServerErrorCode): number { if (code === 'method_not_found' || code === 'unknown_tool') return -32601; if (code === 'invalid_params' || code === 'unsupported_protocol_version') return -32602; if (code === 'invalid_request') return -32600; if (code === 'line_too_large' || code === 'response_too_large') return -32004; if (code === 'not_initialized' || code === 'already_initialized' || code === 'request_timeout' || code === 'query_cancelled') return -32002; return -32000; }
+function rpcCodeFor(code: McpReadOnlyServerErrorCode): number { if (code === 'method_not_found' || code === 'unknown_tool') return -32601; if (code === 'invalid_params' || code === 'unsupported_protocol_version') return -32602; if (code === 'invalid_request') return -32600; if (code === 'line_too_large' || code === 'response_too_large') return -32004; if (code === 'server_busy') return -32003; if (code === 'not_initialized' || code === 'already_initialized' || code === 'request_timeout' || code === 'query_cancelled') return -32002; return -32000; }
 function rpcError(id: McpJsonRpcId, code: number, message: string, data?: unknown): string { return JSON.stringify({ jsonrpc: '2.0', id, error: { code, message, ...(data === undefined ? {} : { data }) } }); }
 function safeJson(value: unknown): string { try { const result = JSON.stringify(value); return result === undefined ? 'null' : result; } catch { throw new McpReadOnlyServerError('query_failed', 'MCP result is not JSON serializable.'); } }
 function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }

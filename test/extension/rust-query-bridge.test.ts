@@ -1,8 +1,8 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { RUST_QUERY_SCHEMA, RustQueryAuthorizationError, RustQueryBridge, readPortableRustQuery } from '../../src/extension/rust-query-bridge';
+import { describe, expect, it, vi } from 'vitest';
+import { createMcpRustQueryHandler, RUST_QUERY_SCHEMA, RustQueryAuthorizationError, RustQueryBridge, readPortableRustQuery } from '../../src/extension/rust-query-bridge';
 
 const result = JSON.stringify({
   schema: RUST_QUERY_SCHEMA,
@@ -37,6 +37,30 @@ describe('RustQueryBridge', () => {
       abiVersion: () => 2, capabilities: () => 4, queryRecords: () => '{}',
     } });
     expect(() => bridge.query({ sourcePath: 'C:/data/events.jsonl' })).toThrow(/invalid response schema/);
+  });
+
+  it('lets the cancellable stdio adapter prefer portable reads over synchronous native calls', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jsonlview-mcp-portable-only-'));
+    const file = join(root, 'events.jsonl');
+    writeFileSync(file, '{"origin":"portable"}\n', 'utf8');
+    const nativeLine = '{"origin":"native"}';
+    const nativeByteLength = Buffer.byteLength(nativeLine, 'utf8');
+    const native = vi.fn(() => JSON.stringify({
+      schema: RUST_QUERY_SCHEMA,
+      snapshot: { sizeBytes: String(nativeByteLength), modifiedUnixMillis: '1000' },
+      records: [{ ordinal: '0', startByte: '0', endByte: String(nativeByteLength), raw: nativeLine }],
+      nextOrdinal: null,
+      truncated: false,
+    }));
+    const bridge = new RustQueryBridge({ binding: { abiVersion: () => 2, capabilities: () => 4, queryRecords: native } });
+    try {
+      const query = createMcpRustQueryHandler(bridge, new Map([['local', file]]), { preferPortable: true });
+      const result = await query({ arguments: { sourceId: 'local' }, signal: new AbortController().signal });
+      expect(result.records).toMatchObject([{ raw: '{"origin":"portable"}' }]);
+      expect(native).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('resolves symlinks before checking the authorized root', () => {
@@ -83,6 +107,13 @@ describe('RustQueryBridge', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('does not open a source when a portable query is already cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(readPortableRustQuery({ sourcePath: join(tmpdir(), 'missing-cancelled-jsonlview-source.jsonl') }, controller.signal))
+      .rejects.toThrow('MCP query was cancelled.');
   });
 
   it('rejects portable raw budgets above the bounded fallback cap', async () => {

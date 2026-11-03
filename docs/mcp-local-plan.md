@@ -50,14 +50,39 @@ authorization remain host policies.
 
 An MCP client launches the packaged entrypoint with its normal Node runtime and
 sets those two environment variables for one explicitly authorized JSONL file.
-The only tool is jsonlview_query_records; it accepts sourceId, startOrdinal,
-limit, and maxBytes. The host caps a tool page at 256 records and 512 KiB; it
-never splits a physical record, and a first record that exceeds maxBytes fails
-explicitly with `record-exceeds-max-bytes` instead of returning a stationary
-continuation cursor. The Rust core caps ordinal-prefix scanning at 64 MiB. The
-packaged N-API query is synchronous, so the stdio adapter cannot process MCP
-cancellation or enforce its cooperative request timeout while a native read is
-running. This is a bounded-read limitation, not a cancellable query contract.
+The only tool is `jsonlview_query_records`; it accepts `sourceId`,
+`startOrdinal`, `limit`, and `maxBytes`. The host caps a tool page at 256 records
+and 512 KiB; it never splits a physical record, and a first record that exceeds
+`maxBytes` fails explicitly with `record-exceeds-max-bytes` instead of
+returning a stationary continuation cursor. The Rust core caps ordinal-prefix
+scanning at 64 MiB.
+
+The stdio adapter bounds execution to two active tool calls by default and at
+most eight queued calls. `JSONLVIEW_MCP_MAX_CONCURRENCY` may set active
+concurrency from 1 through 8; setting it to 1 serializes query scans. Requests
+beyond the waiting-queue cap fail with `server_busy` before query I/O starts.
+`JSONLVIEW_MCP_BUDGET_MS` sets a total request budget from 1 through 60000 ms,
+defaulting to 3000 ms. The budget starts when a valid, allowlisted tool call is
+admitted and includes queue wait and query execution. Invalid configuration
+fails server startup with a named setting and permitted range.
+
+Client `notifications/cancelled` aborts the request signal. A queued request is
+removed before query I/O begins; an active portable scan cooperates at its
+open/read boundaries and the server sends no later response for the cancelled
+request. The packaged stdio handler selects the portable asynchronous reader so
+the event loop can process cancellation and deadlines between filesystem
+operations. It checks the signal before opening, after opening, and after each
+read; an individual operating-system read already in progress is not forcibly
+interrupted. Other callers may still use the synchronous N-API accelerator,
+which cannot process a notification or run a timer while blocked. The MCP
+server also checks the monotonic deadline before starting queued work and
+before accepting a query result, so a synchronous over-budget result is
+dropped after control returns. Both readers retain the existing scan caps. If
+a timed-out or cancelled adapter ignores its signal, the request response is
+settled but its execution slot remains occupied until that work actually ends;
+the slot is not reused in a way that would exceed the configured work bound.
+Duplicate request IDs are rejected while their calls are pending, and a stopped
+server instance is one-shot so old work cannot cross a restart boundary.
 Unknown requested protocol versions negotiate to the newest server-supported
 version. Tool arguments cannot supply paths, commands, or write operations.
 
@@ -86,4 +111,5 @@ activation.
 The Navigator inspection capability remains experimental, disabled by default,
 metadata-only, and without an activation-time transport. The Rust query server
 is a separate explicit stdio adapter and remains read-only, bounded, source
-allowlisted, synchronous, and provider-neutral.
+allowlisted, and provider-neutral. Packaged stdio uses the asynchronous
+portable reader; synchronous native reads remain available to other adapters.

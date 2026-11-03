@@ -1234,6 +1234,26 @@
       "sha256": "b047a3658e2608017e6c02c24c4f7cf0552f5d3068b81678d88ec0246b70fb77"
     },
     {
+      "id": "063-bounded-mcp-stdio-work",
+      "path": "docs/decisions/063-bounded-mcp-stdio-work.md",
+      "title": "Bounded MCP Stdio Work and Cooperative Cancellation",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "cancellation",
+        "concurrency",
+        "mcp",
+        "stdio"
+      ],
+      "evidence": [],
+      "revisit": "when MCP stdio query transport, source reader, or default resource budget changes",
+      "rollback": "restore the prior MCP adapter and keep stdio publication disabled until bounded query behavior is revalidated",
+      "summary": "ADR-063: Bounded MCP Stdio Work and Cooperative Cancellation",
+      "bytes": 5882,
+      "sha256": "b703280c1d69ad460545685938a8780cae5c42b3f70047e04a474636f2e162c4"
+    },
+    {
       "id": "acceleration-roadmap",
       "path": "docs/acceleration-roadmap.md",
       "title": "Acceleration roadmap",
@@ -1330,8 +1350,8 @@
       "revisit": "when the decision record topology changes",
       "rollback": "restore the previous decision index",
       "summary": "JsonlView Decisions",
-      "bytes": 7667,
-      "sha256": "3acb3b656268d5fc052c3d50125308ca11a00aa0127de12f664bae604ecf52c0"
+      "bytes": 10513,
+      "sha256": "f6a5f51e74032ac3e1225ea941779c53fcdac511e995f73fd45d5dc71e0b18dc"
     },
     {
       "id": "docs-index",
@@ -1349,8 +1369,8 @@
       "revisit": "when the documentation topology changes",
       "rollback": "remove this catalog entry in a reviewed metadata migration",
       "summary": "Product Documentation",
-      "bytes": 3493,
-      "sha256": "80bd53fa6ee288b009acbb2e9fd8dc5eb818ef5186942995c30b2aff3b692a44"
+      "bytes": 5563,
+      "sha256": "00a9d9270f6426c238fa96eabec7da07a8bc9bf1212552c709156c1720485de0"
     },
     {
       "id": "format-and-profile-boundaries",
@@ -1428,8 +1448,8 @@
       "revisit": "when the read-only MCP transport or trust boundary gains evidence",
       "rollback": "keep MCP disabled and retain local read-only navigation",
       "summary": "Local MCP and Audit Plan",
-      "bytes": 4797,
-      "sha256": "a35a146aed509df5eff9f3901b31c22926e7313d20736d7da9fcce8c5e41bc31"
+      "bytes": 6583,
+      "sha256": "da9690d52b88950abf876e706372e3db88f52e707f4bb172fb5a789835608f13"
     },
     {
       "id": "metadata-index",
@@ -1721,8 +1741,8 @@
       "revisit": "when a public distribution target changes",
       "rollback": "revert the runbook change and retain the old gate",
       "summary": "Promotion Runbook",
-      "bytes": 6930,
-      "sha256": "885e37d6305b5ae334817b521b4ef7fc933d50faf03907d53984aba888e46603"
+      "bytes": 7722,
+      "sha256": "bfbf7cf764806220f5f1d03fba2942197a1cd3500c7b44bd4e326bf5eddd7083"
     },
     {
       "id": "query-studio-and-navigator",

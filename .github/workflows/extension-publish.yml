@@ -179,18 +179,118 @@ jobs:
           node-version: 24.15.0
       - name: Publish exact VSIX with Open VSX trusted publishing
         run: npx --yes ovsx@1.2.0 publish jsonlview-extension-release/open-vsx.vsix --trusted-publishing --no-dependencies
-      - name: Read back Open VSX version
+      - name: Read back exact Open VSX artifact bytes
+        env:
+          CANDIDATE: jsonlview-extension-release/open-vsx.vsix
+          MANIFEST: jsonlview-extension-release/open-vsx-manifest.json
+          VERSION_FILE: jsonlview-extension-release/version.txt
+          READBACK: jsonlview-extension-release/open-vsx-registry-readback.vsix
+          AUDIT: jsonlview-extension-release/open-vsx-artifact-readback.json
         run: |
           set -euo pipefail
-          version="$(cat jsonlview-extension-release/version.txt)"
-          EXPECTED_VERSION="$version" node --input-type=module <<'NODE'
-          const expected = process.env.EXPECTED_VERSION;
-          const response = await fetch('https://open-vsx.org/api/Sumi-Sophia/jsonl-view');
-          if (!response.ok) throw new Error('Open VSX readback failed with HTTP ' + response.status);
-          const payload = await response.json();
-          if (payload?.allVersions?.[expected] === undefined) throw new Error('Open VSX does not list Sumi-Sophia.jsonl-view@' + expected);
-          console.log(JSON.stringify({ ok: true, target: 'Sumi-Sophia.jsonl-view', version: expected, source: 'open-vsx-api' }));
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFile as execFileCallback } from 'node:child_process';
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { promisify } from 'node:util';
+
+          const execFile = promisify(execFileCallback);
+          const report = { schemaVersion: 1, ok: false, registry: 'open-vsx', status: 'started', attemptedAt: new Date().toISOString() };
+          let failureStage = 'candidate';
+          try {
+            const manifest = JSON.parse(await readFile(process.env.MANIFEST, 'utf8'));
+            const candidate = await readFile(process.env.CANDIDATE);
+            const candidateSha256 = createHash('sha256').update(candidate).digest('hex');
+            const publisher = manifest?.package?.publisher;
+            const name = manifest?.package?.name;
+            const version = manifest?.package?.version;
+            const expectedSha256 = manifest?.artifact?.sha256;
+            if (manifest?.releaseTarget?.registry !== 'open-vsx' || manifest?.releaseTarget?.extensionId !== `${publisher}.${name}`) {
+              throw new Error('candidate manifest does not identify its Open VSX target');
+            }
+            if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(publisher ?? '') || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name ?? '')) {
+              throw new Error('candidate manifest contains an invalid Open VSX identity');
+            }
+            if (!/^(0|[1-9]\d*)(?:\.(0|[1-9]\d*)){2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version ?? '')) {
+              throw new Error('candidate manifest contains an invalid version');
+            }
+            if (!/^[a-f0-9]{64}$/.test(expectedSha256 ?? '') || candidateSha256 !== expectedSha256) {
+              report.target = `${publisher}.${name}`;
+              report.version = version;
+              report.candidateSha256 = candidateSha256;
+              report.status = 'candidate-digest-mismatch';
+              throw new Error('candidate bytes do not match the frozen Open VSX manifest digest');
+            }
+            if ((await readFile(process.env.VERSION_FILE, 'utf8')).trim() !== version) {
+              throw new Error('candidate version file differs from the frozen Open VSX manifest');
+            }
+
+            report.target = `${publisher}.${name}`;
+            report.version = version;
+            report.candidate = { file: 'open-vsx.vsix', bytes: candidate.length, sha256: candidateSha256 };
+            const extensionApi = 'https://open-vsx.org/api/' + encodeURIComponent(publisher) + '/' + encodeURIComponent(name);
+            report.versionApi = extensionApi;
+            failureStage = 'version-api';
+            const extensionResponse = await fetch(extensionApi);
+            report.versionApiHttpStatus = extensionResponse.status;
+            if (!extensionResponse.ok) throw new Error('Open VSX extension API returned a non-success status');
+            const extensionPayload = await extensionResponse.json();
+            if (!Object.prototype.hasOwnProperty.call(extensionPayload?.allVersions ?? {}, version)) {
+              report.status = 'version-not-visible';
+              throw new Error('Open VSX does not list the exact candidate version');
+            }
+
+            const exactVersionApi = extensionApi + '/' + encodeURIComponent(version);
+            report.exactVersionApi = exactVersionApi;
+            const exactVersionResponse = await fetch(exactVersionApi);
+            report.exactVersionApiHttpStatus = exactVersionResponse.status;
+            if (!exactVersionResponse.ok) throw new Error('Open VSX exact-version API returned a non-success status');
+            const exactVersionPayload = await exactVersionResponse.json();
+            if (exactVersionPayload?.namespace !== publisher || exactVersionPayload?.name !== name || exactVersionPayload?.version !== version) {
+              report.status = 'exact-version-identity-mismatch';
+              throw new Error('Open VSX exact-version API returned a different package identity');
+            }
+
+            failureStage = 'download';
+            const downloadUrl = exactVersionPayload?.files?.download;
+            const download = new URL(downloadUrl ?? '');
+            const expectedDownloadPath = `/api/${encodeURIComponent(publisher)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}/file/${encodeURIComponent(`${publisher}.${name}-${version}.vsix`)}`;
+            if (download.protocol !== 'https:' || download.hostname !== 'open-vsx.org' || download.port !== '' || download.username !== '' || download.password !== '' || download.search !== '' || download.hash !== '' || download.pathname !== expectedDownloadPath) {
+              report.status = 'download-url-identity-mismatch';
+              throw new Error('Open VSX exact-version API returned an unexpected download URL');
+            }
+            report.downloadUrl = downloadUrl;
+            await execFile('curl', ['-fSL', '--retry', '3', '--retry-all-errors', '--output', process.env.READBACK, downloadUrl], {
+              windowsHide: true,
+              maxBuffer: 1024 * 1024,
+            });
+
+            failureStage = 'digest';
+            const published = await readFile(process.env.READBACK);
+            const publishedSha256 = createHash('sha256').update(published).digest('hex');
+            report.registryArtifact = { file: 'open-vsx-registry-readback.vsix', bytes: published.length, sha256: publishedSha256 };
+            report.ok = candidateSha256 === publishedSha256;
+            report.status = report.ok ? 'sha256-match' : 'sha256-mismatch';
+            report.retrievedAt = new Date().toISOString();
+            if (!report.ok) throw new Error('Open VSX artifact SHA-256 differs from the frozen candidate');
+          } catch {
+            if (report.status === 'started') report.status = `${failureStage}-failed`;
+            report.ok = false;
+          }
+
+          await writeFile(process.env.AUDIT, JSON.stringify(report, null, 2) + '\n');
+          console.log(JSON.stringify(report));
+          if (!report.ok) throw new Error('Open VSX artifact readback failed: ' + report.status);
           NODE
+
+      - name: Retain Open VSX publication evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: jsonlview-open-vsx-publication-${{ github.run_number }}
+          path: jsonlview-extension-release/
+          if-no-files-found: error
+          retention-days: 30
 
   publish-marketplace:
     needs: package

@@ -96,11 +96,17 @@ export class RustQueryAuthorizationError extends Error {
   public readonly code = 'RUST_QUERY_UNAUTHORIZED' as const;
 }
 
+export interface McpRustQueryHandlerOptions {
+  /** Avoid the synchronous native call path when the host needs cooperative cancellation. */
+  readonly preferPortable?: boolean;
+}
+
 /** Adapt the same Rust data plane to the MCP tool boundary. Source IDs are
  * resolved by the host; MCP arguments never receive a filesystem path. */
 export function createMcpRustQueryHandler(
   bridge: RustQueryBridge,
   sourcePaths: ReadonlyMap<string, string>,
+  options: McpRustQueryHandlerOptions = {},
 ): (request: { readonly arguments: Readonly<Record<string, unknown>>; readonly signal: AbortSignal }) => Promise<RustQueryResult> {
   let requestSequence = 0;
   const registeredPaths = new Map(sourcePaths);
@@ -132,7 +138,7 @@ export function createMcpRustQueryHandler(
           } satisfies RustQueryRequest;
           let result: RustQueryResult | undefined;
           let nativeFailure: unknown;
-          if (isNativeAdmission(dto)) {
+          if (!options.preferPortable && isNativeAdmission(dto)) {
             try {
               result = bridge.query(nativeRequest);
             } catch (error) {
@@ -279,11 +285,13 @@ export async function readPortableRustQuery(
   const startOrdinal = parseBoundedOrdinal(request.startOrdinal ?? '0');
   const limit = boundedInteger(request.limit ?? 100, 1, 500, 'limit');
   const maxBytes = boundedInteger(request.maxBytes ?? 1024 * 1024, 1, 64 * 1024 * 1024, 'maxBytes');
+  if (signal.aborted) throw new Error('MCP query was cancelled.');
   const file = await open(path, 'r');
   try {
+    if (signal.aborted) throw new Error('MCP query was cancelled.');
     const before = await file.stat();
     const records: RustQueryRecord[] = [];
-    let chunk = Buffer.alloc(PORTABLE_RAW_QUERY_CHUNK_BYTES);
+    const chunk = Buffer.alloc(PORTABLE_RAW_QUERY_CHUNK_BYTES);
     let pending = Buffer.alloc(0);
     let pendingStart = 0n;
     let scannedBytes = 0n;
@@ -332,6 +340,7 @@ export async function readPortableRustQuery(
     while (!done) {
       if (signal.aborted) throw new Error('MCP query was cancelled.');
       const read = await file.read(chunk, 0, chunk.length, Number(scannedBytes));
+      if (signal.aborted) throw new Error('MCP query was cancelled.');
       if (read.bytesRead === 0) {
         if (pending.length > 0) {
           const line = pending[pending.length - 1] === 13 ? pending.subarray(0, -1) : pending;
@@ -354,6 +363,7 @@ export async function readPortableRustQuery(
         newline = pending.indexOf(10);
       }
     }
+    if (signal.aborted) throw new Error('MCP query was cancelled.');
     const after = await file.stat();
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error('jsonl-query:source-changed');
     const truncated = nextOrdinal !== null;

@@ -1,5 +1,13 @@
 const MAX_NAME = 128;
 const MAX_MESSAGE = 512;
+const PROTOCOL_PATH_RE = /(?<![A-Za-z0-9+.-])(?:[A-Za-z]:[\\/]|file:\/\/)[^\s'"<>]+/giu;
+const POSIX_ROOT = '(?:home|Users|tmp|var|private|root|etc|usr|opt|mnt|media|Volumes|workspace|workspaces|srv|run|data|app|build|proc|dev|sys)';
+const POSIX_PATH_SEGMENT_WITH_SPACES = '[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*';
+const POSIX_SPACED_FILE_PATH_RE = new RegExp(
+  String.raw`(^|[\s"'\x60([<{=])((?:\/${POSIX_ROOT})(?![A-Za-z0-9_.-])(?:\/${POSIX_PATH_SEGMENT_WITH_SPACES})*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.[A-Za-z0-9_-]+(?=$|[\s"'\x60)\]}>.,;:!?]))`,
+  'gu',
+);
+const POSIX_ABSOLUTE_PATH_RE = /(^|[\s"'`([<{=])((?:\/(?:home|Users|tmp|var|private|root|etc|usr|opt|mnt|media|Volumes|workspace|workspaces|srv|run|data|app|build|proc|dev|sys)(?![A-Za-z0-9_.-])(?:\/[A-Za-z0-9_.-]+)*|\/(?!(?:api\/)?[vV]\d+(?:\.\d+)*\/)[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]*){1,}\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*)?\.[A-Za-z0-9_-]+))/gu;
 
 export interface JsonlViewDiagnosticInput {
   readonly stage: string;
@@ -59,5 +67,7 @@ function sanitizeToken(value: string, limit: number): string {
 
 function sanitizeMessage(value: string): string {
   return sanitizeToken(value, MAX_MESSAGE)
-    .replace(/(?:[A-Za-z]:[\\/]|file:\/\/)[^\s'"<>]+/gu, '[REDACTED_PATH]');
+    .replace(PROTOCOL_PATH_RE, '[REDACTED_PATH]')
+    .replace(POSIX_SPACED_FILE_PATH_RE, '$1[REDACTED_PATH]')
+    .replace(POSIX_ABSOLUTE_PATH_RE, '$1[REDACTED_PATH]');
 }

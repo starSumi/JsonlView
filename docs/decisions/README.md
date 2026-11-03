@@ -30,6 +30,31 @@ Evidence references are navigation aids. They must include a receipt ID or
 public URL, source revision, digest or artifact identity, and measurement
 boundary. A local machine path is never an evidence contract.
 
+## Diátaxis placement
+
+ADR files belong to the **Explanation** quadrant: they preserve architectural
+context, trade-offs, invariants, evidence boundaries, revisit triggers, and
+rollback rules. They are not tutorials, task recipes, or protocol reference
+manuals. Use `docs/README.md` to enter through the
+appropriate Tutorial, How-to, Reference, or Explanation route before opening
+a decision record.
+
+## Domain navigation
+
+Use these verified domain anchors for a focused first pass. Links target each
+record's actual heading. The complete chronological list below remains the
+unfragmented ADR inventory checked by `pnpm check:docs-index`.
+
+| Domain | Entry points |
+| --- | --- |
+| Core engine and physical framing | [ADR-001](001-format-profile-boundary.md#adr-001-format-and-profile-boundary), [ADR-003](003-native-acceleration.md#adr-003-native-acceleration), [ADR-040](040-native-scanner-measurement-boundary.md#adr-040-native-scanner-measurement-boundary), [ADR-054](054-bounded-forward-page-read-window.md#adr-054-bounded-forward-page-read-window) |
+| Presentation and Webview | [ADR-004](004-webview-rendering.md#adr-004-webview-rendering-and-bounded-detail), [ADR-019](019-webview-query-and-keyboard-ownership.md#webview-query-ownership-and-keyboard-interaction), [ADR-045](045-table-query-and-column-ownership.md#adr-045-table-query-and-column-ownership), [ADR-048](048-bounded-conversation-and-dataset-scenes.md#adr-048-bounded-conversation-and-dataset-scenes) |
+| Catalog, persistence, and storage | [ADR-011](011-runtime-topology-and-refactor-shape.md#adr-011-runtime-topology-and-refactor-shape), [ADR-029](029-opt-in-session-navigator-treeview.md#adr-029-opt-in-session-navigator-treeview-and-local-catalog), [ADR-032](032-bounded-session-pagination.md#adr-032-bounded-session-pagination-and-source-state-continuations), [ADR-050](050-navigator-catalog-metadata-plane.md#adr-050-navigator-catalog-metadata-plane), [ADR-062](062-catalog-versioned-persistence-contract.md#adr-062-catalog-versioned-persistence-contract) |
+| Protocols, distribution, and agent interfaces | [ADR-005](005-release-provenance.md#adr-005-release-provenance), [ADR-008](008-promotion-synchronization.md#adr-008-promotion-synchronization), [ADR-037](037-mcp-july-2026-compatibility-boundary.md#adr-037-mcp-july-2026-compatibility-boundary), [ADR-041](041-typed-rpc-and-ports-adapters-slices.md#adr-041-typed-rpc-and-ports-adapters-slices), [ADR-049](049-shared-protocol-wire-registry.md#adr-049-shared-protocol-wire-registry), [ADR-052](052-rust-query-mcp-acp-boundary.md#adr-052-rust-query-mcp-and-acp-boundary) |
+
+These anchors are a reading aid only. They do not change ADR ownership, status,
+causal history, or the generated `docs/index.json` projection.
+
 ## Reading order
 
 Read these before changing a shared boundary:
@@ -97,6 +122,7 @@ Read these before changing a shared boundary:
 61. [ADR-060 shared query anchor and Treemap metadata](060-shared-query-anchor-and-treemap-metadata.md)
 62. [ADR-061 virtualized list accessibility semantics](061-virtualized-list-a11y-semantics.md)
 63. [ADR-062 catalog versioned persistence contract](062-catalog-versioned-persistence-contract.md)
+64. [ADR-063 bounded MCP stdio work and cooperative cancellation](063-bounded-mcp-stdio-work.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.
