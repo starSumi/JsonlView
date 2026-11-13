@@ -10,8 +10,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      codeql:
+        patterns:
+          - github/codeql-action/*
   - package-ecosystem: cargo
     directory: /native/jsonl-core
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      napi-runtime:
+        patterns:
+          - napi
+          - napi-build
+          - napi-derive

@@ -280,8 +280,8 @@ describe('release candidate integrity', () => {
   });
 
   it('pins the pnpm setup action to the verified peeled commit', async () => {
-    const expected = 'ea17c68df8912ef543352723c149a84f56e3d413';
-    for (const workflow of ['ci.yml', 'maintenance.yml']) {
+    const expected = '73e46992e05b19abd31f2f3c20e0e7370d762115';
+    for (const workflow of ['ci.yml', 'maintenance.yml', 'extension-publish.yml', 'npm-publish.yml']) {
       const source = await readFile(new URL(`../../.github/workflows/${workflow}`, import.meta.url), 'utf8');
       const references = [...source.matchAll(/uses:\s*pnpm\/action-setup@([^\s#]+)/g)].map((match) => match[1]);
       expect(references.length).toBeGreaterThan(0);

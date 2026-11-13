@@ -4,8 +4,8 @@
 
 - Consolidate the current studio milestone with reviewed dependency updates:
   React Virtual 3.14.25, VSCE 4.1.0, Biome 2.6.4, pnpm setup 6.1.1, and paired
-  CodeQL 4.39.3 actions. Update napi-derive to 3.7.0 and its backend to 7.0.0,
-  with license notices checked against their published source revision.
+  CodeQL 4.39.3 actions. Retain the compatible napi-derive 3.6.8/runtime 3.12.7
+  pair; the isolated derive 3.7.0 update requires a coordinated native migration.
 - Refresh the test and packaging dependency graph to remove reported high and
   critical advisories, including the runtime package's older test worker pool.
 - Track the AppShell transition separately: Import-origin guidance for original

@@ -54,10 +54,8 @@ describe('Cargo license notice inventory', () => {
     ['napi-build', '2.5.0', '2763e12efc855748485129952a6ccb97ac991c06'],
     ['napi-derive', '3.6.5', '1492b220d5ad01807b2dcbd250e8383f9d738311'],
     ['napi-derive', '3.6.8', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
-    ['napi-derive', '3.7.0', 'f89400d99b136c5c8a27818654b91256832b5bd6'],
     ['napi-derive-backend', '6.1.3', '31c27a1676a7c4b317f4e144e0a9cb94e8354143'],
     ['napi-derive-backend', '6.1.4', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
-    ['napi-derive-backend', '7.0.0', 'f89400d99b136c5c8a27818654b91256832b5bd6'],
     ['napi-sys', '3.3.1', '31c27a1676a7c4b317f4e144e0a9cb94e8354143'],
     ['napi-sys', '3.3.2', '38162bb0eb324ae24b402982bad3d4ef3f24c90a'],
   ])('binds %s@%s override to its reviewed VCS revision', async (name, version, revision) => {
