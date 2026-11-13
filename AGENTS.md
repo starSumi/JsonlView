@@ -115,6 +115,9 @@ clipboard path, and never changes activation safety or includes source data.
 - Dependency maintenance keeps the Biome schema aligned with its pinned CLI,
   pairs CodeQL init/analyze revisions, and reviews locked Rust license notices
   before promotion. A dependency-only PR still updates this build contract.
+- PowerShell release workflows parse package.json with -AsHashtable to preserve
+  case-distinct compatibility setting keys. Validate decision headings with the
+  CI --base/--head form of check:docs-index before source promotion.
 - Root and runtime tests use Vitest 5.0.3 with its matching coverage provider;
   root Vite is pinned to 8.2.4 for the supported test-toolchain peer boundary.
 - Do not make CI or cloud jobs depend on a developer PATH or FNM_DIR.

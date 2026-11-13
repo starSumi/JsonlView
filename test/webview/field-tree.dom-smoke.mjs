@@ -91,7 +91,7 @@ const click = async (expression) => {
   await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
   await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
 };
-const summary = (title) => `document.querySelector('summary[title=${JSON.stringify(title)}]')`;
+const summary = (title) => `Array.from(document.querySelectorAll('summary[title]')).find(e => e.getAttribute('title') === ${JSON.stringify(title)})`;
 const dynamic = `document.querySelectorAll('.field-tree-section')[1]`;
 try {
   const activePort = await until(async () => (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]);
@@ -100,6 +100,12 @@ try {
   await client.open();
   await client.send('Page.navigate', { url: pathToFileURL(join(output, 'index.html')).href });
   await until(() => evaluate('Boolean(document.querySelector(".columns-menu"))'));
+  const quotedTitle = `quote'"\\]; globalThis.unexpectedTitleCode = true; //`;
+  await evaluate(`(() => { const e = document.createElement('summary'); e.title = ${JSON.stringify(quotedTitle)};
+    e.id = 'quoted-title-probe'; document.body.append(e); })()`);
+  assert.equal(await evaluate(`(${summary(quotedTitle)})?.id`), 'quoted-title-probe');
+  assert.equal(await evaluate('globalThis.unexpectedTitleCode === true'), false);
+  await evaluate("document.getElementById('quoted-title-probe').remove()");
   const initial = await evaluate(`({ dynamicItems: (${dynamic}).querySelector(':scope > ul').children.length,
     dynamicCheckboxes: (${dynamic}).querySelectorAll('input[type=checkbox]').length,
     rowControls: document.querySelectorAll('.row-type-filter-fields').length,

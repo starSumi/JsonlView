@@ -118,7 +118,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $targets = Get-Content config/release-targets.json -Raw | ConvertFrom-Json
-          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $package = Get-Content package.json -Raw | ConvertFrom-Json -AsHashtable
           $npmName = [string]$targets.npm.name
           $version = [string]$package.version
           $npmStage = Join-Path $env:RUNNER_TEMP 'jsonlview-extension-npm-stage'

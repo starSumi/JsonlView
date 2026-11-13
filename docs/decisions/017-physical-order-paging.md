@@ -10,7 +10,7 @@ evidence: []
 revisit: "when paging or order semantics change"
 rollback: "restore physical-order navigation"
 ---
-# 017: Physical order paging and incomplete filtered results
+# ADR-017: Physical order paging and incomplete filtered results
 
 Status: Accepted
 

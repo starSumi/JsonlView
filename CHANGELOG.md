@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve case-distinct manifest keys in Windows packaging, validate legacy ADR
+  headings, and keep architecture alias and DOM smoke string handling literal.
 - Consolidate the current studio milestone with reviewed dependency updates:
   React Virtual 3.14.25, VSCE 4.1.0, Biome 2.6.4, pnpm setup 6.1.1, and paired
   CodeQL 4.39.3 actions. Retain the compatible napi-derive 3.6.8/runtime 3.12.7

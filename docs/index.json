@@ -322,9 +322,9 @@
       "evidence": [],
       "revisit": "when paging or order semantics change",
       "rollback": "restore physical-order navigation",
-      "summary": "017: Physical order paging and incomplete filtered results",
-      "bytes": 6159,
-      "sha256": "12e4eaea2349eed358a66abf0aac8b5a68535f393e32bb3c1cd280e909b9115c"
+      "summary": "ADR-017: Physical order paging and incomplete filtered results",
+      "bytes": 6163,
+      "sha256": "1fee91fa61f6b6b8f98881b9ec17a5fd1e28cec21967a93b4d5ab0f67f3c8495"
     },
     {
       "id": "018-accepted-webview-snapshot-identity",
@@ -341,9 +341,9 @@
       "evidence": [],
       "revisit": "when snapshot identity semantics change",
       "rollback": "retain the previous snapshot identity contract",
-      "summary": "Accepted Webview Snapshot Identity",
-      "bytes": 3389,
-      "sha256": "23a45f6ebb723c37d6e6039b7c1f8d61e34449c1d7baf08994ee0ccd146f2067"
+      "summary": "ADR-018: Accepted Webview Snapshot Identity",
+      "bytes": 3398,
+      "sha256": "2d720761fe67228de7b62b9ee25828bee6c5a51be559700db7b73ff38ce9a92f"
     },
     {
       "id": "019-webview-query-and-keyboard-ownership",
@@ -360,9 +360,9 @@
       "evidence": [],
       "revisit": "when query or keyboard ownership changes",
       "rollback": "restore the prior interaction owner",
-      "summary": "Webview Query Ownership and Keyboard Interaction",
-      "bytes": 4897,
-      "sha256": "4b2f2ab2627b24f59b90651f6d10230926e9834a1a5e0cb4fbf79a5fd24b91f8"
+      "summary": "ADR-019: Webview Query Ownership and Keyboard Interaction",
+      "bytes": 4906,
+      "sha256": "9a9699d983a5b3ca0ba4eaf833a9a0ea44d52379d89bba8e7772734c9e576905"
     },
     {
       "id": "020-read-only-indexing-status-strip",

@@ -46,7 +46,7 @@ function resolveImport(importer, specifier, sourcePaths) {
     const alias = pathAliases.find(({ pattern, prefix }) => pattern.endsWith('/*') ? specifier.startsWith(prefix) : specifier === pattern);
     if (!alias) return undefined;
     const suffix = alias.pattern.endsWith('/*') ? specifier.slice(alias.prefix.length) : '';
-    base = resolve(root, alias.target.replace('*', suffix));
+    base = resolve(root, alias.target.replaceAll('*', () => suffix));
   }
   const candidates = [
     base,

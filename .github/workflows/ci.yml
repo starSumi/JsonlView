@@ -152,7 +152,7 @@ jobs:
           $npmStage = Join-Path $env:RUNNER_TEMP 'jsonl-view-npm-stage'
           $npmManifest = Join-Path $env:JSONLVIEW_NATIVE_REPORT_DIR 'npm-manifest.json'
           $npmTarball = Join-Path $env:RUNNER_TEMP 'sumi-labs-jsonl-view.tgz'
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json -AsHashtable).version
           $targets = Get-Content config/release-targets.json -Raw | ConvertFrom-Json
           $npmName = $targets.npm.name
           $publisher = $targets.sourceManifest.publisher

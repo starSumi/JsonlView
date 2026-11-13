@@ -10,7 +10,7 @@ evidence: []
 revisit: "when snapshot identity semantics change"
 rollback: "retain the previous snapshot identity contract"
 ---
-# Accepted Webview Snapshot Identity
+# ADR-018: Accepted Webview Snapshot Identity
 
 Status: accepted
 
