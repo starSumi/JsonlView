@@ -3,4 +3,4 @@
  *
  * Keep this path stable while consumers migrate to the feature boundary.
  */
-export * from './features/record-query/row-query-recovery-policy';
+export * from '@features/record-query/row-query-recovery-policy';

@@ -1,0 +1,355 @@
+@media (forced-colors: active) {
+  .data-grid-scroll::-webkit-scrollbar-thumb:horizontal,
+  .data-grid-scroll:hover::-webkit-scrollbar-thumb:horizontal,
+  .data-grid-scroll:focus-within::-webkit-scrollbar-thumb:horizontal,
+  .data-grid-scroll::-webkit-scrollbar-thumb:horizontal:hover {
+    background: CanvasText;
+  }
+
+  .navigator-action[aria-expanded='true'] {
+    outline: 1px solid Highlight;
+  }
+
+  .navigator-action[aria-expanded='true'] .navigator-glyph::before {
+    background: Highlight;
+    opacity: 1;
+  }
+
+  .row-order-option.is-active,
+  button.row-order-control[aria-pressed='true'] {
+    border-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+  }
+
+  .row-order-option:focus-within {
+    outline-color: Highlight;
+  }
+
+  .workspace-tabs button.is-active,
+  .detail-tabs button.is-active {
+    border-bottom-color: Highlight;
+    color: HighlightText;
+    background: Highlight;
+    outline: 1px solid Highlight;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+}
+
+/* The App measures the workspace container (not the viewport) before it
+ * publishes data-detail-layout. Keep the responsive drawer rules on that
+ * marker so a narrow host pane cannot drift from the modal/focus semantics. */
+.workspace[data-detail-layout='overlay'].has-drawer {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace[data-detail-layout='overlay'] .detail-drawer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(520px, 92cqi);
+  box-shadow: -5px 0 16px var(--vscode-widget-shadow);
+}
+
+.workspace[data-detail-layout='overlay'] .detail-splitter {
+  display: none;
+}
+
+@media (max-width: 680px) {
+  .workspace-tabs {
+    overflow-x: auto;
+  }
+
+  .workspace-tabs button {
+    min-width: 68px;
+    padding: 0 7px;
+  }
+
+  .detail-drawer {
+    width: 100%;
+  }
+
+  .detail-drawer.is-modal {
+    width: 100%;
+  }
+}
+
+@container workspace (max-width: 700px) {
+  .workspace-header-primary > .workspace-tabs button {
+    min-width: 68px;
+    padding-inline: 8px;
+  }
+
+  .workspace-header-primary > .workspace-tabs {
+    scrollbar-color: var(--vscode-scrollbarSlider-background) transparent;
+  }
+
+  .profile-suggestion,
+  .dataset-head-status,
+  .status-strip > .status-valid,
+  .status-strip > .progress-track {
+    display: none;
+  }
+}
+
+@container workspace (max-width: 1050px) {
+  .profile-label,
+  .status-strip > .status-bytes {
+    display: none;
+  }
+
+  .status-strip > .status-problems[data-empty='true'] {
+    display: none;
+  }
+
+  .compact-field select {
+    width: 132px;
+  }
+}
+
+@container workspace (max-width: 900px) {
+  .workspace-query-controls > .table-query-toolbar {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: 8px;
+  }
+
+  .workspace-query-controls .table-query-toolbar > :not(.search-box) {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .preview-lifecycle-actions {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex: 0 0 clamp(160px, 32vw, 220px);
+    min-width: min(160px, 100%);
+    max-width: 220px;
+  }
+
+}
+
+@container workspace (max-width: 720px) {
+  .workspace-header-primary .follow-toggle span,
+  .workspace-header-primary .toolbar-action-label,
+  .workspace-header-primary .rebuild-action-label {
+    display: none;
+  }
+
+  .workspace-header-primary {
+    flex: 0 0 auto;
+  }
+
+  .workspace-header-primary,
+  .workspace-header-secondary {
+    flex-basis: auto;
+    flex-wrap: wrap;
+    column-gap: 6px;
+    row-gap: 4px;
+    padding: 4px 8px;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex: 0 0 160px;
+    max-width: none;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .row-order-control {
+    flex: 0 0 auto;
+  }
+
+  .status-strip {
+    gap: 6px;
+  }
+
+  .status-problems .status-scope {
+    display: none;
+  }
+}
+
+@container workspace (max-width: 520px) {
+  .workspace-header-primary > .workspace-tabs {
+    flex-basis: calc(100% - 34px);
+  }
+
+  .workspace-header-primary > .workspace-controls {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .workspace-header-secondary.has-query {
+    align-items: flex-start;
+  }
+
+  .workspace-header-secondary.has-query .status-strip,
+  .workspace-header-secondary.has-query .workspace-query-controls {
+    flex-basis: 100%;
+  }
+
+  .toolbar {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .profile-field {
+    flex: 0 1 116px;
+  }
+
+  .profile-control,
+  .profile-control select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .follow-toggle {
+    justify-content: center;
+    min-width: 28px;
+  }
+
+  .follow-toggle span,
+  .status-phase[data-complete='true'],
+  .status-problems[data-empty='true'] {
+    display: none;
+  }
+
+  .rebuild-action-label {
+    display: none;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex-basis: 120px;
+    min-width: 120px;
+  }
+}
+
+@container workspace (max-width: 460px) {
+  .snapshot-update-label {
+    display: none;
+  }
+
+  .snapshot-update-compact {
+    display: inline;
+  }
+}
+
+@supports selector(::details-content) {
+  @container query-toolbar (min-width: 541px) {
+    .workspace-query-controls > .table-query-toolbar {
+      overflow: visible;
+    }
+
+    .table-query-toolbar .more-actions-menu {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .more-actions-menu > summary {
+      display: none;
+    }
+
+    .more-actions-menu::details-content {
+      display: contents;
+      content-visibility: visible;
+    }
+
+    .more-actions-menu > .more-actions-popover,
+    .more-actions-menu:not([open]) > .more-actions-popover {
+      position: static;
+      inset: auto;
+      display: inline-flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+      width: auto;
+      max-width: none;
+      max-height: none;
+      overflow: visible;
+      padding: 0;
+      border: 0;
+      box-shadow: none;
+      background: transparent;
+    }
+  }
+}
+
+@container query-toolbar (max-width: 760px) {
+  .table-query-toolbar .query-tool-label,
+  .table-query-toolbar .toolbar-action-label {
+    display: none;
+  }
+
+  .table-query-toolbar .query-tool-button,
+  .table-query-toolbar > button.row-order-control {
+    justify-content: center;
+    min-width: 30px;
+    padding-inline: 6px;
+    gap: 3px;
+  }
+
+  .table-query-toolbar .query-tool-count {
+    font-size: 10px;
+  }
+
+  .workspace-query-controls > .table-query-toolbar {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow: visible;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex: 1 1 120px;
+    min-width: 100px;
+    max-width: none;
+  }
+}
+
+@container query-toolbar (max-width: 540px) {
+  .more-actions-menu > summary {
+    display: inline-flex;
+  }
+
+  .more-actions-menu:not([open])::details-content {
+    content-visibility: hidden;
+  }
+
+  .more-actions-menu[open]::details-content {
+    content-visibility: visible;
+  }
+
+  .more-actions-popover .query-tool-label,
+  .more-actions-popover .toolbar-action-label {
+    display: inline;
+  }
+}
+
+@container query-toolbar (max-width: 420px) {
+  .workspace-query-controls > .table-query-toolbar {
+    gap: 4px;
+  }
+
+  .workspace-query-controls .table-query-toolbar > .search-box {
+    flex-basis: 100px;
+    min-width: 70px;
+  }
+
+  .table-query-toolbar .temporary-preview-badge {
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

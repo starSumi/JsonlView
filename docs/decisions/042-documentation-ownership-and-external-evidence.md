@@ -1,3 +1,15 @@
+---
+id: "042-documentation-ownership-and-external-evidence"
+path: "docs/decisions/042-documentation-ownership-and-external-evidence.md"
+title: "Documentation Ownership and External Evidence"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["documentation","evidence","harness"]
+evidence: []
+revisit: "when product and harness ownership changes"
+rollback: "restore the prior ownership boundary"
+---
 # ADR-042: Documentation ownership and external evidence
 
 Status: accepted

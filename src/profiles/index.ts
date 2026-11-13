@@ -1,5 +1,49 @@
 export { ClaudeCodeProfile } from './claude-profile';
 export {
+  GENERIC_DATASET_ADAPTER_ID,
+  GENERIC_DATASET_ADAPTER_VERSION,
+  LLAMA_FACTORY_V1_ADAPTER_ID,
+  LLAMA_FACTORY_V1_ADAPTER_VERSION,
+  SHAREGPT_V1_ADAPTER_ID,
+  SHAREGPT_V1_ADAPTER_VERSION,
+  VIRTUALHOME_V1_ADAPTER_ID,
+  VIRTUALHOME_V1_ADAPTER_VERSION,
+  SFT_MASTER_CONVERSATION_V1_ADAPTER_ID,
+  SFT_MASTER_CONVERSATION_V1_ADAPTER_VERSION,
+  SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_ID,
+  SFT_MASTER_KEYWORD_RESULT_V1_ADAPTER_VERSION,
+  LlamaFactoryV1DatasetAdapter,
+  inspectLlamaFactoryDataset,
+} from './dataset-adapter';
+export { DATASET_HEAD_PLAN, DatasetHeadInspection, pendingDatasetProvenance } from './dataset-runtime';
+export {
+  aggregateBfclV3Summaries,
+  isBfclV3Candidate,
+  summarizeBfclV3Record,
+} from './datasets/bfcl-v3';
+export type {
+  DatasetAdapter,
+  DatasetCandidate,
+  DatasetClockBasis,
+  DatasetConfidence,
+  DatasetDetection,
+  DatasetDetectionReason,
+  DatasetFallbackCode,
+  DatasetFallbackDiagnostic,
+  DatasetFieldProjection,
+  DatasetFraming,
+  DatasetInspection,
+  DatasetInspectionOptions,
+  DatasetProvenance,
+  DatasetRecordProjection,
+  DatasetRecordSample,
+  DatasetSampleCoverage,
+  DatasetSamplePlan,
+  DatasetShape,
+  DatasetSourceIdentity,
+  DatasetTruncationReason,
+} from './dataset-adapter';
+export {
   CodexHistoryProfile,
   CodexSessionIndexProfile,
   isHistoryEntry,
@@ -35,6 +79,8 @@ export { GenericAgentEventsProfile } from './generic-agent-profile';
 export { GENERIC_PROFILE_ID, GenericProfile } from './generic-profile';
 export { OpenTelemetryProfile } from './opentelemetry-profile';
 export { PiCodingAgentProfile, isPiMessageEntry, isPiSessionHeader } from './pi-profile';
+export { KimiCodeProfile } from './kimi-profile';
+export { KIMI_SOURCE_REVISION, isKimiAgentCoreRecord, isKimiContextRecord, isKimiMetadata } from './kimi-record';
 export { AgentProfileRegistry } from './profile-registry';
 export { SoftwareEngineeringAgentProfile } from './software-engineering-agent-profile';
 export { StructuredApplicationLogProfile } from './structured-application-log-profile';

@@ -1,7 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { posix } from 'node:path';
 import type * as vscode from 'vscode';
-import type { SnapshotIdentity } from '../shared/types';
+import type { SnapshotIdentity } from '@shared/types';
+import {
+  JSONLVIEW_DIAGNOSTIC_PROTOCOL_VERSION,
+  MAX_JSONLVIEW_DIAGNOSTIC_MESSAGE_LENGTH,
+  MAX_JSONLVIEW_DIAGNOSTIC_NAME_LENGTH,
+} from '@shared/contracts/errors';
+import { UNKNOWN_RUNTIME_IDENTITY, type RuntimeExecutionIdentity } from '@shared/execution-identity';
 
 export function getWebviewHtml(
   webview: vscode.Webview,
@@ -9,6 +15,8 @@ export function getWebviewHtml(
   snapshot: SnapshotIdentity,
   pageSize = 100,
   rowOrder: 'asc' | 'desc' = 'asc',
+  startupId = randomBytes(12).toString('hex'),
+  runtimeIdentity: RuntimeExecutionIdentity = UNKNOWN_RUNTIME_IDENTITY,
 ): string {
   const nonce = randomBytes(18).toString('base64url');
   const scriptUri = webview.asWebviewUri(extensionUri.with({
@@ -30,6 +38,8 @@ export function getWebviewHtml(
 <body
   data-document-id="${escapeAttribute(snapshot.documentId)}"
   data-generation="${escapeAttribute(snapshot.generation)}"
+  data-startup-id="${escapeAttribute(startupId)}"
+  data-runtime-identity="${escapeAttribute(JSON.stringify(runtimeIdentity))}"
   ${snapshot.epoch === undefined ? '' : `data-epoch="${String(snapshot.epoch)}"`}
   data-uri="${escapeAttribute(snapshot.uri)}"
   data-page-size="${String(Math.min(500, Math.max(20, Math.trunc(pageSize))))}"
@@ -39,8 +49,9 @@ export function getWebviewHtml(
   <script nonce="${nonce}">
     (() => {
       const vscode = acquireVsCodeApi();
+      window.__jsonlViewVscodeApi = vscode;
       const clean = (value, limit) => String(value || '').replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, limit);
-      const report = (name, message) => vscode.postMessage({ type: 'JSONLVIEW_DIAGNOSTIC', name: clean(name, 128) || 'Error', message: clean(message, 512) || 'Unknown Webview error' });
+      const report = (name, message) => vscode.postMessage({ type: 'JSONLVIEW_DIAGNOSTIC', diagnosticProtocolVersion: ${JSONLVIEW_DIAGNOSTIC_PROTOCOL_VERSION}, name: clean(name, ${MAX_JSONLVIEW_DIAGNOSTIC_NAME_LENGTH}) || 'Error', message: clean(message, ${MAX_JSONLVIEW_DIAGNOSTIC_MESSAGE_LENGTH}) || 'Unknown Webview error' });
       window.addEventListener('error', event => report('Error', event.message));
       window.addEventListener('unhandledrejection', event => report('UnhandledRejection', event.reason && event.reason.message ? event.reason.message : event.reason));
     })();

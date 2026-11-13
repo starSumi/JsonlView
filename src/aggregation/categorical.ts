@@ -1,4 +1,4 @@
-import type { JsonScalar, RowProjection } from '../shared/types';
+import type { JsonScalar, RowProjection } from '@shared/types';
 import { resolveGroupCapacity, resolveLimits, throwIfAborted } from './limits';
 import { selectValue } from './selectors';
 import type {

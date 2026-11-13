@@ -1,0 +1,1 @@
+{"name":"@jsonlview/bridge","version":"0.1.0","type":"module","private":true,"scripts":{"build":"tsc --project tsconfig.json","start":"node dist/main.js","test":"node --test test/bridge.test.mjs"},"dependencies":{"@jsonlview/runtime":"workspace:*","ws":"^8.18.3"},"devDependencies":{"@types/node":"^24.0.0","@types/ws":"^8.5.13","typescript":"^7.0.2"}}

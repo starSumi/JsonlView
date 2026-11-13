@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 10.26.0
 
@@ -209,6 +209,103 @@ jobs:
           if ([string]$tagMap.($env:NPM_DIST_TAG) -ne $env:JSONLVIEW_NPM_VERSION) {
             throw "Registry readback did not point $env:NPM_DIST_TAG to $env:JSONLVIEW_NPM_VERSION."
           }
+
+      - name: Download the published npm tarball for exact-version readback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:JSONLVIEW_NPM_NAME -notmatch '^@[a-z0-9._~-]+/[a-z0-9._~-]+$') { throw 'Published npm package name is not a valid scoped package name.' }
+          if ($env:JSONLVIEW_NPM_VERSION -notmatch '^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') { throw 'Published npm version is not valid semver.' }
+          $readbackDir = Join-Path $env:RUNNER_TEMP 'jsonlview-npm-registry-readback'
+          $candidate = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'jsonl-view-npm.tgz'
+          $manifest = Join-Path $env:JSONLVIEW_NPM_REPORT_DIR 'npm-manifest.json'
+          $metadataPath = Join-Path $readbackDir 'npm-pack-metadata.json'
+          New-Item -ItemType Directory -Force -Path $readbackDir | Out-Null
+          if (@(Get-ChildItem -LiteralPath $readbackDir -Force).Count -ne 0) { throw 'npm registry readback directory must start empty.' }
+          $packageSpec = "$($env:JSONLVIEW_NPM_NAME)@$($env:JSONLVIEW_NPM_VERSION)"
+          $packOutput = & npm pack $packageSpec --pack-destination $readbackDir --registry=https://registry.npmjs.org --ignore-scripts --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadataText = $packOutput | Out-String
+          $metadata = ConvertFrom-Json -InputObject $metadataText -NoEnumerate
+          if (@($metadata).Count -ne 1) { throw 'npm pack did not return exactly one registry artifact record.' }
+          $filename = [string]$metadata[0].filename
+          if ($filename -notmatch '^[A-Za-z0-9_.@+-]+\.tgz$') { throw 'npm pack returned an invalid registry tarball filename.' }
+          $readbackTarball = Join-Path $readbackDir $filename
+          if (-not (Test-Path -LiteralPath $readbackTarball -PathType Leaf)) { throw 'npm pack did not create its reported registry tarball.' }
+          $metadataText | Set-Content -LiteralPath $metadataPath -Encoding utf8
+          "JSONLVIEW_NPM_READBACK_TARBALL=$readbackTarball" >> $env:GITHUB_ENV
+          "JSONLVIEW_NPM_CANDIDATE_TARBALL=$candidate" >> $env:GITHUB_ENV
+          "JSONLVIEW_NPM_CANDIDATE_MANIFEST=$manifest" >> $env:GITHUB_ENV
+          "JSONLVIEW_NPM_PACK_METADATA=$metadataPath" >> $env:GITHUB_ENV
+
+      - name: Compare npm registry artifact SHA-256 with frozen candidate
+        if: always()
+        shell: pwsh
+        env:
+          AUDIT: ${{ runner.temp }}\jsonlview-npm-release\npm-artifact-readback.json
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          import { createHash } from 'node:crypto';
+          import { readFile, writeFile } from 'node:fs/promises';
+
+          const report = {
+            schemaVersion: 1,
+            ok: false,
+            registry: 'npmjs',
+            status: 'started',
+            target: { name: process.env.JSONLVIEW_NPM_NAME, version: process.env.JSONLVIEW_NPM_VERSION },
+          };
+          try {
+            const manifest = JSON.parse(await readFile(process.env.JSONLVIEW_NPM_CANDIDATE_MANIFEST, 'utf8'));
+            const candidate = await readFile(process.env.JSONLVIEW_NPM_CANDIDATE_TARBALL);
+            const candidateSha256 = createHash('sha256').update(candidate).digest('hex');
+            const packageName = process.env.JSONLVIEW_NPM_NAME;
+            const version = process.env.JSONLVIEW_NPM_VERSION;
+            if (manifest?.package?.name !== packageName || manifest?.package?.version !== version) {
+              throw new Error('npm candidate manifest does not match the published package identity');
+            }
+            if (!/^[a-f0-9]{64}$/.test(manifest?.tarball?.sha256 ?? '') || candidateSha256 !== manifest.tarball.sha256) {
+              report.status = 'candidate-digest-mismatch';
+              report.target = { name: packageName, version };
+              report.candidateSha256 = candidateSha256;
+              throw new Error('candidate bytes do not match the frozen npm manifest digest');
+            }
+
+            const metadata = JSON.parse(await readFile(process.env.JSONLVIEW_NPM_PACK_METADATA, 'utf8'));
+            if (!Array.isArray(metadata) || metadata.length !== 1 || metadata[0]?.name !== packageName || metadata[0]?.version !== version) {
+              throw new Error('npm pack did not return the exact published package and version');
+            }
+            const filename = metadata[0].filename;
+            if (typeof filename !== 'string' || filename.includes('/') || filename.includes('\\') || !filename.endsWith('.tgz')) {
+              throw new Error('npm pack returned an invalid registry tarball filename');
+            }
+            const registryTarball = await readFile(process.env.JSONLVIEW_NPM_READBACK_TARBALL);
+            const registrySha256 = createHash('sha256').update(registryTarball).digest('hex');
+            report.ok = candidateSha256 === registrySha256;
+            report.status = report.ok ? 'sha256-match' : 'sha256-mismatch';
+            report.target = { name: packageName, version };
+            report.candidate = { file: 'jsonl-view-npm.tgz', bytes: candidate.length, sha256: candidateSha256 };
+            report.registryArtifact = {
+              file: filename,
+              bytes: registryTarball.length,
+              sha256: registrySha256,
+              integrity: typeof metadata[0].integrity === 'string' && /^sha(?:1|256|384|512)-[A-Za-z0-9+/=]+$/.test(metadata[0].integrity) ? metadata[0].integrity : null,
+              shasum: typeof metadata[0].shasum === 'string' && /^[a-f0-9]{40}$/.test(metadata[0].shasum) ? metadata[0].shasum : null,
+              source: 'npm pack ' + packageName + '@' + version + ' --registry=https://registry.npmjs.org',
+            };
+            report.retrievedAt = new Date().toISOString();
+            if (!report.ok) throw new Error('npm registry artifact SHA-256 differs from the frozen candidate');
+          } catch {
+            if (report.status === 'started') report.status = 'readback-failed';
+            report.ok = false;
+          }
+
+          await writeFile(process.env.AUDIT, JSON.stringify(report, null, 2) + '\n');
+          console.log(JSON.stringify(report));
+          if (!report.ok) throw new Error('npm artifact readback failed: ' + report.status);
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Retain non-secret release evidence
         if: always()

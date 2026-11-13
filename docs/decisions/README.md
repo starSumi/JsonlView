@@ -1,3 +1,15 @@
+---
+id: "decisions-index"
+path: "docs/decisions/README.md"
+title: "JsonlView Decisions"
+kind: "index"
+status: "active"
+owner: "product"
+tags: ["architecture","decisions","documentation"]
+evidence: []
+revisit: "when the decision record topology changes"
+rollback: "restore the previous decision index"
+---
 # JsonlView Decisions
 
 These records capture durable engineering choices for the product. They are
@@ -17,6 +29,31 @@ tree, screenshot collection, or release readback a runtime dependency.
 Evidence references are navigation aids. They must include a receipt ID or
 public URL, source revision, digest or artifact identity, and measurement
 boundary. A local machine path is never an evidence contract.
+
+## Diátaxis placement
+
+ADR files belong to the **Explanation** quadrant: they preserve architectural
+context, trade-offs, invariants, evidence boundaries, revisit triggers, and
+rollback rules. They are not tutorials, task recipes, or protocol reference
+manuals. Use `docs/README.md` to enter through the
+appropriate Tutorial, How-to, Reference, or Explanation route before opening
+a decision record.
+
+## Domain navigation
+
+Use these verified domain anchors for a focused first pass. Links target each
+record's actual heading. The complete chronological list below remains the
+unfragmented ADR inventory checked by `pnpm check:docs-index`.
+
+| Domain | Entry points |
+| --- | --- |
+| Core engine and physical framing | [ADR-001](001-format-profile-boundary.md#adr-001-format-and-profile-boundary), [ADR-003](003-native-acceleration.md#adr-003-native-acceleration), [ADR-040](040-native-scanner-measurement-boundary.md#adr-040-native-scanner-measurement-boundary), [ADR-054](054-bounded-forward-page-read-window.md#adr-054-bounded-forward-page-read-window) |
+| Presentation and Webview | [ADR-004](004-webview-rendering.md#adr-004-webview-rendering-and-bounded-detail), [ADR-019](019-webview-query-and-keyboard-ownership.md#webview-query-ownership-and-keyboard-interaction), [ADR-045](045-table-query-and-column-ownership.md#adr-045-table-query-and-column-ownership), [ADR-048](048-bounded-conversation-and-dataset-scenes.md#adr-048-bounded-conversation-and-dataset-scenes) |
+| Catalog, persistence, and storage | [ADR-011](011-runtime-topology-and-refactor-shape.md#adr-011-runtime-topology-and-refactor-shape), [ADR-029](029-opt-in-session-navigator-treeview.md#adr-029-opt-in-session-navigator-treeview-and-local-catalog), [ADR-032](032-bounded-session-pagination.md#adr-032-bounded-session-pagination-and-source-state-continuations), [ADR-050](050-navigator-catalog-metadata-plane.md#adr-050-navigator-catalog-metadata-plane), [ADR-062](062-catalog-versioned-persistence-contract.md#adr-062-catalog-versioned-persistence-contract) |
+| Protocols, distribution, and agent interfaces | [ADR-005](005-release-provenance.md#adr-005-release-provenance), [ADR-008](008-promotion-synchronization.md#adr-008-promotion-synchronization), [ADR-037](037-mcp-july-2026-compatibility-boundary.md#adr-037-mcp-july-2026-compatibility-boundary), [ADR-041](041-typed-rpc-and-ports-adapters-slices.md#adr-041-typed-rpc-and-ports-adapters-slices), [ADR-049](049-shared-protocol-wire-registry.md#adr-049-shared-protocol-wire-registry), [ADR-052](052-rust-query-mcp-acp-boundary.md#adr-052-rust-query-mcp-and-acp-boundary), [ADR-080](080-agent-integration-adapters.md#adr-080-agent-integration-adapters-and-execution-targets), [ADR-084](084-private-mcp-cli-and-protocol-owner.md#adr-084-private-mcp-cli-and-canonical-protocol-owner) |
+
+These anchors are a reading aid only. They do not change ADR ownership, status,
+causal history, or the generated `docs/index.json` projection.
 
 ## Reading order
 
@@ -67,11 +104,55 @@ Read these before changing a shared boundary:
 43. [ADR-042 documentation ownership and external evidence](042-documentation-ownership-and-external-evidence.md)
 44. [ADR-043 core closure and evidence-gated evolution](043-core-closure-and-evidence-gated-evolution.md)
 45. [ADR-044 data format ecosystem and conversion boundary](044-data-format-ecosystem-boundary.md)
+46. [ADR-045 table query and column ownership](045-table-query-and-column-ownership.md)
+47. [ADR-046 Insights analysis intent and scope](046-insights-analysis-intent-and-scope.md)
+48. [ADR-047 execution identity and request correlation](047-execution-identity-and-request-correlation.md)
+49. [ADR-048 bounded conversation and dataset scenes](048-bounded-conversation-and-dataset-scenes.md)
+50. [ADR-049 shared protocol wire registry](049-shared-protocol-wire-registry.md)
+51. [ADR-050 Navigator catalog metadata plane](050-navigator-catalog-metadata-plane.md)
+52. [ADR-051 V2 plane boundaries and engineering gates](051-v2-plane-boundaries-and-engineering-gates.md)
+53. [ADR-052 Rust query, MCP, and ACP boundary](052-rust-query-mcp-acp-boundary.md)
+54. [ADR-053 Kimi KAP server journal adapter](053-kimi-kap-server-journal-adapter.md)
+55. [ADR-054 bounded forward-page read window](054-bounded-forward-page-read-window.md)
+56. [ADR-055 development query observation tap](055-development-query-observation-tap.md)
+57. [ADR-056 modern language and compiler gates](056-modern-language-and-compiler-gates.md)
+58. [ADR-057 module review budget and hotspot governance](057-module-review-budget-and-hotspot-governance.md)
+59. [ADR-058 priority scheduling for background index slices](058-priority-background-index-slices.md)
+60. [ADR-059 Webview style attribute CSP boundary](059-webview-style-attribute-csp-boundary.md)
+61. [ADR-060 shared query anchor and Treemap metadata](060-shared-query-anchor-and-treemap-metadata.md)
+62. [ADR-061 virtualized list accessibility semantics](061-virtualized-list-a11y-semantics.md)
+63. [ADR-062 catalog versioned persistence contract](062-catalog-versioned-persistence-contract.md)
+64. [ADR-063 bounded MCP stdio work and cooperative cancellation](063-bounded-mcp-stdio-work.md)
+65. [ADR-064 independent Collections metadata board](064-independent-collections-board.md)
+66. [ADR-065 opportunistic session work and read diagnostics](065-opportunistic-session-work-and-read-diagnostics.md)
+67. [ADR-066 bounded trajectory query contract](066-bounded-trajectory-query-contract.md)
+68. [ADR-067 correlated internal reveal and DOM confirmation](067-correlated-internal-reveal.md)
+69. [ADR-068 bounded read-only record text](068-bounded-read-only-record-text.md)
+70. [ADR-069 bounded raw source export](069-bounded-raw-source-export.md)
+71. [ADR-070 Graph authorization and snapshot identity](070-graph-authorization-and-snapshot-identity.md)
+72. [ADR-071 current document Graph hierarchy and reveal](071-current-document-graph-hierarchy-and-reveal.md)
+73. [ADR-072 scoped raw export and durable recovery](072-scoped-raw-export-recovery.md)
+74. [ADR-073 Collections entry metadata](073-collections-entry-metadata.md)
+75. [ADR-074 shared Collections command journal](074-collections-shared-journal.md)
+76. [ADR-075 Detail Drawer page-local Lineage](075-detail-drawer-page-local-lineage.md)
+77. [ADR-076 Source intake stage and explicit actions](076-source-intake-stage.md)
+78. [ADR-078 Lineage rail and explicit bounded lookup](078-lineage-rail-and-explicit-bounded-lookup.md)
+79. [ADR-079 ACP and MCP stream lifecycle](079-acp-mcp-stream-lifecycle.md)
+80. [ADR-080 Agent integration adapters and execution targets](080-agent-integration-adapters.md)
+81. [ADR-081 Public artifact documentation allowlists](081-public-artifact-documentation-allowlists.md)
+82. [ADR-082 Collection archive visibility](082-collection-archive-visibility.md)
+83. [ADR-083 Navigator owners, surfaces and schema review](083-navigator-owners-surfaces-and-schema-review.md)
+84. [ADR-084 Private MCP CLI and canonical protocol owner](084-private-mcp-cli-and-protocol-owner.md)
+85. [ADR-085 Collections reference entrypoint and intake separation](085-collections-reference-entrypoint.md)
+86. [ADR-086 Import canvas and Collections toolbar entrypoint](086-import-canvas-and-toolbar-entrypoint.md)
+87. [ADR-087 Save As and Collection onboarding](087-save-as-collection-onboarding.md)
 
 ADR-023 is intentionally retained for two historical decisions. The mapping
 is recorded in config/docs-index.json and is checked by pnpm check:docs-index.
 New or modified records must use a unique standard ADR-NNN heading and a
 matching filename/link.
 
-Every ADR uses the same fields: pressure, invariant, owner, alternatives,
-probe, decision, evidence, boundary, revisit trigger, and rollback.
+Every ADR uses the same front matter fields and keeps its decision body focused
+on pressure, invariant, owner, alternatives, probe, decision, evidence,
+boundary, revisit trigger, and rollback. The generated `docs/index.json` is the
+only lookup projection; the Markdown file remains authoritative.

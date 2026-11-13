@@ -50,6 +50,40 @@ export interface StageIntent {
   readonly fenceToken: string;
 }
 
+/**
+ * Host supplied gates for the staged mutation experiment. The experiment is
+ * deliberately disabled until every gate is explicitly satisfied. Keeping
+ * this decision pure makes the boundary testable without filesystem or host
+ * access.
+ */
+export interface StagedMutationOptIn {
+  enabled: boolean;
+  workspaceTrusted: boolean;
+  sourceAuthorized: boolean;
+  userGesture: boolean;
+}
+
+export type StagedMutationOptInReason =
+  | 'disabled'
+  | 'workspace-untrusted'
+  | 'source-not-authorized'
+  | 'user-gesture-required';
+
+export interface StagedMutationOptInDecision {
+  allowed: boolean;
+  reason?: StagedMutationOptInReason;
+}
+
+export function evaluateStagedMutationOptIn(
+  gates: StagedMutationOptIn,
+): StagedMutationOptInDecision {
+  if (!gates.enabled) return { allowed: false, reason: 'disabled' };
+  if (!gates.workspaceTrusted) return { allowed: false, reason: 'workspace-untrusted' };
+  if (!gates.sourceAuthorized) return { allowed: false, reason: 'source-not-authorized' };
+  if (!gates.userGesture) return { allowed: false, reason: 'user-gesture-required' };
+  return { allowed: true };
+}
+
 export interface Delta extends BaseEdit {
   readonly sequence: number;
 }
@@ -114,12 +148,14 @@ export type MutationErrorCode =
 
 export class StagedMutationError extends Error {
   override readonly name = 'StagedMutationError';
+  readonly code: MutationErrorCode;
 
   constructor(
-    readonly code: MutationErrorCode,
+    code: MutationErrorCode,
     message: string,
   ) {
     super(message);
+    this.code = code;
   }
 }
 

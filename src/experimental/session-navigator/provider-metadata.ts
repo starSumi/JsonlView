@@ -6,7 +6,15 @@ export class MetadataBudget {
   public bytes = 0;
   public records = 0;
   public truncated = false;
-  public constructor(public readonly limits: SessionNavigatorBudget, public readonly signal: AbortSignal, private readonly started = Date.now()) {}
+  public readonly limits: SessionNavigatorBudget;
+  public readonly signal: AbortSignal;
+  private readonly started: number;
+
+  public constructor(limits: SessionNavigatorBudget, signal: AbortSignal, started = Date.now()) {
+    this.limits = limits;
+    this.signal = signal;
+    this.started = started;
+  }
   public check(): boolean {
     if (this.signal.aborted) throw new Error('Session navigator scan cancelled.');
     if (Date.now() - this.started >= this.limits.maxMilliseconds) this.truncated = true;

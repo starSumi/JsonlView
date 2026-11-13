@@ -1,3 +1,15 @@
+---
+id: "016-otlp-metrics-and-columnar-format-gates"
+path: "docs/decisions/016-otlp-metrics-and-columnar-format-gates.md"
+title: "OTLP Metrics Semantics and Columnar Format Gates"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["columnar","otlp","telemetry"]
+evidence: []
+revisit: "when telemetry or conversion contracts change"
+rollback: "keep conversion opt-in and bounded"
+---
 # ADR-016: OTLP Metrics Semantics and Columnar Format Gates
 
 Status: accepted
@@ -5,8 +17,8 @@ Status: accepted
 ## Pressure
 
 The OpenTelemetry Protocol File Exporter writes JSON Lines envelopes that may
-carry logs, spans, or metrics. The current semantic profile recognizes logs and
-spans but leaves a metrics-only envelope in Generic JSONL. Parquet is also
+carry logs, spans, or metrics. The semantic profile now recognizes all three
+signals with bounded summaries and projections. Parquet is also
 proposed as a future input, although it is a columnar container with different
 access and source-location semantics from line-oriented JSONL.
 
@@ -54,8 +66,9 @@ it does not own OpenTelemetry meaning.
 
 ## Decision
 
-The next OpenTelemetry slice is metrics semantics on the existing JSONL
-adapter; it does not add a parser dependency or alter the physical row model.
+The metrics slice is implemented on the existing JSONL adapter without a parser
+dependency or physical row-model change. It projects bounded metric identity,
+aggregation and data-point counts alongside the existing log/span observations.
 Parquet remains a separate, evidence-gated future adapter. Do not implement it
 until a representative workload demonstrates that JSONL cannot meet the
 product's latency or memory budget and a reader can satisfy the immutable
@@ -89,10 +102,11 @@ adapter count and discovery needs justify one.
 
 ## Revisit Trigger
 
-Implement the metrics slice when the fixture matrix and profile tests are
-ready. Reopen the Parquet decision only when an anonymized corpus, query
-workload, projected API, resource budget, dependency/license review, and
-measurable acceptance target are available. Revisit static registry shape
+Reopen this decision if mixed-signal envelopes, new OTLP schema revisions, or
+unbounded payload pressure require a contract change. Reopen the Parquet
+decision only when an anonymized corpus, query workload, projected API,
+resource budget, dependency/license review, and measurable acceptance target
+are available. Revisit static registry shape
 when at least two physical adapters require the same dispatch contract.
 
 ## Rollback

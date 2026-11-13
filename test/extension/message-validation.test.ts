@@ -19,8 +19,25 @@ describe('webview message validation', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts an explicit row projection plan and rejects malformed plans', () => {
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      projection: { conversation: false, dataset: true },
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      projection: { conversation: 'false', dataset: true },
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 20,
+      projection: { conversation: false },
+    })).ok).toBe(false);
+  });
+
   it('accepts the explicit Navigator focus action without a data payload', () => {
     expect(validateWebviewRequest(envelope('OPEN_SESSION_NAVIGATOR', {})).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('SAVE_PREVIEW_AS', {})).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('SAVE_PREVIEW_AS', { path: 'untrusted' })).ok).toBe(false);
   });
 
   it('accepts bounded diagnostic handoff actions and rejects oversized context', () => {
@@ -129,6 +146,19 @@ describe('webview message validation', () => {
       sort: { columnId: 'status', direction: 'asc' },
       anchorOrdinal: '10',
     })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: '__ordinal', direction: 'desc' },
+      anchorOrdinal: '10',
+      direction: 'backward',
+    })).ok).toBe(true);
+    expect(validateWebviewRequest(envelope('GET_ROWS', {
+      limit: 100,
+      sort: { columnId: '__ordinal', direction: 'desc' },
+      sortOffset: '0',
+      anchorOrdinal: '10',
+      direction: 'backward',
+    })).ok).toBe(false);
   });
 
   it('accepts profile text and presence predicates', () => {
@@ -163,11 +193,24 @@ describe('webview message validation', () => {
   });
 
   it('accepts bounded insight requests and rejects unknown dimensions', () => {
+    const intent = {
+      version: 1 as const,
+      intentRevision: 3,
+      dimension: 'eventKind' as const,
+      scope: 'current-view' as const,
+      document: { documentId: 'document', generation: 'generation', sourceEpoch: 2 },
+      profile: { id: 'generic', version: '1' },
+      predicate: { op: 'text_search' as const, value: 'error', caseSensitive: false },
+    };
     expect(validateWebviewRequest(envelope('GET_INSIGHTS', {
-      dimension: 'eventKind',
-      predicate: { op: 'text_search', value: 'error', caseSensitive: false },
+      intent,
     })).ok).toBe(true);
-    expect(validateWebviewRequest(envelope('GET_INSIGHTS', { dimension: 'arbitrary' })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_INSIGHTS', {
+      intent: { ...intent, dimension: 'arbitrary' },
+    })).ok).toBe(false);
+    expect(validateWebviewRequest(envelope('GET_INSIGHTS', {
+      intent: { ...intent, scope: 'whole-file' },
+    })).ok).toBe(false);
   });
 
   it('accepts bounded problem continuation and rejects an unsafe problem budget', () => {

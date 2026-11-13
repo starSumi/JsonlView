@@ -1,5 +1,5 @@
-import type { AgentRowProjection } from '../../shared/types';
-import type { EventPresentationSection } from '../features/event-presentation/model';
+import type { AgentRowProjection } from '@shared/types';
+import type { EventPresentationSection } from '@features/event-presentation/model';
 
 export type PiEventObject = Record<string, unknown>;
 

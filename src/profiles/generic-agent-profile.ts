@@ -1,35 +1,7 @@
-import type { AgentEventKind, AgentRowProjection } from '../shared/types';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
+import { adaptGenericAgentEvent } from './agent-event-adapter';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
-import {
-  actorFromRole,
-  boundedSummary,
-  createProjection,
-  evidence,
-  isObject,
-  keyPath,
-  objectAt,
-  own,
-  pushReason,
-  setActor,
-  setStringField,
-  stringAt,
-  usageFromObject,
-} from './utils';
-
-const KIND_MAP: Record<string, AgentEventKind> = {
-  session: 'session',
-  turn: 'turn',
-  message: 'message',
-  reasoning: 'reasoning',
-  tool_call: 'tool_call',
-  tool_use: 'tool_call',
-  tool_result: 'tool_result',
-  subagent: 'subagent',
-  approval: 'approval',
-  usage: 'usage',
-  error: 'error',
-  checkpoint: 'checkpoint',
-};
+import { boundedSummary, createProjection, evidence, keyPath, pushReason, setActor, setDerivedField, setStringField } from './utils';
 
 export class GenericAgentEventsProfile implements AgentProfile {
   public readonly id = 'generic-agent-events';
@@ -37,81 +9,91 @@ export class GenericAgentEventsProfile implements AgentProfile {
   public readonly version = '1';
 
   public detect(sample: readonly GenericRecordSample[]): DetectionResult {
-    let eventShapes = 0;
-    let semanticFields = 0;
+    let recognized = 0;
+    let semantic = 0;
     let stableIds = 0;
     const reasons: DetectionResult['reasons'] = [];
     for (const entry of sample) {
-      if (!isObject(entry.value)) continue;
-      const event = stringAt(entry.value, 'event') ?? stringAt(entry.value, 'event_type');
-      const role = stringAt(entry.value, 'role') ?? stringAt(entry.value, 'actor');
-      const message = own(entry.value, 'message') ?? own(entry.value, 'content');
-      const toolId = stringAt(entry.value, 'tool_call_id') ?? stringAt(entry.value, 'call_id');
-      if (event && (mappedKind(event) || role || message !== undefined)) {
-        eventShapes += 1;
-        pushReason(reasons, stringAt(entry.value, 'event') ? keyPath('event') : keyPath('event_type'), `Agent event discriminator: ${event}`);
-      }
-      if (role || message !== undefined || objectAt(entry.value, 'usage') || toolId) {
-        semanticFields += 1;
-        pushReason(reasons, role ? (stringAt(entry.value, 'role') ? keyPath('role') : keyPath('actor')) : keyPath('message'), 'Direct agent semantic fields are present');
-      }
-      if (stringAt(entry.value, 'turn_id') || stringAt(entry.value, 'message_id') || toolId || stringAt(entry.value, 'parent_id')) {
-        stableIds += 1;
-      }
+      if (entry.parseState !== undefined && entry.parseState !== 'valid') continue;
+      const adapted = adaptGenericAgentEvent(entry.value);
+      if (!adapted?.recognized) continue;
+      recognized += 1;
+      if (adapted.semanticSignal) semantic += 1;
+      if (adapted.stableIdentityCount > 0) stableIds += 1;
+      if (adapted.event) pushReason(reasons, adapted.event.path, `Agent event discriminator: ${adapted.eventName ?? 'unknown'}`);
     }
     const denominator = Math.max(1, sample.length);
-    const score = Math.min(0.82, 0.34 * Math.min(1, eventShapes / 2) + 0.28 * Math.min(1, semanticFields / denominator) + 0.2 * Math.min(1, stableIds / 2));
+    const coverage = recognized / denominator;
+    const score = Math.min(0.72, 0.44 * Math.min(1, recognized / 3)
+      + 0.26 * Math.min(1, semantic / 3) + 0.2 * Math.min(1, stableIds / 2));
     return {
       profileId: this.id,
       profileVersion: this.version,
       score,
       reasons,
-      requiredEvidenceMet: eventShapes >= 1 && semanticFields >= 2 && stableIds >= 1,
+      requiredEvidenceMet: recognized >= 2 && semantic >= 2 && stableIds >= 1 && coverage >= 0.6,
       sampledRecords: sample.length,
     };
   }
 
   public project(record: HydratedRecord, _context: ProjectionContext): AgentRowProjection {
-    if (!isObject(record.value)) {
-      return createProjection(this.id, 'other', boundedSummary(record.value), undefined, keyPath());
-    }
-    const value = record.value;
-    const discriminatorKey = stringAt(value, 'event') ? 'event' : (stringAt(value, 'event_type') ? 'event_type' : (stringAt(value, 'type') ? 'type' : undefined));
-    const discriminator = discriminatorKey ? stringAt(value, discriminatorKey) : undefined;
-    const eventKind = discriminator ? (mappedKind(discriminator) ?? 'other') : 'other';
-    const summaryKey = own(value, 'message') !== undefined
-      ? 'message'
-      : (own(value, 'content') !== undefined ? 'content' : (own(value, 'error') !== undefined ? 'error' : undefined));
+    const adapted = adaptGenericAgentEvent(record.value);
+    if (!adapted) return createProjection(this.id, 'other', boundedSummary(record.value), undefined, keyPath());
     const projection = createProjection(
       this.id,
-      eventKind,
-      boundedSummary(own(value, 'message') ?? own(value, 'content') ?? own(value, 'error') ?? value, discriminator ?? 'Agent event'),
-      discriminatorKey ? keyPath(discriminatorKey) : undefined,
-      summaryKey ? keyPath(summaryKey) : keyPath(),
+      adapted.eventKind,
+      boundedSummary(adapted.summary?.value ?? adapted.eventName ?? record.value, adapted.eventName ?? 'Agent event'),
+      adapted.event?.path,
+      adapted.summary?.path ?? adapted.event?.path,
     );
-
-    const roleKey = stringAt(value, 'role') ? 'role' : (stringAt(value, 'actor') ? 'actor' : undefined);
-    if (roleKey) setActor(projection, actorFromRole(stringAt(value, roleKey)), keyPath(roleKey));
-    setStringField(projection, 'timestamp', stringAt(value, 'timestamp'), keyPath('timestamp'));
-    setStringField(projection, 'sessionId', stringAt(value, 'session_id'), keyPath('session_id'));
-    setStringField(projection, 'turnId', stringAt(value, 'turn_id'), keyPath('turn_id'));
-    setStringField(projection, 'messageId', stringAt(value, 'message_id'), keyPath('message_id'));
-    setStringField(projection, 'parentId', stringAt(value, 'parent_id'), keyPath('parent_id'));
-    setStringField(projection, 'toolCallId', stringAt(value, 'tool_call_id') ?? stringAt(value, 'call_id'), stringAt(value, 'tool_call_id') ? keyPath('tool_call_id') : keyPath('call_id'));
-    setStringField(projection, 'subagentId', stringAt(value, 'subagent_id') ?? stringAt(value, 'agent_id'), stringAt(value, 'subagent_id') ? keyPath('subagent_id') : keyPath('agent_id'));
-    setStringField(projection, 'model', stringAt(value, 'model'), keyPath('model'));
-    setStringField(projection, 'status', stringAt(value, 'status'), keyPath('status'));
-    setStringField(projection, 'severity', stringAt(value, 'severity'), keyPath('severity'));
-    const usage = usageFromObject(objectAt(value, 'usage'));
-    if (usage) {
-      projection.usage = usage;
-      projection.evidence.push(evidence('usage', keyPath('usage')));
+    if (adapted.actor && adapted.role) setActor(projection, adapted.actor, adapted.role.path);
+    setLocatedString(projection, 'timestamp', adapted.timestamp);
+    setLocatedString(projection, 'sessionId', adapted.sessionId);
+    setLocatedString(projection, 'turnId', adapted.turnId);
+    setLocatedString(projection, 'messageId', adapted.messageId);
+    setLocatedString(projection, 'parentId', adapted.parentId);
+    setLocatedString(projection, 'toolCallId', adapted.toolCallId);
+    setLocatedString(projection, 'subagentId', adapted.subagentId);
+    setLocatedString(projection, 'model', adapted.model);
+    setLocatedString(projection, 'status', adapted.status);
+    setLocatedString(projection, 'severity', adapted.severity);
+    if (adapted.usage) { projection.usage = adapted.usage.value; projection.evidence.push(evidence('usage', adapted.usage.path)); }
+    if (adapted.content) {
+      setDerivedField(projection, 'content', adapted.content.text, adapted.content.path);
+      if (adapted.content.blockKinds.length > 0) setDerivedField(projection, 'contentBlocks', adapted.content.blockKinds.join(', '), adapted.content.path);
+      if (adapted.content.hasThinking) setDerivedField(projection, 'hasThinking', true, adapted.content.path);
+      if (adapted.content.truncated) setDerivedField(projection, 'contentTruncated', true, adapted.content.path);
+    }
+    if (adapted.tool) {
+      setLocatedDerived(projection, 'toolName', adapted.tool.name);
+      setLocatedDerived(projection, 'toolInput', adapted.tool.input);
+      setLocatedDerived(projection, 'toolResult', adapted.tool.result);
+      setLocatedDerived(projection, 'toolError', adapted.tool.isError);
     }
     return projection;
   }
 }
 
-function mappedKind(value: string): AgentEventKind | undefined {
-  const key = value.toLowerCase();
-  return Object.prototype.hasOwnProperty.call(KIND_MAP, key) ? KIND_MAP[key] : undefined;
+function setLocatedString(
+  projection: AgentRowProjection,
+  field: 'timestamp' | 'sessionId' | 'turnId' | 'messageId' | 'parentId' | 'toolCallId' | 'subagentId' | 'model' | 'status' | 'severity',
+  located: { value: unknown; path: FieldPath } | undefined,
+): void {
+  if (!located) return;
+  const value = typeof located.value === 'string' ? located.value : undefined;
+  if (value) setStringField(projection, field, value, located.path);
+}
+
+function setLocatedDerived(
+  projection: AgentRowProjection,
+  field: string,
+  located: { value: unknown; path: FieldPath } | undefined,
+): void {
+  if (!located) return;
+  const value = located.value;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    setDerivedField(projection, field, value, located.path);
+  } else if (value !== undefined && value !== null) {
+    setDerivedField(projection, field, boundedSummary(value), located.path);
+  }
 }

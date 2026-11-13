@@ -2,15 +2,47 @@ import type {
   ColumnSpec,
   Predicate,
   RowPage,
+  RowProjectionPlan,
   RowScanBudget,
   RowSort,
-} from '../../shared/types';
+} from '@shared/types';
+import { isRowProjectionPlan } from '@shared/row-projection';
 
 export const RECORD_PAGE_MAX_LIMIT = 500;
 export const RECORD_PAGE_MAX_SORT_WINDOW = 2_048n;
 export const RECORD_PAGE_MAX_SCAN_RECORDS = 1_000_000;
 export const RECORD_PAGE_MAX_SCAN_BYTES = 512n * 1024n * 1024n;
+export const RECORD_PAGE_MAX_RESULT_BYTES = 512n * 1024n * 1024n;
 export const RECORD_PAGE_MAX_SCAN_AHEAD_MS = 60_000;
+
+export type RecordPageQueueBlocker =
+  | 'none'
+  | 'index_more'
+  | 'finish_indexing'
+  | 'get_rows'
+  | 'inspect_rows'
+  | 'get_problems'
+  | 'get_detail'
+  | 'get_schema'
+  | 'classify_refresh';
+
+/** Internal timing side channel; it is not part of the Webview query DTO or ROWS page. */
+export interface RecordPageExecutionTiming {
+  readonly queueWaitMs: number;
+  readonly engineExecMs: number;
+  readonly queueBlockedBy: RecordPageQueueBlocker;
+  readonly indexWorkMs: number;
+  readonly readWaitMs: number;
+  /** Optional complete diagnostics group; older in-process readers may omit all three. */
+  readonly readCalls?: number;
+  readonly readBytes?: number;
+  readonly readMaxWaitMs?: number;
+  readonly parseMs: number;
+  readonly projectionMs: number;
+  readonly snapshotCheckMs: number;
+}
+
+export type RecordPageTimingObserver = (timing: RecordPageExecutionTiming) => void;
 
 /** Request owned by the record-page application use case, independent of VS Code transport. */
 export interface RecordPageRequest {
@@ -19,9 +51,14 @@ export interface RecordPageRequest {
   limit: number;
   predicate?: Predicate;
   columns?: ColumnSpec[];
+  projection?: RowProjectionPlan;
+  /** Maximum UTF-8 bytes retained in the returned page. */
+  maxReturnedBytes?: string;
   sort?: RowSort;
   sortOffset?: string;
   scanBudget?: RowScanBudget;
+  /** Host-local diagnostics only; omitted from versioned query and Webview payloads. */
+  onTiming?: RecordPageTimingObserver;
 }
 
 /** Read-only port implemented by the current session adapter. */
@@ -36,6 +73,9 @@ export interface RecordPageReader {
  */
 export function assertRecordPageRequest(request: RecordPageRequest): void {
   if (!isObject(request)) fail('Record page request must be an object.');
+  if (request.onTiming !== undefined && typeof request.onTiming !== 'function') {
+    fail('Record page timing observer must be a function.');
+  }
   if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > RECORD_PAGE_MAX_LIMIT) {
     fail(`Record page limit must be between 1 and ${String(RECORD_PAGE_MAX_LIMIT)}.`);
   }
@@ -48,8 +88,10 @@ export function assertRecordPageRequest(request: RecordPageRequest): void {
   if (request.sort !== undefined && !isRowSort(request.sort)) {
     fail('Record page sort is invalid.');
   }
-  if (request.sort !== undefined && (request.anchorOrdinal !== undefined || request.direction !== undefined)) {
-    fail('Sorted record pages cannot include a physical anchor or direction.');
+  if (request.sort !== undefined && (request.anchorOrdinal !== undefined || request.direction !== undefined)
+    && ((request.sort.columnId !== '__ordinal' && request.sort.columnId !== '$ordinal')
+      || request.sortOffset !== undefined)) {
+    fail('Physical cursors require ordinal order and cannot include a sorted offset.');
   }
   if (request.sortOffset !== undefined && !isDecimalString(request.sortOffset)) {
     fail('Record page sort offset must be a non-negative decimal string.');
@@ -64,6 +106,16 @@ export function assertRecordPageRequest(request: RecordPageRequest): void {
   }
   if (request.columns !== undefined && !isColumns(request.columns)) {
     fail('Record page columns are invalid or over budget.');
+  }
+  if (request.projection !== undefined && !isRowProjectionPlan(request.projection)) {
+    fail('Record page projection plan is invalid.');
+  }
+  if (request.maxReturnedBytes !== undefined && !isDecimalString(request.maxReturnedBytes)) {
+    fail('Record page result byte budget is invalid.');
+  }
+  if (request.maxReturnedBytes !== undefined && (BigInt(request.maxReturnedBytes) < 1n
+    || BigInt(request.maxReturnedBytes) > RECORD_PAGE_MAX_RESULT_BYTES)) {
+    fail('Record page result byte budget is outside the bounded result window.');
   }
   if (request.scanBudget !== undefined && !isScanBudget(request.scanBudget)) {
     fail('Record page scan budget is invalid or over budget.');

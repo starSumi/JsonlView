@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { bundleInventoryDigest, DISTRIBUTION_FILES } from './bundle-integrity.mjs';
 import { RELEASE_NOTICE_PREFIX, REQUIRED_RELEASE_LEGAL_FILES } from './release-legal-integrity.mjs';
+import { findVsixPolicyViolations, VSIX_REQUIRED_FILES } from './vsix-package-policy.mjs';
 
 const require = createRequire(import.meta.url);
 const yauzl = require('yauzl');
@@ -33,10 +34,8 @@ const DIST_ENTRIES = new Map(DISTRIBUTION_FILES.map((name) => [`${VSIX_DIST_PREF
 const REQUIRED_ENTRIES = new Set([
   VSIX_CONTENT_TYPES_ENTRY,
   VSIX_MANIFEST_ENTRY,
-  VSIX_PACKAGE_ENTRY,
-  VSIX_NATIVE_ENTRY,
+  ...VSIX_REQUIRED_FILES.map((name) => `${VSIX_LEGAL_PREFIX}${name}`),
   ...REQUIRED_RELEASE_LEGAL_FILES.map((name) => `${VSIX_LEGAL_PREFIX}${name}`),
-  ...DIST_ENTRIES.keys(),
 ]);
 
 /**
@@ -234,8 +233,17 @@ function scanCentralDirectory(snapshot) {
       zipfile.on('end', () => {
         if (settled) return;
         try {
-          const missing = [...REQUIRED_ENTRIES].filter((name) => !names.has(name));
+          const normalizedNames = new Set([...names].map((name) => name.toLowerCase()));
+          const missing = [...REQUIRED_ENTRIES].filter((name) => !normalizedNames.has(name.toLowerCase()));
           if (missing.length > 0) throw new Error(`VSIX is missing critical archive entries: ${missing.join(', ')}`);
+
+          const policyViolations = findVsixPolicyViolations([...names]
+            .filter((name) => !name.endsWith('/')
+              && name !== VSIX_CONTENT_TYPES_ENTRY
+              && name !== VSIX_MANIFEST_ENTRY));
+          if (policyViolations.length > 0) {
+            throw new Error(`VSIX contains files outside the explicit package policy: ${policyViolations.join(', ')}`);
+          }
 
           const packageIdentity = parsePackageIdentity(payloads.get(VSIX_PACKAGE_ENTRY)?.contents);
           const vsixManifestIdentity = parseVsixManifestIdentity(payloads.get(VSIX_MANIFEST_ENTRY)?.contents);

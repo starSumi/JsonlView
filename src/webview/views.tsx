@@ -77,35 +77,38 @@ export function TimelineView({ rows, selectedOrdinal, onSelect }: TimelineViewPr
   }
 
   return (
-    <div className="timeline-scroll" ref={scrollRef} role="list" aria-label="Event timeline">
-      <div className="virtual-space" style={{ height: virtualizer.getTotalSize() }}>
+    <div className="timeline-scroll" ref={scrollRef}>
+      <ul className="virtual-space timeline-list" style={{ height: virtualizer.getTotalSize() }} aria-label="Event timeline">
         {virtualizer.getVirtualItems().map((item) => {
           const row = rows[item.index];
           if (!row?.profile) return null;
           const Icon = eventIcon(row.profile.eventKind);
           return (
-            <button
-              type="button"
-              className={`timeline-row${row.ref.ordinal === selectedOrdinal ? ' is-selected' : ''}`}
-              role="listitem"
+            <li
               key={row.ref.ordinal}
+              className="timeline-list-item"
               style={{ height: item.size, transform: `translateY(${item.start}px)` }}
-              onClick={() => onSelect(row.ref)}
             >
-              <span className="timeline-icon"><Icon size={15} aria-hidden /></span>
-              <span className="timeline-main">
-                <span className="timeline-meta">
-                  <span className="event-kind">{row.profile.eventKind.replaceAll('_', ' ')}</span>
-                  <span>{row.profile.actor ?? 'unknown'}</span>
-                  {row.profile.status ? <span>{row.profile.status}</span> : null}
+              <button
+                type="button"
+                className={`timeline-row${row.ref.ordinal === selectedOrdinal ? ' is-selected' : ''}`}
+                onClick={() => onSelect(row.ref)}
+              >
+                <span className="timeline-icon"><Icon size={15} aria-hidden /></span>
+                <span className="timeline-main">
+                  <span className="timeline-meta">
+                    <span className="event-kind">{row.profile.eventKind.replaceAll('_', ' ')}</span>
+                    <span>{row.profile.actor ?? 'unknown'}</span>
+                    {row.profile.status ? <span>{row.profile.status}</span> : null}
+                  </span>
+                  <span className="timeline-summary">{row.profile.summary}</span>
                 </span>
-                <span className="timeline-summary">{row.profile.summary}</span>
-              </span>
-              <span className="timeline-time">{row.profile.timestamp ?? `#${row.ref.ordinal}`}</span>
-            </button>
+                <span className="timeline-time">{row.profile.timestamp ?? `#${row.ref.ordinal}`}</span>
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -191,11 +194,23 @@ export function SchemaView({ fields, total, loading }: SchemaViewProps): React.J
 
   return (
     <div className="schema-scroll" ref={scrollRef} role="treegrid" aria-label="Observed JSON schema tree" aria-rowcount={total}>
+      {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+      {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS row surface until the separate C2 task */}
       <div className="schema-tree-header" role="row">
+        {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+        {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
         <div role="columnheader">Path</div>
+        {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+        {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
         <div role="columnheader">Kinds</div>
+        {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+        {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
         <div role="columnheader">Seen</div>
+        {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+        {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
         <div role="columnheader">Missing / null</div>
+        {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+        {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
         <div role="columnheader">Confidence</div>
       </div>
       <div className="virtual-space schema-tree-space" style={{ height: virtualizer.getTotalSize() }}>
@@ -208,6 +223,8 @@ export function SchemaView({ fields, total, loading }: SchemaViewProps): React.J
             .join(', ') : row.children.length ? `object ${row.children.length} fields` : 'object';
           const confidence = field?.confidence;
           return (
+            // biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task
+            // biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS row surface until the separate C2 task
             <div
               className="schema-tree-row"
               role="row"
@@ -216,6 +233,8 @@ export function SchemaView({ fields, total, loading }: SchemaViewProps): React.J
               key={row.id}
               style={{ height: item.size, transform: `translateY(${item.start}px)` }}
             >
+              {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+              {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
               <div role="gridcell" className="schema-tree-path" style={{ paddingLeft: row.depth * 16 }} title={field?.displayPath ?? row.label}>
                 {row.children.length ? (
                   <button
@@ -230,9 +249,17 @@ export function SchemaView({ fields, total, loading }: SchemaViewProps): React.J
                 ) : <span className="schema-tree-toggle-spacer" aria-hidden />}
                 <span className="schema-tree-label">{row.label}</span>
               </div>
+              {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+              {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
               <div role="gridcell" className="ellipsis" title={kinds}>{kinds}</div>
+              {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+              {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
               <div role="gridcell">{field?.seenRecords ?? '-'}</div>
+              {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+              {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
               <div role="gridcell">{field ? `${field.missingRecords} / ${field.nullRecords}` : '-'}</div>
+              {/* biome-ignore lint/a11y/useFocusableInteractive: Schema treegrid keyboard and focus contract is a separate C2 task */}
+              {/* biome-ignore lint/a11y/useSemanticElements: Schema treegrid keeps its virtualized CSS cells until the separate C2 task */}
               <div role="gridcell">{confidence ? <span className={`confidence confidence-${confidence}`}>{confidence}</span> : <span className="schema-tree-derived">derived</span>}</div>
             </div>
           );
@@ -295,29 +322,32 @@ export function ProblemsView({ problems, onSelectOrdinal, complete, hasAfter, on
           {hasAfter && onContinue ? <button type="button" onClick={onContinue} disabled={loading}>Continue scan</button> : null}
         </div>
       ) : null}
-      <div className="problems-scroll" ref={scrollRef} role="list" aria-label="JSONL problems">
-      <div className="virtual-space" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((item) => {
-          const problem = problems[item.index];
-          if (!problem) return null;
-          return (
-            <button
-              type="button"
-              className={`problem-row severity-${problem.severity}`}
-              role="listitem"
-              key={`${problem.ordinal ?? 'document'}:${problem.code}:${item.index}`}
-              style={{ height: item.size, transform: `translateY(${item.start}px)` }}
-              disabled={!problem.ordinal}
-              onClick={() => problem.ordinal && onSelectOrdinal(problem.ordinal)}
-            >
-              <ProblemIcon severity={problem.severity} />
-              <span className="problem-code">{problem.code}</span>
-              <span className="problem-message">{problem.message}</span>
-              <span className="problem-ordinal">{problem.ordinal ? `#${problem.ordinal}` : 'document'}</span>
-            </button>
-          );
-        })}
-      </div>
+      <div className="problems-scroll" ref={scrollRef}>
+        <ul className="virtual-space problems-list" style={{ height: virtualizer.getTotalSize() }} aria-label="JSONL problems">
+          {virtualizer.getVirtualItems().map((item) => {
+            const problem = problems[item.index];
+            if (!problem) return null;
+            return (
+              <li
+                key={`${problem.ordinal ?? 'document'}:${problem.code}:${item.index}`}
+                style={{ height: item.size, transform: `translateY(${item.start}px)` }}
+                className="problem-list-item"
+              >
+                <button
+                  type="button"
+                  className={`problem-row severity-${problem.severity}`}
+                  disabled={!problem.ordinal}
+                  onClick={() => problem.ordinal && onSelectOrdinal(problem.ordinal)}
+                >
+                  <ProblemIcon severity={problem.severity} />
+                  <span className="problem-code">{problem.code}</span>
+                  <span className="problem-message">{problem.message}</span>
+                  <span className="problem-ordinal">{problem.ordinal ? `#${problem.ordinal}` : 'document'}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 // the extension; changing the ABI requires updating all three surfaces.
 export const NATIVE_ABI_VERSION = 2;
 export const NATIVE_CAPABILITY_SCAN_LF = 1 << 0;
+export const NATIVE_CAPABILITY_MCP_MANAGER = 1 << 1;
 
 export function readNativeContract(binding) {
   if (

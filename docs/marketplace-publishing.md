@@ -1,3 +1,15 @@
+---
+id: "marketplace-publishing"
+path: "docs/marketplace-publishing.md"
+title: "Visual Studio Marketplace publication"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["marketplace","provenance","release"]
+evidence: []
+revisit: "when the marketplace publication contract changes"
+rollback: "stop promotion and use the prior release runbook"
+---
 # Visual Studio Marketplace publication
 
 The Marketplace adapter is a guarded promotion boundary for the exact VSIX

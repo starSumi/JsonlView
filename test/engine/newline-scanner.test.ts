@@ -8,7 +8,7 @@ import {
 
 function collect(batch: NewlineOffsetBatch): number[] {
   const offsets: number[] = [];
-  batch.forEach((offset) => offsets.push(offset));
+  batch.forEach((offset) => { offsets.push(offset); });
   return offsets;
 }
 
@@ -36,6 +36,14 @@ function validBinding(overrides: Partial<{
 }
 
 describe('newline scanner', () => {
+  it.each([
+    ['a UTF-8 BOM prefix', Buffer.from('\uFEFF{"a":1}\n'), [10]],
+    ['mixed CRLF and LF delimiters', Buffer.from('{"a":1}\r\n{"b":2}\n{"c":3}'), [8, 16]],
+    ['a final record without a delimiter', Buffer.from('{"a":1}'), []],
+  ])('returns only physical LF offsets for %s', (_name, bytes, expected) => {
+    expect(collect(scanNewlinesWithNode(bytes).batch)).toEqual(expected);
+  });
+
   it('uses Buffer.indexOf for sparse data and a number loop for extremely dense data', () => {
     const empty = scanNewlinesWithNode(Buffer.alloc(0));
     expect(collect(empty.batch)).toEqual([]);
@@ -126,11 +134,22 @@ describe('newline scanner', () => {
     expect(scanner.diagnostics().fallbackReason).toContain('sample below');
   });
 
-  it('enforces a 256 KiB scan quantum and reports the bound diagnostically', () => {
-    const scanner = createNewlineScanner({ mode: 'node' });
-    expect(scanner.diagnostics().maxScanBytes).toBe(256 * 1024);
+  it('reports the 256 KiB scan quantum and enforces its exact boundary', () => {
     expect(MAX_NEWLINE_SCAN_BYTES).toBe(256 * 1024);
-    expect(scanner.scan(Buffer.alloc(MAX_NEWLINE_SCAN_BYTES, 0x0a)).count).toBe(MAX_NEWLINE_SCAN_BYTES);
-    expect(() => scanner.scan(Buffer.alloc(MAX_NEWLINE_SCAN_BYTES + 1))).toThrow('fixed 262144 byte bound');
+    const scanner = createNewlineScanner({ mode: 'node' });
+    expect(scanner.diagnostics().maxScanBytes).toBe(MAX_NEWLINE_SCAN_BYTES);
+  });
+
+  it.each([
+    { name: 'exactly at the 256 KiB limit', byteLength: MAX_NEWLINE_SCAN_BYTES, rejected: false },
+    { name: 'one byte above the 256 KiB limit', byteLength: MAX_NEWLINE_SCAN_BYTES + 1, rejected: true },
+  ])('handles a scan $name', ({ byteLength, rejected }) => {
+    const scanner = createNewlineScanner({ mode: 'node' });
+    const scan = () => scanner.scan(Buffer.alloc(byteLength, 0x0a));
+    if (rejected) {
+      expect(scan).toThrow('fixed 262144 byte bound');
+    } else {
+      expect(scan().count).toBe(byteLength);
+    }
   });
 });

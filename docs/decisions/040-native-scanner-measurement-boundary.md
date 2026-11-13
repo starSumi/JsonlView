@@ -1,3 +1,15 @@
+---
+id: "040-native-scanner-measurement-boundary"
+path: "docs/decisions/040-native-scanner-measurement-boundary.md"
+title: "Native Scanner Measurement Boundary"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["benchmark","native","scanner"]
+evidence: []
+revisit: "when a new paired measurement changes the choice"
+rollback: "use the portable scanner and retain the measurement"
+---
 # ADR-040: Native Scanner Measurement Boundary
 
 Status: accepted

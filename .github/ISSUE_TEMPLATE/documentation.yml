@@ -1,0 +1,72 @@
+name: Documentation improvement
+description: Report incorrect, missing, or unclear JsonlView documentation
+title: "[Docs]: "
+labels:
+  - documentation
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for documentation changes. Do not include private
+        transcripts, credentials, or unredacted local paths.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before opening this issue
+      options:
+        - label: I searched the documentation and existing issues for a duplicate.
+          required: true
+        - label: I removed private data, secrets, and machine-specific paths.
+          required: true
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Documentation location
+      description: Give the public URL or repository path and section heading.
+      placeholder: README.md, section Supported Boundary
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Documentation issue type
+      options:
+        - Incorrect or outdated information
+        - Missing guidance
+        - Unclear wording or example
+        - Broken link
+        - Accessibility or formatting problem
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_text
+    attributes:
+      label: Current behavior or text
+      description: Quote only the smallest public excerpt needed to identify the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_change
+    attributes:
+      label: Proposed correction
+      description: Describe the correction or provide replacement wording.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and affected version
+      description: Link to the public product contract, command, or version that supports the correction.
+    validations:
+      required: true
+

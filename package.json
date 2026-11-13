@@ -2,7 +2,7 @@
   "name": "jsonl-view",
   "displayName": "JsonlView",
   "description": "A bounded JSONL event studio for logs, telemetry, traces, coding-agent runs, and local agent session history.",
-  "version": "0.2.10",
+  "version": "0.2.12",
   "publisher": "Sumi-Sophia",
   "icon": "images/jsonlview-icon.png",
   "private": false,
@@ -22,15 +22,17 @@
     "native/jsonl-core/package.json",
     "README.md",
     "CHANGELOG.md",
+    "package.nls.json",
     "images/jsonlview-icon.png",
     "LICENSE.txt",
     "THIRD-PARTY-NOTICES.txt",
-    "docs/acceleration-roadmap.md",
-    "docs/roadmap.yaml",
     "docs/format-and-profile-boundaries.md",
-    "docs/metadata",
-    "docs/decisions",
-    "docs/assets",
+    "docs/assets/claude-diff.png",
+    "docs/assets/codex-timeline-exec.png",
+    "docs/assets/paste-jsonl-source.png",
+    "docs/assets/pi-system-prompt.png",
+    "docs/assets/rollout-event-insights.png",
+    "docs/assets/session-navigator-opt-in.png",
     "third_party/licenses"
   ],
   "type": "module",
@@ -65,7 +67,14 @@
   ],
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": "limited",
+      "description": "%capabilities.untrustedWorkspaces.description%",
+      "restrictedConfigurations": [
+        "jsonlView.acp.command",
+        "jsonlView.acp.args",
+        "jsonlView.acp.timeoutMs",
+        "jsonlView.acp.profiles"
+      ]
     },
     "virtualWorkspaces": {
       "supported": false,
@@ -74,15 +83,46 @@
   },
   "contributes": {
     "commands": [
+      { "command": "jsonlView.sessionNavigator.collections.create", "title": "JsonlView: New Collection", "icon": "$(new-folder)" },
+      { "command": "jsonlView.sessionNavigator.collections.rename", "title": "Rename Collection" },
+      { "command": "jsonlView.sessionNavigator.collections.delete", "title": "Delete Collection" },
+      { "command": "jsonlView.sessionNavigator.collections.fileInto", "title": "Add Reference to Collection…" },
+      { "command": "jsonlView.sessionNavigator.collections.addReference", "title": "Add Existing Reference…", "icon": "$(add)" },
+      { "command": "jsonlView.sessionNavigator.openImportCanvas", "title": "Import", "icon": "$(cloud-download)" },
+      { "command": "jsonlView.sessionNavigator.collections.unfile", "title": "Remove Reference from Collection" },
+      { "command": "jsonlView.sessionNavigator.collections.open", "title": "Open Reference in JsonlView" },
+      { "command": "jsonlView.sessionNavigator.collections.alias", "title": "Rename Reference Alias…" },
+      { "command": "jsonlView.sessionNavigator.collections.archive", "title": "Set Local Archive Intent" },
+      { "command": "jsonlView.sessionNavigator.collections.restore", "title": "Clear Local Archive Intent" },
+      { "command": "jsonlView.sessionNavigator.collections.rebind", "title": "Rebind Reference…" },
+      { "command": "jsonlView.sessionNavigator.collections.refresh", "title": "JsonlView: Refresh Collections", "icon": "$(refresh)" },
       {
         "command": "jsonlView.open",
         "title": "JsonlView: Open as Data Studio",
         "icon": "$(table)"
       },
       {
+        "command": "jsonlView.exportRawSource",
+        "title": "JsonlView: Export Entire Raw JSONL Source…",
+        "icon": "$(export)"
+      },
+      { "command": "jsonlView.exportRawRecords", "title": "JsonlView: Export Selected / Range / Matching Raw Records…", "icon": "$(export)" },
+      { "command": "jsonlView.recoverRawExport", "title": "JsonlView: Inspect or Retry Raw Export…", "icon": "$(history)" },
+      {
         "command": "jsonlView.rebuildIndex",
         "title": "JsonlView: Rebuild Index",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "jsonlView.queryRustPage",
+        "title": "JsonlView: Query Current Page with Rust Data Plane",
+        "icon": "$(search)",
+        "enablement": "resourceExtname == .jsonl || resourceExtname == .ndjson"
+      },
+      {
+        "command": "jsonlView.sendLastDiagnosticViaAcp",
+        "title": "JsonlView: Send Last Diagnostic via ACP",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "jsonlView.diagnoseWebview",
@@ -105,6 +145,11 @@
         "icon": "$(copy)"
       },
       {
+        "command": "jsonlView.sendLastDiagnosticToSideAgent",
+        "title": "JsonlView: Send Last Diagnostic to Side Agent",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "jsonlView.sessionNavigator.enable",
         "title": "JsonlView: Enable Session Navigator",
         "icon": "$(activate-breakpoints)"
@@ -115,6 +160,30 @@
         "icon": "$(circle-slash)"
       },
       {
+        "command": "jsonlView.sessionNavigator.settings",
+        "title": "JsonlView: Session Navigator Settings",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.mcpCapability",
+        "title": "JsonlView: Inspect MCP Navigation Capability",
+        "icon": "$(symbol-interface)"
+      },
+      {
+        "command": "jsonlView.previews.open",
+        "title": "Open Temporary Preview",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "jsonlView.previews.saveAs",
+        "title": "Save Preview As…",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "jsonlView.previews.openSavedCopy",
+        "title": "Open Saved Preview Copy"
+      },
+      {
         "command": "jsonlView.sessionNavigator.addSource",
         "title": "JsonlView: Add Source",
         "icon": "$(add)"
@@ -122,6 +191,22 @@
       {
         "command": "jsonlView.sessionNavigator.authorizeAgent",
         "title": "JsonlView: Connect Local Agent"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.source.files",
+        "title": "JsonlView: Add JSONL Files"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.source.folder",
+        "title": "JsonlView: Add Local Folder"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.source.paste",
+        "title": "JsonlView: Paste JSONL Source"
+      },
+      {
+        "command": "jsonlView.sessionNavigator.source.authorizeDetected",
+        "title": "JsonlView: Authorize Detected Agent"
       },
       {
         "command": "jsonlView.sessionNavigator.sort",
@@ -208,28 +293,55 @@
     "views": {
       "jsonlViewSessionNavigator": [
         {
-          "type": "webview",
           "id": "jsonlView.sourceDrop",
-          "name": "Add source",
-          "when": "config.jsonlView.sessionNavigator.enabled"
+          "name": "Collections"
         },
         {
           "id": "jsonlView.sessionNavigator",
-          "name": "Sessions",
-          "when": "config.jsonlView.sessionNavigator.enabled"
+          "name": "Agent Sessions"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "jsonlView.sessionNavigator",
+        "when": "!config.jsonlView.sessionNavigator.enabled",
+        "contents": "Session Navigator is built in. Enable it to browse local Agent sources. Source authorization is separate.\n[Enable Session Navigator](command:jsonlView.sessionNavigator.enable)\n[Open Settings](command:jsonlView.sessionNavigator.settings)"
+      }
+    ],
     "menus": {
+      "commandPalette": [
+        { "command": "jsonlView.sessionNavigator.collections.rename", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.delete", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.fileInto", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.addReference", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.openImportCanvas", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.unfile", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.open", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.alias", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.archive", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.restore", "when": "false" },
+        { "command": "jsonlView.sessionNavigator.collections.rebind", "when": "false" },
+        {
+          "command": "jsonlView.sendLastDiagnosticViaAcp",
+          "when": "isWorkspaceTrusted"
+        }
+      ],
       "view/title": [
+        { "command": "jsonlView.sessionNavigator.openImportCanvas", "when": "view == jsonlView.sourceDrop", "group": "navigation@1" },
+        { "command": "jsonlView.exportRawSource", "when": "view == jsonlView.sourceDrop", "group": "export@1" },
+        { "command": "jsonlView.exportRawRecords", "when": "view == jsonlView.sourceDrop", "group": "export@2" },
+        { "command": "jsonlView.recoverRawExport", "when": "view == jsonlView.sourceDrop", "group": "export@3" },
+        { "command": "jsonlView.sessionNavigator.collections.create", "when": "view == jsonlView.sourceDrop", "group": "collections@1" },
+        { "command": "jsonlView.sessionNavigator.collections.refresh", "when": "view == jsonlView.sourceDrop", "group": "collections@2" },
         {
           "command": "jsonlView.sessionNavigator.refresh",
-          "when": "view == jsonlView.sessionNavigator",
+          "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
           "group": "navigation@1"
         },
         {
           "command": "jsonlView.sessionNavigator.addSource",
-          "when": "view == jsonlView.sessionNavigator",
+          "when": "view == jsonlView.sessionNavigator && config.jsonlView.sessionNavigator.enabled",
           "group": "navigation@2"
         },
         {
@@ -281,12 +393,36 @@
         }
       ],
       "editor/title": [
-        {
-          "command": "jsonlView.open",
-          "group": "navigation@1"
-        }
+        { "command": "jsonlView.exportRawSource", "when": "activeCustomEditorId == jsonlView.editor", "group": "export@1" },
+        { "command": "jsonlView.exportRawRecords", "when": "activeCustomEditorId == jsonlView.editor", "group": "export@2" }
       ],
       "view/item/context": [
+        { "command": "jsonlView.sessionNavigator.collections.addReference", "when": "view == jsonlView.sourceDrop && viewItem == jsonlView.collection", "group": "inline@1" },
+        { "command": "jsonlView.sessionNavigator.collections.rename", "when": "view == jsonlView.sourceDrop && viewItem == jsonlView.collection", "group": "collections@1" },
+        { "command": "jsonlView.sessionNavigator.collections.delete", "when": "view == jsonlView.sourceDrop && viewItem == jsonlView.collection", "group": "collections@2" },
+        { "command": "jsonlView.sessionNavigator.collections.open", "when": "view == jsonlView.sourceDrop && viewItem =~ /^jsonlView\\.collection\\.entry\\.(?:session|file|source)(?:\\.archived)?$/", "group": "navigation@1" },
+        { "command": "jsonlView.sessionNavigator.collections.fileInto", "when": "view == jsonlView.sourceDrop && viewItem =~ /^jsonlView\\.collection\\.entry\\./", "group": "collections@1" },
+        { "command": "jsonlView.sessionNavigator.collections.unfile", "when": "view == jsonlView.sourceDrop && viewItem =~ /^jsonlView\\.collection\\.entry\\./", "group": "collections@2" },
+        { "command": "jsonlView.sessionNavigator.collections.alias", "when": "view == jsonlView.sourceDrop && viewItem =~ /^jsonlView\\.collection\\.entry\\.(?:session|file|source)/", "group": "collections@3" },
+        { "command": "jsonlView.sessionNavigator.collections.archive", "when": "view == jsonlView.sourceDrop && viewItem == jsonlView.collection.entry.session", "group": "collections@4" },
+        { "command": "jsonlView.sessionNavigator.collections.restore", "when": "view == jsonlView.sourceDrop && viewItem =~ /^jsonlView\\.collection\\.entry\\.(?:session|unavailable)\\.archived$/", "group": "collections@4" },
+        { "command": "jsonlView.sessionNavigator.collections.rebind", "when": "view == jsonlView.sourceDrop && viewItem =~ /^jsonlView\\.collection\\.entry\\./", "group": "collections@5" },
+        { "command": "jsonlView.sessionNavigator.collections.fileInto", "when": "view == jsonlView.sessionNavigator && viewItem =~ /^jsonlView\\.sessionNavigator\\.(?:entity|source(?:\\.partial)?)$/", "group": "collections@1" },
+        {
+          "command": "jsonlView.previews.open",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.preview.temporary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jsonlView.previews.saveAs",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.preview.temporary",
+          "group": "inline@1"
+        },
+        {
+          "command": "jsonlView.previews.openSavedCopy",
+          "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.preview.savedCopy",
+          "group": "open@1"
+        },
         {
           "command": "jsonlView.sessionNavigator.loadMore",
           "when": "view == jsonlView.sessionNavigator && viewItem == jsonlView.sessionNavigator.source.partial",
@@ -377,6 +513,32 @@
     "configuration": {
       "title": "JsonlView",
       "properties": {
+        "jsonlView.telemetry.otlp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Explicitly enable query-duration metrics export from this extension host to the configured OTLP/HTTP endpoint. No export is mounted by default."
+        },
+        "jsonlView.telemetry.otlp.endpoint": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Explicit OTLP/HTTP metrics URL ending in /v1/metrics. HTTPS is required except for loopback HTTP; workspace settings cannot override this destination."
+        },
+        "jsonlview.telemetry.otlp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Explicitly enable query-duration metrics export from this extension host to the configured OTLP/HTTP endpoint. No export is mounted by default.",
+          "deprecationMessage": "Deprecated setting. Use `jsonlView.telemetry.otlp.enabled` instead."
+        },
+        "jsonlview.telemetry.otlp.endpoint": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Explicit OTLP/HTTP metrics URL ending in /v1/metrics. HTTPS is required except for loopback HTTP; workspace settings cannot override this destination.",
+          "deprecationMessage": "Deprecated setting. Use `jsonlView.telemetry.otlp.endpoint` instead."
+        },
         "jsonlView.hydration.maxBytes": {
           "type": "number",
           "default": 1048576,
@@ -410,6 +572,44 @@
           "default": true,
           "description": "Suggest a semantic profile when bounded samples provide sufficient evidence."
         },
+        "jsonlView.acp.command": {
+          "type": "string",
+          "default": "",
+          "description": "Optional local ACP agent executable. It starts only when Send Last Diagnostic via ACP is invoked."
+        },
+        "jsonlView.acp.args": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Arguments passed to the explicitly configured ACP agent."
+        },
+        "jsonlView.acp.timeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Bounded timeout for each ACP handshake or prompt request."
+        },
+        "jsonlView.acp.profiles": {
+          "type": "array",
+          "description": "Optional local ACP v1 stdio agents. Each profile is launched only after an explicit Send Last Diagnostic via ACP action; selecting no agent starts no process.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+              "adapterId": { "type": "string", "enum": ["generic.acp-v1"], "default": "generic.acp-v1" },
+              "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "command": { "type": "string", "minLength": 1, "maxLength": 4096 },
+              "args": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 4096 } },
+              "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 60000 },
+              "executionTarget": { "type": "string", "enum": ["local"], "default": "local" },
+              "protocolVersion": { "type": "string", "enum": ["1"], "default": "1" },
+              "transport": { "type": "string", "enum": ["stdio"], "default": "stdio" }
+            },
+            "required": ["id", "label", "command", "args", "timeoutMs"]
+          }
+        },
         "jsonlView.native.newlineScanner": {
           "type": "string",
           "enum": [
@@ -425,10 +625,20 @@
           "default": "off",
           "description": "Experimental Rust newline scanner. Native failures always fall back to the bounded Node implementation."
         },
+        "jsonlView.experimental.stagedMutation.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt in to the staged mutation experiment. A trusted workspace, separately authorized source, and explicit user gesture are still required; source files remain unchanged until a future commit flow is enabled."
+        },
         "jsonlView.sessionNavigator.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex, Claude, and pi roots are detected automatically; custom roots remain explicit."
+          "description": "Opt in to the read-only Agent Session Navigator. Standard Codex, Claude, and pi roots plus explicitly configured generic agent homes are detected; custom roots remain explicit."
+        },
+        "jsonlView.sessionNavigator.hideArchivedCollectionSessions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide sessions with an archived reference in a Collection from Agent Sessions. Archive intent remains Collection metadata; restoring the reference or removing its last Collection membership makes the session visible again. Missing Collection metadata leaves sessions visible."
         },
         "jsonlView.sessionNavigator.sort": {
           "type": "string",
@@ -444,13 +654,13 @@
         "jsonlView.sessionNavigator.sources": {
           "type": "array",
           "default": [],
-          "description": "Additional local Agent source roots. Standard Codex, Claude, and pi roots are detected automatically; all paths are read-only.",
+          "description": "Additional local Agent source roots. Standard Codex, Claude, pi, and Kimi Code roots plus explicit Gemini, OpenCode, and AgentsView homes may be detected as candidates; scanning requires separate source authorization. All paths are read-only.",
           "items": {
             "type": "object",
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["codex", "claude", "pi", "generic"]
+                "enum": ["codex", "claude", "pi", "kimi", "gemini", "opencode", "agentsview", "generic"]
               },
               "rootUri": {
                 "type": "string",
@@ -469,6 +679,12 @@
   },
   "scripts": {
     "build": "node esbuild.mjs",
+    "build:react-compiler:smoke": "node scripts/react-compiler-smoke.mjs",
+    "verify:execution-identity": "node scripts/execution-identity.mjs --dist dist",
+    "verify:mcp-client": "node scripts/mcp-client-smoke.mjs",
+    "workspace:build": "turbo run build",
+    "workspace:typecheck": "turbo run typecheck",
+    "workspace:test": "turbo run test",
     "benchmark:engine": "node scripts/benchmark-engine.mjs",
     "benchmark:trend": "node scripts/benchmark-trend.mjs",
     "benchmark:newlines": "node scripts/benchmark-newline-scanners.mjs",
@@ -479,9 +695,16 @@
     "check:cargo-notices": "node scripts/check-cargo-notices.mjs",
     "generate:cargo-notices": "node scripts/generate-cargo-notices.mjs",
     "check:runtime-notices": "node scripts/check-runtime-notices.mjs",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "review:modules": "node scripts/module-review.mjs --all",
+    "check:typescript-erasable": "tsc --noEmit -p tsconfig.erasable-syntax.json",
+    "check:typescript-gates": "node scripts/check-typescript-gates.mjs",
+    "check:typescript-tests": "tsc --noEmit -p tsconfig.tests.json",
     "agent-spec-lint": "node scripts/check-agent-spec.mjs",
     "check:agent-spec": "pnpm agent-spec-lint",
     "check:docs-index": "node scripts/check-docs-index.mjs",
+    "docs:index:generate": "node scripts/generate-doc-index.mjs",
+    "docs:index": "node scripts/docs-index.mjs",
     "audit:cargo": "cargo audit --file native/jsonl-core/Cargo.lock",
     "check:cargo-policy": "cargo deny --manifest-path native/jsonl-core/Cargo.toml --config deny.toml check advisories licenses bans sources",
     "discover:producers": "node scripts/discover-producer-surfaces.mjs",
@@ -501,34 +724,45 @@
     "watch": "node esbuild.mjs --watch",
     "check:contract": "node scripts/check-engineering-contract.mjs",
     "check:biome": "node scripts/check-biome.mjs",
+    "check:biome:plugin": "node scripts/check-biome-plugin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --maxWorkers=2",
     "test:watch": "vitest",
     "package:vsix": "node scripts/package-vsix.mjs",
     "package:vsix:candidate": "node scripts/package-vsix-candidate.mjs",
     "verify:vsix-targets": "node scripts/verify-vsix-targets.mjs"
   },
   "dependencies": {
-    "@tanstack/react-virtual": "3.14.13",
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.301.0",
+    "@opentelemetry/resources": "3.1.0",
+    "@opentelemetry/sdk-metrics": "3.1.0",
+    "@tanstack/react-virtual": "3.14.25",
     "lucide-react": "1.47.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@babel/core": "7.29.6",
+    "@babel/parser": "7.29.8",
+    "@biomejs/biome": "2.6.4",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@napi-rs/cli": "3.10.5",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/vscode": "1.136.0",
-    "@vitest/coverage-v8": "5.0.1",
+    "@vitest/coverage-v8": "5.0.3",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "4.0.0",
+    "@vscode/vsce": "4.1.0",
+    "babel-plugin-react-compiler": "1.0.0",
     "esbuild": "0.28.2",
     "tar": "7.5.22",
+    "turbo": "^2.5.6",
     "typescript": "7.0.2",
-    "vitest": "5.0.1",
+    "vite": "8.2.4",
+    "vitest": "5.0.3",
     "yauzl": "3.4.0"
   },
   "packageManager": "pnpm@10.26.0"

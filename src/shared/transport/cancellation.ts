@@ -36,13 +36,19 @@ export class CancellationRegistry {
     return controller.signal;
   }
 
-  public finish(requestId: string): void {
+  /** Only the handler that acquired the current signal may retire its registration. */
+  public finish(requestId: string, signal: AbortSignal): boolean {
+    const controller = this.requests.get(requestId);
+    if (controller === undefined || controller.signal !== signal) {
+      return false;
+    }
     this.requests.delete(requestId);
     for (const [channel, activeRequestId] of this.channels) {
       if (activeRequestId === requestId) {
         this.channels.delete(channel);
       }
     }
+    return true;
   }
 
   public cancel(requestId: string): boolean {
@@ -51,7 +57,7 @@ export class CancellationRegistry {
       return false;
     }
     controller.abort();
-    this.finish(requestId);
+    this.finish(requestId, controller.signal);
     return true;
   }
 

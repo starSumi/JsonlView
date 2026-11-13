@@ -1,3 +1,15 @@
+---
+id: "023-keyless-target-separated-publication"
+path: "docs/decisions/023-keyless-target-separated-publication.md"
+title: "Keyless and Target-Separated Publication"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["credentials","publication","release"]
+evidence: []
+revisit: "when registry publication contracts change"
+rollback: "stop publication and use separate target gates"
+---
 # ADR-023: Keyless and Target-Separated Publication
 
 ## Pressure

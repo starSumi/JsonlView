@@ -1,4 +1,4 @@
-import type { ProfileSuggestion } from '../shared/types';
+import type { ProfileSuggestion } from '@shared/types';
 
 export interface ProfileOption {
   id: string;

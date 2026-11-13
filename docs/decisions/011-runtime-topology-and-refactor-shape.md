@@ -1,3 +1,15 @@
+---
+id: "011-runtime-topology-and-refactor-shape"
+path: "docs/decisions/011-runtime-topology-and-refactor-shape.md"
+title: "Runtime Topology And Refactor Shape"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","extension-host","webview"]
+evidence: []
+revisit: "when a runtime boundary or build consumer changes"
+rollback: "retain the modular monolith topology"
+---
 # ADR-011: Runtime Topology And Refactor Shape
 
 Status: accepted

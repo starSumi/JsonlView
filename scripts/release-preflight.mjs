@@ -14,6 +14,7 @@ import { getExtensionTarget, getReleaseTargets, resolveExtensionTarget } from '.
 import { canonicalVsixPairEvidence, computeVsixPairSha256, verifyVsixTargetEvidence } from './verify-vsix-targets.mjs';
 import { checkPublicSurface } from './check-public-surface.mjs';
 import { normalizeRepositoryIdentity } from './repository-identity.mjs';
+import { isVsixPathAllowed, isVsixPathForbidden } from './vsix-package-policy.mjs';
 export { normalizeRepositoryIdentity } from './repository-identity.mjs';
 
 const execFile = promisify(execFileCallback);
@@ -761,6 +762,7 @@ export function findForbiddenDistributionPaths(paths, prefix = '') {
       || /(?:^|\/)(?:\.vscodeignore|Cargo(?:\.lock|\.toml)?|build\.rs|\.env(?:\..*)?|\.npmrc|.*\.(?:pem|key|p12|pfx)|.*\.provenance\.json)$/i.test(path)) {
       forbidden.push(normalized);
     }
+    if (normalizedPrefix.toLowerCase() === 'extension/' && isVsixPathForbidden(path)) forbidden.push(normalized);
   }
   return [...new Set(forbidden)].sort(stableCompare);
 }
@@ -769,7 +771,12 @@ export function findForbiddenDistributionPaths(paths, prefix = '') {
 export function findUnexpectedVsixDistributionPaths(paths) {
   if (!Array.isArray(paths)) return ['<missing-inventory>'];
   return paths
-    .filter((path) => typeof path !== 'string' || !isAllowedVsixPath(path.replaceAll('\\', '/')))
+    .filter((path) => {
+      if (typeof path !== 'string') return true;
+      const normalized = path.replaceAll('\\', '/');
+      if (normalized === '[Content_Types].xml' || normalized === 'extension.vsixmanifest') return false;
+      return !isVsixPathAllowed(normalized);
+    })
     .map((path) => typeof path === 'string' ? path : '<invalid-path>')
     .sort(stableCompare);
 }
@@ -795,19 +802,6 @@ function findUnreferencedShowcaseAssets(paths, referencedAssets, prefix = '') {
     .map((path) => path.replaceAll('\\', '/'))
     .filter((path) => path.toLowerCase().startsWith(normalizedPrefix.toLowerCase() + 'docs/assets/'))
     .filter((path) => !referenced.has(path.slice(normalizedPrefix.length))))].sort(stableCompare);
-}
-
-function isAllowedVsixPath(path) {
-  if (path === '[Content_Types].xml' || path === 'extension.vsixmanifest') return true;
-  if (!path.startsWith('extension/')) return false;
-  const relativePath = path.slice('extension/'.length);
-  const foldedPath = relativePath.toLowerCase();
-  if (['package.json', 'readme.md', 'changelog.md', 'license.txt', 'third-party-notices.txt'].includes(foldedPath)) return true;
-  if (foldedPath === 'images/jsonlview-icon.png') return true;
-  if (['dist/extension.cjs', 'dist/webview.css', 'dist/webview.js'].includes(foldedPath)) return true;
-  if (['native/jsonl-core/jsonl_core.win32-x64-msvc.node', 'native/jsonl-core/index.d.ts', 'native/jsonl-core/package.json'].includes(foldedPath)) return true;
-  if (['docs/acceleration-roadmap.md', 'docs/format-and-profile-boundaries.md'].includes(foldedPath)) return true;
-  return /^(?:docs\/assets|docs\/decisions|third_party\/licenses)\/.+/i.test(relativePath);
 }
 
 function requireSourceProvenance(source, current, label, check) {

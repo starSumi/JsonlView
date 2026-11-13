@@ -1,3 +1,15 @@
+---
+id: "028-staged-mutation-benchmark"
+path: "docs/decisions/028-staged-mutation-benchmark.md"
+title: "Staged Mutation Benchmark and Failure Replay"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["benchmark","failure","mutation"]
+evidence: []
+revisit: "when mutation benchmark scope changes"
+rollback: "remove the mutation path from the candidate"
+---
 # ADR-028: Synthetic Staged-Mutation Benchmark and Failure Replay
 
 Status: experimental

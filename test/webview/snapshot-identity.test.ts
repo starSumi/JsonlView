@@ -13,7 +13,7 @@ const summary: DocumentSummary = {
 };
 const opened = (payload: DocumentSummary, epoch?: number): Extract<ExtensionMessage, { type: 'OPENED' }> => ({
   protocolVersion: PROTOCOL_VERSION, type: 'OPENED', documentId: payload.snapshot.documentId,
-  generation: payload.snapshot.generation, requestId: '', payload,
+  generation: payload.snapshot.generation, requestId: '', delivery: 'broadcast', payload,
   ...(epoch === undefined ? {} : { epoch }),
 });
 
@@ -45,7 +45,7 @@ describe('accepted snapshot identity', () => {
     state = workspaceReducer(state, { type: 'REQUEST_SENT', request: oldRows });
     state = workspaceReducer(state, { type: 'REQUEST_SENT', request: oldDetail });
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
-      protocolVersion: PROTOCOL_VERSION, type: 'SOURCE_INVALIDATED', ...identity, requestId: '', payload: { reason: 'replace' },
+      protocolVersion: PROTOCOL_VERSION, type: 'SOURCE_INVALIDATED', ...identity, requestId: '', delivery: 'broadcast', payload: { reason: 'replace' },
     } });
     const next = opened({ ...summary, snapshot: { ...summary.snapshot, epoch: 2 } }, 2);
     const accepted = client.accept(next);
@@ -70,7 +70,7 @@ describe('accepted snapshot identity', () => {
   it('keeps a duplicate OPENED behind the destructive barrier', () => {
     let state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: opened(summary, 1) });
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
-      protocolVersion: PROTOCOL_VERSION, type: 'SOURCE_INVALIDATED', ...identity, requestId: '', payload: { reason: 'replace' },
+      protocolVersion: PROTOCOL_VERSION, type: 'SOURCE_INVALIDATED', ...identity, requestId: '', delivery: 'broadcast', payload: { reason: 'replace' },
     } });
     expect(workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: opened(summary, 1) }).invalidationReason).toBe('replace');
   });
@@ -81,7 +81,7 @@ describe('accepted snapshot identity', () => {
     const client = new VsCodeMessageClient({ postMessage: () => undefined }, identity);
     let state = workspaceReducer(createInitialState(), { type: 'MESSAGE_RECEIVED', message: opened(legacySummary, 1) });
     state = workspaceReducer(state, { type: 'MESSAGE_RECEIVED', message: {
-      protocolVersion: PROTOCOL_VERSION, type: 'SOURCE_INVALIDATED', ...identity, requestId: '', payload: { reason: 'replace' },
+      protocolVersion: PROTOCOL_VERSION, type: 'SOURCE_INVALIDATED', ...identity, requestId: '', delivery: 'broadcast', payload: { reason: 'replace' },
     } });
     const next = client.accept(opened(legacySummary, 2));
     expect(client.session.epoch).toBe(2);

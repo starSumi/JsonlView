@@ -1,3 +1,15 @@
+---
+id: "038-claude-tool-result-presentation"
+path: "docs/decisions/038-claude-tool-result-presentation.md"
+title: "Claude Top-Level Tool Result Presentation"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["claude","presentation","tools"]
+evidence: []
+revisit: "when Claude tool-result shapes change"
+rollback: "retain the raw bounded presentation"
+---
 # ADR-038: Claude Top-Level Tool Result Presentation
 
 Status: experimental

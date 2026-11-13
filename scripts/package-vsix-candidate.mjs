@@ -2,15 +2,17 @@ import { createHash } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 import { copyFrozenBundle, compareBundleInventories, inventoryFrozenBundle } from './bundle-integrity.mjs';
+import { assertExecutionIdentityMatchesSource, verifyBuiltExecutionIdentityForSource } from './execution-identity.mjs';
 import { compareVsixArchiveIdentity, inspectVsixArchive } from './vsix-archive-integrity.mjs';
 import { assertOutsideTree, assertPathsDoNotOverlap, isWithin } from './path-boundary.mjs';
 import { resolveExtensionTarget } from './release-targets.mjs';
 import { extractReferencedAssets } from './check-public-surface.mjs';
+import { findVsixPolicyViolations, projectArtifactReadme, VSIX_PUBLIC_ASSETS, VSIX_PUBLIC_FILES } from './vsix-package-policy.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -28,6 +30,7 @@ const frozenDist = resolve(options.dist);
 await assertRegularFile(nativeBinary, 'native candidate');
 await assertRegularFile(declaration, 'native candidate declaration');
 await assertOutsideCheckout(frozenDist, 'frozen dist');
+const executionIdentity = await verifyBuiltExecutionIdentityForSource({ rootDirectory: root, distDirectory: frozenDist });
 const frozenBundle = await inventoryFrozenBundle(frozenDist);
 
 const output = resolve(options.out);
@@ -55,15 +58,18 @@ try {
     await assertDirectoryEmpty(staging);
   }
 
-  const packageFiles = [
-    'README.md',
-    'CHANGELOG.md',
-    'LICENSE.txt',
-    'THIRD-PARTY-NOTICES.txt',
-    '.vscodeignore',
-  ];
-  for (const file of packageFiles) await cp(resolve(root, file), resolve(staging, file));
   const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+  const readme = await readFile(resolve(root, 'README.md'), 'utf8');
+  const projectedReadme = projectArtifactReadme(readme, {
+    repositoryUrl: packageJson.repository?.url,
+    commitSha: sourceState.sha,
+    allowedPaths: [...VSIX_PUBLIC_FILES, ...VSIX_PUBLIC_ASSETS],
+  });
+  for (const file of VSIX_PUBLIC_FILES) {
+    if (file === 'README.md') continue;
+    await cp(resolve(root, file), resolve(staging, file));
+  }
+  await writeFile(resolve(staging, 'README.md'), projectedReadme, 'utf8');
   const releaseTarget = options.target === undefined ? undefined : await resolveExtensionTarget(options.target);
   if (releaseTarget !== undefined) {
     if (options.publisher !== undefined && options.publisher !== releaseTarget.publisher) {
@@ -76,23 +82,13 @@ try {
     packageJson.publisher = options.publisher;
   }
   if (options.version !== undefined) packageJson.version = options.version;
-  // VSCE accepts either a `files` allowlist or .vscodeignore, never both.
-  // npm keeps the allowlist in the source manifest; the VSIX staging copy uses
-  // the reviewed .vscodeignore so the two artifact policies cannot conflict.
+  if (typeof packageJson.icon !== 'string' || !VSIX_PUBLIC_FILES.includes(packageJson.icon.trim())) {
+    throw new Error(`VSIX icon must be one of the explicit public files: ${packageJson.icon ?? '<missing>'}`);
+  }
+  // npm keeps its own allowlist in the source manifest. VSIX staging is
+  // assembled independently from the explicit policy above.
   delete packageJson.files;
   await writeFile(resolve(staging, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
-  if (typeof packageJson.icon === 'string' && packageJson.icon.trim().length > 0) {
-    const iconPath = packageJson.icon.trim();
-    if (isAbsolute(iconPath)) throw new Error('VSIX icon path must be relative to the product checkout');
-    const sourceIcon = resolve(root, iconPath);
-    if (!isWithin(root, sourceIcon) || sourceIcon === root) {
-      throw new Error(`VSIX icon path must stay inside the product checkout: ${iconPath}`);
-    }
-    await assertRegularFile(sourceIcon, 'VSIX icon');
-    const stagedIcon = resolve(staging, iconPath);
-    await mkdir(dirname(stagedIcon), { recursive: true });
-    await cp(sourceIcon, stagedIcon);
-  }
   await mkdir(resolve(staging, 'dist'), { recursive: true });
   const stagedBundle = await copyFrozenBundle(frozenDist, resolve(staging, 'dist'));
   await mkdir(resolve(staging, 'native/jsonl-core'), { recursive: true });
@@ -103,8 +99,10 @@ try {
   const stagedNativeSha256 = hash(stagedNativeBinary);
   // Ship only README-referenced showcase assets. Retired screenshots may stay
   // in the checkout for history, but they must never enter a public VSIX.
-  const readme = await readFile(resolve(root, 'README.md'), 'utf8');
   for (const asset of extractReferencedAssets(readme)) {
+    if (!VSIX_PUBLIC_ASSETS.includes(asset)) {
+      throw new Error(`VSIX README asset is outside the explicit public allowlist: ${asset}`);
+    }
     const sourceAsset = resolve(root, asset);
     if (!isWithin(root, sourceAsset) || sourceAsset === root) {
       throw new Error(`VSIX showcase asset must stay inside the product checkout: ${asset}`);
@@ -114,10 +112,13 @@ try {
     await mkdir(dirname(stagedAsset), { recursive: true });
     await cp(sourceAsset, stagedAsset);
   }
-  await cp(resolve(root, 'docs/acceleration-roadmap.md'), resolve(staging, 'docs/acceleration-roadmap.md'));
-  await cp(resolve(root, 'docs/format-and-profile-boundaries.md'), resolve(staging, 'docs/format-and-profile-boundaries.md'));
-  await cp(resolve(root, 'docs/decisions'), resolve(staging, 'docs/decisions'), { recursive: true });
   await cp(resolve(root, 'third_party/licenses'), resolve(staging, 'third_party/licenses'), { recursive: true });
+
+  const stagingFiles = await inventoryStagingFiles(staging);
+  const stagingViolations = findVsixPolicyViolations(stagingFiles);
+  if (stagingViolations.length > 0) {
+    throw new Error(`VSIX staging contains files outside the explicit allowlist: ${stagingViolations.join(', ')}`);
+  }
 
   // Invoke the package's Node entrypoint directly. Calling the Windows .cmd
   // shim through child_process.execFile produces EINVAL on some Node builds
@@ -153,6 +154,7 @@ try {
   if (bundleIssues.length > 0) throw new Error(`finished VSIX bundle differs from frozen staging: ${bundleIssues.join(', ')}`);
   const afterPackageState = await readGitState();
   assertGitStateStable(sourceState, afterPackageState);
+  await assertExecutionIdentityMatchesSource(root, executionIdentity, { requireCleanProduction: true });
   const manifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -162,6 +164,7 @@ try {
       statusSha256: sourceState.statusSha256,
       diffSha256: sourceState.diffSha256,
       root: '<workspace>',
+      executionIdentity,
     },
     reproducibility: {
       sourceDateEpoch: sourceDateEpoch ?? null,
@@ -324,6 +327,22 @@ async function assertOutputReady(path, replace) {
 async function assertDirectoryEmpty(path) {
   const entries = await readdir(path);
   if (entries.length > 0) throw new Error(`VSIX staging directory must be empty: ${path}`);
+}
+
+async function inventoryStagingFiles(directory, prefix = '') {
+  const files = [];
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const relativePath = `${prefix}${entry.name}`.replaceAll('\\', '/');
+    if (entry.isDirectory()) {
+      files.push(...await inventoryStagingFiles(resolve(directory, entry.name), `${relativePath}/`));
+    } else if (entry.isFile()) {
+      files.push(relativePath);
+    } else {
+      throw new Error(`VSIX staging contains a non-regular entry: ${relativePath}`);
+    }
+  }
+  return files;
 }
 
 function hash(path) {

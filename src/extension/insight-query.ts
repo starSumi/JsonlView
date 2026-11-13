@@ -1,14 +1,14 @@
 import { CategoricalAggregator, TimeBucketAggregator } from '../aggregation';
 import type { GetRowsOptions, RowEnricher } from '../engine';
 import type {
-  InsightDimension,
+  AnalysisIntentV1,
   InsightSummary,
-  Predicate,
   RowPage,
   ScanTruncationReason,
-} from '../shared/types';
+} from '@shared/types';
 
 const INSIGHT_PAGE_SIZE = 500;
+const INSIGHT_ROW_PROJECTION = { conversation: false, dataset: false };
 const INSIGHT_BUCKET_WIDTH_MS = 5 * 60 * 1_000;
 const DEFAULT_INSIGHT_MAX_EXAMINED_RECORDS = 100_000;
 const DEFAULT_INSIGHT_MAX_EXAMINED_BYTES = 64 * 1024 * 1024;
@@ -31,14 +31,14 @@ export interface InsightQueryRequest {
   source: InsightRowSource;
   generation: string;
   enricher: RowEnricher;
-  dimension: InsightDimension;
-  predicate: Predicate | undefined;
+  intent: AnalysisIntentV1;
   signal: AbortSignal;
   limits: InsightQueryLimits;
 }
 
 export async function runInsightQuery(request: InsightQueryRequest): Promise<InsightSummary> {
-  const { source, generation, enricher, dimension, predicate, signal, limits } = request;
+  const { source, generation, enricher, intent, signal, limits } = request;
+  const { dimension, predicate } = intent;
   throwIfAborted(signal);
   const categories = new CategoricalAggregator({
     selector: { kind: 'common', dimension },
@@ -53,6 +53,7 @@ export async function runInsightQuery(request: InsightQueryRequest): Promise<Ins
   let examinedRecords = 0n;
   let examinedBytes = 0n;
   let truncatedReason: ScanTruncationReason | undefined;
+  let sawUninspectableRecord = false;
   const maxExaminedRecords = boundedInsightLimit(
     limits.maxExaminedRecords,
     DEFAULT_INSIGHT_MAX_EXAMINED_RECORDS,
@@ -85,15 +86,23 @@ export async function runInsightQuery(request: InsightQueryRequest): Promise<Ins
       truncatedReason = 'byte_limit';
       break;
     }
+    // Bound physical work even when a sparse predicate returns no matched rows.
+    const pageRecordLimit = Number(remainingRecords < BigInt(INSIGHT_PAGE_SIZE)
+      ? remainingRecords : BigInt(INSIGHT_PAGE_SIZE));
     const page = await source.getRows({
       ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      columns: [],
       limit: INSIGHT_PAGE_SIZE,
       ...(predicate === undefined ? {} : { predicate }),
+      ...(predicate === undefined ? {} : {
+        onHydrated: (record) => { sawUninspectableRecord ||= record.value === undefined; },
+      }),
       enricher,
       generation,
+      projection: INSIGHT_ROW_PROJECTION,
       signal,
       scanBudget: {
-        maxExaminedRecords: Number(remainingRecords),
+        maxExaminedRecords: pageRecordLimit,
         maxExaminedBytes: remainingBytes,
         deadlineEpochMs,
       },
@@ -113,12 +122,21 @@ export async function runInsightQuery(request: InsightQueryRequest): Promise<Ins
       }
     }
     if (!continueScanning) break;
-    if (scan.truncatedReason !== undefined) {
+    const continuesRecordSlice = scan.truncatedReason === 'record_limit'
+      && BigInt(pageRecordLimit) < remainingRecords
+      && page.hasAfter;
+    if (scan.truncatedReason !== undefined && !continuesRecordSlice) {
       truncatedReason = scan.truncatedReason;
       break;
     }
-    if (!page.hasAfter) break;
-    if (scan.cursorOrdinal === undefined || scan.examinedRecords === '0') {
+    if (!page.hasAfter) {
+      // The last physical slice may not contain the earlier uninspectable row.
+      // Keep its coverage signal without stopping before later in-budget matches.
+      if (sawUninspectableRecord) truncatedReason = 'uninspectable_record';
+      break;
+    }
+    if (scan.cursorOrdinal === undefined || scan.examinedRecords === '0'
+      || (anchorOrdinal !== undefined && BigInt(scan.cursorOrdinal) <= BigInt(anchorOrdinal))) {
       throw new Error('The JSONL engine returned a non-progressing Insights cursor.');
     }
     anchorOrdinal = scan.cursorOrdinal;
@@ -127,7 +145,14 @@ export async function runInsightQuery(request: InsightQueryRequest): Promise<Ins
   const categoryResult = categories.finish();
   const timeResult = time.finish();
   return {
-    dimension,
+    intent,
+    provenance: {
+      scope: intent.scope,
+      predicateApplied: predicate !== undefined,
+      coverage: truncatedReason === undefined
+        && !categoryResult.meta.truncatedByRecordLimit
+        && !timeResult.meta.truncatedByRecordLimit ? 'complete' : 'bounded',
+    },
     categories: categoryResult.groups.map((group) => ({
       label: group.label,
       count: group.count,

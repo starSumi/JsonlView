@@ -1,0 +1,127 @@
+name: Bug report
+description: Report a reproducible problem in JsonlView
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        JsonlView is a read-only viewer for local JSONL and NDJSON data.
+        Do not paste real transcripts, credentials, notification bodies, or
+        unredacted local paths. Use a small synthetic or redacted fixture.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before opening this issue
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I confirmed that the input is a file-backed .jsonl or .ndjson source.
+          required: true
+        - label: I removed private data, secrets, and machine-specific paths from this report.
+          required: true
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected product surface
+      options:
+        - Core data engine or indexing
+        - Table, Timeline, Schema, or Problems view
+        - Insights, Tree, Raw, Derived, or Bytes view
+        - Source intake or temporary preview
+        - Session Navigator
+        - Profile detection or semantic projection
+        - Native scanner
+        - ACP or diagnostic handoff
+        - Packaging or installation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source_kind
+    attributes:
+      label: Source or profile shape
+      options:
+        - Generic JSONL or NDJSON
+        - Codex session data
+        - Claude Code session data
+        - pi session data
+        - OpenTelemetry or structured application logs
+        - Dataset profile
+        - Not applicable
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the JsonlView version, VS Code version, OS, and architecture.
+      placeholder: JsonlView 0.2.11; VS Code 1.136.0; Windows 11 x64
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction steps
+      description: List the smallest sequence that reproduces the problem.
+      placeholder: |
+        1. Open a redacted fixture with Open With -> JsonlView.
+        2. Select the ... view or run the ... command.
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should JsonlView do for this input and action?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include a stable error name if one is shown.
+    validations:
+      required: true
+
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Minimal redacted fixture
+      description: Include only the smallest synthetic or redacted records needed to reproduce the issue.
+      render: json
+      placeholder: |
+        {"type":"example","timestamp":"2026-01-01T00:00:00Z"}
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste relevant output without source content, secrets, or full local paths.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add a screenshot, regression range, or related issue when it is safe to share.
+    validations:
+      required: false
+

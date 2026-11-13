@@ -7,6 +7,7 @@ src/**
 test/**
 coverage/**
 node_modules/**
+**/node_modules/**
 scripts/**
 native/jsonl-core/src/**
 native/jsonl-core/target/**
@@ -31,5 +32,14 @@ vitest.config.ts
 esbuild.mjs
 pnpm-lock.yaml
 AGENTS.md
+docs/**
+!docs/
 !docs/format-and-profile-boundaries.md
-!docs/decisions/**
+!docs/assets/
+docs/assets/**
+!docs/assets/claude-diff.png
+!docs/assets/codex-timeline-exec.png
+!docs/assets/paste-jsonl-source.png
+!docs/assets/pi-system-prompt.png
+!docs/assets/rollout-event-insights.png
+!docs/assets/session-navigator-opt-in.png

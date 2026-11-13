@@ -1,3 +1,15 @@
+---
+id: "service-levels"
+path: "docs/reliability/service-levels.md"
+title: "Reliability Service Levels"
+kind: "reliability"
+status: "active"
+owner: "product"
+tags: ["error-budget","reliability","sli","slo"]
+evidence: []
+revisit: "when reliability budgets or runtime surfaces change"
+rollback: "retain the last accepted service-level policy"
+---
 # Reliability Service Levels
 
 ## Scope

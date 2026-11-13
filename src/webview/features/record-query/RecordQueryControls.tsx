@@ -1,8 +1,11 @@
-import React, { useRef } from 'react';
-import { ArrowDownNarrowWide, ArrowDownWideNarrow, Filter, Search, X } from 'lucide-react';
-import type { ColumnSpec, RowFilterOperator, SortDirection } from '../../../shared/types';
-import { useLightDismiss } from '../../use-light-dismiss';
-import { useViewportPopover } from '../../use-viewport-popover';
+import type React from 'react';
+import { useRef, useState } from 'react';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Filter, Search, X } from 'lucide-react';
+import type { ColumnSpec, RowFilter, RowFilterOperator, SortDirection } from '@shared/types';
+import { useLightDismiss } from '@webview/shared/hooks/use-light-dismiss';
+import { useViewportPopover } from '@webview/use-viewport-popover';
+import { describeFieldFilter, MAX_FIELD_FILTERS } from './query-selection';
+import { RowTypeFilterFields, type RowTypeChooserProps } from './RowTypeChooser';
 
 export interface FilterOperatorOption {
   value: RowFilterOperator;
@@ -11,6 +14,7 @@ export interface FilterOperatorOption {
 }
 
 export interface RecordQueryControlsProps {
+  controlNamePrefix?: string;
   query: string;
   searchDisabled: boolean;
   sortDirection: SortDirection;
@@ -21,6 +25,7 @@ export interface RecordQueryControlsProps {
   onSearchChange: (query: string) => void;
   onSearchClear: () => void;
   filterActive: boolean;
+  filters?: readonly RowFilter[];
   filterableColumns: readonly ColumnSpec[];
   filterColumnId: string;
   filterOperator: RowFilterOperator;
@@ -33,9 +38,12 @@ export interface RecordQueryControlsProps {
   onFilterCaseSensitiveChange: (enabled: boolean) => void;
   onFilterSubmit: () => void;
   onFilterClear: () => void;
+  onFilterRemove?: (index: number) => void;
+  rowTypes?: RowTypeChooserProps | undefined;
 }
 
 export function RecordQueryControls({
+  controlNamePrefix = 'record',
   query,
   searchDisabled,
   sortDirection,
@@ -46,6 +54,7 @@ export function RecordQueryControls({
   onSearchChange,
   onSearchClear,
   filterActive,
+  filters = [],
   filterableColumns,
   filterColumnId,
   filterOperator,
@@ -58,26 +67,40 @@ export function RecordQueryControls({
   onFilterCaseSensitiveChange,
   onFilterSubmit,
   onFilterClear,
+  onFilterRemove,
+  rowTypes,
 }: RecordQueryControlsProps): React.JSX.Element {
   const filterMenuRef = useRef<HTMLDetailsElement>(null);
   useLightDismiss(filterMenuRef);
   useViewportPopover(filterMenuRef);
+  const [fieldSearch, setFieldSearch] = useState('');
+  const term = fieldSearch.trim().toLocaleLowerCase();
+  const matchingFields = filterableColumns.filter((column) => column.label.toLocaleLowerCase().includes(term));
+  const displayedFields = matchingFields.slice(0, 50);
+  const selectedColumn = filterableColumns.find((column) => column.id === filterColumnId);
+  if (selectedColumn !== undefined && !displayedFields.some((column) => column.id === filterColumnId)) displayedFields.unshift(selectedColumn);
   const needsValue = !['exists', 'is_null'].includes(filterOperator);
   const supportsCaseSensitive = ['contains', 'starts_with', 'ends_with'].includes(filterOperator);
-  const rowOrderTitle = descendingDisabled
-    ? descendingDisabledReason
-    : sortDirection === 'asc'
-      ? 'Rows: first line first; activate for last line first'
-      : 'Rows: last line first; activate for first line first';
+  const nextSortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+  const sortUnavailable = searchDisabled || (nextSortDirection === 'desc' && descendingDisabled);
+  const sortAction = nextSortDirection === 'desc'
+    ? 'Sort rows descending; last line first'
+    : 'Sort rows ascending; first line first';
+  const sortUnavailableReason = nextSortDirection === 'desc' && descendingDisabled ? descendingDisabledReason : undefined;
+  const selectedRowTypes = rowTypes?.selection?.values.length ?? 0;
+  const filterCount = filters.length + selectedRowTypes;
+  const searchFormId = `${controlNamePrefix}-search-form`;
 
   return (
     <>
+      {/* biome-ignore lint/a11y/useSemanticElements: This form both submits the table query and provides its search landmark. */}
       <form
+        id={searchFormId}
         className="search-box"
         role="search"
         onSubmit={(event) => {
           event.preventDefault();
-          onSearchSubmit();
+          if (!searchDisabled) onSearchSubmit();
         }}
       >
         <Search size={14} aria-hidden />
@@ -85,6 +108,7 @@ export function RecordQueryControls({
           value={query}
           placeholder="Search records"
           aria-label="Search records"
+          aria-description="Search and filters query the current file together in bounded scans; results appear in this table."
           disabled={searchDisabled}
           onChange={(event) => onSearchChange(event.target.value)}
         />
@@ -94,39 +118,53 @@ export function RecordQueryControls({
           </button>
         ) : null}
       </form>
-      <div
+      <button
+        type="button"
         className="row-order-control"
-        role="group"
-        aria-label="Record order"
-        title={descendingDisabled ? descendingDisabledReason : undefined}
+        data-direction={sortDirection}
+        aria-label="Descending row order; last line first"
+        aria-pressed={sortDirection === 'desc'}
+        aria-description={sortUnavailableReason}
+        title={sortUnavailableReason ?? sortAction}
+        disabled={sortUnavailable}
+        onClick={() => onSortDirectionChange(nextSortDirection)}
       >
-        <button
-          type="button"
-          className="icon-button"
-          title={rowOrderTitle}
-          aria-label="Toggle row order"
-          aria-pressed={sortDirection === 'desc'}
-          aria-description={descendingDisabled ? descendingDisabledReason : undefined}
-          disabled={descendingDisabled}
-          onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
-        >
-          {sortDirection === 'asc'
-            ? <ArrowDownNarrowWide size={15} aria-hidden />
-            : <ArrowDownWideNarrow size={15} aria-hidden />}
-        </button>
-      </div>
+        {sortDirection === 'asc' ? <ArrowUpNarrowWide size={15} aria-hidden /> : <ArrowDownWideNarrow size={15} aria-hidden />}
+        <span className="query-tool-label" aria-hidden="true">{sortDirection === 'asc' ? 'Asc' : 'Desc'}</span>
+      </button>
       <details className="filter-menu" ref={filterMenuRef}>
-        <summary className={`icon-button${filterActive ? ' is-active' : ''}`} title="Filter records" aria-label="Filter records">
-          <Filter size={15} aria-hidden />
+        <summary className={`query-tool-button${filterActive || selectedRowTypes > 0 ? ' is-active' : ''}`}
+          title={rowTypes ? 'Filters: field conditions and row types' : 'Field filters: match all conditions'}
+          aria-label={rowTypes ? 'Filters' : 'Field filters'}
+          aria-description={rowTypes
+            ? `${filters.length} field conditions applied; ${selectedRowTypes} row types selected`
+            : filters.length ? `${filters.length} field conditions applied` : undefined}>
+          <Filter size={15} aria-hidden /><span className="query-tool-label">{rowTypes ? 'Filters' : 'Field filters'}</span>
+          {filterCount ? <span className="query-tool-count" aria-hidden="true">({filterCount})</span> : null}
         </summary>
+        <div className="filter-popover query-filters-popover" data-popover-width="340" data-popover-height="560">
         <form
-          className="filter-popover"
+          className="field-filter-form"
+          aria-labelledby={`${controlNamePrefix}-field-filters`}
           onSubmit={(event) => {
             event.preventDefault();
             onFilterSubmit();
           }}
         >
+          <strong id={`${controlNamePrefix}-field-filters`}>Field filters</strong>
+          <small>Match all field conditions, the search, and any selected row type.</small>
+          {filters.length > 0 ? <ul className="applied-filters" aria-label="Applied field conditions">
+            {filters.map((filter, index) => <li key={JSON.stringify(filter)}>
+              <span title={describeFieldFilter(filter, filterableColumns)}>{describeFieldFilter(filter, filterableColumns)}</span>
+              <button type="button" className="icon-button" aria-label={`Remove condition ${index + 1}`}
+                onClick={() => onFilterRemove?.(index)} disabled={searchDisabled}>
+                <X size={13} aria-hidden />
+              </button>
+            </li>)}
+          </ul> : null}
           <div className="filter-fields">
+          <label><span>Find field</span><input aria-label="Search filter fields" placeholder="Search a field path"
+            value={fieldSearch} onChange={(event) => setFieldSearch(event.target.value)} /></label>
           <label>
             <span>Field</span>
             <select
@@ -134,7 +172,7 @@ export function RecordQueryControls({
               disabled={filterableColumns.length === 0}
               onChange={(event) => onFilterColumnChange(event.target.value)}
             >
-              {filterableColumns.map((column) => <option value={column.id} key={column.id}>{column.label}</option>)}
+              {displayedFields.map((column) => <option value={column.id} key={column.id}>{column.label}</option>)}
             </select>
           </label>
           <label>
@@ -162,11 +200,16 @@ export function RecordQueryControls({
           ) : null}
           </div>
           <div className="filter-actions">
-            <button type="submit" disabled={!filterColumnId || filterableColumns.length === 0}>Apply</button>
-            <button type="button" onClick={onFilterClear} disabled={!filterActive}>Clear</button>
+            <button type="submit" disabled={searchDisabled || !filterColumnId || filterableColumns.length === 0
+              || filters.length >= MAX_FIELD_FILTERS}>Add condition</button>
+            <button type="button" onClick={onFilterClear} disabled={searchDisabled || !filterActive}>Clear fields</button>
           </div>
+          {filters.length >= MAX_FIELD_FILTERS ? <small>Up to {MAX_FIELD_FILTERS} field conditions. Remove one to add another.</small> : null}
+          {matchingFields.length > 50 ? <small>Search a more specific path to find additional fields.</small> : null}
           <small>Scans a bounded source window; limited results are marked.</small>
         </form>
+        {rowTypes ? <RowTypeFilterFields {...rowTypes} /> : null}
+        </div>
       </details>
     </>
   );

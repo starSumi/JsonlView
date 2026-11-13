@@ -1,3 +1,15 @@
+---
+id: "threat-model"
+path: "docs/security/threat-model.md"
+title: "Security Threat Model"
+kind: "security"
+status: "active"
+owner: "product"
+tags: ["security","threat-model","trust-boundary"]
+evidence: []
+revisit: "when an input, permission, or execution boundary changes"
+rollback: "restore the prior threat model and record the trigger"
+---
 # Security Threat Model
 
 ## Scope and assets

@@ -8,3 +8,6 @@ export * from './session-navigator/source-config';
 export * from './session-navigator/catalog-store';
 export * from './session-navigator/file-provider';
 export * from './session-navigator/reveal-intents';
+export * from './session-navigator/source-controller-registry';
+export * from './session-navigator/session-catalog-strategy';
+export * from './session-navigator/provider-errors';

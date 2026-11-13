@@ -68,4 +68,22 @@ describe('LoadRecordPage', () => {
     await expect(useCase.execute(bounded, new AbortController().signal)).resolves.toBe(page);
     expect(getRows).toHaveBeenCalledWith(bounded, expect.any(AbortSignal));
   });
+
+  it('accepts only ordinal physical cursors without a logical sort offset', async () => {
+    const getRows = vi.fn().mockResolvedValue(page);
+    const useCase = new LoadRecordPage({ getRows });
+    const cursor: RecordPageRequest = {
+      limit: 100,
+      anchorOrdinal: '200',
+      direction: 'backward',
+      sort: { columnId: '__ordinal', direction: 'desc' },
+    };
+
+    await expect(useCase.execute(cursor, new AbortController().signal)).resolves.toBe(page);
+    await expect(useCase.execute({ ...cursor, sortOffset: '0' }, new AbortController().signal))
+      .rejects.toBeInstanceOf(RecordPageRequestError);
+    await expect(useCase.execute({ ...cursor, sort: { columnId: 'payload', direction: 'desc' } },
+      new AbortController().signal)).rejects.toBeInstanceOf(RecordPageRequestError);
+    expect(getRows).toHaveBeenCalledTimes(1);
+  });
 });

@@ -1,3 +1,15 @@
+---
+id: "promotion-runbook"
+path: "docs/promotion-runbook.md"
+title: "Promotion Runbook"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["promotion","release","rollback"]
+evidence: []
+revisit: "when a public distribution target changes"
+rollback: "revert the runbook change and retain the old gate"
+---
 # Promotion Runbook
 
 This runbook keeps a reviewed update synchronized without turning a file save
@@ -107,13 +119,23 @@ manifests and candidates belong outside the product checkout.
    publisher owner for manual upload. Never hand off the Open VSX VSIX. The
    optional API adapter remains disabled unless separately authorized. Record
    each target as `pending`, `published`, `readback`, or `failed`; never collapse
-   them into one success. Read back the exact ref/version and artifact
-   integrity after every target. A successful npm publish does not prove GitHub
-   or Open VSX changed.
+   them into one success. Read back the exact version on every registry and
+   compare the registry artifact's SHA-256 with the bytes of that target's
+   frozen candidate: Open VSX must list the exact version before its VSIX is
+   downloaded, and npm must return the exact `<name>@<version>` tarball from
+   `npm pack` against `https://registry.npmjs.org`. Treat any missing version,
+   failed download, or digest mismatch as a failed promotion. A successful npm
+   publish does not prove GitHub or Open VSX changed.
 8. Read back the Git tag and release assets, confirm GitHub's `/releases/latest`
    points to the new version, and verify the repository sidebar after an
-   anonymous hard refresh. Then download each registry artifact and compare its
-   digest with the frozen candidate.
+   anonymous hard refresh. Retain each sanitized `*-artifact-readback.json`
+   with the corresponding candidate manifests, frozen artifacts, and run
+   identity in the release evidence archive. The workflow artifacts retain this
+   evidence for 30 days; export it to the harness release-evidence archive
+   before expiry and preserve the workflow run and artifact names in the
+   promotion record. The audit JSON records target, version, byte counts,
+   SHA-256 values, and registry source only; it must not contain credentials,
+   local paths, or environment dumps.
 
 The two extension IDs share commands, settings, and `jsonlView.editor`; they are
 not supported as a co-install. When changing registry source, disable or

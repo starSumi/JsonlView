@@ -1,4 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 type Cleanup = (() => void) | undefined;
 const hook = vi.hoisted(() => ({ setup: undefined as (() => Cleanup) | undefined }));
@@ -23,6 +25,7 @@ class FakeNode {
 class FakeDetails extends FakeNode {
   open = false;
   private readonly handlers = new Map<string, (event: Event) => void>();
+  constructor(id: string) { super(id); this.append(this.summary); }
   addEventListener(type: string, handler: (event: Event) => void): void { this.handlers.set(type, handler); }
   removeEventListener(type: string): void { this.handlers.delete(type); }
   toggle(): void { this.handlers.get('toggle')?.(new Event('toggle')); }
@@ -36,13 +39,21 @@ const fakeDocument = {
   addEventListener(type: string, handler: (event: Event) => void): void { this.handlers.set(type, handler); },
   removeEventListener(type: string): void { this.handlers.delete(type); },
 };
+const cleanups = new Set<() => void>();
+
+function MenuHarness({ menu }: { menu: FakeDetails }): null {
+  useLightDismiss({ current: menu as unknown as HTMLDetailsElement });
+  return null;
+}
 
 function mount(menu: FakeDetails): () => void {
   hook.setup = undefined;
-  useLightDismiss({ current: menu as unknown as HTMLDetailsElement });
+  renderToStaticMarkup(createElement(MenuHarness, { menu }));
   const setup = hook.setup as unknown as (() => Cleanup) | undefined;
   const cleanup = setup ? setup() : undefined;
-  return cleanup ?? (() => undefined);
+  const unmount = (): void => { cleanup?.(); cleanups.delete(unmount); };
+  cleanups.add(unmount);
+  return unmount;
 }
 
 beforeEach(() => {
@@ -51,7 +62,10 @@ beforeEach(() => {
   vi.stubGlobal('Node', FakeNode);
   vi.stubGlobal('document', fakeDocument);
 });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => {
+  for (const cleanup of cleanups) cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe('light dismiss behavior', () => {
   it('closes an open menu on outside pointer and focus events', () => {
@@ -101,4 +115,116 @@ describe('light dismiss behavior', () => {
     cleanupSecond(); cleanupFirst();
     expect(fakeDocument.handlers.size).toBe(0);
   });
+
+  it.each(['ancestor-first', 'descendant-first'] as const)(
+    'keeps nested disclosures open when toggle events arrive %s',
+    (order) => {
+      const more = new FakeDetails('more');
+      const columns = new FakeDetails('columns');
+      more.append(columns);
+      mount(columns);
+      mount(more);
+      more.open = true;
+      columns.open = true;
+
+      const toggles = order === 'ancestor-first' ? [more, columns] : [columns, more];
+      for (const menu of toggles) menu.toggle();
+
+      expect(more.open).toBe(true);
+      expect(columns.open).toBe(true);
+    },
+  );
+
+  it('closes a sibling disclosure while keeping their shared ancestor open', () => {
+    const more = new FakeDetails('more');
+    const columns = new FakeDetails('columns');
+    const sibling = new FakeDetails('sibling');
+    more.append(columns);
+    more.append(sibling);
+    mount(more);
+    mount(columns);
+    mount(sibling);
+    more.open = true;
+    columns.open = true;
+
+    sibling.open = true;
+    sibling.toggle();
+
+    expect(more.open).toBe(true);
+    expect(columns.open).toBe(false);
+    expect(sibling.open).toBe(true);
+  });
+
+  it('closes an entire nested chain when an unrelated menu opens', () => {
+    const more = new FakeDetails('more');
+    const columns = new FakeDetails('columns');
+    const filters = new FakeDetails('filters');
+    more.append(columns);
+    mount(more);
+    mount(columns);
+    mount(filters);
+    more.open = true;
+    columns.open = true;
+
+    filters.open = true;
+    filters.toggle();
+
+    expect(more.open).toBe(false);
+    expect(columns.open).toBe(false);
+    expect(filters.open).toBe(true);
+  });
+
+  it.each(['pointerdown', 'focusin'])(
+    'dismisses only disclosures outside the %s target',
+    (type) => {
+      const more = new FakeDetails('more');
+      const columns = new FakeDetails('columns');
+      const insideColumns = new FakeNode('column-control');
+      const outside = new FakeNode('outside');
+      columns.append(insideColumns);
+      more.append(columns);
+      mount(more);
+      mount(columns);
+      more.open = true;
+      columns.open = true;
+
+      fakeDocument.handlers.get(type)?.({ target: insideColumns } as unknown as Event);
+      expect(more.open).toBe(true);
+      expect(columns.open).toBe(true);
+
+      fakeDocument.handlers.get(type)?.({ target: more.summary } as unknown as Event);
+      expect(more.open).toBe(true);
+      expect(columns.open).toBe(false);
+
+      columns.open = true;
+      fakeDocument.handlers.get(type)?.({ target: outside } as unknown as Event);
+      expect(more.open).toBe(false);
+      expect(columns.open).toBe(false);
+    },
+  );
+
+  it.each(['ancestor-first', 'descendant-first'] as const)(
+    'closes a nested chain on Escape and restores visible focus with %s registration',
+    (order) => {
+      const more = new FakeDetails('more');
+      const columns = new FakeDetails('columns');
+      const insideColumns = new FakeNode('column-control');
+      columns.append(insideColumns);
+      more.append(columns);
+      const registration = order === 'ancestor-first' ? [more, columns] : [columns, more];
+      for (const menu of registration) mount(menu);
+      more.open = true;
+      columns.open = true;
+      fakeDocument.activeElement = insideColumns;
+
+      const event = { key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() };
+      fakeDocument.handlers.get('keydown')?.(event as unknown as Event);
+
+      expect(more.open).toBe(false);
+      expect(columns.open).toBe(false);
+      expect(fakeDocument.activeElement).toBe(more.summary);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(event.stopPropagation).toHaveBeenCalledOnce();
+    },
+  );
 });

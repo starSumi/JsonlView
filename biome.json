@@ -1,8 +1,14 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
   "files": {
-    "includes": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.mjs", "test/**/*.ts", "test/**/*.tsx"]
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.mjs", "test/**/*.ts", "test/**/*.tsx", "config/biome-fixtures/**/*.ts", "packages/mcp-server/src/cli.ts", "packages/mcp-server/src/mcp-server-runtime.ts", "packages/mcp-server/src/index.ts", "packages/mcp-server/src/mcp-trajectory-contract.ts", "packages/mcp-server/src/mcp-trajectory-tools.ts", "packages/mcp-server/src/trajectory-spine.ts", "packages/mcp-server/src/contracts/trajectory-spine.ts", "packages/mcp-server/test/cli.test.mjs", "packages/runtime/src/index.ts", "packages/runtime/test/runtime.test.ts", "packages/runtime/test/process-tree-smoke.mjs", "test/fixtures/acp-mcp-dataflow-agent.mjs"]
   },
+  "plugins": [
+    {
+      "path": "./config/biome-plugins/prefer-object-spread.grit",
+      "includes": ["**/config/biome-fixtures/**/*.ts"]
+    }
+  ],
   "formatter": {
     "enabled": false
   },

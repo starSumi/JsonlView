@@ -69,6 +69,11 @@ describe('paging helpers', () => {
     expect(rowsOptionsAfterRebuild('0', false)).toEqual({});
     expect(rowsOptionsAfterRebuild(undefined, false)).toEqual({});
     expect(rowsOptionsAfterRebuild('200', true)).toEqual({ direction: 'backward' });
+    expect(rowsOptionsAfterRebuild('200', false, 'desc')).toEqual({
+      anchorOrdinal: '201',
+      direction: 'backward',
+    });
+    expect(rowsOptionsAfterRebuild(undefined, false, 'desc')).toEqual({ direction: 'backward' });
   });
 
   it('uses the visible page as a fallback when a rebuild cancels the row response', () => {
@@ -82,6 +87,10 @@ describe('paging helpers', () => {
     });
     expect(rowsOptionsForViewport(undefined, '1', 100, false)).toEqual({});
     expect(rowsOptionsForViewport(undefined, '4', 100, true)).toEqual({ direction: 'backward' });
+    expect(rowsOptionsForViewport('200', '4', 100, false, undefined, 'desc')).toEqual({
+      anchorOrdinal: '201',
+      direction: 'backward',
+    });
   });
 
   it('keeps an in-flight direct page request ahead of the previous cursor', () => {
@@ -144,6 +153,12 @@ describe('paging helpers', () => {
     expect(rowsOptionsAfterOpened(viewport, { documentId: 'doc', generation: 'g1' }, false)).toBeUndefined();
     expect(rowsOptionsAfterOpened(undefined, { documentId: 'doc', generation: 'g1' }, false)).toEqual({});
     expect(rowsOptionsAfterOpened(viewport, { documentId: 'other', generation: 'g1' }, false)).toEqual({});
+
+    const descending = { ...viewport, windowFirstOrdinal: '900', sortDirection: 'desc' as const };
+    expect(rowsOptionsAfterOpened(descending, { documentId: 'doc', generation: 'g2' }, false)).toEqual({
+      anchorOrdinal: '901',
+      direction: 'backward',
+    });
   });
 
   it('treats an explicit empty resume intent as authoritative', () => {

@@ -1,5 +1,5 @@
 // @ts-expect-error JavaScript CLI module intentionally does not emit declarations.
-import { findInstalledTargetConflicts, parseArgs, sourceStateFromGitOutputs } from '../../scripts/sync-local-extension.mjs';
+import { bundleDigestsFromArchive, findInstalledTargetConflicts, parseArgs, sourceStateFromGitOutputs } from '../../scripts/sync-local-extension.mjs';
 import { describe, expect, it } from 'vitest';
 
 describe('local extension sync arguments', () => {
@@ -57,5 +57,15 @@ describe('local extension sync arguments', () => {
     expect(state.clean).toBe(false);
     expect(state.statusSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(state.diffSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('binds install verification to the freshly packaged archive bundle', () => {
+    expect(bundleDigestsFromArchive({ bundle: { files: [
+      { path: 'execution-identity.json', sha256: 'identity' },
+      { path: 'webview.js', sha256: 'webview' },
+    ] } })).toEqual({
+      'dist/execution-identity.json': 'identity',
+      'dist/webview.js': 'webview',
+    });
   });
 });

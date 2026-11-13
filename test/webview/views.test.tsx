@@ -29,6 +29,11 @@ describe('webview semantic views', () => {
     expect(renderToStaticMarkup(<EmptyState title="Empty" detail="No rows" />)).toContain('No rows');
     const kinds = ['tool_call', 'tool_result', 'error', 'message', 'log', 'span', 'task', 'action', 'observation', 'patch', 'test', 'result', 'other'];
     const markup = renderToStaticMarkup(<TimelineView rows={kinds.map((kind, index) => profileRow(kind, String(index)))} onSelect={vi.fn()} />);
+    expect(markup).toContain('<ul class="virtual-space timeline-list"');
+    expect(markup).toContain('aria-label="Event timeline"');
+    expect((markup.match(/<li /g) ?? []).length).toBe(kinds.length);
+    expect(markup).not.toContain('role="list"');
+    expect(markup).not.toContain('role="listitem"');
     expect(markup).toContain('Event summary');
     expect(markup).toContain('tool call');
     expect(markup).toContain('2026-10-06T00:00:00Z');
@@ -73,9 +78,24 @@ describe('webview semantic views', () => {
     expect(partial).toContain('Malformed record');
     expect(partial).toContain('#7');
     expect(partial).toContain('Continue scan');
+    expect(partial).toContain('<ul class="virtual-space problems-list"');
+    expect(partial).toContain('aria-label="JSONL problems"');
+    expect(partial).toContain('<li ');
+    expect(partial).not.toContain('role="list"');
+    expect(partial).not.toContain('role="listitem"');
     const empty = renderToStaticMarkup(<ProblemsView problems={[]} onSelectOrdinal={onSelectOrdinal} complete={false} hasAfter onContinue={onContinue} loading />);
     expect(empty).toContain('Scanning the next problem window');
     expect(empty).toContain('Scanning problems');
+    expect(empty).toContain('disabled=""');
+    const { ordinal: _ordinal, ...documentProblemRef } = visibleProblem;
+    const documentProblem = renderToStaticMarkup(<ProblemsView problems={[documentProblemRef]} onSelectOrdinal={onSelectOrdinal} complete />);
+    expect(documentProblem).toContain('class="problem-row severity-error" disabled=""');
+  });
+
+  it('keeps selected timeline state on the native button', () => {
+    const markup = renderToStaticMarkup(<TimelineView rows={[profileRow('message', '7')]} selectedOrdinal="7" onSelect={vi.fn()} />);
+    expect(markup).toContain('class="timeline-row is-selected"');
+    expect(markup).toContain('<button type="button"');
   });
 
   it('keeps fallback columns bounded and joins visible cell previews', () => {

@@ -53,4 +53,33 @@ describe('packaged newline scanner process fuse', () => {
       fallbackReason: expect.stringContaining('process fuse'),
     });
   });
+
+  it('falls back safely when a packaged Rust N-API dynamic library exists but cannot load', async () => {
+    const load = vi.fn(() => { throw new Error('invalid Win32 application'); });
+
+    vi.resetModules();
+    vi.doMock('node:fs', () => ({ existsSync: () => true }));
+    vi.doMock('node:module', () => ({ createRequire: () => load }));
+    Object.defineProperty(globalThis, '__filename', {
+      configurable: true,
+      value: 'E:\\jsonl-view-test\\dist\\extension.cjs',
+    });
+
+    const { createNewlineScanner } = await import('../../src/engine/newline-scanner');
+    const scanner = createNewlineScanner({ mode: 'native' });
+
+    expect(collect(scanner.scan(Buffer.from('a\nb\n')))).toEqual([1, 3]);
+    expect(load).toHaveBeenCalled();
+    expect(scanner.diagnostics()).toMatchObject({
+      requestedMode: 'native',
+      activeMode: 'node',
+      fallbackReason: expect.stringContaining('invalid Win32 application'),
+    });
+  });
 });
+
+function collect(batch: { forEach(visitor: (offset: number) => void): void }): number[] {
+  const offsets: number[] = [];
+  batch.forEach((offset) => { offsets.push(offset); });
+  return offsets;
+}

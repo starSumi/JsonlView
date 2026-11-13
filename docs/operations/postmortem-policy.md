@@ -1,3 +1,15 @@
+---
+id: "postmortem-policy"
+path: "docs/operations/postmortem-policy.md"
+title: "Incident Review and Postmortem Contract"
+kind: "policy"
+status: "active"
+owner: "product"
+tags: ["incidents","learning","operations"]
+evidence: []
+revisit: "when incident response ownership changes"
+rollback: "use the previous policy and supersede this version"
+---
 # Incident Review and Postmortem Contract
 
 ## Scope and owner

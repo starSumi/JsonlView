@@ -1,0 +1,684 @@
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JsonlFileEngine } from '../../../src/engine';
+import { isDatasetRuntimeProvenance } from '../../../src/shared/transport/dataset-provenance';
+import {
+  IntegratedJsonlSession,
+  nextProfileEpoch,
+  type IntegratedSessionOptions,
+} from '../../../src/extension/integrated-session/integrated-session';
+import type { FollowRecoveryIdentity } from '../../../src/extension/follow/recovery';
+import type { RecordPageExecutionTiming } from '../../../src/application/ports/record-page-reader';
+import { DocumentController } from '../../../src/extension/document-controller';
+import { PROTOCOL_VERSION, type ExtensionMessage } from '../../../src/shared/types';
+import { keyPath, MAX_TABLE_COLUMNS, type ColumnSpec, type Predicate, type RowSort } from '../../../src/shared/types';
+import { compileQueryCondition } from '../../../src/webview/features/record-query/query-condition';
+import {
+  otelFixture,
+  softwareEngineeringAgentFixture,
+  structuredApplicationLogFixture,
+} from '../../profiles/fixtures';
+
+const directories: string[] = [];
+const sessions: IntegratedJsonlSession[] = [];
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await Promise.all(sessions.splice(0).map(async (session) => session.dispose()));
+  await Promise.all(directories.splice(0).map(async (directory) => rm(directory, {
+    recursive: true,
+    force: true,
+  })));
+});
+
+async function openFixture(
+  records: readonly unknown[],
+  options: Partial<Omit<IntegratedSessionOptions, 'uri'>> = {},
+  relativeFile = 'rollout.jsonl',
+): Promise<{
+  path: string;
+  session: IntegratedJsonlSession;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-session-'));
+  directories.push(directory);
+  const path = join(directory, relativeFile);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, records.map((record) => JSON.stringify(record)).join('\n'));
+  const session = await IntegratedJsonlSession.open(path, {
+    uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+    backgroundIndexing: false,
+    ...options,
+  });
+  sessions.push(session);
+  return { path, session };
+}
+
+const codexRecords = [
+  {
+    timestamp: '2026-08-30T00:00:00Z',
+    type: 'session_meta',
+    payload: {
+      session_id: 'session-1',
+      id: 'session-1',
+      timestamp: '2026-08-30T00:00:00Z',
+      cwd: 'C:/redacted',
+      originator: 'codex-cli',
+      cli_version: '0.1.0',
+    },
+  },
+  {
+    timestamp: '2026-08-30T00:00:01Z',
+    type: 'turn_context',
+    payload: {
+      turn_id: 'turn-1',
+      cwd: 'C:/redacted',
+      approval_policy: 'on-request',
+      sandbox_policy: { type: 'workspace-write' },
+      model: 'model-1',
+    },
+  },
+  { timestamp: '2026-08-30T00:00:02Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hello' }] } },
+  { timestamp: '2026-08-30T00:00:03Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 4, output_tokens: 2 } } } },
+];
+
+const codexHistoryRecords = [
+  { session_id: '01a060f8-803d-7563-872e-e2e4e54e6708', ts: 1788346097, text: 'Inspect the parser' },
+  { session_id: '01a061b9-2090-7343-abf9-4b16528826a2', ts: 1788346120, text: 'Run focused tests' },
+];
+
+describe('IntegratedJsonlSession', () => {
+  it('forwards read diagnostics through the application timing callback without adding row-page fields', async () => {
+    const { session } = await openFixture([{ id: 1 }], { autoDetectProfiles: false });
+    let observed: RecordPageExecutionTiming | undefined;
+    const page = await session.getRows({ limit: 1, onTiming: (timing) => { observed = timing; } }, new AbortController().signal);
+    expect(page.rows).toHaveLength(1);
+    expect(observed?.readCalls).toBeGreaterThan(0);
+    expect(observed?.readBytes).toBeGreaterThan(0);
+    expect(Number.isSafeInteger(observed?.readMaxWaitMs)).toBe(true);
+    expect(JSON.stringify(page)).not.toMatch(/readCalls|readBytes|readMaxWaitMs/u);
+  });
+
+  it.each([
+    { columnId: '__ordinal', direction: 'asc', physicalDirection: 'forward' },
+    { columnId: '__ordinal', direction: 'desc', physicalDirection: 'backward' },
+    { columnId: '$ordinal', direction: 'asc', physicalDirection: 'forward' },
+    { columnId: '$ordinal', direction: 'desc', physicalDirection: 'backward' },
+  ] as const)('walks $columnId $direction physical pages beyond 2048 against an independent oracle', async ({
+    columnId, direction, physicalDirection,
+  }) => {
+    const recordCount = 2_075;
+    const records = Array.from({ length: recordCount }, (_, id) => ({ id, keep: id % 7 === 0 }));
+    const { session } = await openFixture(records);
+    const sort: RowSort = { columnId, direction };
+    const expected = Array.from({ length: recordCount }, (_, ordinal) => String(ordinal));
+    if (direction === 'desc') expected.reverse();
+    const observed: string[] = [];
+    let anchorOrdinal: string | undefined;
+
+    for (let pageNumber = 0; pageNumber < 32; pageNumber += 1) {
+      const page = await session.getRows({
+        limit: 137, sort, direction: physicalDirection,
+        ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      }, new AbortController().signal);
+      const ordinals = page.rows.map((row) => row.ref.ordinal);
+      expect(ordinals.length).toBeGreaterThan(0);
+      observed.push(...ordinals);
+      if (!page.hasAfter) break;
+      anchorOrdinal = ordinals.at(-1);
+    }
+
+    expect(observed).toEqual(expected);
+    expect(new Set(observed).size).toBe(recordCount);
+  }, 15_000);
+
+  it('preserves bounded zero/one-match continuation and terminates zero progress through the session port', async () => {
+    const records = Array.from({ length: 10 }, (_, id) => ({ id }));
+    const { session } = await openFixture(records);
+    const sort: RowSort = { columnId: '$ordinal', direction: 'desc' };
+    const predicate: Predicate = { op: 'compare', path: keyPath('id'), cmp: 'eq', value: 0 };
+    const budget = { maxExaminedRecords: 3, maxExaminedBytes: '4096' };
+    const seen: string[] = [];
+    let anchorOrdinal: string | undefined;
+
+    for (let step = 0; step < 4; step += 1) {
+      const page = await session.getRows({
+        limit: 2, sort, predicate, scanBudget: budget, direction: 'backward',
+        ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }),
+      }, new AbortController().signal);
+      seen.push(...page.rows.map((row) => row.ref.ordinal));
+      if (!page.hasAfter) break;
+      expect(page.scan).toMatchObject({ direction: 'backward', truncatedReason: 'record_limit' });
+      const next = page.scan?.cursorOrdinal;
+      expect(next).toBeDefined();
+      expect(next).not.toBe(anchorOrdinal);
+      anchorOrdinal = next;
+    }
+    expect(seen).toEqual(['0']);
+
+    const stopped = await session.getRows({
+      anchorOrdinal: '5', direction: 'backward', limit: 2, sort, predicate,
+      scanBudget: { deadlineEpochMs: 1 },
+    }, new AbortController().signal);
+    expect(stopped.rows).toEqual([]);
+    expect(stopped.scan).toMatchObject({ examinedRecords: '0', direction: 'backward', truncatedReason: 'time_limit' });
+    expect(stopped.hasAfter).toBe(false);
+  });
+
+  it('returns a generic shell before deferred profile detection publishes the semantic profile', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    expect(session.getSummary().profileId).toBe('generic');
+
+    const updates: string[] = [];
+    const removeListener = session.onProgress((summary) => updates.push(summary.profileId));
+    const firstPage = await session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(firstPage.rows).toHaveLength(codexRecords.length);
+    expect(firstPage.rows.every((row) => row.profile?.profileId === 'generic')).toBe(true);
+
+    await waitFor(() => session.getSummary().profileId === 'codex-rollout');
+    removeListener();
+    expect(updates).toContain('codex-rollout');
+    expect(session.getProfileColumns().map((column) => column.id)).toEqual([
+      'eventKind', 'timestamp', 'actor', 'summary', 'status', 'model',
+    ]);
+  });
+
+  it('publishes metadata-only dataset provenance from the first head hydration', async () => {
+    const { session } = await openFixture([
+      { messages: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'world' }] },
+    ]);
+    const provenance = session.getSummary().datasetProvenance;
+    expect(provenance?.status).toBe('ready');
+    expect(provenance).toMatchObject({ adapterId: 'llamafactory-v1', shape: 'sft', coverage: { sampledRecords: 1, partial: false } });
+    expect(JSON.stringify(provenance)).not.toContain('hello');
+  });
+
+  it('saturates profile epochs instead of wrapping through zero', () => {
+    expect(nextProfileEpoch(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
+    expect(nextProfileEpoch(Number.MAX_SAFE_INTEGER - 1)).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('fails closed at the epoch limit until a new snapshot is adopted', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    Reflect.set(session, 'profileEpoch', Number.MAX_SAFE_INTEGER);
+    const before = session.getSummary();
+    const updates: number[] = [];
+    session.onProgress((summary) => updates.push(summary.profileEpoch!));
+
+    await expect(session.setProfile('generic-agent-events', new AbortController().signal)).rejects.toThrow(/epoch limit/);
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(session.getSummary()).toMatchObject({ profileId: before.profileId, profileEpoch: Number.MAX_SAFE_INTEGER, datasetProvenance: { status: 'pending' } });
+    expect(updates).toEqual([]);
+
+    const rebuilt = await session.rebuild(new AbortController().signal);
+    expect(rebuilt.snapshot.epoch).toBe((before.snapshot.epoch ?? 0) + 1);
+    expect(rebuilt.profileEpoch).toBe(1);
+    expect(rebuilt.profileId).toBe('codex-rollout');
+  });
+
+  it('drops an in-flight deferred result after epoch saturation, then resets on rebuild', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    const inspectRows = JsonlFileEngine.prototype.inspectBackgroundRows;
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let heads = 0;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectBackgroundRows').mockImplementation(async function (this: JsonlFileEngine, request) {
+      const result = await inspectRows.call(this, request);
+      if (request?.onHydrated !== undefined && request.direction !== 'backward' && request.anchorOrdinal === undefined) {
+        heads += 1;
+        if (heads === 1) { entered(); await held; }
+      }
+      return result;
+    });
+
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    await started;
+    Reflect.set(session, 'profileEpoch', Number.MAX_SAFE_INTEGER);
+    const before = session.getSummary();
+    const updates: number[] = [];
+    session.onProgress((summary) => updates.push(summary.profileEpoch!));
+    release();
+    await waitFor(() => session.getSummary().profileEpoch === Number.MAX_SAFE_INTEGER);
+    expect(session.getSummary()).toMatchObject({ profileId: before.profileId, profileEpoch: Number.MAX_SAFE_INTEGER });
+    expect(updates).toEqual([]);
+
+    const rebuilt = await session.rebuild(new AbortController().signal);
+    expect(rebuilt.snapshot.epoch).toBe((before.snapshot.epoch ?? 0) + 1);
+    expect(rebuilt.profileEpoch).toBe(1);
+  });
+
+  it('drops a deferred A-to-B-to-A result and retries the current publication epoch', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    const inspectRows = JsonlFileEngine.prototype.inspectBackgroundRows;
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let heads = 0;
+    vi.spyOn(JsonlFileEngine.prototype, 'inspectBackgroundRows').mockImplementation(async function (this: JsonlFileEngine, request) {
+      const result = await inspectRows.call(this, request);
+      if (request?.onHydrated !== undefined && request.direction !== 'backward' && request.anchorOrdinal === undefined) {
+        heads += 1;
+        if (heads === 1) { entered(); await held; }
+      }
+      return result;
+    });
+    const updates: number[] = [];
+    session.onProgress((summary) => updates.push(summary.profileEpoch!));
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    await started;
+    await session.setProfile('generic-agent-events', new AbortController().signal);
+    await session.setProfile('generic', new AbortController().signal);
+    release();
+    await waitFor(() => session.getSummary().datasetProvenance?.status !== 'pending');
+
+    expect(heads).toBe(2);
+    expect(session.getSummary()).toMatchObject({ profileId: 'generic', profileEpoch: 4, datasetProvenance: { status: 'fallback' } });
+    expect(updates).toEqual([4]);
+  });
+
+  it('publishes transport-valid Generic fallback after a later oversized record', async () => {
+    const { session } = await openFixture([
+      { messages: [{ role: 'user', content: 'ok' }] },
+      { messages: [{ role: 'user', content: 'x'.repeat(2048) }] },
+      { messages: [{ role: 'user', content: 'later' }] },
+    ], { maxRecordBytes: 128 });
+    const provenance = session.getSummary().datasetProvenance;
+    expect(provenance).toMatchObject({ status: 'fallback', adapterId: 'generic-jsonl', fallback: { code: 'invalid_sample' }, coverage: { sampledRecords: 1, validRecords: 1, invalidRecords: 0, partial: true, stoppedBy: 'uninspectable_record' } });
+    expect(isDatasetRuntimeProvenance(provenance)).toBe(true);
+  });
+
+  it('does not let deferred detection override an explicit profile selection', async () => {
+    const { session } = await openFixture(codexRecords, { deferProfileDetection: true });
+    await session.setProfile('generic-agent-events', new AbortController().signal);
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+
+    await waitFor(() => session.getSummary().profileSuggestions.some((suggestion) => suggestion.score > 0));
+    expect(session.getSummary().profileId).toBe('generic-agent-events');
+  });
+
+  it('detects Codex content and enriches rows without replacing raw projections', async () => {
+    const { session } = await openFixture(codexRecords);
+    expect(session.getSummary().profileId).toBe('codex-rollout');
+
+    const page = await session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(page.rows).toHaveLength(codexRecords.length);
+    expect(page.columns.slice(0, 6).map((column) => column.id)).toEqual([
+      'eventKind', 'timestamp', 'actor', 'summary', 'status', 'model',
+    ]);
+    expect(page.columns.some((column) => column.id === '$ordinal')).toBe(false);
+    expect(page.rows.map((row) => row.profile?.profileId)).toEqual([
+      'codex-rollout', 'codex-rollout', 'codex-rollout', 'codex-rollout',
+    ]);
+    expect(page.rows[2]?.cells.find((cell) => cell.columnId === 'summary')?.value).toBe('assistant message: hello');
+    expect(page.rows.every((row) => row.genericSummary.length > 0)).toBe(true);
+  });
+
+  it('projects selected nested record fields alongside semantic profile columns without duplicates', async () => {
+    const { session } = await openFixture(codexRecords);
+    const path = keyPath('payload', 'session_id');
+    const column: ColumnSpec = {
+      id: JSON.stringify(path.tokens), label: '$.payload.session_id', path, source: 'record',
+    };
+
+    const page = await session.getRows({ limit: 4, columns: [column, column] }, new AbortController().signal);
+
+    expect(page.columns.slice(0, 6).map((entry) => entry.id)).toEqual([
+      'eventKind', 'timestamp', 'actor', 'summary', 'status', 'model',
+    ]);
+    expect(page.columns.slice(6)).toEqual([column]);
+    expect(page.rows[0]?.cells.find((cell) => cell.columnId === column.id)?.value).toBe('session-1');
+    expect(page.rows[1]?.cells.find((cell) => cell.columnId === column.id)?.value).toBeUndefined();
+  });
+
+  it('bounds the combined semantic and requested record columns to the table limit', async () => {
+    const { session } = await openFixture(codexRecords);
+    const requested: ColumnSpec[] = Array.from({ length: MAX_TABLE_COLUMNS }, (_, index) => {
+      const path = keyPath('payload', `field${String(index)}`);
+      return { id: JSON.stringify(path.tokens), label: `$.payload.field${String(index)}`, path, source: 'record' };
+    });
+
+    const page = await session.getRows({ limit: 1, columns: requested }, new AbortController().signal);
+
+    expect(page.columns).toHaveLength(MAX_TABLE_COLUMNS);
+    expect(page.columns.slice(0, 6).map((column) => column.source)).toEqual(Array(6).fill('profile'));
+    expect(page.columns.slice(6).map((column) => column.id)).toEqual(
+      requested.slice(0, MAX_TABLE_COLUMNS - 6).map((column) => column.id),
+    );
+  });
+
+  it('uses a trusted Codex auxiliary path to select the matching surface profile', async () => {
+    const history = await openFixture(codexHistoryRecords, {}, '.codex/history.jsonl');
+    expect(history.session.getSummary().profileId).toBe('codex-history');
+    expect(history.session.getProfileColumns().map((column) => column.id)).toEqual([
+      'eventKind', 'timestamp', 'actor', 'summary', 'sessionId', 'sourceKind',
+    ]);
+    const historyPage = await history.session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(historyPage.rows[0]?.cells.find((cell) => cell.columnId === 'sessionId')?.value)
+      .toBe(codexHistoryRecords[0]!.session_id);
+  });
+
+  it('keeps a trusted auxiliary surface generic when physical rows are malformed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-mixed-surface-'));
+    directories.push(directory);
+    const path = join(directory, '.codex', 'history.jsonl');
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, [
+      JSON.stringify(codexHistoryRecords[0]),
+      'not-json',
+      '',
+      JSON.stringify(codexHistoryRecords[1]),
+    ].join('\n'));
+    const session = await IntegratedJsonlSession.open(path, {
+      uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+      backgroundIndexing: false,
+    });
+    sessions.push(session);
+    expect(session.getSummary().profileId).toBe('generic');
+  });
+
+  it('revisits a completed index with a tail sample when valid records arrive late', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-tail-detection-'));
+    directories.push(directory);
+    const path = join(directory, 'late-surface.jsonl');
+    const lateRecords = codexRecords.slice(0, 4).map((record) => JSON.stringify(record)).join('\n');
+    await writeFile(path, `${'\n'.repeat(40)}${lateRecords}`);
+    const session = await IntegratedJsonlSession.open(path, {
+      uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+      deferProfileDetection: true,
+      backgroundIndexing: true,
+    });
+    sessions.push(session);
+
+    await session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(session.getSummary().profileId).toBe('generic');
+    await waitFor(() => session.getSummary().profileId === 'codex-rollout', 2_000);
+    expect(session.getSummary().profileSuggestions.some((suggestion) => suggestion.id === 'codex-rollout' && suggestion.score > 0.65)).toBe(true);
+  });
+
+  it.each([
+    {
+      profileId: 'opentelemetry',
+      records: otelFixture,
+      row: 0,
+      expectedColumns: ['eventKind', 'timestamp', 'severity', 'summary', 'nestedCount', 'service', 'operation', 'traceCount', 'errorCount', 'durationMs', 'metricCount', 'dataPointCount'],
+      columnId: 'service',
+      value: 'checkout-service',
+    },
+    {
+      profileId: 'software-engineering-agent',
+      records: softwareEngineeringAgentFixture,
+      row: 1,
+      expectedColumns: ['eventKind', 'summary', 'task', 'step', 'tool', 'status'],
+      columnId: 'tool',
+      value: 'shell',
+    },
+    {
+      profileId: 'structured-application-log',
+      records: structuredApplicationLogFixture,
+      row: 0,
+      expectedColumns: ['timestamp', 'severity', 'summary', 'service', 'logger'],
+      columnId: 'logger',
+      value: 'api',
+    },
+  ])('projects bounded $profileId semantic columns into RowPage cells', async ({
+    profileId,
+    records,
+    row,
+    expectedColumns,
+    columnId,
+    value,
+  }) => {
+    const { session } = await openFixture(records);
+    await session.setProfile(profileId, new AbortController().signal);
+
+    const page = await session.getRows({ limit: 20 }, new AbortController().signal);
+
+    expect(page.columns.map((column) => column.id)).toEqual(expectedColumns);
+    expect(page.rows[row]?.cells.find((cell) => cell.columnId === columnId)?.value).toBe(value);
+  });
+
+  it('preserves an explicit profile across a new source generation', async () => {
+    const { path, session } = await openFixture(codexRecords);
+    await session.setProfile('generic', new AbortController().signal);
+    const previousGeneration = session.getSummary().snapshot.generation;
+    await appendFile(path, '\n' + JSON.stringify({ type: 'future_record', payload: { value: 1 } }));
+
+    expect(await session.classifyRefresh()).toMatchObject({ kind: 'append' });
+    const rebuilt = await session.rebuild(new AbortController().signal);
+
+    expect(rebuilt.snapshot.generation).not.toBe(previousGeneration);
+    expect(rebuilt.profileId).toBe('generic');
+    const page = await session.getRows({ limit: 20 }, new AbortController().signal);
+    expect(page.rows).toHaveLength(codexRecords.length + 1);
+  });
+
+  it('recovers a large deferred-baseline file as a stable full resync', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'jsonl-view-large-follow-'));
+    directories.push(directory);
+    const path = join(directory, 'large.jsonl');
+    const initial = `${JSON.stringify({ payload: 'x'.repeat(8 * 1024 * 1024) })}\n`;
+    await writeFile(path, initial);
+    const session = await IntegratedJsonlSession.open(path, {
+      uri: new URL(`file:///${path.replaceAll('\\', '/')}`).toString(),
+      backgroundIndexing: false,
+    });
+    sessions.push(session);
+    const before = session.getSummary();
+    const expected: FollowRecoveryIdentity = {
+      documentId: before.snapshot.documentId,
+      uri: before.snapshot.uri,
+      generation: before.snapshot.generation,
+      ...(before.snapshot.epoch === undefined ? {} : { epoch: before.snapshot.epoch }),
+      sizeBytes: before.snapshot.sizeBytes,
+      ...(before.snapshot.device === undefined ? {} : { device: before.snapshot.device }),
+      ...(before.snapshot.inode === undefined ? {} : { inode: before.snapshot.inode }),
+    };
+    await appendFile(path, '{"tail":true}\n');
+
+    const recovered = await session.rebuildStable(expected, new AbortController().signal);
+
+    expect(recovered.snapshot.generation).not.toBe(before.snapshot.generation);
+    expect(BigInt(recovered.snapshot.sizeBytes)).toBeGreaterThan(BigInt(before.snapshot.sizeBytes));
+    const page = await session.getRows({ limit: 2 }, new AbortController().signal);
+    expect(page.rows.length).toBeGreaterThan(0);
+    expect(page.hasAfter).toBe(true);
+  }, 15_000);
+
+  it('computes bounded insights only when explicitly requested', async () => {
+    const { session } = await openFixture(codexRecords);
+    const summary = session.getSummary();
+
+    const insights = await session.getInsights({
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: summary.snapshot.documentId, generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }) },
+      profile: { id: summary.profileId, version: summary.profileVersion! },
+    }, new AbortController().signal);
+
+    expect(insights.processedRecords).toBe('4');
+    expect(insights.examinedRecords).toBe('4');
+    expect(Number(insights.examinedBytes)).toBeGreaterThan(0);
+    expect(insights.categories).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'session', count: 1 }),
+      expect.objectContaining({ label: 'message', count: 1 }),
+      expect.objectContaining({ label: 'usage', count: 1 }),
+    ]));
+    expect(insights.timeBuckets.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(4);
+    expect(insights.truncated).toBe(false);
+  });
+
+  it('uses the same text, multiple field conditions and row types for Table and current-view Insights', async () => {
+    const { session } = await openFixture(codexRecords);
+    const summary = session.getSummary();
+    const path = keyPath('payload', 'role');
+    const predicate = compileQueryCondition({ query: 'hello',
+      filters: [
+        { columnId: 'actor', source: 'profile', operator: 'eq', value: 'assistant' },
+        { columnId: JSON.stringify(path.tokens), source: 'record', path, operator: 'eq', value: 'assistant' },
+      ],
+      rowTypes: { column: { id: 'eventKind', label: 'Event', source: 'profile' }, values: ['message', 'tool_call'] },
+      filterColumns: session.getProfileColumns(),
+    });
+    const rows = await session.getRows({ limit: 100, ...(predicate === undefined ? {} : { predicate }) },
+      new AbortController().signal);
+    const base = { version: 1 as const, intentRevision: 1, dimension: 'eventKind' as const,
+      document: { documentId: summary.snapshot.documentId, generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }) },
+      profile: { id: summary.profileId, version: summary.profileVersion! },
+    };
+    const current = await session.getInsights({ ...base, scope: 'current-view',
+      ...(predicate === undefined ? {} : { predicate }),
+    }, new AbortController().signal);
+    const whole = await session.getInsights({ ...base, intentRevision: 2, scope: 'whole-file' },
+      new AbortController().signal);
+    expect(rows.rows.map((row) => row.ref.ordinal)).toEqual(['2']);
+    expect(current.processedRecords).toBe(String(rows.rows.length));
+    expect(current.categories).toEqual([{ label: 'message', count: 1 }]);
+    expect(current.provenance).toEqual({ scope: 'current-view', predicateApplied: true, coverage: 'complete' });
+    expect(whole.processedRecords).toBe('4');
+    expect(whole.provenance).toEqual({ scope: 'whole-file', predicateApplied: false, coverage: 'complete' });
+  });
+
+  it('stops zero-match insights at the physical record budget', async () => {
+    const records = Array.from({ length: 20 }, (_, id) => ({ id, message: `record-${String(id)}` }));
+    const { session } = await openFixture(records, {
+      insightsMaxExaminedRecords: 3,
+      insightsMaxExaminedBytes: 1_048_576,
+      insightsMaxMilliseconds: 60_000,
+    });
+
+    const summary = session.getSummary();
+    const insights = await session.getInsights({
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: summary.snapshot.documentId, generation: summary.snapshot.generation,
+        ...(summary.snapshot.epoch === undefined ? {} : { sourceEpoch: summary.snapshot.epoch }) },
+      profile: { id: summary.profileId, version: summary.profileVersion! },
+      predicate: { op: 'text_search', value: 'never-present', caseSensitive: false },
+    }, new AbortController().signal);
+
+    expect(insights).toMatchObject({
+      processedRecords: '0',
+      examinedRecords: '3',
+      truncated: true,
+      truncatedReason: 'record_limit',
+    });
+    expect(Number(insights.examinedBytes)).toBeGreaterThan(0);
+  });
+
+  it('rejects unknown profile ids and supports disabling auto-detection', async () => {
+    const { path, session } = await openFixture(codexRecords);
+    await expect(session.setProfile('missing', new AbortController().signal)).rejects.toThrow(/Unknown Agent profile/);
+
+    const generic = await IntegratedJsonlSession.open(path, {
+      uri: 'file:///rollout.jsonl',
+      autoDetectProfiles: false,
+      backgroundIndexing: false,
+    });
+    sessions.push(generic);
+    expect(generic.getSummary().profileId).toBe('generic');
+    expect(generic.getSummary().profileSuggestions.map((profile) => profile.id)).toEqual([
+      'codex-rollout',
+      'codex-exec-jsonl',
+      'codex-trace',
+      'codex-history',
+      'codex-session-index',
+      'claude-code-session',
+      'pi-coding-agent',
+      'kimi-code-session',
+      'generic-agent-events',
+      'opentelemetry',
+      'software-engineering-agent',
+      'structured-application-log',
+    ]);
+  });
+
+  it('keeps the old engine and profile state when a rebuild is already cancelled', async () => {
+    const { path, session } = await openFixture(codexRecords);
+    await session.setProfile('generic-agent-events', new AbortController().signal);
+    const before = session.getSummary();
+    await appendFile(path, '\n' + JSON.stringify({ event: 'message', role: 'assistant', message: 'new' }));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(session.rebuild(controller.signal)).rejects.toThrow(/cancel/i);
+
+    const after = session.getSummary();
+    expect(after.snapshot.generation).toBe(before.snapshot.generation);
+    expect(after.profileId).toBe(before.profileId);
+    expect(after.profileSuggestions).toEqual(before.profileSuggestions);
+  });
+
+  it('does not let one caller cancel a shared rebuild for another caller', async () => {
+    const { path, session } = await openFixture(codexRecords);
+    await appendFile(path, '\n' + JSON.stringify({ type: 'future_record', payload: {} }));
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+
+    const first = session.rebuild(firstController.signal);
+    const second = session.rebuild(secondController.signal);
+    secondController.abort();
+
+    await expect(second).rejects.toThrow(/cancel/i);
+    await expect(first).resolves.toMatchObject({ indexedRecords: expect.any(String) });
+  });
+});
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for deferred profile detection.');
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe('physical ordinal paging through the host contract', () => {
+  it.each([
+    ['__ordinal', 'asc'],
+    ['__ordinal', 'desc'],
+    ['$ordinal', 'asc'],
+    ['$ordinal', 'desc'],
+  ])('routes a %s %s page past the field-sort window', async (columnId, direction) => {
+    const { session } = await openFixture(
+      Array.from({ length: 2_050 }, (_, ordinal) => ({ ordinal })),
+      { autoDetectProfiles: false },
+    );
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => { messages.push(message); return true; },
+    });
+    const { documentId, generation } = session.getSummary().snapshot;
+    try {
+      await controller.handleMessage({
+        protocolVersion: PROTOCOL_VERSION,
+        documentId,
+        generation,
+        requestId: 'physical-page',
+        type: 'GET_ROWS',
+        payload: { limit: 20, sort: { columnId, direction }, sortOffset: '2040' },
+      });
+      const response = messages.find((message) => message.type === 'ROWS');
+      expect(response?.payload.rows.map((row) => row.ref.ordinal)).toEqual(
+        Array.from({ length: 10 }, (_, index) => String(direction === 'asc' ? 2_040 + index : 9 - index)),
+      );
+      expect(messages.some((message) => message.type === 'ERROR')).toBe(false);
+
+      messages.length = 0;
+      await controller.handleMessage({
+        protocolVersion: PROTOCOL_VERSION,
+        documentId,
+        generation,
+        requestId: 'field-page',
+        type: 'GET_ROWS',
+        payload: { limit: 20, sort: { columnId: 'ordinal', direction }, sortOffset: '2040' },
+      });
+      expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'INVALID_REQUEST' } });
+    } finally {
+      controller.dispose();
+    }
+  }, 15_000);
+});

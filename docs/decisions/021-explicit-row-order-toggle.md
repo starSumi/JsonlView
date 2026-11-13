@@ -1,3 +1,15 @@
+---
+id: "021-explicit-row-order-toggle"
+path: "docs/decisions/021-explicit-row-order-toggle.md"
+title: "Explicit Row-Order Toggle"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["navigation","ordering","webview"]
+evidence: []
+revisit: "when row-order controls change"
+rollback: "restore the prior row-order behavior"
+---
 # ADR-021: Explicit Row-Order Toggle
 
 Status: accepted
@@ -75,3 +87,29 @@ introduced.
 
 Restore the two-button presentation and its focused tests without changing the
 persisted `sortDirection` or row-query controller contracts.
+
+## Startup Projection Addendum
+
+The accepted control presentation above remains unchanged. Opening a fresh
+engine with persisted last-line-first order exposed a separate projection
+dependency: completing the physical index does not observe record fields;
+hydration does. The ordinal-sort path must resolve inferred default columns
+after its bounded hydration scan and before projecting the selected rows.
+The engine owns this ordering invariant in `src/engine/jsonl-engine.ts`.
+
+Warming the schema through an extra ascending request was rejected because it
+makes the first descending page depend on earlier work and adds an unnecessary
+read. Resolving defaults after the existing scan uses that scan's observations
+without changing query predicates, offsets, hydration/scan budgets, or framing.
+Explicit column lists, including an empty list, still take precedence; profile
+defaults and the existing column caps retain their ownership.
+
+`test/engine/jsonl-engine.test.ts` opens separate fresh engines for ascending,
+descending, and filtered descending ordinal pages and verifies both inferred
+columns and projected cell values on the first request. Explicit empty-column
+controls verify that schema inference does not override the caller. Existing
+engine tests cover profile projection, explicit column caps, and bounded scans.
+This is engine-level evidence; installed-host startup acceptance remains a
+separate check. Revisit if another startup path resolves schema-dependent
+projection before observing its selected records. Rollback restores the prior
+column-resolution location and its behavior without altering persisted state.

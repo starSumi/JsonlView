@@ -1,3 +1,15 @@
+---
+id: "001-format-profile-boundary"
+path: "docs/decisions/001-format-profile-boundary.md"
+title: "Format And Profile Boundary"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","jsonl","profiles"]
+evidence: []
+revisit: "when the source/profile separation changes"
+rollback: "supersede ADR-001 with an explicit replacement"
+---
 # ADR-001: Format And Profile Boundary
 
 Status: accepted

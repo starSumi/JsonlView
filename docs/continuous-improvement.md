@@ -1,3 +1,15 @@
+---
+id: "continuous-improvement"
+path: "docs/continuous-improvement.md"
+title: "Continuous improvement loop"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["maintenance","reliability","rollback"]
+evidence: []
+revisit: "when the maintenance or evidence workflow changes"
+rollback: "supersede this guide with the prior workflow"
+---
 # Continuous improvement loop
 
 This file is the product-facing maintenance contract. It keeps recurring work
