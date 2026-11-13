@@ -121,6 +121,9 @@ clipboard path, and never changes activation safety or includes source data.
 - Use host-native paths and file URI round trips in cross-platform fixtures.
   Test optional-addon protocol routing independently of installed artifacts,
   and retain an explicit real-addon or unavailable-host integration check.
+- Standalone Rust tests enable napi/dyn-symbols so Linux test executables do not
+  require a Node host at link time. This test-only feature does not change the
+  production addon build's feature selection.
 - Root and runtime tests use Vitest 5.0.3 with its matching coverage provider;
   root Vite is pinned to 8.2.4 for the supported test-toolchain peer boundary.
 - Do not make CI or cloud jobs depend on a developer PATH or FNM_DIR.

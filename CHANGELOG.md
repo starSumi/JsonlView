@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Enable dynamic Node-API symbol lookup for standalone Rust tests on Linux,
+  while retaining the production addon's existing build features.
 - Make documentation index diagnostics and source/ACP test fixtures portable
   across Windows and Linux; separate optional native protocol unit tests from
   actual-addon integration and pass browser test data through CDP arguments.

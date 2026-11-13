@@ -719,7 +719,7 @@
     "native:check": "cargo check --manifest-path native/jsonl-core/Cargo.toml",
     "native:fmt": "cargo fmt --manifest-path native/jsonl-core/Cargo.toml -- --check",
     "native:clippy": "cargo clippy --manifest-path native/jsonl-core/Cargo.toml --all-targets --locked -- -D warnings",
-    "native:test": "cargo test --manifest-path native/jsonl-core/Cargo.toml",
+    "native:test": "cargo test --manifest-path native/jsonl-core/Cargo.toml --locked --features napi/dyn-symbols",
     "native:verify": "node scripts/verify-native-addon.mjs",
     "watch": "node esbuild.mjs --watch",
     "check:contract": "node scripts/check-engineering-contract.mjs",
