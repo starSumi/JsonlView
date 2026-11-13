@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildIndex, expectedId, KINDS, parseDocument, REQUIRED_FIELDS, stableJson, STATUSES } from './document-metadata.mjs';
 
@@ -69,6 +69,6 @@ if (index && actual) {
   if (stableJson(index) !== stableJson(actual)) failures.push('docs/index.json is stale; regenerate it from document front matter');
 }
 
-const result = { ok: failures.length === 0, schemaVersion: 1, documents: actual?.documents.length ?? 0, index: indexPath.replace(`${root}\\`, '').replaceAll('\\', '/'), failures };
+const result = { ok: failures.length === 0, schemaVersion: 1, documents: actual?.documents.length ?? 0, index: relative(root, indexPath).replaceAll('\\', '/'), failures };
 console.log(JSON.stringify(result, null, 2));
 if (failures.length > 0) process.exitCode = 1;

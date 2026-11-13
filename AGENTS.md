@@ -118,6 +118,9 @@ clipboard path, and never changes activation safety or includes source data.
 - PowerShell release workflows parse package.json with -AsHashtable to preserve
   case-distinct compatibility setting keys. Validate decision headings with the
   CI --base/--head form of check:docs-index before source promotion.
+- Use host-native paths and file URI round trips in cross-platform fixtures.
+  Test optional-addon protocol routing independently of installed artifacts,
+  and retain an explicit real-addon or unavailable-host integration check.
 - Root and runtime tests use Vitest 5.0.3 with its matching coverage provider;
   root Vite is pinned to 8.2.4 for the supported test-toolchain peer boundary.
 - Do not make CI or cloud jobs depend on a developer PATH or FNM_DIR.

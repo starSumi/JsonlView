@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 
@@ -17,15 +20,24 @@ vi.mock('vscode', () => ({
   },
   TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
   ThemeIcon: class { constructor(public id: string) {} },
-  Uri: { parse: (value: string) => ({ scheme: 'file', fsPath: value.slice('file:///'.length), path: value, toString: () => value }) },
+  Uri: { parse: (value: string) => {
+    const url = new URL(value);
+    return { scheme: url.protocol.slice(0, -1), authority: url.host, fsPath: fileURLToPath(url), path: decodeURIComponent(url.pathname), toString: () => url.href };
+  } },
   window: { showWarningMessage: vi.fn() },
 }));
 
 import { SourceNavigatorTreeProvider } from '../../src/experimental/session-navigator/source-tree-provider';
 
+function localUri(name: string) {
+  const fsPath = resolve(tmpdir(), name);
+  const url = pathToFileURL(fsPath);
+  return { scheme: 'file', fsPath, path: decodeURIComponent(url.pathname), toString: () => url.href };
+}
+
 describe('native Add Source tree', () => {
   it('preserves the exact native Uri when Explorer also supplies the same text/uri-list', async () => {
-    const uri = { scheme: 'file', fsPath: 'C:/sample.jsonl', path: '/sample.jsonl', toString: () => 'file:///C:/sample.jsonl' };
+    const uri = localUri('sample.jsonl');
     const previewFile = vi.fn().mockResolvedValue(undefined);
     const provider = new SourceNavigatorTreeProvider({ action: vi.fn(), previewFile, authorizePath: vi.fn() });
     await provider.handleDrop(undefined, {
@@ -56,7 +68,7 @@ describe('native Add Source tree', () => {
     const token = { isCancellationRequested: false } as vscode.CancellationToken;
     await provider.handleDrop(undefined, {
       forEach(callback: (item: vscode.DataTransferItem) => void) {
-        callback({ asFile: () => ({ uri: { scheme: 'file', fsPath: 'C:/sample.jsonl', path: '/sample.jsonl', toString: () => 'file:///C:/sample.jsonl' } }) } as unknown as vscode.DataTransferItem);
+        callback({ asFile: () => ({ uri: localUri('sample.jsonl') }) } as unknown as vscode.DataTransferItem);
       },
       get: () => undefined,
     } as unknown as vscode.DataTransfer, token);
@@ -74,7 +86,7 @@ describe('native Add Source tree', () => {
     const authorizePath = vi.fn().mockResolvedValue(undefined);
     const provider = new SourceNavigatorTreeProvider({ action: vi.fn(), previewFile, authorizePath });
     const token = state as vscode.CancellationToken;
-    const uri = { scheme: 'file', fsPath: 'C:/sample.jsonl', path: '/sample.jsonl', toString: () => 'file:///C:/sample.jsonl' };
+    const uri = localUri('sample.jsonl');
 
     await expect(provider.handleDrop(undefined, {
       forEach(callback: (item: vscode.DataTransferItem) => void) {
@@ -93,7 +105,7 @@ describe('native Add Source tree', () => {
     const provider = new SourceNavigatorTreeProvider({ action: vi.fn(), previewFile, authorizePath });
     const token = { isCancellationRequested: false } as vscode.CancellationToken;
     const items = Array.from({ length: 33 }, (_, index) => ({
-      asFile: () => ({ uri: { scheme: 'file', fsPath: `C:/source-${String(index)}.jsonl`, path: `/source-${String(index)}.jsonl`, toString: () => `file:///C:/source-${String(index)}.jsonl` } }),
+      asFile: () => ({ uri: localUri(`source-${String(index)}.jsonl`) }),
     } as unknown as vscode.DataTransferItem));
     await provider.handleDrop(undefined, {
       forEach(callback: (item: vscode.DataTransferItem) => void) { items.forEach(callback); },
@@ -109,7 +121,7 @@ describe('native Add Source tree', () => {
     const authorizePath = vi.fn().mockResolvedValue(undefined);
     const provider = new SourceNavigatorTreeProvider({ action: vi.fn(), previewFile, authorizePath });
     const token = { isCancellationRequested: false } as vscode.CancellationToken;
-    const uriList = `file:///C:/${'x'.repeat(65_000)}.jsonl`;
+    const uriList = `file:///${'x'.repeat(65_000)}.jsonl`;
     await provider.handleDrop(undefined, {
       forEach() {},
       get: () => ({ asString: async () => uriList }),

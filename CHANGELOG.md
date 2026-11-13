@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make documentation index diagnostics and source/ACP test fixtures portable
+  across Windows and Linux; separate optional native protocol unit tests from
+  actual-addon integration and pass browser test data through CDP arguments.
 - Preserve case-distinct manifest keys in Windows packaging, validate legacy ADR
   headings, and keep architecture alias and DOM smoke string handling literal.
 - Consolidate the current studio milestone with reviewed dependency updates:

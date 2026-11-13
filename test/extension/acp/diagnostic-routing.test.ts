@@ -2,8 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import manifest from '../../../package.json';
 import packageNls from '../../../package.nls.json';
+
+const fixtureExtensionPath = resolve(tmpdir(), 'jsonlview-acp-test-extension');
+const fixtureSourcePath = resolve(tmpdir(), 'jsonlview-acp-test-source.jsonl');
 
 const host = vi.hoisted(() => ({
   trusted: false,
@@ -111,7 +115,7 @@ describe('ACP side-agent diagnostic routing', () => {
   async function activateConflict(): Promise<void> {
     const extension = await import('../../../src/extension/extension');
     extension.activate({
-      extensionPath: 'D:/test/jsonlview',
+      extensionPath: fixtureExtensionPath,
       extensionMode: 3,
       extension: { id: 'Sumi-Sophia.jsonl-view', packageJSON: { version: '0.2.11' } },
       subscriptions: [],
@@ -380,19 +384,19 @@ describe('ACP side-agent diagnostic routing', () => {
 
   it('passes the active JSONL MCP server in the official ACP v1 stdio shape to an authenticated adapter', async () => {
     host.trusted = true;
-    host.activeUri = { scheme: 'file', fsPath: 'D:/test/source.jsonl', path: '/D:/test/source.jsonl' };
+    host.activeUri = { scheme: 'file', fsPath: fixtureSourcePath, path: decodeURIComponent(pathToFileURL(fixtureSourcePath).pathname) };
     host.command = process.execPath;
     host.args = ['-e', "let servers;const r=require('node:readline').createInterface({input:process.stdin});r.on('line',s=>{const q=JSON.parse(s);let result;if(q.method==='initialize')result={protocolVersion:1,authMethods:[{id:'native',name:'Native login'}]};else if(q.method==='session/new'){servers=q.params.mcpServers;const ok=servers.every(s=>typeof s.name==='string'&&typeof s.command==='string'&&Array.isArray(s.args)&&Array.isArray(s.env)&&s.env.every(e=>typeof e.name==='string'&&typeof e.value==='string'));if(!ok){process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,error:{code:-32602,message:'ACP v1 env must be an array'}})+'\\n');return;}result={sessionId:'official-v1'};}else result={stopReason:'end_turn',servers};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\\n');});"];
     await activateConflict();
     await vi.waitFor(() => expect(host.documents).toHaveLength(1), { timeout: 5_000 });
     const transcript = JSON.parse(host.documents[0]!.content) as { result: { servers: unknown[] } };
     expect(transcript.result.servers).toEqual([{
-      name: 'jsonlview', command: process.execPath, args: ['D:\\test\\jsonlview\\dist\\mcp-server.cjs'],
+      name: 'jsonlview', command: process.execPath, args: [resolve(fixtureExtensionPath, 'dist', 'mcp-server.cjs')],
       env: [
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
-        { name: 'JSONLVIEW_EXTENSION_PATH', value: 'D:/test/jsonlview' },
+        { name: 'JSONLVIEW_EXTENSION_PATH', value: fixtureExtensionPath },
         { name: 'JSONLVIEW_MCP_SOURCE_ID', value: 'active-jsonl' },
-        { name: 'JSONLVIEW_MCP_SOURCE_PATH', value: 'D:/test/source.jsonl' },
+        { name: 'JSONLVIEW_MCP_SOURCE_PATH', value: fixtureSourcePath },
       ],
     }]);
   }, 20_000);

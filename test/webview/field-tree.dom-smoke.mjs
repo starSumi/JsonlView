@@ -81,17 +81,39 @@ const evaluate = async (expression) => {
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   return result.result.value;
 };
-const click = async (expression) => {
-  const point = await evaluate(`(async () => { const e = (${expression}); if (!e) throw new Error('Missing click target');
+const evaluateObject = async (expression) => {
+  const result = await client.send('Runtime.evaluate', { expression, returnByValue: false });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+  return result.result;
+};
+const callOn = async (target, callback, args = [], returnByValue = true) => {
+  const object = await target;
+  if (!object.objectId) throw new Error('Missing browser object');
+  const result = await client.send('Runtime.callFunctionOn', {
+    objectId: object.objectId, functionDeclaration: callback.toString(),
+    arguments: args.map((value) => ({ value })), returnByValue, awaitPromise: true,
+  });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+  return returnByValue ? result.result.value : result.result;
+};
+const click = async (target) => {
+  const point = await callOn(typeof target === 'string' ? evaluateObject(target) : target, async function () {
+    const e = this;
     e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
     const r=e.getBoundingClientRect(); const p={ x:r.x+r.width/2, y:r.y+r.height/2 };
     const hit=document.elementFromPoint(p.x,p.y); if (!e.contains(hit)) throw new Error('Click target is obscured: '+e.outerHTML+' at '+JSON.stringify(p)+' by '+hit?.outerHTML);
-    return p; })()`);
+    return p;
+  });
   await client.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
   await client.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
 };
-const summary = (title) => `Array.from(document.querySelectorAll('summary[title]')).find(e => e.getAttribute('title') === ${JSON.stringify(title)})`;
+let pageGlobal;
+const summary = (title, selector) => callOn(pageGlobal, function (title, selector) {
+  const element = Array.from(document.querySelectorAll('summary[title]')).find(e => e.getAttribute('title') === title);
+  return selector ? element?.parentElement.querySelector(selector) : element;
+}, [title, selector ?? null], false);
+const hasSummary = async (title, selector) => Boolean((await summary(title, selector)).objectId);
 const dynamic = `document.querySelectorAll('.field-tree-section')[1]`;
 try {
   const activePort = await until(async () => (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]);
@@ -100,10 +122,11 @@ try {
   await client.open();
   await client.send('Page.navigate', { url: pathToFileURL(join(output, 'index.html')).href });
   await until(() => evaluate('Boolean(document.querySelector(".columns-menu"))'));
+  pageGlobal = await evaluateObject('globalThis');
   const quotedTitle = `quote'"\\]; globalThis.unexpectedTitleCode = true; //`;
-  await evaluate(`(() => { const e = document.createElement('summary'); e.title = ${JSON.stringify(quotedTitle)};
-    e.id = 'quoted-title-probe'; document.body.append(e); })()`);
-  assert.equal(await evaluate(`(${summary(quotedTitle)})?.id`), 'quoted-title-probe');
+  await callOn(pageGlobal, function (title) { const e = document.createElement('summary'); e.title = title;
+    e.id = 'quoted-title-probe'; document.body.append(e); }, [quotedTitle]);
+  assert.equal(await callOn(summary(quotedTitle), function () { return this.id; }), 'quoted-title-probe');
   assert.equal(await evaluate('globalThis.unexpectedTitleCode === true'), false);
   await evaluate("document.getElementById('quoted-title-probe').remove()");
   const initial = await evaluate(`({ dynamicItems: (${dynamic}).querySelector(':scope > ul').children.length,
@@ -116,10 +139,10 @@ try {
   assert.ok(initial.treeElements < 150);
   await click('document.querySelector(".columns-menu > summary")');
   await click(summary('$.type'));
-  await until(() => evaluate(`Boolean((${summary('$.type')}).parentElement.querySelector(':scope > label > input'))`));
-  await click(`(${summary('$.type')}).parentElement.querySelector(':scope > label > input')`);
+  await until(() => hasSummary('$.type', ':scope > label > input'));
+  await click(summary('$.type', ':scope > label > input'));
   await until(() => evaluate('window.receipt.columns.length === 1'));
-  assert.equal(await evaluate(`(${summary('$.type')}).parentElement.querySelector(':scope > label > input').checked`), true);
+  assert.equal(await callOn(summary('$.type', ':scope > label > input'), function () { return this.checked; }), true);
   await click(`document.querySelector('.field-tree-row-types > summary')`);
   await until(() => evaluate('document.querySelectorAll(".row-type-filter-fields").length === 1'));
   await click('document.querySelectorAll(".row-type-option input")[0]');
@@ -131,10 +154,10 @@ try {
   await click(`Array.from(document.querySelectorAll('.row-type-filter-fields button')).find(e=>e.textContent==='Show all types')`);
   await until(() => evaluate('window.receipt.selections.at(-1) === null'));
   await click(summary('$.type[]'));
-  await until(() => evaluate(`Boolean(${summary('$.type[0]')})`));
+  await until(() => hasSummary('$.type[0]'));
   await click(summary('$.type[0]'));
-  await until(() => evaluate(`Boolean((${summary('$.type[0]')}).parentElement.querySelector('label input'))`));
-  await click(`(${summary('$.type[0]')}).parentElement.querySelector('label input')`);
+  await until(() => hasSummary('$.type[0]', 'label input'));
+  await click(summary('$.type[0]', 'label input'));
   await until(() => evaluate('window.receipt.columns.length === 2'));
   assert.deepEqual(await evaluate('window.receipt.columns.at(-1).path.tokens'), [
     { kind: 'key', value: 'type' }, { kind: 'index', value: 0 }, { kind: 'key', value: 'name' },
