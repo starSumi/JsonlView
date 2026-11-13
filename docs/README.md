@@ -90,6 +90,10 @@ These domain links provide progressive disclosure; they do not reclassify or dup
 
 ## Design baselines
 
+- [AppShell v0.3.0 milestone](designs/app-shell-milestone.md) plans the selected
+  command rail, drawers, Import guidance and durable material history from the
+  frozen studio baseline. Its [acceptance checklist](designs/app-shell-acceptance.md)
+  tracks implementation and installed-host validation; both remain proposed.
 - [Theme adaptation design](designs/theme-adaptation.md) records the accepted
   Neutral Contrast direction, Compact Focus density guidance for dark host
   themes, semantic VS Code token contract, and visual acceptance boundary.

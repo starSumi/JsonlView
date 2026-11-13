@@ -1812,6 +1812,56 @@
       "sha256": "12004c5312ad2953f737390439b39579cb0602ed361ef56e2673252b9ed0ab15"
     },
     {
+      "id": "app-shell-acceptance",
+      "path": "docs/designs/app-shell-acceptance.md",
+      "title": "AppShell v0.3.0 Acceptance Checklist",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "acceptance",
+        "accessibility",
+        "app-shell",
+        "history",
+        "intake",
+        "validation"
+      ],
+      "evidence": [
+        "design-receipt:appshell-prototype-1-attempt-3"
+      ],
+      "revisit": "after contract review and for every changed installation candidate",
+      "rollback": "restore the prior shell candidate while retaining user files, source grants and recoverable history data",
+      "x-priority": "P1",
+      "summary": "AppShell v0.3.0 验收清单",
+      "bytes": 8997,
+      "sha256": "cbc5156e7cc010a81bc06a92c4cb1c53bc02039ed35c3a190bed56525488d142"
+    },
+    {
+      "id": "app-shell-milestone",
+      "path": "docs/designs/app-shell-milestone.md",
+      "title": "AppShell v0.3.0 Milestone Plan",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "app-shell",
+        "history",
+        "intake",
+        "navigator",
+        "webview"
+      ],
+      "evidence": [
+        "design-receipt:appshell-prototype-1-attempt-3"
+      ],
+      "revisit": "before implementation and whenever intake identity, persistence or source authorization changes",
+      "rollback": "restore the prior shell and command composition while preserving originals, saved copies and recoverable material metadata",
+      "x-priority": "P1",
+      "summary": "AppShell v0.3.0 Milestone Plan",
+      "bytes": 18369,
+      "sha256": "23daf005dc64a9346546b3ce6bbe6224eede54147bedde756169c7888599f72c"
+    },
+    {
       "id": "architecture-v2-roadmap",
       "path": "docs/architecture-v2-roadmap.md",
       "title": "JsonlView V2 Architecture Roadmap",
@@ -1907,8 +1957,8 @@
       "revisit": "when the documentation topology changes",
       "rollback": "remove this catalog entry in a reviewed metadata migration",
       "summary": "Product Documentation",
-      "bytes": 6115,
-      "sha256": "067a23fee85dd4366d5bdba252601cee7315d5f8a3e30c25b2577d0de9b1df0d"
+      "bytes": 6438,
+      "sha256": "381a43bda424e4e8a11f144c2d3d245ab56c400512d37692532ef95101634d49"
     },
     {
       "id": "format-and-profile-boundaries",
