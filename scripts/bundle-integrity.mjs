@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { cp, lstat, readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-export const DISTRIBUTION_FILES = ['extension.cjs', 'webview.css', 'webview.js'];
+export const DISTRIBUTION_FILES = ['execution-bundle-inventory.json', 'execution-identity.json', 'extension.cjs', 'mcp-server.cjs', 'webview.css', 'webview.js'];
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
 

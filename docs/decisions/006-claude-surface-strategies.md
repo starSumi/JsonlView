@@ -1,3 +1,15 @@
+---
+id: "006-claude-surface-strategies"
+path: "docs/decisions/006-claude-surface-strategies.md"
+title: "Claude Surface Strategies"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["claude","profiles","provider"]
+evidence: []
+revisit: "when a Claude source surface changes"
+rollback: "retain the previous provider strategy"
+---
 # ADR-006: Claude surface strategies
 
 ## Pressure

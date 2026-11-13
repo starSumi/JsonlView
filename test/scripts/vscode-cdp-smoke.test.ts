@@ -6,22 +6,80 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const { createMutableSyntheticFixture } = await import(fileURLToPath(new URL('../../scripts/synthetic-cdp-fixture.mjs', import.meta.url)));
+const { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } = await import(
+  fileURLToPath(new URL('../../scripts/page-navigation-measurement.mjs', import.meta.url)),
+);
+const { CdpClient, findCdpTargetWithinDeadline, runCdpMeasurement } = await import(
+  fileURLToPath(new URL('../../scripts/cdp-measurement-lifecycle.mjs', import.meta.url)),
+);
 
 const smokeScript = fileURLToPath(new URL('../../scripts/vscode-cdp-smoke.mjs', import.meta.url));
 const fixtureScript = fileURLToPath(new URL('../../scripts/synthetic-cdp-fixture.mjs', import.meta.url));
 const syntheticRecord = '{"message":"Synthetic acceptance event 0"}\n';
+
+class PreparationCancellationSocket extends EventTarget {
+  readyState = 0;
+  respondToCancellation: boolean;
+  commands: Array<{ id: number; method: string; params: { expression?: string } }> = [];
+  preparationRequestId: number | undefined;
+
+  constructor(respondToCancellation = true) {
+    super();
+    this.respondToCancellation = respondToCancellation;
+    queueMicrotask(() => {
+      this.readyState = 1;
+      this.dispatchEvent(new Event('open'));
+    });
+  }
+
+  send(payload: string) {
+    const command = JSON.parse(payload) as { id: number; method: string; params: { expression?: string } };
+    this.commands.push(command);
+    if (command.params.expression === 'cancel-page-probe' && !this.respondToCancellation) return;
+    if (command.params.expression === 'prepare-hangs') {
+      this.preparationRequestId = command.id;
+      return;
+    }
+    queueMicrotask(() => {
+      if (command.params.expression === 'cancel-page-probe' && this.preparationRequestId !== undefined) {
+        this.dispatchResponse({
+          id: this.preparationRequestId,
+          result: { exceptionDetails: { text: 'Page preparation cancelled.' } },
+        });
+        this.preparationRequestId = undefined;
+      }
+      this.dispatchResponse({ id: command.id, result: { result: { value: true } } });
+    });
+  }
+
+  private dispatchResponse(response: { id: number; result: unknown }) {
+    const message = new Event('message');
+    Object.defineProperty(message, 'data', { value: JSON.stringify(response) });
+    this.dispatchEvent(message);
+  }
+
+  close() {
+    if (this.readyState >= 2) return;
+    this.readyState = 3;
+    this.dispatchEvent(new Event('close'));
+  }
+}
 
 async function withTempRoot(check: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'jsonlview-smoke-'));
   try {
     await check(root);
   } finally {
-    const relativeRoot = relative(resolve(tmpdir()), await realpath(root));
-    if (!relativeRoot || relativeRoot.startsWith('..') || isAbsolute(relativeRoot)) {
-      throw new Error('Refusing to remove an unexpected smoke test directory');
-    }
-    await rm(root, { recursive: true, force: true });
+    await removeOwnedTempRoot(root);
   }
+}
+
+async function removeOwnedTempRoot(root: string): Promise<void> {
+  const relativeRoot = relative(resolve(tmpdir()), await realpath(root));
+  if (!relativeRoot || relativeRoot.startsWith('..') || isAbsolute(relativeRoot)) {
+    throw new Error('Refusing to remove an unexpected smoke test directory');
+  }
+  await rm(root, { recursive: true, force: true });
 }
 
 function runSmoke(output: string, ...argumentsToPass: string[]) {
@@ -42,6 +100,116 @@ function prepareFixture(output: string) {
 }
 
 describe('synthetic CDP smoke fixture boundary', () => {
+  it('shares one deadline across the serial target scan', async () => {
+    let now = 0;
+    const budgets: number[] = [];
+
+    await expect(findCdpTargetWithinDeadline({
+      candidates: ['stale-1', 'stale-2', 'fixture'],
+      probe: async (_candidate: string, remainingMs: number) => {
+        budgets.push(remainingMs);
+        now += remainingMs;
+        throw new Error('CDP target detached.');
+      },
+      matches: () => false,
+      timeoutMs: 30,
+      timeoutMessage: 'Synthetic fixture target discovery exceeded 30 seconds.',
+      now: () => now,
+    })).rejects.toThrow('Synthetic fixture target discovery exceeded 30 seconds.');
+
+    expect(budgets).toEqual([30]);
+  });
+
+  it('cancels stalled preparation before closing the CDP session', async () => {
+    const socket = new PreparationCancellationSocket();
+    const client = new CdpClient('ws://test.invalid', () => socket as unknown as WebSocket);
+    let preparationSettled = false;
+    let pendingAfterPageCancellation: number | undefined;
+    let preparationSettledAtCancellation: boolean | undefined;
+
+    const result = runCdpMeasurement({
+      client,
+      timeoutMs: 25,
+      timeoutMessage: 'Page navigation CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 100,
+      task: async () => {
+        await client.open();
+        try {
+          const response = await client.send('Runtime.evaluate', { expression: 'prepare-hangs' });
+          if (response.exceptionDetails) throw new Error('Page preparation was cancelled.');
+        } finally {
+          preparationSettled = true;
+        }
+      },
+      onTimeout: () => client.send('Runtime.evaluate', { expression: 'cancel-page-probe' }).then(() => {
+        pendingAfterPageCancellation = client.pendingRequestCount;
+        preparationSettledAtCancellation = preparationSettled;
+      }),
+    });
+
+    await expect(result).rejects.toThrow('Page navigation CDP measurement exceeded 20 seconds.');
+    expect(socket.commands.map((command) => command.params.expression)).toEqual([
+      'prepare-hangs',
+      'cancel-page-probe',
+    ]);
+    expect(socket.readyState).toBe(3);
+    expect(pendingAfterPageCancellation).toBe(0);
+    expect(preparationSettledAtCancellation).toBe(true);
+    expect(client.pendingRequestCount).toBe(0);
+    expect(preparationSettled).toBe(true);
+  });
+
+  it('closes CDP when page cancellation misses its grace period', async () => {
+    const socket = new PreparationCancellationSocket(false);
+    const client = new CdpClient('ws://test.invalid', () => socket as unknown as WebSocket);
+    const startedAt = performance.now();
+
+    const result = runCdpMeasurement({
+      client,
+      timeoutMs: 20,
+      timeoutMessage: 'Page navigation CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 25,
+      task: async () => {
+        await client.open();
+        await client.send('Runtime.evaluate', { expression: 'prepare-hangs' });
+      },
+      onTimeout: () => client.send('Runtime.evaluate', { expression: 'cancel-page-probe' }),
+    });
+
+    await expect(result).rejects.toThrow('Page navigation CDP measurement exceeded 20 seconds.');
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    expect(socket.commands.map((command) => command.params.expression)).toEqual([
+      'prepare-hangs',
+      'cancel-page-probe',
+    ]);
+    expect(socket.readyState).toBe(3);
+    expect(client.pendingRequestCount).toBe(0);
+  });
+
+  it('parses the cursor range without assuming row order', () => {
+    expect(parsePageCursorOrdinal('Rows #100-#199')).toBe(100);
+    expect(parsePageCursorOrdinal('Rows #0-#99')).toBe(0);
+    expect(parsePageCursorOrdinal('Loading page...')).toBeUndefined();
+    expect(parsePageCursorOrdinal('Rows #1.5-#9')).toBeUndefined();
+  });
+
+  it('requires one-page movement in the requested direction', () => {
+    expect(isExpectedPageNavigation(1, 2, 'next')).toBe(true);
+    expect(isExpectedPageNavigation(2, 1, 'previous')).toBe(true);
+    expect(isExpectedPageNavigation(1, 3, 'next')).toBe(false);
+    expect(isExpectedPageNavigation(2, 2, 'previous')).toBe(false);
+    expect(isExpectedPageNavigation(1, 2, 'sideways')).toBe(false);
+  });
+
+  it('requires the measured page state to remain unchanged across the settle frames', () => {
+    const committed = { page: 2, cursorText: 'Rows #100-#199', cursorOrdinal: 100, mountedOrdinal: 100, generation: 'g2' };
+    expect(samePageNavigationState(committed, { ...committed })).toBe(true);
+    expect(samePageNavigationState(committed, { ...committed, page: 3 })).toBe(false);
+    expect(samePageNavigationState(committed, { ...committed, cursorOrdinal: 200 })).toBe(false);
+    expect(samePageNavigationState(committed, { ...committed, mountedOrdinal: 101 })).toBe(false);
+    expect(samePageNavigationState(committed, { ...committed, generation: 'g3' })).toBe(false);
+  });
+
   for (const modeArguments of [
     ['--follow-file', 'victim.jsonl'],
     ['--append-file', 'victim.jsonl'],
@@ -71,6 +239,50 @@ describe('synthetic CDP smoke fixture boundary', () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('--synthetic-change requires append, truncate, or rewrite');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rejects inspect-only mode before creating a page-navigation measurement run', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--inspect-only', '--measure-page-navigation');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--measure-page-navigation cannot be combined with --inspect-only');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('keeps query temporal association separate from page-navigation measurement', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--measure-page-navigation', '--measure-query-temporal-association');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Page-navigation and query temporal-association measurement modes are separate');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rejects inspect-only query temporal-association mode before creating a run directory', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--inspect-only', '--measure-query-temporal-association');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--measure-query-temporal-association cannot be combined with --inspect-only');
+      await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rejects page-navigation measurement combined with a synthetic file mutation', async () => {
+    await withTempRoot(async (root) => {
+      const output = join(root, 'output');
+      const result = runSmoke(output, '--measure-page-navigation', '--synthetic-change', 'append');
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--measure-page-navigation cannot be combined with other smoke modes');
       await expect(readdir(output)).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });

@@ -38,6 +38,8 @@ export function verifyVsixTargetEvidence({ openVsx, marketplace }, { openVsxTarg
   if (openVersion !== marketplaceVersion) failures.push('extension versions differ between target VSIX files');
 
   compareTargetMetadata(openVsx, marketplace, failures);
+  compareTargetDigest('native payload', openVsx?.native?.sha256, marketplace?.native?.sha256, failures);
+  compareTargetDigest('production bundle', openVsx?.bundle?.sha256, marketplace?.bundle?.sha256, failures);
   const openFiles = comparableFileMap(openVsx?.files);
   const marketplaceFiles = comparableFileMap(marketplace?.files);
   const paths = [...new Set([...openFiles.keys(), ...marketplaceFiles.keys()])].sort();
@@ -116,6 +118,17 @@ function compareTargetMetadata(openVsx, marketplace, failures) {
   if (normalizedOpenManifest !== undefined && normalizedMarketplaceManifest !== undefined
     && normalizedOpenManifest !== normalizedMarketplaceManifest) {
     failures.push('extension.vsixmanifest differs outside allowed registry identity fields');
+  }
+}
+
+function compareTargetDigest(label, openDigest, marketplaceDigest, failures) {
+  if (openDigest === undefined && marketplaceDigest === undefined) return;
+  if (typeof openDigest !== 'string' || typeof marketplaceDigest !== 'string') {
+    failures.push(`${label} digest evidence is missing from one target`);
+    return;
+  }
+  if (openDigest.toLowerCase() !== marketplaceDigest.toLowerCase()) {
+    failures.push(`${label} digest differs between targets`);
   }
 }
 

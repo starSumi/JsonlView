@@ -1,3 +1,15 @@
+---
+id: "009-automatic-update-boundary"
+path: "docs/decisions/009-automatic-update-boundary.md"
+title: "Automatic Update Boundary"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["trust","updates","vscode"]
+evidence: []
+revisit: "when update ownership or trust changes"
+rollback: "disable the proposed update path"
+---
 # ADR-009: Automatic Update Boundary
 
 ## Pressure

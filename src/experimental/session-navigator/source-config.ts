@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
-import { readdirSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { AuthorizedSourceSetting, SessionNavigatorProviderId } from './types';
+import { catalogSourceId, catalogSourceLabel } from '@application/catalog/catalog-identity';
+import { isKimiServerSourceRoot } from './kimi-server-journal';
+import { isGenericFileProvider, type AuthorizedSourceSetting, type SessionNavigatorProviderId } from './types';
 
-const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'generic']);
+const PROVIDERS = new Set<SessionNavigatorProviderId>(['codex', 'claude', 'pi', 'kimi', 'gemini', 'opencode', 'agentsview', 'generic']);
 const MAX_ROOT_URI_LENGTH = 2_048;
 
 export interface DefaultSourceDiscoveryOptions {
@@ -51,15 +52,29 @@ export function discoverDefaultSources(options: DefaultSourceDiscoveryOptions = 
     { provider: 'codex', path: codexRoot, statePath: codexStateRoot },
     { provider: 'claude', path: env.CLAUDE_CONFIG_DIR?.trim() || join(homeDirectory, '.claude') },
     { provider: 'pi', path: piSessionRoot },
+    { provider: 'kimi', path: env.KIMI_CODE_HOME?.trim() || join(homeDirectory, '.kimi-code') },
+    // Generic agent homes are opt-in through an explicit environment variable.
+    // Never guess by walking the user's home directory.
+    { provider: 'gemini', path: env.GEMINI_HOME?.trim() || env.GEMINI_CODE_HOME?.trim() },
+    { provider: 'opencode', path: env.OPENCODE_HOME?.trim() },
+    { provider: 'agentsview', path: env.AGENTSVIEW_HOME?.trim() || env.AGENTSVIEW_ROOT?.trim() || env.AGENT_VIEW_HOME?.trim() },
   ];
   return parseAuthorizedSources(candidates.flatMap(({ provider, path, statePath }) => {
-    if (path === undefined || !isProviderRoot(provider, path)) return [];
+    if (path === undefined || !isLocalFilesystemPath(path)) return [];
+    // Kimi explicitly refuses a linked provider root. Check the original path
+    // before realpath would erase its symlink identity.
+    const isKimiRoot = provider === 'kimi';
+    if (isKimiRoot && !isProviderRoot(provider, path)) return [];
+    const canonicalPath = canonicalRoot(path);
+    if (!isLocalFilesystemPath(canonicalPath)
+      || (statePath !== undefined && (!isLocalFilesystemPath(statePath) || !isLocalFilesystemPath(canonicalRoot(statePath))))
+      || (!isKimiRoot && !isProviderRoot(provider, canonicalPath))) return [];
     const stateRoot = provider === 'codex' && statePath !== undefined
       ? pathToFileURL(canonicalRoot(statePath)).toString()
       : undefined;
     return [{
       provider,
-      rootUri: pathToFileURL(canonicalRoot(path)).toString(),
+      rootUri: pathToFileURL(canonicalPath).toString(),
       ...(stateRoot === undefined ? {} : { stateRootUri: stateRoot }),
     }];
   }));
@@ -77,7 +92,8 @@ export function mergeSourceSettings(
     candidate.provider === setting.provider && candidate.stateRootUri !== undefined && canonicalUriKey(candidate.rootUri) === canonicalUriKey(setting.rootUri),
   ) ?? setting);
   const candidates = [...defaults, ...configured.filter((setting) => !discovered.some((candidate) =>
-    candidate.provider === setting.provider && isUnderRoot(canonicalUriKey(setting.rootUri), canonicalUriKey(candidate.rootUri)),
+    candidate.provider === setting.provider && isUnderRoot(canonicalUriKey(setting.rootUri), canonicalUriKey(candidate.rootUri))
+      && !(setting.provider === 'kimi' && isIndependentKimiServerRoot(setting.rootUri, candidate.rootUri)),
   ))];
   for (const setting of candidates) {
     const key = setting.provider + '\0' + canonicalUriKey(setting.rootUri) + '\0' + canonicalUriKey(setting.stateRootUri ?? setting.rootUri);
@@ -89,40 +105,49 @@ export function mergeSourceSettings(
 }
 
 export function sourceIdFor(setting: AuthorizedSourceSetting): string {
-  const digest = createHash('sha256').update(setting.provider + '\0' + canonicalUriKey(setting.rootUri) + '\0' + canonicalUriKey(setting.stateRootUri ?? setting.rootUri), 'utf8').digest('hex');
-  return `${setting.provider}-${digest.slice(0, 24)}`;
+  return catalogSourceId(setting);
 }
 
 export function sourceLabelFor(setting: AuthorizedSourceSetting): string {
-  try {
-    const parsed = new URL(setting.rootUri);
-    const path = decodeURIComponent(parsed.pathname).replace(/\/+$/u, '');
-    const name = path.split('/').filter(Boolean).at(-1);
-    return name && name.length > 0 ? `${setting.provider}: ${name}` : `${setting.provider} source`;
-  } catch {
-    return `${setting.provider} source`;
-  }
+  return catalogSourceLabel(setting);
 }
 
 function isFileUri(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === 'file:' && isAbsolute(fileURLToPath(parsed));
+    if (parsed.protocol !== 'file:' || parsed.host !== '') return false;
+    return isLocalFilesystemPath(fileURLToPath(parsed));
   } catch { return false; }
 }
 
 function isProviderRoot(provider: SessionNavigatorProviderId, path: string): boolean {
   try {
+    if (!isLocalFilesystemPath(path)) return false;
+    if (provider === 'kimi') {
+      const root = lstatSync(path);
+      if (!root.isDirectory() || root.isSymbolicLink()) return false;
+      if (isKimiServerSourceRoot(path)) return true;
+      const sessions = lstatSync(join(path, 'sessions'));
+      return sessions.isDirectory() && !sessions.isSymbolicLink();
+    }
     if (!statSync(path).isDirectory()) return false;
     const names = new Set(readdirSync(path, { encoding: 'utf8' }));
     if (provider === 'codex') {
       return [...names].some((name) => /^state(?:_\d+)?\.sqlite$/iu.test(name)) || names.has('sessions') || names.has('archived_sessions');
     }
     if (provider === 'pi') return names.has('sessions') || names.has('agent') || [...names].some((name) => name.endsWith('.jsonl'));
+    if (isGenericFileProvider(provider)) {
+      return names.has('projects') || names.has('history.jsonl') || names.has('sessions') || names.has('internal')
+        || [...names].some((name) => name.endsWith('.jsonl'));
+    }
     return names.has('projects') || names.has('history.jsonl') || names.has('sessions');
   } catch {
     return false;
   }
+}
+
+function isLocalFilesystemPath(path: string): boolean {
+  return isAbsolute(path) && !/^[\\/]{2}/u.test(path);
 }
 
 function canonicalRoot(path: string): string {
@@ -141,6 +166,12 @@ function canonicalUriKey(uri: string): string {
 function isUnderRoot(candidate: string, root: string): boolean {
   const suffix = relative(root, candidate);
   return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..' + sep));
+}
+
+function isIndependentKimiServerRoot(candidateUri: string, homeUri: string): boolean {
+  const candidate = canonicalUriKey(candidateUri);
+  const withinHome = relative(canonicalUriKey(homeUri), candidate).split(sep).join('/').toLowerCase();
+  return withinHome === 'server' || withinHome === 'server/events' || isKimiServerSourceRoot(fileURLToPath(candidateUri));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

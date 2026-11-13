@@ -1,0 +1,3 @@
+import { createBridgeServer } from './index.js';
+const token=process.env.JSONLVIEW_BRIDGE_TOKEN;
+if(!token){console.error('JSONLVIEW_BRIDGE_TOKEN is required');process.exitCode=2;}else{const server=createBridgeServer({token,command:process.env.JSONLVIEW_TUNNEL_COMMAND??process.execPath,args:process.env.JSONLVIEW_TUNNEL_ARGS?JSON.parse(process.env.JSONLVIEW_TUNNEL_ARGS):['-e','process.stdin.pipe(process.stdout)']});await server.listen();const address=server.address();console.error(`private JSON-RPC tunnel listening on ${typeof address==='object'&&address?`${address.address}:${address.port}`:'unknown'}`)}

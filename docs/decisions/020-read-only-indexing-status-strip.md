@@ -1,3 +1,15 @@
+---
+id: "020-read-only-indexing-status-strip"
+path: "docs/decisions/020-read-only-indexing-status-strip.md"
+title: "Read-Only Indexing Status Strip"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["indexing","status","webview"]
+evidence: []
+revisit: "when indexing status presentation changes"
+rollback: "restore the prior status strip"
+---
 # ADR-020: Read-Only Indexing Status Strip
 
 Status: accepted

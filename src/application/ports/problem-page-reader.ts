@@ -1,4 +1,4 @@
-import type { ProblemPage, RowScanBudget } from '../../shared/types';
+import type { ProblemPage, RowScanBudget } from '@shared/types';
 
 export const PROBLEM_PAGE_MAX_LIMIT = 200;
 

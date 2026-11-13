@@ -1,0 +1,156 @@
+---
+id: "mcp-local-plan"
+path: "docs/mcp-local-plan.md"
+title: "Local MCP and Audit Plan"
+kind: "guide"
+status: "proposed"
+owner: "product"
+tags: ["audit","mcp","otel","redaction","staging"]
+evidence: []
+revisit: "when the read-only MCP transport or trust boundary gains evidence"
+rollback: "keep MCP disabled and retain local read-only navigation"
+---
+# Local MCP and Audit Plan
+
+MCP is a host adapter, not a second source of truth. The first shipped boundary
+is read-only and opt-in. It reads the same bounded snapshot and catalog used by
+the Navigator and returns opaque source identifiers unless a trusted user asks
+for a path.
+
+## Commands and fences
+
+The planned Navigator query set is `list_sessions`, `get_session`,
+`list_relations`, `read_slice`, and `search_index`. Each planned request carries
+an operation ID, source allowlist, generation/snapshot token, cancellation
+signal, traversal budget, and output byte cap. The shipped Rust record adapter
+described below is a narrower physical-page API and does not implement this
+query set. No command execution, arbitrary path access, secret disclosure, or
+source write is part of this phase.
+
+The audit ledger and OTel telemetry are separate: the local ledger is the
+forensic record for bounded operation metadata and recovery outcomes; optional
+telemetry is a redacted trend signal with fixed enums and bounded cardinality.
+Raw prompts, source bytes, local absolute paths, credentials, and full tool
+payloads do not leave the local boundary.
+
+## Mutation phases
+
+`stage_patch` can be considered only after the read-only query contract has
+conformance and failure evidence. It must produce a diff and precondition receipt
+without changing the source. A commit tool is a later capability requiring
+explicit human confirmation, authority fencing, idempotency, journal intent,
+atomic replacement, readback digest, and unknown-commit reconciliation.
+
+This plan does not add an MCP server to extension startup. A separate
+dist/mcp-server.cjs stdio entrypoint is packaged for an explicit MCP client
+launch. It requires JSONLVIEW_MCP_SOURCE_ID and JSONLVIEW_MCP_SOURCE_PATH; the
+source path is supplied by the trusted host, never by a tool argument.
+Transport ownership, Restricted Mode behavior, Workspace Trust, and source
+authorization remain host policies.
+
+An MCP client launches the packaged entrypoint with its normal Node runtime and
+sets those two environment variables for one explicitly authorized JSONL file.
+The only tool is `jsonlview_query_records`; it accepts `sourceId`,
+`startOrdinal`, `limit`, and `maxBytes`. The host caps a tool page at 256 records
+and 512 KiB; it never splits a physical record, and a first record that exceeds
+`maxBytes` fails explicitly with `record-exceeds-max-bytes` instead of
+returning a stationary continuation cursor. The Rust core caps ordinal-prefix
+scanning at 64 MiB.
+
+The stdio adapter bounds execution to two active tool calls by default and at
+most eight queued calls. `JSONLVIEW_MCP_MAX_CONCURRENCY` may set active
+concurrency from 1 through 8; setting it to 1 serializes query scans. Requests
+beyond the waiting-queue cap fail with `server_busy` before query I/O starts.
+`JSONLVIEW_MCP_BUDGET_MS` sets a total request budget from 1 through 60000 ms,
+defaulting to 3000 ms. The budget starts when a valid, allowlisted tool call is
+admitted and includes queue wait and query execution. Invalid configuration
+fails server startup with a named setting and permitted range.
+
+Client `notifications/cancelled` aborts the request signal. A queued request is
+removed before query I/O begins; an active portable scan cooperates at its
+open/read boundaries and the server sends no later response for the cancelled
+request. The packaged stdio handler selects the portable asynchronous reader so
+the event loop can process cancellation and deadlines between filesystem
+operations. It checks the signal before opening, after opening, and after each
+read; an individual operating-system read already in progress is not forcibly
+interrupted. Other callers may still use the synchronous N-API accelerator,
+which cannot process a notification or run a timer while blocked. The MCP
+server also checks the monotonic deadline before starting queued work and
+before accepting a query result, so a synchronous over-budget result is
+dropped after control returns. Both readers retain the existing scan caps. If
+a timed-out or cancelled adapter ignores its signal, the request response is
+settled but its execution slot remains occupied until that work actually ends;
+the slot is not reused in a way that would exceed the configured work bound.
+Duplicate request IDs are rejected while their calls are pending, and a stopped
+server instance is one-shot so old work cannot cross a restart boundary.
+Unknown requested protocol versions negotiate to the newest server-supported
+version. Tool arguments cannot supply paths, commands, or write operations.
+
+The shipped inspection command only reports the frozen capability descriptor:
+
+## Diagnostic bridge
+
+The Rust `McpManager` in `native/jsonl-core/src/mcp_manager.rs` is a
+transport-neutral lifecycle manager. It stays dormant until the user explicitly
+chooses `Send to side agent` or invokes the corresponding command. The extension
+then asks the native manager for a bounded, metadata-only request plan; the
+manager never starts a process, opens a socket, or contacts a provider. The
+separate AcpSessionManager owns an explicit ACP stdio child session and can
+attach the packaged MCP server definition to session/new for the configured
+agent.
+
+The plan includes the current MCP handshake (`2026-07-28`) and compatibility
+attempts for `2025-11-25` (the repository's existing line) and `2025-06-18`
+(the Codex legacy line). A host-owned bridge decides whether and how to execute
+one attempt, applies its own timeout and trust policy, and may route to any
+compatible agent. Copilot is not a required dependency. On the explicit
+`Send to side agent` action, a configured ACP agent is used only in a trusted
+workspace; otherwise the extension tries its MCP side-agent bridge and copies
+the bounded prompt if no bridge accepts it. No provider process starts at
+activation.
+The Navigator inspection capability remains experimental, disabled by default,
+metadata-only, and without an activation-time transport. The Rust query server
+is a separate explicit stdio adapter and remains read-only, bounded, source
+allowlisted, and provider-neutral. Packaged stdio uses the asynchronous
+portable reader; synchronous native reads remain available to other adapters.
+
+## Adapter and target boundary
+
+The extension keeps one ACP v1 stdio agent compatible through the legacy
+`jsonlView.acp.command`, `args` and `timeoutMs` settings. Multiple explicitly
+configured profiles are listed only when the user invokes the ACP diagnostic
+action; canceling that picker starts no process. Each profile records ACP v1,
+stdio and an explicit `local` execution target. The ACP session manager uses
+the shared runtime process factory; WSL/SSH profile values remain rejected
+until their process context, working-directory mapping and live lifecycle are
+implemented. Profiles do not embed credentials or plugin code. ACP v2 is not
+advertised by the current manager: v2 prompt acceptance is separate from turn
+completion and needs a distinct update-driven lifecycle implementation.
+
+`packages/runtime` defines a static `jsonlview.agent-adapter.v1` descriptor
+and separates protocol (`acp`/`mcp`), transport (`stdio`/MCP Streamable HTTP)
+and process execution target (`local`/`wsl`/`ssh`). Descriptors carry protocol
+versions, declared capabilities and provenance only. Executable commands,
+per-process secrets and user grants are not catalog fields. The runtime can
+construct local, WSL and SSH process launches for existing process adapters;
+this does not itself enable a provider or prove a live remote endpoint.
+
+Plugin entries are metadata pinned to a full 40-character Git commit SHA and
+SHA-256 content digest.
+Validation returns entries disabled; JsonlView does not download, evaluate or
+auto-activate plugin code or skills. Provider catalogs remain source-specific
+adapters rather than a cross-provider plugin standard.
+
+The experimental bridge currently exposes only an authenticated private
+newline-delimited JSON-RPC tunnel at `/rpc-tunnel`. It is not an ACP transport
+or an MCP endpoint. `/mcp` intentionally returns 404 until an implementation
+passes the native MCP initialize, discovery, invocation, cancellation and
+transport probes. This keeps a future real Streamable HTTP MCP host separate
+from the packaged read-only stdio server.
+
+Run `pnpm verify:mcp-client` after `pnpm build` to exercise the built stdio
+entrypoint with official MCP TypeScript SDK 1.32.2: legacy initialize,
+`tools/list`, bounded `tools/call` against a synthetic source and clean close.
+The product's separate MCP 2026-07-28 per-request metadata tests remain the
+modern protocol evidence; the SDK v1 probe does not claim that SDK supports
+the modern stateless era.

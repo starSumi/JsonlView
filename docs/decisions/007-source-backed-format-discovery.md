@@ -1,3 +1,15 @@
+---
+id: "007-source-backed-format-discovery"
+path: "docs/decisions/007-source-backed-format-discovery.md"
+title: "Source-Backed Format Discovery"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["discovery","formats","provider"]
+evidence: []
+revisit: "when source-backed format discovery changes"
+rollback: "restore the previous discovery rules"
+---
 # ADR-007: Source-Backed Format Discovery
 
 Status: accepted
@@ -21,7 +33,7 @@ which may expose bounded inferred signals but never claims a provider schema.
 
 `src/profiles/shape-discovery.ts` owns bounded structural discovery and source
 surface hints. Provider profiles own their validated contracts and projections.
-`src/extension/integrated-session.ts` owns the bounded sample window. Producer
+`src/extension/integrated-session/integrated-session.ts` owns the bounded sample window. Producer
 source studies and redacted fixtures live outside the product checkout.
 
 ## Alternatives

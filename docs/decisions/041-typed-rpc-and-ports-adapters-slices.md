@@ -1,3 +1,15 @@
+---
+id: "041-typed-rpc-and-ports-adapters-slices"
+path: "docs/decisions/041-typed-rpc-and-ports-adapters-slices.md"
+title: "Typed RPC And Ports-Adapters Slices"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","ports-adapters","rpc"]
+evidence: []
+revisit: "when a second runtime consumer or protocol change appears"
+rollback: "revert one vertical slice and keep the prior facade"
+---
 # ADR-041: Typed RPC And Ports-Adapters Slices
 
 Status: accepted
@@ -8,8 +20,10 @@ JsonlView has two active runtimes: the VS Code Extension Host and a sandboxed
 Webview. The product also has provider-specific session formats, filesystem
 indexing, and an optional native scanner. Existing protocol validation, request
 tracking, and provider presentation are correct but still expose large module
-boundaries. The next refactor must make ownership explicit without changing the
-wire shape, lifecycle semantics, or release composition root.
+boundaries. The next refactor must make ownership explicit while preserving
+lifecycle semantics and the release composition root. A separately reviewed
+protocol evolution may add versioned or additive wire fields; that evolution
+must not be hidden inside a structural extraction.
 
 ## Invariant
 
@@ -26,9 +40,21 @@ wire shape, lifecycle semantics, or release composition root.
 
 ## Owner
 
-- `src/shared/`: versioned protocol and serializable domain contracts.
-- `src/extension/`: host-side transport endpoint, application use-cases, and
-  lifecycle/cancellation coordination.
+- `src/shared/contracts/`: serializable structures and stateless format guards,
+  grouped by identity, envelope, record, query, navigation, intake, and errors.
+  `src/shared/types.ts` remains a compatibility barrel during migration.
+- `src/shared/transport/`: envelope creation/stamping, request-ID correlation,
+  and cancellation-registry lifetime. It does not own contract structure,
+  semantic format validation, filesystem authorization, or workspace trust.
+  Completion retires an entry only when both its request ID and acquired
+  AbortSignal match the current registration. Handlers without an acquired
+  signal and late completions after ID reuse leave the current owner intact.
+  Acquire that registration before projection invalidation, query observation,
+  first-request callbacks, or rebuild sequence changes, so duplicate rejection
+  has no lifecycle effect on the operation that already owns the ID.
+- `src/extension/`: host-side transport endpoint, application use-cases,
+  lifecycle/cancellation coordination, path sandboxing, and workspace-trust
+  authorization.
 - `src/webview/`: feature owners, protocol client, and presentation state.
 - `src/experimental/` and `src/adapters/` when introduced: explicitly bounded
   provider or filesystem adapters, each with one source owner.
@@ -63,10 +89,11 @@ contract.
 
 Adopt a staged hybrid architecture:
 
-1. **Typed transport.** Keep `ProtocolEnvelope` as the wire envelope. Centralize
-   request/response validation and cancellation semantics behind a small shared
-   transport contract; the Extension Host and Webview may provide different
-   implementations, but neither bypasses the contract.
+1. **Typed contracts and transport.** Put serializable shapes and stateless
+   format guards under `src/shared/contracts/`; keep transport limited to
+   envelope creation/stamping, request correlation, and cancellation lifetime.
+   The Extension Host and Webview may provide different endpoint
+   implementations, but neither may bypass the shared format contract.
 2. **Application use-cases.** Extract named operations such as loading a bounded
    record page or resolving a provider source behind ports. Use-cases receive
    ports and cancellation signals, and do not import VS Code or React.
@@ -77,7 +104,9 @@ Adopt a staged hybrid architecture:
    focused tests. Compatibility barrels remain thin and contain no parsing or
    lifecycle owner.
 5. **Vertical migration.** Migrate one capability at a time, retaining the
-   existing facade and wire shape until the new owner has equivalent evidence.
+   existing facade until the new owner has equivalent evidence. Any wire change
+   is reviewed as a protocol evolution with explicit versioning or compatibility
+   behavior, not treated as an incidental consequence of moving files.
 
 ## Evidence
 

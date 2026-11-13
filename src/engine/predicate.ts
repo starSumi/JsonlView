@@ -3,7 +3,7 @@ import type {
   JsonKind,
   JsonScalar,
   Predicate,
-} from '../shared/types';
+} from '@shared/types';
 
 export interface PredicateContext {
   profileFields?: Readonly<Record<string, JsonScalar | undefined>>;
@@ -94,7 +94,7 @@ function searchableText(value: unknown): string {
     return String(value);
   }
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? '';
   } catch {
     return '';
   }

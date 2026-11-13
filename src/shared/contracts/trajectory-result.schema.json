@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:jsonlview:trajectory-slice:result:v1",
+  "title": "JsonlView trajectory slice result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "requestId",
+    "status"
+  ],
+  "properties": {
+    "schema": {
+      "const": "jsonlview.trajectory-slice.result.v1"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "error"
+      ]
+    },
+    "sourceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "guarantee"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "guarantee": {
+          "const": "observed-metadata"
+        }
+      }
+    },
+    "records": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "examinedBytes",
+        "examinedRecords",
+        "returnedBytes"
+      ],
+      "properties": {
+        "examinedBytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "examinedRecords": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "returnedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        }
+      }
+    },
+    "reason": {
+      "enum": [
+        "record_limit",
+        "scan_limit",
+        "output_limit",
+        "deadline"
+      ]
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "recoverable"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_ARGUMENT",
+            "SOURCE_NOT_AUTHORIZED",
+            "SOURCE_CHANGED",
+            "STALE_CURSOR",
+            "BUDGET_TOO_SMALL",
+            "CANCELLED",
+            "DEADLINE_EXCEEDED",
+            "UNSUPPORTED_PROFILE",
+            "IO_FAILED",
+            "INTERNAL"
+          ]
+        },
+        "recoverable": {
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "code": {
+              "enum": [
+                "SOURCE_CHANGED",
+                "STALE_CURSOR",
+                "BUDGET_TOO_SMALL",
+                "CANCELLED",
+                "DEADLINE_EXCEEDED",
+                "IO_FAILED"
+              ]
+            },
+            "recoverable": {
+              "const": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "code": {
+              "enum": [
+                "INVALID_ARGUMENT",
+                "SOURCE_NOT_AUTHORIZED",
+                "UNSUPPORTED_PROFILE",
+                "INTERNAL"
+              ]
+            },
+            "recoverable": {
+              "const": false
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": {
+          "const": "complete"
+        }
+      },
+      "required": [
+        "sourceId",
+        "profile",
+        "snapshot",
+        "records",
+        "usage"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "reason"
+            ]
+          },
+          {
+            "required": [
+              "cursor"
+            ]
+          },
+          {
+            "required": [
+              "error"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "partial"
+        }
+      },
+      "required": [
+        "sourceId",
+        "profile",
+        "snapshot",
+        "records",
+        "usage",
+        "reason",
+        "cursor"
+      ],
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "error"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "sourceId"
+            ]
+          },
+          {
+            "required": [
+              "profile"
+            ]
+          },
+          {
+            "required": [
+              "snapshot"
+            ]
+          },
+          {
+            "required": [
+              "records"
+            ]
+          },
+          {
+            "required": [
+              "usage"
+            ]
+          },
+          {
+            "required": [
+              "reason"
+            ]
+          },
+          {
+            "required": [
+              "cursor"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 20
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ordinal",
+        "byteStart",
+        "byteEnd",
+        "actor",
+        "hasError",
+        "text"
+      ],
+      "properties": {
+        "ordinal": {
+          "$ref": "#/$defs/decimal"
+        },
+        "byteStart": {
+          "$ref": "#/$defs/decimal"
+        },
+        "byteEnd": {
+          "$ref": "#/$defs/decimal"
+        },
+        "actor": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool",
+            "system",
+            "unknown"
+          ]
+        },
+        "hasError": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 262144
+        }
+      }
+    }
+  }
+}

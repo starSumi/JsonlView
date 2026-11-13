@@ -1,54 +1,32 @@
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdtemp, open, realpath, rmdir, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { lstat, open, realpath } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
+import { TextDecoder } from 'node:util';
 import * as vscode from 'vscode';
-import { getSourceDropHtml, getSourceIntakeHtml } from './source-intake-html';
-import type { SessionNavigatorProviderId } from './types';
+import { getSourceIntakeHtml } from './source-intake-html';
+import { hasJsonlExtension } from './source-intake-contract';
+import { INTAKE_PROTOCOL_VERSION, createIntakeFocusMessage, createIntakeStatusReply, validateIntakeMessage, type IntakeMessage, type IntakeStatusState } from '../../shared/contracts/intake';
+import { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
+import { SessionPreviews } from './session-previews';
+import type { SessionPreview } from './session-previews';
 
-export const SOURCE_INTAKE_MAX_BYTES = 1_048_576;
-export const SOURCE_INTAKE_MAX_RECORDS = 10_000;
-const MAX_SOURCES = 32;
-const MAX_PREVIEWS = 20;
+export { SOURCE_INTAKE_MAX_BYTES, SOURCE_INTAKE_MAX_RECORDS } from './source-intake-limits';
 
-type IntakeMessage =
-  | { readonly type: 'pick-files' | 'pick-folder' }
-  | { readonly type: 'drop-uris'; readonly uris: readonly string[] }
-  | { readonly type: 'import-jsonl'; readonly text: string }
-  | { readonly type: 'authorize-agent'; readonly provider: 'codex' | 'claude' | 'pi' }
-  | { readonly type: 'webview-diagnostic'; readonly name: string; readonly message: string };
-
+/** Host-facing error adapter over the shared, stateless intake contract. */
 export function parseSourceIntakeMessage(value: unknown): IntakeMessage {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid source request.');
-  const message = value as Record<string, unknown>;
-  const keys = Object.keys(message);
-  if ((message.type === 'pick-files' || message.type === 'pick-folder') && keys.length === 1) return { type: message.type };
-  if (message.type === 'import-jsonl' && keys.length === 2 && typeof message.text === 'string') {
-    if (message.text.length > SOURCE_INTAKE_MAX_BYTES || Buffer.byteLength(message.text, 'utf8') > SOURCE_INTAKE_MAX_BYTES) {
-      throw new Error('JSONL preview is limited to 1 MiB. Choose Files to open a larger local source.');
-    }
-    return { type: 'import-jsonl', text: message.text };
+  const result = validateIntakeMessage(value);
+  if (result.ok) return result.message;
+  if (result.error === 'unsupported-version') {
+    throw new Error('This Import panel uses an unsupported protocol version. Close and reopen the panel.');
   }
-  if (message.type === 'drop-uris' && keys.length === 2 && Array.isArray(message.uris)
-    && message.uris.length > 0 && message.uris.length <= MAX_SOURCES
-    && message.uris.every((uri: unknown) => typeof uri === 'string' && uri.length > 0 && uri.length <= 8_192)
-    && message.uris.join('').length <= 65_536) {
-    return { type: 'drop-uris', uris: message.uris as string[] };
-  }
-  if (message.type === 'webview-diagnostic' && keys.length === 3
-    && typeof message.name === 'string' && message.name.length > 0 && message.name.length <= 128
-    && typeof message.message === 'string' && message.message.length > 0 && message.message.length <= 512) {
-    return { type: 'webview-diagnostic', name: message.name, message: message.message };
-  }
-  if (message.type === 'authorize-agent' && keys.length === 2 && (message.provider === 'codex' || message.provider === 'claude' || message.provider === 'pi')) {
-    return { type: 'authorize-agent', provider: message.provider };
+  if (result.error === 'oversized') {
+    throw new Error('JSONL preview is limited to 1 MiB. Choose Files to open a larger local source.');
   }
   throw new Error('Invalid or oversized source request.');
 }
 
 /** Validation preserves the exact content; blank or malformed records are never discarded. */
 export function validatePastedJsonl(text: string): number {
-  parseSourceIntakeMessage({ type: 'import-jsonl', text });
+  parseSourceIntakeMessage({ intakeProtocolVersion: INTAKE_PROTOCOL_VERSION, type: 'import-jsonl', text });
   if (text.length === 0) throw new Error('Paste at least one JSON record.');
   if (Buffer.from(text, 'utf8').toString('utf8') !== text) throw new Error('JSONL must contain valid Unicode text.');
   const lines = text.split('\n');
@@ -78,56 +56,87 @@ export async function validateLocalSourceUri(value: string): Promise<vscode.Uri>
   return vscode.Uri.file(canonical);
 }
 
-export type SourceIntakeHandler = (uri: vscode.Uri, signal: AbortSignal) => Promise<void>;
-export type DetectedAgentHandler = (provider: Extract<SessionNavigatorProviderId, 'codex' | 'claude' | 'pi'>, signal: AbortSignal) => Promise<void>;
+async function readPreviewSource(uri: vscode.Uri, signal: AbortSignal): Promise<{ readonly text: string; readonly records: number }> {
+  if (signal.aborted) throw new Error('Source preview was cancelled.');
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(uri.fsPath, 'r');
+    const buffer = Buffer.alloc(SOURCE_INTAKE_MAX_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const result = await handle.read(buffer, length, buffer.length - length, length);
+      if (result.bytesRead === 0) break;
+      length += result.bytesRead;
+    }
+    if (length > SOURCE_INTAKE_MAX_BYTES) throw new Error('Dropped previews are limited to 1 MiB. Choose Files to open a larger source.');
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, length));
+    return { text, records: validatePastedJsonl(text) };
+  } catch (error) {
+    if (error instanceof Error && (error.message.includes('preview') || error.message.startsWith('Line '))) throw error;
+    throw new Error('The dropped source could not be read as UTF-8 JSONL. Choose Files to open it directly.');
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
 
 /** Session-owned controller. Closing its panel leaves an already-open temporary preview readable. */
-export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewProvider {
-  readonly #onSource: SourceIntakeHandler;
-  readonly #onDetectedAgent: DetectedAgentHandler | undefined;
+export class SourceIntakePanel implements vscode.Disposable {
   readonly #lifetime = new AbortController();
-  readonly #previews = new Map<string, { readonly dev: number; readonly ino: number; readonly size?: number; readonly mtimeMs?: number }>();
   #panel: vscode.WebviewPanel | undefined;
-  #view: vscode.WebviewView | undefined;
   #panelLifetime: AbortController | undefined;
-  #viewLifetime: AbortController | undefined;
   #pending: Promise<void> | undefined;
-  #directory: string | undefined;
-  #directoryIdentity: { readonly dev: number; readonly ino: number } | undefined;
   #disposal: Promise<void> | undefined;
+  public readonly previews: SessionPreviews;
 
-  public constructor(onSource: SourceIntakeHandler, onDetectedAgent?: DetectedAgentHandler) {
-    this.#onSource = onSource;
-    this.#onDetectedAgent = onDetectedAgent;
+  public constructor(previews = new SessionPreviews()) {
+    this.previews = previews;
   }
 
-  public resolveWebviewView(view: vscode.WebviewView): void {
-    if (this.#lifetime.signal.aborted) return;
-    this.#view = view;
-    view.webview.options = { enableScripts: true, localResourceRoots: [] };
-    view.webview.html = getSourceDropHtml();
-    const controller = new AbortController();
-    this.#viewLifetime = controller;
-    const listener = view.webview.onDidReceiveMessage((message: unknown) => {
-      if (controller.signal.aborted) return;
-      if (this.#pending !== undefined) {
-        void this.post(view.webview, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
-        return;
-      }
-      const operation = this.receive(message, view.webview, controller.signal);
-      this.#pending = operation;
-      void operation.finally(() => { if (this.#pending === operation) this.#pending = undefined; });
+  /** Browser file drops share the existing host validation and session preview owner. */
+  public async previewText(text: string, signal: AbortSignal): Promise<SessionPreview | undefined> {
+    if (signal.aborted || this.#lifetime.signal.aborted) return undefined;
+    return this.openPreview(text, validatePastedJsonl(text), signal);
+  }
+
+  /** Open one native TreeView drop as a bounded temporary preview. */
+  public async previewUri(uri: vscode.Uri, signal: AbortSignal): Promise<SessionPreview | undefined> {
+    const canonical = await validateLocalSourceUri(uri.toString());
+    const details = await lstat(canonical.fsPath);
+    if (!details.isFile() || !hasJsonlExtension(canonical.fsPath)) {
+      throw new Error('Drop a JSONL or NDJSON file for a temporary preview.');
+    }
+    const { text, records } = await readPreviewSource(canonical, signal);
+    return this.openPreview(text, records, signal);
+  }
+
+  /** Offer a permanent copy after the Import canvas has already received success. */
+  public offerPreviewSaveAs(preview: SessionPreview, signal: AbortSignal): void {
+    if (signal.aborted || this.#lifetime.signal.aborted) return;
+    void this.promptPreviewSaveAs(preview, signal).catch(() => {
+      // Notification delivery cannot change a successfully opened temporary preview.
     });
-    view.onDidDispose(() => {
-      controller.abort(); listener.dispose();
-      if (this.#view === view) { this.#view = undefined; this.#viewLifetime = undefined; }
-    });
+  }
+
+  private async promptPreviewSaveAs(preview: SessionPreview, signal: AbortSignal): Promise<void> {
+    const count = preview.recordCount === 1 ? '1 record' : `${String(preview.recordCount)} records`;
+    const action = await vscode.window.showInformationMessage(
+      `Temporary preview opened with ${count}. Recover it this session under Agent Sessions > Recent Previews. Save As keeps a permanent copy; Collection filing is a separate choice.`,
+      'Save As…', 'Keep Temporary Only',
+    );
+    if (action !== 'Save As…' || signal.aborted || this.#lifetime.signal.aborted) return;
+    await this.previews.saveAs(preview.sourceUri, () => !signal.aborted && !this.#lifetime.signal.aborted);
   }
 
   public show(): void {
     if (this.#lifetime.signal.aborted) return;
-    if (this.#panel !== undefined) { this.#panel.reveal(); return; }
-    const panel = vscode.window.createWebviewPanel('jsonlView.sourceIntake', 'Add Source', vscode.ViewColumn.Active, {
+    if (this.#panel !== undefined) {
+      this.#panel.reveal();
+      try {
+        void Promise.resolve(this.#panel.webview.postMessage(createIntakeFocusMessage())).catch(() => {});
+      } catch { /* The active Webview may be closing. */ }
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel('jsonlView.sourceIntake', 'Paste JSONL', vscode.ViewColumn.Active, {
       enableScripts: true, localResourceRoots: [], retainContextWhenHidden: true,
     });
     this.#panel = panel;
@@ -136,11 +145,17 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
     panel.webview.html = getSourceIntakeHtml();
     const listener = panel.webview.onDidReceiveMessage((message: unknown) => {
       if (controller.signal.aborted) return;
-      if (this.#pending !== undefined) {
-        void this.post(panel.webview, controller.signal, 'idle', 'Finish or cancel the current source selection first.');
+      let parsed: IntakeMessage;
+      try { parsed = parseSourceIntakeMessage(message); }
+      catch (error) {
+        void this.post(panel.webview, controller.signal, 'error', error instanceof Error ? error.message : 'Invalid source request.');
         return;
       }
-      const operation = this.receive(message, panel.webview, controller.signal);
+      if (this.#pending !== undefined) {
+        void this.post(panel.webview, controller.signal, 'busy', 'Finish or cancel the current source selection first.');
+        return;
+      }
+      const operation = this.receive(parsed, panel.webview, controller.signal);
       this.#pending = operation;
       void operation.finally(() => { if (this.#pending === operation) this.#pending = undefined; });
     });
@@ -152,53 +167,35 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
 
   public dispose(): Promise<void> {
     if (this.#disposal !== undefined) return this.#disposal;
-    this.#lifetime.abort(); this.#panelLifetime?.abort(); this.#viewLifetime?.abort(); this.#panel?.dispose();
+    this.#lifetime.abort(); this.#panelLifetime?.abort(); this.#panel?.dispose();
     this.#disposal = this.cleanup();
     return this.#disposal;
   }
 
-  private async receive(raw: unknown, webview: vscode.Webview, signal: AbortSignal): Promise<void> {
+  private async receive(message: IntakeMessage, webview: vscode.Webview, signal: AbortSignal): Promise<void> {
     try {
-      const message = parseSourceIntakeMessage(raw);
       if (message.type === 'webview-diagnostic') {
         await this.handleWebviewDiagnostic(webview, signal, message);
         return;
       }
       await this.post(webview, signal, 'busy', 'Adding source…');
       if (signal.aborted) return;
-      if (message.type === 'authorize-agent') {
-        if (this.#onDetectedAgent === undefined) throw new Error('Detected agent authorization is unavailable. Use Add Source to choose a local folder.');
-        await this.#onDetectedAgent(message.provider, signal);
-        const providerLabel = message.provider === 'codex' ? 'Codex' : message.provider === 'claude' ? 'Claude' : 'pi';
-        await this.post(webview, signal, 'success', providerLabel + ' source connected.');
+      if (message.type === 'preview-uris') {
+        const preview = await this.previewUri(vscode.Uri.parse(message.uris[0], true), signal);
+        if (preview === undefined) return;
+        await this.post(webview, signal, 'success', 'Temporary preview opened. Save As keeps a copy; recover it this session from Agent Sessions > Recent Previews.');
+        this.offerPreviewSaveAs(preview, signal);
         return;
       }
       if (message.type === 'import-jsonl') {
         const records = validatePastedJsonl(message.text);
-        await this.openPreview(message.text, signal);
-        await this.post(webview, signal, 'success', `Opened a temporary preview with ${String(records)} records.`, true);
+        const preview = await this.openPreview(message.text, records, signal);
+        if (preview === undefined) return;
+        await this.post(webview, signal, 'success', `Opened a temporary preview with ${String(records)} records. Save As keeps a copy; recover it this session from Agent Sessions > Recent Previews.`, true);
+        this.offerPreviewSaveAs(preview, signal);
         return;
       }
-      const selected = message.type === 'drop-uris' ? message.uris : (await vscode.window.showOpenDialog({
-        canSelectFiles: message.type === 'pick-files', canSelectFolders: message.type === 'pick-folder',
-        canSelectMany: message.type === 'pick-files', openLabel: 'Add Source',
-        ...(message.type === 'pick-files' ? { filters: { 'JSONL / NDJSON': ['jsonl', 'ndjson'], 'All files': ['*'] } } : {}),
-      }))?.map((uri) => uri.toString());
-      if (signal.aborted) return;
-      if (selected === undefined || selected.length === 0) { await this.post(webview, signal, 'idle', 'No source selected.'); return; }
-      if (selected.length > MAX_SOURCES) throw new Error('Choose up to 32 sources at a time.');
-      // Validate the complete selection before authorizing any source.
-      const uris: vscode.Uri[] = [];
-      for (const value of [...new Set(selected)]) {
-        const uri = await validateLocalSourceUri(value);
-        if (signal.aborted) return;
-        uris.push(uri);
-      }
-      for (const uri of uris) {
-        if (signal.aborted) return;
-        await this.#onSource(uri, signal);
-      }
-      await this.post(webview, signal, 'idle', 'Source selection complete.');
+      throw new Error('Unsupported paste request.');
     } catch (error) {
       await this.post(webview, signal, 'error', error instanceof Error ? error.message : 'Could not add this source.');
     }
@@ -219,71 +216,34 @@ export class SourceIntakePanel implements vscode.Disposable, vscode.WebviewViewP
       } catch {
         await this.post(webview, signal, 'error', 'VS Code AI is unavailable. Diagnostics were copied instead.');
       }
+    } else {
+      await this.post(webview, signal, 'idle', 'No diagnostic action selected.');
     }
   }
 
-  private async post(webview: vscode.Webview, signal: AbortSignal, state: string, text: string, clearText = false): Promise<void> {
+  private async post(webview: vscode.Webview, signal: AbortSignal, state: IntakeStatusState, text: string, clearText = false): Promise<void> {
     if (signal.aborted || this.#lifetime.signal.aborted) return;
-    try { await webview.postMessage({ type: 'status', state, text, clearText }); }
+    try { await webview.postMessage(createIntakeStatusReply(state, text, clearText)); }
     catch { /* The panel may close between the signal check and delivery. */ }
   }
 
-  private async openPreview(text: string, signal: AbortSignal): Promise<void> {
-    if (this.#previews.size >= MAX_PREVIEWS) throw new Error('This session has 20 temporary previews. Save your work and reload VS Code to start a new session.');
-    if (this.#directory === undefined) {
-      this.#directory = await mkdtemp(join(tmpdir(), 'jsonlview-intake-'));
-      const stat = await lstat(this.#directory);
-      this.#directoryIdentity = { dev: stat.dev, ino: stat.ino };
+  private async openPreview(text: string, records: number, signal: AbortSignal): Promise<SessionPreview | undefined> {
+    const preview = await this.previews.create(text, records, signal);
+    if (preview === undefined) return;
+    if (signal.aborted || this.#lifetime.signal.aborted) {
+      await this.previews.remove(preview.id);
+      return;
     }
-    if (signal.aborted) return;
-    const path = join(this.#directory, `preview-${randomUUID()}.jsonl`);
     try {
-      const handle = await open(path, 'wx', 0o600);
-      try {
-        const stat = await handle.stat();
-        this.#previews.set(path, { dev: stat.dev, ino: stat.ino });
-        await handle.writeFile(text, { encoding: 'utf8' });
-        const written = await handle.stat();
-        this.#previews.set(path, { dev: written.dev, ino: written.ino, size: written.size, mtimeMs: written.mtimeMs });
-      }
-      finally { await handle.close(); }
-      if (signal.aborted) { await this.removePreview(path); return; }
-      await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(path), 'jsonlView.editor');
-    } catch (error) {
-      await this.removePreview(path);
-      throw error;
+      await vscode.commands.executeCommand('vscode.openWith', preview.sourceUri, 'jsonlView.editor');
+      return preview;
     }
-  }
-
-  private async ownsDirectory(): Promise<boolean> {
-    if (this.#directory === undefined || this.#directoryIdentity === undefined) return false;
-    try {
-      const stat = await lstat(this.#directory);
-      return stat.isDirectory() && !stat.isSymbolicLink() && stat.dev === this.#directoryIdentity.dev
-        && stat.ino === this.#directoryIdentity.ino && resolve(await realpath(this.#directory)) === resolve(this.#directory);
-    } catch { return false; }
-  }
-
-  private async removePreview(path: string): Promise<void> {
-    const owned = this.#previews.get(path);
-    if (owned === undefined || !await this.ownsDirectory()) return;
-    try {
-      const current = await lstat(path);
-      if (!current.isFile() || current.isSymbolicLink() || current.dev !== owned.dev || current.ino !== owned.ino
-        || (owned.size !== undefined && current.size !== owned.size)
-        || (owned.mtimeMs !== undefined && current.mtimeMs !== owned.mtimeMs)) return;
-      await unlink(path); this.#previews.delete(path);
-    }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') this.#previews.delete(path); }
+    catch { await this.previews.remove(preview.id); throw new Error('Could not open the temporary preview.'); }
   }
 
   private async cleanup(): Promise<void> {
     await this.#pending;
-    for (const path of this.#previews.keys()) await this.removePreview(path);
-    if (await this.ownsDirectory()) {
-      // Deliberately non-recursive: files not created by this controller are never removed.
-      try { await rmdir(this.#directory!); } catch { /* Retain an occupied or locked directory. */ }
-    }
+    await this.previews.dispose();
   }
 }
 

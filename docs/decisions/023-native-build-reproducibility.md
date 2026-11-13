@@ -1,3 +1,15 @@
+---
+id: "023-native-build-reproducibility"
+path: "docs/decisions/023-native-build-reproducibility.md"
+title: "Native Build Reproducibility"
+kind: "decision"
+status: "historical"
+owner: "product"
+tags: ["historical","native","reproducibility"]
+evidence: []
+revisit: "when native build reproducibility is re-evaluated"
+rollback: "retain the historical record and superseding decision"
+---
 # ADR-023: Native Build Reproducibility
 
 Status: accepted, experimental

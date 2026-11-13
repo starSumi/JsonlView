@@ -8,14 +8,18 @@ export function useViewportPopover(ref: RefObject<HTMLDetailsElement | null>): v
     const summary = menu?.querySelector<HTMLElement>(':scope > summary');
     if (!menu || !popup || !summary) return;
     const previousStyle = popup.getAttribute('style');
+    const pane = menu.closest<HTMLElement>('.workspace-primary');
     const place = (): void => {
       if (!menu.open) return;
-      const desiredWidth = popup.classList.contains('columns-popover') ? 220 : 260;
-      const desiredMaxHeight = popup.classList.contains('columns-popover') ? 320 : 420;
+      const boundary = pane?.getBoundingClientRect();
+      const preferredWidth = Number(popup.dataset.popoverWidth)
+        || (popup.classList.contains('columns-popover') ? 220 : 260);
+      const desiredMaxHeight = Number(popup.dataset.popoverHeight)
+        || (popup.classList.contains('columns-popover') ? 320 : 420);
       const anchor = summary.getBoundingClientRect();
-      const placement = clampPopoverToViewport(anchor, desiredWidth,
+      const placement = clampPopoverToViewport(anchor, preferredWidth,
         Math.min(popup.scrollHeight + 2, desiredMaxHeight),
-        window.innerWidth, window.innerHeight);
+        window.innerWidth, window.innerHeight, boundary);
       const nextStyle: Record<string, string> = {
         position: 'fixed',
         right: 'auto',
@@ -30,6 +34,7 @@ export function useViewportPopover(ref: RefObject<HTMLDetailsElement | null>): v
     };
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
     observer?.observe(popup);
+    if (pane !== null) observer?.observe(pane);
     const onScroll = (event: Event): void => {
       // Scrolling the popup must leave its own scroll position untouched.
       // Only an ancestor/window scroll can move the anchor out of view.

@@ -1,3 +1,15 @@
+---
+id: "036-pi-coding-agent-adapter"
+path: "docs/decisions/036-pi-coding-agent-adapter.md"
+title: "Pi Coding Agent Session Adapter"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["agent-history","pi","provider"]
+evidence: []
+revisit: "when the Pi session format changes"
+rollback: "disable Pi discovery without touching source files"
+---
 # ADR-036: Pi Coding Agent Session Adapter
 
 Status: experimental

@@ -1,4 +1,4 @@
-import type { SnapshotIdentity } from '../shared/types';
+import type { SnapshotIdentity } from '@shared/types';
 
 export type AcceptedSnapshotIdentity = Readonly<Pick<SnapshotIdentity, 'documentId' | 'generation' | 'epoch'>>;
 

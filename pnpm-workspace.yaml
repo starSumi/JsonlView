@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/*/*
+
+# Keep compatible transitive security fixes reproducible until upstream locks
+# absorb them; review these selectors when the packaging/SDK parents change.
+overrides:
+  '@vscode/vsce@4.1.0>@azure/identity': 4.14.1
+  'qs@<6.16.1': 6.17.1

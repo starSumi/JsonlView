@@ -1,3 +1,15 @@
+---
+id: "008-promotion-synchronization"
+path: "docs/decisions/008-promotion-synchronization.md"
+title: "Promotion Synchronization"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["release","rollback","synchronization"]
+evidence: []
+revisit: "when distribution synchronization changes"
+rollback: "stop promotion and use the last known good artifact"
+---
 # ADR-008: Promotion Synchronization
 
 ## Pressure

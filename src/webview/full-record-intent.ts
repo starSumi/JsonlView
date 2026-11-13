@@ -1,4 +1,4 @@
-import type { RecordDetail } from '../shared/types';
+import type { RecordDetail } from '@shared/types';
 
 export const AUTOMATIC_FULL_RECORD_LIMIT_BYTES = 16 * 1024 * 1024;
 

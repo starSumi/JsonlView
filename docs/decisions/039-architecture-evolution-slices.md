@@ -1,3 +1,15 @@
+---
+id: "039-architecture-evolution-slices"
+path: "docs/decisions/039-architecture-evolution-slices.md"
+title: "Architecture Evolution Slices"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","migration","vertical-slice"]
+evidence: []
+revisit: "when a migration boundary or consumer changes"
+rollback: "revert one vertical slice and retain the facade"
+---
 # ADR-039: Architecture Evolution Slices
 
 Status: accepted
@@ -66,6 +78,14 @@ typed transport owner, while bounded record-page loading is expressed as an
 application use-case behind a reader port. The existing facades and wire shape
 remain in place for rollback; filesystem, provider, native, and domain roots
 remain deferred until their own contracts and evidence are ready.
+
+The query execution DTO now has a canonical owner in
+`src/shared/contracts/query-dto.ts`. The previous `src/shared/query-dto.ts`
+path remains as a deprecated compatibility facade, and production consumers
+use the canonical contract. Canonical-path serialization and parsing tests
+characterize the existing v1 wire shape and export surface; the rollback point
+is to restore the former implementation behind the retained facade. This
+contract-only move does not change query execution behavior.
 
 The paired measurement for these slices used the fixed 100,000-record,
 47,167,597-byte synthetic corpus with the Node scanner on Windows x64 / Node

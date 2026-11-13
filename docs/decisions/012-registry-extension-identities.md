@@ -1,3 +1,15 @@
+---
+id: "012-registry-extension-identities"
+path: "docs/decisions/012-registry-extension-identities.md"
+title: "Registry Extension Identities"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["identity","marketplace","registry"]
+evidence: []
+revisit: "when a distribution identity changes"
+rollback: "restore the prior published identity mapping"
+---
 # ADR-012: Registry Extension Identities
 
 ## Pressure

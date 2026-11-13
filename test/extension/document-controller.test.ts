@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DocumentController, type JsonlSessionPort, type MessageChannel } from '../../src/extension/document-controller';
+import { DocumentGraphController } from '../../src/extension/document-graph';
+import type { ObservabilityEvent } from '../../src/extension/observability/observability-contract';
+import { lineageEvidence, lineageRow } from '../support/lineage-fixtures';
 import {
   PROTOCOL_VERSION,
   type ColumnSpec,
@@ -21,6 +24,7 @@ function summary(): DocumentSummary {
       observedAt: '2026-01-01T00:00:00.000Z',
     },
     profileId: 'generic',
+    profileVersion: '1',
     profileSuggestions: [],
     indexedBytes: '0',
     indexedRecords: '0',
@@ -31,7 +35,7 @@ function summary(): DocumentSummary {
 }
 
 function fakeSession(profileColumns: readonly ColumnSpec[] = []): JsonlSessionPort {
-  const value = summary();
+  let value = summary();
   return {
     getSummary: () => value,
     getProfileColumns: () => profileColumns,
@@ -61,8 +65,9 @@ function fakeSession(profileColumns: readonly ColumnSpec[] = []): JsonlSessionPo
       problems: [],
     }),
     getSchema: async () => ({ fields: [], totalFields: 0, complete: true }),
-    getInsights: async (dimension) => ({
-      dimension,
+    getInsights: async (intent) => ({
+      intent,
+      provenance: { scope: intent.scope, predicateApplied: intent.predicate !== undefined, coverage: 'complete' },
       categories: [],
       timeBuckets: [],
       processedRecords: '0',
@@ -72,7 +77,7 @@ function fakeSession(profileColumns: readonly ColumnSpec[] = []): JsonlSessionPo
       capacityReached: false,
       bucketWidthMs: 300_000,
     }),
-    setProfile: async (profileId) => ({ ...value, profileId }),
+    setProfile: async (profileId) => { value = { ...value, profileId }; return value; },
     setFollowMode: async () => value,
     rebuild: async () => value,
   };
@@ -93,7 +98,455 @@ function request(
   };
 }
 
+function queryDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise; reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('request admission side effects', () => {
+  it('keeps the admitted rebuild publishable after rejecting its duplicate id', async () => {
+    const result = queryDeferred<DocumentSummary>();
+    const rebuild = vi.fn(async () => result.promise);
+    const beforeRebuild = vi.fn();
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController({ ...fakeSession(), rebuild }, {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { beforeRebuild });
+    const first = controller.handleMessage(request('REBUILD_INDEX', {}, 'rebuild'));
+    await controller.handleMessage(request('REBUILD_INDEX', {}, 'rebuild'));
+    result.resolve(summary());
+    await first;
+
+    try {
+      expect(rebuild).toHaveBeenCalledTimes(1);
+      expect(beforeRebuild).toHaveBeenCalledTimes(1);
+      expect(messages.filter((message) => message.type === 'OPENED')).toMatchObject([
+        { requestId: 'rebuild', payload: { snapshot: { generation: 'generation' } } },
+      ]);
+    } finally { controller.dispose(); }
+  });
+
+  it('does not observe or consume first-row lifecycle state for a rejected duplicate', async () => {
+    const pending = queryDeferred<{ fields: never[]; totalFields: number; complete: boolean }>();
+    const onFirstRowsRequest = vi.fn();
+    const onFirstRowsResult = vi.fn();
+    const events: ObservabilityEvent[] = [];
+    const controller = new DocumentController({ ...fakeSession(), getSchema: async () => pending.promise }, {
+      postMessage: async () => true,
+    }, { onFirstRowsRequest, onFirstRowsResult, onQueryOperation: (event) => { events.push(event); } });
+    const first = controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 1 }, 'owned'));
+    await controller.handleMessage(request('GET_ROWS', { limit: 1 }, 'owned'));
+
+    try {
+      expect(onFirstRowsRequest).not.toHaveBeenCalled();
+      expect(onFirstRowsResult).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+      await controller.handleMessage(request('GET_ROWS', { limit: 1 }, 'rows'));
+      expect(onFirstRowsRequest).toHaveBeenCalledTimes(1);
+      expect(onFirstRowsResult).toHaveBeenCalledTimes(1);
+      expect(events.map((event) => event.name)).toEqual(['jsonlview.query.started', 'jsonlview.query.settled']);
+      expect(events.map((event) => event.attributes.request_seq)).toEqual([1, 1]);
+    } finally {
+      pending.resolve({ fields: [], totalFields: 0, complete: true });
+      await first;
+      controller.dispose();
+    }
+  });
+
+  it.each(['GET_ROWS', 'SET_PROFILE', 'REBUILD_INDEX'] as const)('keeps delivered lineage and graph authority when rejecting duplicate %s', async (duplicateType) => {
+    const source = lineageRow(600, { parentId: 'target', evidence: [lineageEvidence('messageId', 'uuid'), lineageEvidence('parentId', 'parentUuid')] });
+    source.ref = { ...source.ref, generation: 'generation' };
+    const baseSession = fakeSession();
+    const pending = queryDeferred<{ fields: never[]; totalFields: number; complete: boolean }>();
+    const session: JsonlSessionPort = { ...baseSession,
+      getRows: async () => ({ ...await baseSession.getRows({ limit: 1 }, new AbortController().signal), rows: [source] }),
+      getSchema: async () => pending.promise,
+    };
+    const graph = new DocumentGraphController({ getSummary: session.getSummary,
+      getGraphRows: async () => ({ ...await baseSession.getRows({ limit: 1 }, new AbortController().signal), rows: [source] }),
+      validateObservedSource: async () => true,
+    }, () => true);
+    const invalidateGraph = vi.spyOn(graph, 'invalidate');
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { graph });
+    await controller.handleMessage(request('GET_ROWS', { limit: 1 }, 'page'));
+    const first = controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 1 }, 'owned'));
+    const payload = duplicateType === 'GET_ROWS' ? { limit: 1 }
+      : duplicateType === 'SET_PROFILE' ? { profileId: 'generic' } : {};
+    await controller.handleMessage(request(duplicateType, payload, 'owned'));
+
+    try {
+      expect(invalidateGraph).not.toHaveBeenCalled();
+      await controller.handleMessage(request('LOOKUP_LINEAGE_RECORD', { sourceRef: source.ref, relation: 'parent' }, 'lookup'));
+      expect(messages.filter((message) => message.requestId === 'lookup')).toMatchObject([
+        { type: 'LINEAGE_LOOKUP_RESULT', payload: { status: 'unavailable' } },
+      ]);
+    } finally {
+      pending.resolve({ fields: [], totalFields: 0, complete: true });
+      await first;
+      controller.dispose();
+      invalidateGraph.mockRestore();
+    }
+  });
+});
+
+describe('Host raw export authority', () => {
+  it('captures only successfully delivered current queries, not rejected or failed requests', async () => {
+    const session = fakeSession();
+    const accepted = vi.fn();
+    let delivered = false;
+    const controller = new DocumentController(session, { postMessage: async () => delivered }, { onAcceptedRawQuery: accepted });
+    const predicate = { op: 'text_search', value: 'first', caseSensitive: false };
+    await controller.handleMessage(request('GET_ROWS', { limit: 2, predicate }));
+    expect(accepted).not.toHaveBeenCalled();
+    delivered = true;
+    await controller.handleMessage(request('GET_ROWS', { limit: 2, predicate }));
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(accepted.mock.calls[0]?.[1]).toEqual(predicate);
+    session.getRows = async () => { throw new Error('failed'); };
+    await controller.handleMessage(request('GET_ROWS', { limit: 2, predicate: { ...predicate, value: 'failed' } }));
+    expect(accepted).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a late delivered query superseded while awaiting postMessage', async () => {
+    const session = fakeSession();
+    const accepted = vi.fn();
+    const pending = queryDeferred<boolean>();
+    let rows = 0;
+    const controller = new DocumentController(session, { postMessage: async (message) => message.type === 'ROWS' && ++rows === 1 ? pending.promise : true }, { onAcceptedRawQuery: accepted });
+    const first = controller.handleMessage(request('GET_ROWS', { limit: 2, predicate: { op: 'text_search', value: 'old', caseSensitive: false } }, 'first'));
+    await vi.waitFor(() => expect(rows).toBe(1));
+    await controller.handleMessage(request('GET_ROWS', { limit: 2, predicate: { op: 'text_search', value: 'new', caseSensitive: false } }, 'second'));
+    pending.resolve(true);
+    await first;
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(accepted.mock.calls[0]?.[1]).toMatchObject({ value: 'new' });
+  });
+
+  it('does not capture query or detail delivery after a profile change during the post await', async () => {
+    const session = fakeSession();
+    const current = session.getSummary();
+    const accepted = vi.fn();
+    const selected = vi.fn();
+    const controller = new DocumentController(session, { postMessage: async () => { current.profileEpoch = (current.profileEpoch ?? 0) + 1; return true; } },
+      { onAcceptedRawQuery: accepted, onAcceptedRawSelection: selected });
+    await controller.handleMessage(request('GET_ROWS', { limit: 2 }));
+    const ref = { generation: 'generation', ordinal: '0', byteStart: '0', byteEndExclusive: '1', contentByteLength: '1', delimiterByteLength: 1, parseState: 'valid' };
+    await controller.handleMessage(request('GET_DETAIL', { ref }));
+    expect(accepted).not.toHaveBeenCalled();
+    expect(selected).not.toHaveBeenCalled();
+  });
+});
+
+describe('read-only text host handoff', () => {
+  it('accepts only a matching current record reference without reading detail into IPC', async () => {
+    const open = vi.fn();
+    const detail = vi.fn();
+    const session = fakeSession();
+    session.getDetail = detail;
+    const post = vi.fn(async () => true);
+    const controller = new DocumentController(session, { postMessage: post }, { onOpenRecordText: open });
+    const ref = { generation: 'generation', ordinal: '0', byteStart: '0', byteEndExclusive: '3', contentByteLength: '2', delimiterByteLength: 1, parseState: 'valid' };
+    await controller.handleMessage(request('OPEN_RECORD_TEXT', { ref }));
+    expect(open).toHaveBeenCalledWith(ref, expect.any(Function));
+    expect(detail).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    await controller.handleMessage(request('OPEN_RECORD_TEXT', { ref: { ...ref, generation: 'old' } }));
+    await controller.handleMessage(request('OPEN_RECORD_TEXT', { ref, path: '/untrusted' }));
+    expect(open).toHaveBeenCalledTimes(1);
+    controller.dispose();
+    expect(open.mock.calls[0]?.[1]()).toBe(false);
+  });
+});
+
+describe('Navigator bridge handoff', () => {
+  const opened = {
+    version: 1 as const,
+    status: 'opened' as const,
+    enabled: 'enabled' as const,
+    authorization: 'granted' as const,
+    authorizationReadback: 'confirmed' as const,
+    action: 'focus-sessions' as const,
+    targetDocumentId: 'document',
+    sourceId: 'codex-source',
+  };
+
+  it('publishes only a Host-validated result as NAVIGATOR_STATUS', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { onOpenSessionNavigator: async () => opened });
+
+    await controller.handleMessage(request('OPEN_SESSION_NAVIGATOR'));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'NAVIGATOR_STATUS', requestId: 'request-OPEN_SESSION_NAVIGATOR', payload: opened });
+  });
+
+  it('rejects an untyped Host handoff without mutating Navigator state', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { onOpenSessionNavigator: async () => ({ status: 'opened' }) });
+
+    await controller.handleMessage(request('OPEN_SESSION_NAVIGATOR'));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'NAVIGATOR_RESULT_INVALID', recoverable: true } });
+  });
+});
+
+describe('GET_ROWS local operation observations', () => {
+  function fixture() {
+    const session = fakeSession();
+    const events: ObservabilityEvent[] = [];
+    const messages: ExtensionMessage[] = [];
+    const channel: MessageChannel = { postMessage: async (message) => { messages.push(message); return true; } };
+    const controller = new DocumentController(session, channel, { onQueryOperation: (event) => { events.push(event); } });
+    return { session, events, messages, channel, controller };
+  }
+
+  it('pairs starts and terminals with per-controller sequence, including empty rows', async () => {
+    const f = fixture();
+    await f.controller.handleMessage(request('READY'));
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'private-request-one'));
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'private-request-two'));
+    expect(f.events.map((event) => [event.name, event.attributes.request_seq])).toEqual([
+      ['jsonlview.query.started', 1], ['jsonlview.query.settled', 1],
+      ['jsonlview.query.started', 2], ['jsonlview.query.settled', 2],
+    ]);
+    expect(f.events[1]?.attributes).toEqual({ stage: 'get_rows', request_seq: 1,
+      outcome: 'completed', delivery: 'accepted', abort_observed: false, duration_ms: expect.any(Number), rows: 0 });
+    expect(f.events[1]?.attributes.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(f.events)).not.toMatch(/private-request|documentId|generation|epoch|fixture.jsonl/u);
+    const allowed = new Set(['stage', 'request_seq', 'outcome', 'delivery', 'abort_observed', 'duration_ms', 'rows']);
+    expect(f.events.every((event) => Object.keys(event.attributes).every((key) => allowed.has(key)))).toBe(true);
+    const second = fixture();
+    await second.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(second.events[0]?.attributes.request_seq).toBe(1);
+  });
+
+  it.each([false, true])('carries internal timings with read diagnostics=%s only to the local terminal event', async (withReads) => {
+    const f = fixture();
+    const page = await f.session.getRows({ limit: 10 }, new AbortController().signal);
+    f.session.getRows = async (pageRequest) => {
+      pageRequest.onTiming?.({
+        queueWaitMs: 3,
+        engineExecMs: 7,
+        queueBlockedBy: 'index_more',
+        indexWorkMs: 2,
+        readWaitMs: 1,
+        ...(withReads ? { readCalls: 2, readBytes: 16, readMaxWaitMs: 1 } : {}),
+        parseMs: 1,
+        projectionMs: 0,
+        snapshotCheckMs: 1,
+      });
+      return page;
+    };
+
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+
+    expect(f.events[1]?.attributes).toMatchObject({
+      queue_wait_ms: 3,
+      engine_exec_ms: 7,
+      queue_blocked_by: 'index_more',
+      index_work_ms: 2,
+      read_wait_ms: 1,
+      ...(withReads ? { read_calls: 2, read_bytes: 16, read_max_wait_ms: 1 } : {}),
+      parse_ms: 1,
+      projection_ms: 0,
+      snapshot_check_ms: 1,
+    });
+    expect(f.messages[0]?.type).toBe('ROWS');
+    if (!withReads) expect(f.events[1]?.attributes).not.toHaveProperty('read_calls');
+    expect(JSON.stringify(f.messages)).not.toMatch(/queue_wait_ms|engine_exec_ms|queue_blocked_by|read_calls|read_bytes|read_max_wait_ms/u);
+  });
+
+  it('does not observe rejected identities, invalid requests, or non-query operations', async () => {
+    const f = fixture();
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 0 }));
+    await f.controller.handleMessage({ ...request('GET_ROWS', { limit: 10 }), generation: 'other' });
+    await f.controller.handleMessage({ ...request('GET_ROWS', { limit: 10 }), documentId: 'other' });
+    await f.controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 10 }));
+    expect(f.events).toEqual([]);
+    expect(f.messages.map((message) => message.type)).toEqual(['ERROR', 'ERROR', 'ERROR', 'SCHEMA']);
+  });
+
+  it('distinguishes a rejected ROWS post from a failed operation', async () => {
+    const f = fixture();
+    f.channel.postMessage = async () => false;
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'completed', delivery: 'rejected' });
+    expect(f.events).toHaveLength(2);
+  });
+
+  it('records a failed ROWS post even if sending the existing error response also fails', async () => {
+    const f = fixture();
+    const error = new TypeError('private delivery body at C:/secret/file.jsonl');
+    f.channel.postMessage = async () => { throw error; };
+    await expect(f.controller.handleMessage(request('GET_ROWS', { limit: 10 }))).rejects.toBe(error);
+    expect(f.events).toHaveLength(2);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'failed', delivery: 'failed', error_name: 'TypeError' });
+    expect(JSON.stringify(f.events)).not.toContain('private');
+  });
+
+  it('classifies failures with fixed metadata while preserving the existing error response', async () => {
+    const f = fixture();
+    const error = Object.assign(new Error('private query value at C:/secret/file.jsonl'), { name: 'PrivateError', code: 'private' });
+    f.session.getRows = async () => { throw error; };
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(f.messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'REQUEST_FAILED', message: error.message } });
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'failed', delivery: 'skipped', error_name: 'UnknownError' });
+    expect(JSON.stringify(f.events)).not.toMatch(/private|PrivateError|secret/u);
+  });
+
+  it.each(['cancelled', 'stale'] as const)('keeps failed delivery separate from a later %s gate', async (outcome) => {
+    const f = fixture();
+    const delivered = queryDeferred<boolean>();
+    let current = summary();
+    f.session.getSummary = () => current;
+    f.channel.postMessage = async (message) => { f.messages.push(message); return delivered.promise; };
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    await vi.waitFor(() => expect(f.messages).toHaveLength(1));
+    if (outcome === 'cancelled') await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    else current = { ...current, snapshot: { ...current.snapshot, generation: 'private-new' } };
+    delivered.reject(new Error('private failed delivery'));
+    await handling;
+    expect(f.events).toHaveLength(2);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome, delivery: 'failed', abort_observed: outcome === 'cancelled' });
+    if (outcome === 'stale') expect(f.events[1]?.attributes.stale_reason).toBe('generation');
+    expect(f.messages.map((message) => message.type)).toEqual(['ROWS']);
+  });
+
+  it.each(['document', 'generation', 'epoch'] as const)('records the original %s stale gate without raw identity', async (field) => {
+    const f = fixture();
+    const page = await f.session.getRows({ limit: 10 }, new AbortController().signal);
+    const pending = queryDeferred<RowPage>();
+    let current = summary();
+    f.session.getSummary = () => current;
+    f.session.getRows = () => pending.promise;
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    current = { ...current, snapshot: { ...current.snapshot,
+      ...(field === 'document' ? { documentId: 'private-new-document' }
+        : field === 'generation' ? { generation: 'private-new-generation' } : { epoch: 2 }) } };
+    pending.resolve(page);
+    await handling;
+    expect(f.messages).toEqual([]);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'stale', delivery: 'skipped', stale_reason: field });
+    expect(JSON.stringify(f.events)).not.toContain('private-new');
+  });
+
+  it('records staleness at the second identity gate instead of mislabelling delivery rejection', async () => {
+    const f = fixture();
+    const current = summary();
+    let reads = 0;
+    f.session.getSummary = () => ++reads <= 2 ? current
+      : { ...current, snapshot: { ...current.snapshot, generation: 'new' } };
+    await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }));
+    expect(reads).toBe(3);
+    expect(f.messages).toEqual([]);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'stale', delivery: 'skipped', stale_reason: 'generation' });
+  });
+
+  it('observes cooperative cancellation only when the existing handler settles', async () => {
+    const f = fixture();
+    const pending = queryDeferred<RowPage>();
+    f.session.getRows = () => pending.promise;
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    expect(f.events).toHaveLength(1);
+    pending.reject(new Error('private abort reason'));
+    await handling;
+    expect(f.events).toHaveLength(2);
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'cancelled', delivery: 'skipped', abort_observed: true });
+    expect(f.events[1]?.attributes).not.toHaveProperty('error_name');
+    expect(f.messages).toEqual([]);
+  });
+
+  it.each(['cancel', 'supersede', 'dispose'] as const)('preserves non-cooperative late delivery after %s', async (action) => {
+    const f = fixture();
+    const page = await f.session.getRows({ limit: 10 }, new AbortController().signal);
+    const pending = queryDeferred<RowPage>();
+    let calls = 0;
+    f.session.getRows = () => ++calls === 1 ? pending.promise : Promise.resolve(page);
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    if (action === 'cancel') await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    else if (action === 'supersede') await f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'new'));
+    else f.controller.dispose();
+    pending.resolve(page);
+    await handling;
+    expect(f.messages.some((message) => message.type === 'ROWS' && message.requestId === 'old')).toBe(true);
+    const terminals = f.events.filter((event) => event.name === 'jsonlview.query.settled' && event.attributes.request_seq === 1);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.attributes).toMatchObject({ outcome: 'completed', delivery: 'accepted', abort_observed: true });
+  });
+
+  it('does not rewrite a successful post when cancellation arrives during its acknowledgement', async () => {
+    const f = fixture();
+    const delivered = queryDeferred<boolean>();
+    f.channel.postMessage = async (message) => { f.messages.push(message); return delivered.promise; };
+    const handling = f.controller.handleMessage(request('GET_ROWS', { limit: 10 }, 'old'));
+    await vi.waitFor(() => expect(f.messages).toHaveLength(1));
+    await f.controller.handleMessage(request('CANCEL', { targetRequestId: 'old' }));
+    delivered.resolve(true);
+    await handling;
+    expect(f.events[1]?.attributes).toMatchObject({ outcome: 'completed', delivery: 'accepted', abort_observed: true });
+    expect(f.events).toHaveLength(2);
+  });
+
+  it('contains observer failures at both start and terminal without changing messages', async () => {
+    const session = fakeSession();
+    const messages: ExtensionMessage[] = [];
+    let calls = 0;
+    const controller = new DocumentController(session, { postMessage: async (message) => { messages.push(message); return true; } }, {
+      onQueryOperation: () => { calls += 1; throw new Error('observer failed'); },
+    });
+    await expect(controller.handleMessage(request('GET_ROWS', { limit: 10 }))).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+    expect(messages.map((message) => message.type)).toEqual(['ROWS']);
+  });
+
+  it('preserves the failed-operation response when both observations throw', async () => {
+    const session = fakeSession();
+    const error = new Error('original query failure');
+    session.getRows = async () => { throw error; };
+    const messages: ExtensionMessage[] = [];
+    let observations = 0;
+    const controller = new DocumentController(session, { postMessage: async (message) => { messages.push(message); return true; } }, {
+      onQueryOperation: () => { observations += 1; throw new Error('observer failed'); },
+    });
+    await expect(controller.handleMessage(request('GET_ROWS', { limit: 10 }))).resolves.toBeUndefined();
+    expect(observations).toBe(2);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'REQUEST_FAILED', message: error.message } });
+  });
+});
+
 describe('document controller', () => {
+  it('publishes temporary metadata on the cold handshake and gates native Save As by envelope identity', async () => {
+    const messages: ExtensionMessage[] = [];
+    const saves: Array<() => boolean> = [];
+    const controller = new DocumentController(fakeSession(), { postMessage: async (message) => { messages.push(message); return true; } }, {
+      getPreviewStatus: () => ({ status: 'temporary', recordCount: 2, sizeBytes: 24, savedCopy: false }),
+      onSavePreviewAs: async (current) => { saves.push(current); },
+    });
+    await controller.handleMessage(request('READY'));
+    expect(messages.map((message) => message.type)).toEqual(['OPENED', 'PREVIEW_STATUS']);
+    await controller.handleMessage({ ...request('SAVE_PREVIEW_AS'), documentId: 'other' });
+    await controller.handleMessage({ ...request('SAVE_PREVIEW_AS'), generation: 'old' });
+    await controller.handleMessage(request('SAVE_PREVIEW_AS', { path: 'untrusted' }));
+    expect(saves).toHaveLength(0);
+    await controller.handleMessage(request('SAVE_PREVIEW_AS'));
+    expect(saves).toHaveLength(1); expect(saves[0]!()).toBe(true);
+    controller.dispose(); expect(saves[0]!()).toBe(false);
+  });
+
   it('responds to READY with the current document summary', async () => {
     const messages: ExtensionMessage[] = [];
     const channel: MessageChannel = {
@@ -105,6 +558,69 @@ describe('document controller', () => {
     const controller = new DocumentController(fakeSession(), channel);
     await controller.handleMessage(request('READY'));
     expect(messages[0]?.type).toBe('OPENED');
+  });
+
+  it('publishes current Navigator visibility only after the editor accepts OPENED', async () => {
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, { getNavigatorVisibility: () => true });
+
+    await controller.handleMessage(request('READY'));
+
+    expect(messages.map((message) => message.type)).toEqual(['OPENED', 'NAVIGATOR_VISIBILITY']);
+    expect(messages[1]).toMatchObject({ documentId: 'document', generation: 'generation', requestId: '', payload: { visible: true } });
+  });
+
+  it('reports a failed OPENED delivery and does not run post-handshake actions', async () => {
+    const deliveries: boolean[] = [];
+    let readyActions = 0;
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async () => false,
+    }, {
+      onOpenedDelivery: (delivered) => { deliveries.push(delivered); },
+      onReady: () => { readyActions += 1; },
+    });
+
+    await controller.handleMessage(request('READY'));
+
+    expect(deliveries).toEqual([false]);
+    expect(readyActions).toBe(0);
+  });
+
+  it('records READY only after validating its document identity', async () => {
+    let readyReceipts = 0;
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async () => true,
+    }, {
+      onReadyReceived: () => { readyReceipts += 1; },
+    });
+    const wrongDocument = request('READY');
+    wrongDocument.documentId = 'another-document';
+
+    await controller.handleMessage(wrongDocument);
+    await controller.handleMessage(request('READY'));
+
+    expect(readyReceipts).toBe(1);
+  });
+
+  it('records a rejected first row post and its successful retry', async () => {
+    const events: string[] = [];
+    let rowPosts = 0;
+    const controller = new DocumentController(fakeSession(), {
+      postMessage: async (message) => message.type !== 'ROWS' || ++rowPosts > 1,
+    }, {
+      onFirstRowsRequest: () => { events.push('requested'); },
+      onFirstRowsResult: ({ status, rows, indexedRecords }) => {
+        events.push([status, rows, indexedRecords].join(':'));
+      },
+    });
+
+    await controller.handleMessage(request('GET_ROWS', { limit: 100 }, 'rows-1'));
+    await controller.handleMessage(request('GET_ROWS', { limit: 100 }, 'rows-2'));
+    await controller.handleMessage(request('GET_ROWS', { limit: 100 }, 'rows-3'));
+
+    expect(events).toEqual(['requested', 'rejected:0:0', 'posted:0:0']);
   });
 
   it('hands a bounded diagnostic banner action to the host without a data response', async () => {
@@ -230,6 +746,42 @@ describe('document controller', () => {
     });
   });
 
+  it('keeps a moving source recoverable without reporting a destructive request failure', async () => {
+    const messages: ExtensionMessage[] = [];
+    let recoveryRequests = 0;
+    const session = {
+      ...fakeSession(),
+      getDetail: async () => {
+        throw Object.assign(new Error('The JSONL source has no stable baseline; rebuild after the writer settles.'), { code: 'SOURCE_CHANGED' });
+      },
+    };
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => { messages.push(message); return true; },
+    }, {
+      onTransientSourceChange: () => { recoveryRequests += 1; return true; },
+    });
+
+    await controller.handleMessage(request('GET_DETAIL', {
+      ref: {
+        documentId: 'document',
+        generation: 'generation',
+        ordinal: '0',
+        byteStart: '0',
+        byteEndExclusive: '1',
+        contentByteLength: '1',
+        delimiterByteLength: 1,
+        parseState: 'valid',
+      },
+    }));
+
+    expect(recoveryRequests).toBe(1);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: 'ERROR',
+      payload: { code: 'SOURCE_UPDATING', recoverable: true },
+    });
+  });
+
   it('rejects a stale lifecycle epoch before invoking the session', async () => {
     const messages: ExtensionMessage[] = [];
     const current = { ...summary(), snapshot: { ...summary().snapshot, epoch: 2 } };
@@ -260,12 +812,58 @@ describe('document controller', () => {
       },
     });
 
-    await controller.handleMessage(request('GET_INSIGHTS', { dimension: 'eventKind' }));
+    await controller.handleMessage(request('GET_INSIGHTS', { intent: {
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: 'document', generation: 'generation' },
+      profile: { id: 'generic', version: '1' },
+    } }));
 
     expect(messages[0]).toMatchObject({
       type: 'INSIGHTS',
-      payload: { dimension: 'eventKind', processedRecords: '0', examinedRecords: '0' },
+      payload: { intent: { dimension: 'eventKind' }, processedRecords: '0', examinedRecords: '0' },
     });
+  });
+
+  it.each([
+    { document: { documentId: 'document', generation: 'generation', sourceEpoch: 2 } },
+    { profile: { id: 'generic', version: 'retired' } },
+  ])('rejects an Insights source or adapter identity mismatch before scanning', async (identity) => {
+    const messages: ExtensionMessage[] = [];
+    let scans = 0;
+    const session = fakeSession();
+    const controller = new DocumentController({ ...session, getInsights: async (intent, signal) => {
+      scans += 1;
+      return session.getInsights(intent, signal);
+    } }, { postMessage: async (message) => { messages.push(message); return true; } });
+
+    await controller.handleMessage(request('GET_INSIGHTS', { intent: {
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: 'document', generation: 'generation' },
+      profile: { id: 'generic', version: '1' }, ...identity,
+    } }));
+
+    expect(scans).toBe(0);
+    expect(messages[0]).toMatchObject({ type: 'ERROR', payload: { code: 'STALE_ANALYSIS_INTENT' } });
+  });
+
+  it('does not post a completed old Insights result after the selected adapter changes', async () => {
+    const messages: ExtensionMessage[] = [];
+    let selected = summary();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const session = fakeSession();
+    const controller = new DocumentController({ ...session, getSummary: () => selected,
+      getInsights: async (intent, signal) => { await paused; return session.getInsights(intent, signal); },
+    }, { postMessage: async (message) => { messages.push(message); return true; } });
+    const pending = controller.handleMessage(request('GET_INSIGHTS', { intent: {
+      version: 1, intentRevision: 1, dimension: 'eventKind', scope: 'current-view',
+      document: { documentId: 'document', generation: 'generation' },
+      profile: { id: 'generic', version: '1' },
+    } }));
+    selected = { ...selected, profileId: 'codex', profileVersion: '2' };
+    release?.();
+    await pending;
+    expect(messages).toEqual([]);
   });
 
   it('routes bounded problem scans without using the visible row page', async () => {
@@ -314,8 +912,53 @@ describe('document controller', () => {
     expect(messages[1]).toMatchObject({
       type: 'INDEX_PROGRESS',
       requestId: '',
+      delivery: 'broadcast',
       payload: { profileId: 'claude-code-session' },
     });
+  });
+
+  it('drops a superseded profile summary after its PROFILE_CHANGED delivery resumes', async () => {
+    let selected = summary();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController({ ...fakeSession(), getSummary: () => selected,
+      setProfile: async (profileId) => { selected = { ...selected, profileId }; return selected; },
+    }, { postMessage: async (message) => {
+      messages.push(message);
+      if (message.type === 'PROFILE_CHANGED' && message.payload.profileId === 'first') await paused;
+      return true;
+    } });
+    const first = controller.handleMessage(request('SET_PROFILE', { profileId: 'first' }, 'profile-first'));
+    await Promise.resolve();
+    await controller.handleMessage(request('SET_PROFILE', { profileId: 'second' }, 'profile-second'));
+    release?.();
+    await first;
+    expect(messages.filter((message) => message.type === 'INDEX_PROGRESS')
+      .map((message) => message.payload.profileId)).toEqual(['second']);
+  });
+
+  it('does not publish an aborted SET_PROFILE even when the returned profile identity still matches', async () => {
+    let selected = summary();
+    let release: (() => void) | undefined;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const messages: ExtensionMessage[] = [];
+    let calls = 0;
+    const controller = new DocumentController({ ...fakeSession(), getSummary: () => selected,
+      setProfile: async (profileId) => {
+        selected = { ...selected, profileId };
+        const updated = selected;
+        if (++calls === 1) await paused;
+        return updated;
+      },
+    }, { postMessage: async (message) => { messages.push(message); return true; } });
+    const first = controller.handleMessage(request('SET_PROFILE', { profileId: 'same' }, 'profile-first'));
+    await controller.handleMessage(request('SET_PROFILE', { profileId: 'same' }, 'profile-second'));
+    release?.();
+    await first;
+    expect(messages.filter((message) => message.type === 'PROFILE_CHANGED')
+      .map((message) => message.requestId)).toEqual(['profile-second']);
+    expect(messages.filter((message) => message.type === 'INDEX_PROGRESS')).toHaveLength(1);
   });
 
   it('drops a read response when a rebuild advances the generation while it is pending', async () => {
@@ -353,6 +996,69 @@ describe('document controller', () => {
     releaseRows(page);
     await pendingRequest;
 
+    expect(messages).toEqual([]);
+  });
+
+  it.each(['success', 'failure', 'transient-failure'] as const)('drops late %s when the epoch advances within the same generation', async (outcome) => {
+    const initial = summary();
+    initial.snapshot.epoch = 1;
+    const page: RowPage = {
+      rows: [],
+      columns: [],
+      anchorOrdinal: '0',
+      hasBefore: false,
+      hasAfter: false,
+      indexedRecords: '0',
+      totalRecords: '0',
+    };
+    let releaseRows: (value: RowPage) => void = () => undefined;
+    let rejectRows: (error: Error) => void = () => undefined;
+    const pendingRows = new Promise<RowPage>((resolve, reject) => {
+      releaseRows = resolve;
+      rejectRows = reject;
+    });
+    let markStarted = (): void => undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const session: JsonlSessionPort = {
+      ...fakeSession(),
+      getSummary: () => initial,
+      getRows: async () => { markStarted(); return pendingRows; },
+    };
+    const messages: ExtensionMessage[] = [];
+    const onTransientSourceChange = vi.fn(() => true);
+    const controller = new DocumentController(session, {
+      postMessage: async (message) => {
+        messages.push(message);
+        return true;
+      },
+    }, { onTransientSourceChange });
+    const rowsRequest = request('GET_ROWS', { limit: 100 });
+    rowsRequest.epoch = 1;
+
+    const pendingRequest = controller.handleMessage(rowsRequest);
+    await started;
+    initial.snapshot.epoch = 2;
+    if (outcome === 'success') releaseRows(page);
+    else rejectRows(Object.assign(new Error('late failure'), { code: outcome === 'transient-failure' ? 'UNEXPECTED_EOF' : 'OTHER' }));
+    await pendingRequest;
+
+    expect(messages).toEqual([]);
+    expect(onTransientSourceChange).not.toHaveBeenCalled();
+  });
+
+  it('does not publish an old-epoch transient error when recovery advances the epoch', async () => {
+    const initial = summary();
+    initial.snapshot.epoch = 1;
+    const session = { ...fakeSession(), getSummary: () => initial, getRows: async () => {
+      throw Object.assign(new Error('source settling'), { code: 'UNEXPECTED_EOF' });
+    } };
+    const messages: ExtensionMessage[] = [];
+    const controller = new DocumentController(session, { postMessage: async (message) => { messages.push(message); return true; } }, {
+      onTransientSourceChange: () => { initial.snapshot.epoch = 2; return true; },
+    });
+    const rowsRequest = request('GET_ROWS', { limit: 100 });
+    rowsRequest.epoch = 1;
+    await controller.handleMessage(rowsRequest);
     expect(messages).toEqual([]);
   });
 
@@ -402,6 +1108,81 @@ describe('document controller', () => {
     releaseRows(page);
     await pendingRequest;
     expect(messages).toEqual([]);
+  });
+
+  it.each(['GET_SCHEMA', 'GET_ROWS'] as const)('preserves cancellation ownership after a duplicate %s request id', async (duplicateType) => {
+    const pending = queryDeferred<{ fields: never[]; totalFields: number; complete: boolean }>();
+    let observedSignal: AbortSignal | undefined;
+    const getRows = vi.fn(fakeSession().getRows);
+    const session: JsonlSessionPort = { ...fakeSession(), getRows,
+      getSchema: async (_offset, _limit, signal) => {
+        observedSignal = signal;
+        return pending.promise;
+      },
+    };
+    const controller = new DocumentController(session, { postMessage: async () => true });
+    const first = controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 1 }, 'duplicate'));
+    const payload = duplicateType === 'GET_SCHEMA' ? { offset: 0, limit: 1 } : { limit: 1 };
+    await controller.handleMessage(request(duplicateType, payload, 'duplicate'));
+
+    try {
+      expect(getRows).not.toHaveBeenCalled();
+      expect(observedSignal?.aborted).toBe(false);
+      await controller.handleMessage(request('CANCEL', { targetRequestId: 'duplicate' }));
+      expect(observedSignal?.aborted).toBe(true);
+    } finally {
+      pending.reject(new Error('cancelled synthetic schema'));
+      await first;
+      controller.dispose();
+    }
+  });
+
+  it('does not let a READY handler finish another operation with the same request id', async () => {
+    const pending = queryDeferred<{ fields: never[]; totalFields: number; complete: boolean }>();
+    let observedSignal: AbortSignal | undefined;
+    const session: JsonlSessionPort = { ...fakeSession(), getSchema: async (_offset, _limit, signal) => {
+      observedSignal = signal;
+      return pending.promise;
+    } };
+    const controller = new DocumentController(session, { postMessage: async () => true });
+    const first = controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 1 }, 'shared'));
+    await controller.handleMessage(request('READY', {}, 'shared'));
+
+    try {
+      await controller.handleMessage(request('CANCEL', { targetRequestId: 'shared' }));
+      expect(observedSignal?.aborted).toBe(true);
+    } finally {
+      pending.reject(new Error('cancelled synthetic schema'));
+      await first;
+      controller.dispose();
+    }
+  });
+
+  it('keeps a reused request id cancellable after its retired handler settles', async () => {
+    const firstResult = queryDeferred<{ fields: never[]; totalFields: number; complete: boolean }>();
+    const secondResult = queryDeferred<{ fields: never[]; totalFields: number; complete: boolean }>();
+    const observedSignals: AbortSignal[] = [];
+    const session: JsonlSessionPort = { ...fakeSession(), getSchema: async (_offset, _limit, signal) => {
+      observedSignals.push(signal);
+      return observedSignals.length === 1 ? firstResult.promise : secondResult.promise;
+    } };
+    const controller = new DocumentController(session, { postMessage: async () => true });
+    const first = controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 1 }, 'reused'));
+    await controller.handleMessage(request('CANCEL', { targetRequestId: 'reused' }, 'cancel-first'));
+    const second = controller.handleMessage(request('GET_SCHEMA', { offset: 0, limit: 1 }, 'reused'));
+    firstResult.reject(new Error('retired synthetic schema'));
+    await first;
+
+    try {
+      expect(observedSignals[0]?.aborted).toBe(true);
+      expect(observedSignals[1]?.aborted).toBe(false);
+      await controller.handleMessage(request('CANCEL', { targetRequestId: 'reused' }, 'cancel-second'));
+      expect(observedSignals[1]?.aborted).toBe(true);
+    } finally {
+      secondResult.reject(new Error('cancelled replacement schema'));
+      await second;
+      controller.dispose();
+    }
   });
 
   it('publishes only the latest result when rebuild calls overlap', async () => {

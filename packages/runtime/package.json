@@ -1,0 +1,1 @@
+{"name":"@jsonlview/runtime","version":"0.1.0","type":"module","exports":{".":{"types":"./dist/index.d.ts","import":"./dist/index.js"}},"files":["dist"],"scripts":{"build":"tsc --project tsconfig.json","test":"vitest run"},"dependencies":{"ws":"^8.18.3"},"devDependencies":{"@types/node":"^24.0.0","@types/ws":"^8.5.13","typescript":"^7.0.2","vitest":"5.0.3"}}

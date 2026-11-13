@@ -1,56 +1,25 @@
 import type { FileHandle } from 'node:fs/promises';
-import type { ParseState, RecordRef } from '../shared/types';
+import type { RecordRef } from '@shared/types';
 import { JsonlEngineError } from './errors';
 import {
   MAX_NEWLINE_SCAN_BYTES,
-  type NewlineScanner,
-  type NewlineScannerDiagnostics,
 } from './newline-scanner';
+import { readFileHandle, type ReadWaitObserver } from './snapshot-fingerprint';
+import type {
+  InternalRecordRef,
+  OperationGuard,
+  SegmentIndexDiagnostics,
+  SegmentIndexOptions,
+  SegmentLocation,
+  SegmentMeta,
+} from './segment-index-types';
 
-export interface InternalRecordRef {
-  ordinal: bigint;
-  byteStart: bigint;
-  byteEndExclusive: bigint;
-  contentByteLength: bigint;
-  delimiterByteLength: 0 | 1 | 2;
-  parseState: ParseState;
-}
-
-interface SegmentMeta {
-  id: number;
-  firstOrdinal: bigint;
-  recordCount: number;
-  byteStart: bigint;
-  physicalEndExclusive: bigint;
-}
-
-export interface SegmentLocation {
-  segmentId: number;
-  localIndex: number;
-  segmentCapacity: number;
-}
-
-export interface SegmentIndexOptions {
-  readChunkBytes: number;
-  segmentTargetBytes: number;
-  segmentTargetRecords: number;
-  exactCacheSegments: number;
-  maxRecordBytes: number;
-  newlineScanner: NewlineScanner;
-  validateSnapshot: () => Promise<void>;
-}
-
-export interface SegmentIndexDiagnostics {
-  segmentCount: number;
-  exactCachedSegments: number;
-  pendingExactRecords: number;
-  indexedBytes: string;
-  indexedRecords: string;
-  complete: boolean;
-  newlineScanner: NewlineScannerDiagnostics;
-}
-
-type OperationGuard = () => void;
+export type {
+  InternalRecordRef,
+  SegmentIndexDiagnostics,
+  SegmentIndexOptions,
+  SegmentLocation,
+} from './segment-index-types';
 
 /**
  * Stores one compact summary per segment. Exact refs are reconstructed only for
@@ -59,18 +28,31 @@ type OperationGuard = () => void;
 export class AdaptiveSegmentIndex {
   private readonly segments: SegmentMeta[] = [];
   private readonly exactCache = new Map<number, InternalRecordRef[]>();
+  private readonly handle: FileHandle;
+  private readonly fileSize: bigint;
+  private readonly options: SegmentIndexOptions;
   private pendingRefs: InternalRecordRef[] = [];
   private scanOffset = 0n;
   private lineStart = 0n;
   private previousByte: number | undefined;
   private nextOrdinal = 0n;
   private complete = false;
+  private readAhead: {
+    bytes: Buffer;
+    newlineOffsets: number[];
+    consumedBytes: number;
+    newlineCursor: number;
+  } | undefined;
 
   constructor(
-    private readonly handle: FileHandle,
-    private readonly fileSize: bigint,
-    private readonly options: SegmentIndexOptions,
-  ) {}
+    handle: FileHandle,
+    fileSize: bigint,
+    options: SegmentIndexOptions,
+  ) {
+    this.handle = handle;
+    this.fileSize = fileSize;
+    this.options = options;
+  }
 
   get indexedBytes(): bigint {
     return this.scanOffset;
@@ -117,28 +99,32 @@ export class AdaptiveSegmentIndex {
     }
   }
 
-  async finish(guard: OperationGuard): Promise<void> {
+  async finish(guard: OperationGuard, onReadWait?: ReadWaitObserver): Promise<void> {
     while (!this.complete) {
       guard();
-      await this.scanNextChunk(guard);
+      await this.scanNextChunk(guard, undefined, onReadWait);
     }
   }
 
-  async ensureOrdinal(ordinal: bigint, guard: OperationGuard): Promise<boolean> {
+  async ensureOrdinal(ordinal: bigint, guard: OperationGuard, onReadWait?: ReadWaitObserver): Promise<boolean> {
     if (ordinal < 0n) return false;
     while (!this.complete && this.nextOrdinal <= ordinal) {
       guard();
-      await this.scanNextChunk(guard);
+      await this.scanNextChunk(guard, undefined, onReadWait, ordinal + 1n - this.nextOrdinal);
     }
     return ordinal < this.nextOrdinal;
   }
 
-  async getRecord(ordinal: bigint, guard: OperationGuard): Promise<InternalRecordRef | undefined> {
-    if (!(await this.ensureOrdinal(ordinal, guard))) return undefined;
+  async getRecord(
+    ordinal: bigint,
+    guard: OperationGuard,
+    onReadWait?: ReadWaitObserver,
+  ): Promise<InternalRecordRef | undefined> {
+    if (!(await this.ensureOrdinal(ordinal, guard, onReadWait))) return undefined;
 
     const finalized = this.findFinalizedSegment(ordinal);
     if (finalized !== undefined) {
-      const refs = await this.loadSegment(finalized, guard);
+      const refs = await this.loadSegment(finalized, guard, onReadWait);
       return refs[Number(ordinal - finalized.firstOrdinal)];
     }
 
@@ -181,8 +167,13 @@ export class AdaptiveSegmentIndex {
     };
   }
 
-  private async scanNextChunk(guard: OperationGuard, budgetBytes?: number): Promise<void> {
-    if (this.scanOffset >= this.fileSize) {
+  private async scanNextChunk(
+    guard: OperationGuard,
+    budgetBytes?: number,
+    onReadWait?: ReadWaitObserver,
+    maxRecords?: bigint,
+  ): Promise<void> {
+    if (this.readAhead === undefined && this.scanOffset >= this.fileSize) {
       this.finishAtEof();
       return;
     }
@@ -193,34 +184,58 @@ export class AdaptiveSegmentIndex {
       ? configuredReadBytes
       : Math.min(configuredReadBytes, budgetBytes);
     if (readBudget <= 0) return;
-    const length = Number(remaining < BigInt(readBudget)
-      ? remaining
-      : BigInt(readBudget));
-    const buffer = Buffer.allocUnsafe(length);
-    const { bytesRead } = await this.handle.read(buffer, 0, length, this.scanOffset);
-    guard();
-    if (bytesRead <= 0) {
-      throw new JsonlEngineError(
-        'UNEXPECTED_EOF',
-        'The JSONL source became shorter while its snapshot was being indexed.',
-      );
+    let readAhead = this.readAhead;
+    if (readAhead === undefined) {
+      const length = Number(remaining < BigInt(readBudget)
+        ? remaining
+        : BigInt(readBudget));
+      const buffer = Buffer.allocUnsafe(length);
+      const bytesRead = await readFileHandle(this.handle, buffer, 0, length, this.scanOffset, onReadWait);
+      guard();
+      if (bytesRead <= 0) {
+        throw new JsonlEngineError(
+          'UNEXPECTED_EOF',
+          'The JSONL source became shorter while its snapshot was being indexed.',
+        );
+      }
+
+      const bytes = buffer.subarray(0, bytesRead);
+      const newlineOffsets: number[] = [];
+      this.options.newlineScanner.scan(bytes).forEach((offset) => {
+        newlineOffsets.push(offset);
+      });
+      readAhead = { bytes, newlineOffsets, consumedBytes: 0, newlineCursor: 0 };
+      await this.options.validateSnapshot();
+      guard();
     }
 
-    const base = this.scanOffset;
-    const chunk = buffer.subarray(0, bytesRead);
-    const newlineOffsets = this.options.newlineScanner.scan(chunk);
-    await this.options.validateSnapshot();
-    guard();
-    newlineOffsets.forEach((index) => {
-      const absolute = base + BigInt(index);
+    const availableBytes = readAhead.bytes.byteLength - readAhead.consumedBytes;
+    const chunkLength = Math.min(availableBytes, readBudget);
+    const chunkEnd = readAhead.consumedBytes + chunkLength;
+    const chunk = readAhead.bytes.subarray(readAhead.consumedBytes, chunkEnd);
+    let consumedLength = chunkLength;
+    let recordsEmitted = 0n;
+    while (readAhead.newlineCursor < readAhead.newlineOffsets.length) {
+      const offset = readAhead.newlineOffsets[readAhead.newlineCursor];
+      if (offset === undefined || offset >= chunkEnd) break;
+      const index = offset - readAhead.consumedBytes;
+      const absolute = this.scanOffset + BigInt(index);
       const precedingByte = index === 0 ? this.previousByte : chunk[index - 1];
       const hasCarriageReturn = precedingByte === 0x0d;
       const contentEnd = hasCarriageReturn ? absolute - 1n : absolute;
       this.emitRecord(contentEnd, hasCarriageReturn ? 2 : 1, absolute + 1n);
-    });
-    this.previousByte = chunk[bytesRead - 1];
+      readAhead.newlineCursor += 1;
+      recordsEmitted += 1n;
+      if (maxRecords !== undefined && recordsEmitted >= maxRecords) {
+        consumedLength = index + 1;
+        break;
+      }
+    }
 
-    this.scanOffset += BigInt(bytesRead);
+    this.previousByte = chunk[consumedLength - 1];
+    this.scanOffset += BigInt(consumedLength);
+    readAhead.consumedBytes += consumedLength;
+    this.readAhead = readAhead.consumedBytes >= readAhead.bytes.byteLength ? undefined : readAhead;
     if (this.scanOffset >= this.fileSize) this.finishAtEof();
   }
 
@@ -294,7 +309,11 @@ export class AdaptiveSegmentIndex {
     return undefined;
   }
 
-  private async loadSegment(meta: SegmentMeta, guard: OperationGuard): Promise<InternalRecordRef[]> {
+  private async loadSegment(
+    meta: SegmentMeta,
+    guard: OperationGuard,
+    onReadWait?: ReadWaitObserver,
+  ): Promise<InternalRecordRef[]> {
     const cached = this.exactCache.get(meta.id);
     if (cached !== undefined) {
       this.exactCache.delete(meta.id);
@@ -315,7 +334,7 @@ export class AdaptiveSegmentIndex {
         ? remaining
         : BigInt(configuredReadBytes));
       const buffer = Buffer.allocUnsafe(length);
-      const { bytesRead } = await this.handle.read(buffer, 0, length, offset);
+      const bytesRead = await readFileHandle(this.handle, buffer, 0, length, offset, onReadWait);
       guard();
       if (bytesRead <= 0) {
         throw new JsonlEngineError('UNEXPECTED_EOF', 'Unable to rebuild an exact JSONL segment.');

@@ -1,3 +1,15 @@
+---
+id: "026-read-only-navigation-prototype"
+path: "docs/decisions/026-read-only-navigation-prototype.md"
+title: "Opt-In Read-Only Navigation Prototype"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["agents","navigation","opt-in"]
+evidence: []
+revisit: "when navigation leaves prototype scope"
+rollback: "disable the opt-in prototype"
+---
 # ADR-026: Opt-In Read-Only Navigation Prototype
 
 Status: experimental

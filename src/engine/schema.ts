@@ -4,7 +4,7 @@ import {
   type FieldStats,
   type JsonKind,
   type PathToken,
-} from '../shared/types';
+} from '@shared/types';
 import { jsonKindOf } from './predicate';
 
 interface MutableFieldStats {
@@ -29,11 +29,14 @@ export interface SchemaTrackerOptions {
 export class ProgressiveSchemaTracker {
   private readonly fields = new Map<string, MutableFieldStats>();
   private readonly observedSegments = new Map<number, Uint8Array>();
+  private readonly options: SchemaTrackerOptions;
   private observedRecords = 0n;
   private validRecords = 0n;
   private problemRecords = 0n;
 
-  constructor(private readonly options: SchemaTrackerOptions) {}
+  constructor(options: SchemaTrackerOptions) {
+    this.options = options;
+  }
 
   get observedRecordCount(): bigint {
     return this.observedRecords;

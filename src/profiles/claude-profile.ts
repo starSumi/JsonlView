@@ -1,5 +1,5 @@
-import type { AgentRowProjection, FieldPath } from '../shared/types';
-import { bestSemanticFeature } from '../shared/semantic-features';
+import type { AgentRowProjection, FieldPath } from '@shared/types';
+import { bestSemanticFeature } from '@shared/semantic-features';
 import type { AgentProfile, DetectionResult, GenericRecordSample, HydratedRecord, ProjectionContext } from './profile-contract';
 import {
   CLAUDE_CONTROL_TYPES,
@@ -32,7 +32,7 @@ import {
 export class ClaudeCodeProfile implements AgentProfile {
   public readonly id = 'claude-code-session';
   public readonly displayName = 'Claude Code Session';
-  public readonly version = '2';
+  public readonly version = '3';
 
   public detect(sample: readonly GenericRecordSample[]): DetectionResult {
     let typed = 0;
@@ -288,6 +288,13 @@ export class ClaudeCodeProfile implements AgentProfile {
       }
     }
 
+    if (type) setDerivedField(projection, 'sourceType', type, keyPath('type'));
+    const subtype = stringAt(value, 'subtype');
+    if (subtype) setDerivedField(projection, 'sourceSubtype', subtype, keyPath('subtype'));
+    const durationMs = own(value, 'durationMs');
+    if (typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0) {
+      setDerivedField(projection, 'durationMs', durationMs, keyPath('durationMs'));
+    }
     setStringField(projection, 'timestamp', stringAt(value, 'timestamp'), keyPath('timestamp'));
     if (strategy === 'job-timeline') setStringField(projection, 'timestamp', stringAt(value, 'at'), keyPath('at'));
     if (strategy === 'history') setStringField(projection, 'timestamp', claudeHistoryTimestamp(value), keyPath('timestamp'));

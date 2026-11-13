@@ -1,3 +1,15 @@
+---
+id: "013-bounded-mixed-code-highlighting"
+path: "docs/decisions/013-bounded-mixed-code-highlighting.md"
+title: "Bounded Mixed-Code Highlighting"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["bounds","syntax","webview"]
+evidence: []
+revisit: "when code presentation or language detection changes"
+rollback: "use the bounded plain-text presentation"
+---
 # ADR-013: Bounded Mixed-Code Highlighting
 
 Status: accepted

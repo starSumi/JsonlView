@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "schema": "docs/metadata/schema.yaml",
-  "index": "docs/metadata/index.yaml",
+  "index": "docs/index.json",
   "directory": "docs",
   "requireCompleteCoverage": true,
   "allowExtensionsPrefix": "x-"

@@ -1,3 +1,15 @@
+---
+id: "043-core-closure-and-evidence-gated-evolution"
+path: "docs/decisions/043-core-closure-and-evidence-gated-evolution.md"
+title: "Core Closure And Evidence-Gated Evolution"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","evidence","roadmap","rollback"]
+evidence: []
+revisit: "when a roadmap stage or core boundary changes"
+rollback: "revert the affected stage and retain the prior facade"
+---
 # ADR-043: Core Closure And Evidence-Gated Evolution
 
 Status: accepted

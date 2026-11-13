@@ -1,4 +1,4 @@
-import type { JsonScalar } from '../shared/types';
+import type { JsonScalar } from '@shared/types';
 
 export const AGGREGATION_LIMITS = {
   defaultMaxRecords: 100_000,

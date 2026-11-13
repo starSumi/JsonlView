@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ColumnSpec, RowProjection } from '../shared/types';
+import type { ColumnSpec, RowProjection } from '@shared/types';
 
 export type GridCell =
   | { kind: 'header'; columnId: string }

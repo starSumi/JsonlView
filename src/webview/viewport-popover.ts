@@ -17,13 +17,17 @@ export function clampPopoverToViewport(
   desiredHeight: number,
   viewportWidth: number,
   viewportHeight: number,
+  horizontalBoundary?: { left: number; right: number },
 ): PopoverPlacement {
   const gap = 4;
   const safeWidth = Math.max(0, Number.isFinite(viewportWidth) ? viewportWidth : 0);
   const safeHeight = Math.max(0, Number.isFinite(viewportHeight) ? viewportHeight : 0);
   const marginX = Math.min(8, safeWidth / 2);
   const marginY = Math.min(8, safeHeight / 2);
-  const width = Math.min(Math.max(0, Number.isFinite(desiredWidth) ? desiredWidth : 0), safeWidth - marginX * 2);
+  const leftEdge = Math.max(marginX, horizontalBoundary === undefined ? marginX : horizontalBoundary.left + marginX);
+  const rightEdge = Math.max(leftEdge, Math.min(safeWidth - marginX,
+    horizontalBoundary === undefined ? safeWidth - marginX : horizontalBoundary.right - marginX));
+  const width = Math.min(Math.max(0, Number.isFinite(desiredWidth) ? desiredWidth : 0), rightEdge - leftEdge);
   const height = Math.min(Math.max(0, Number.isFinite(desiredHeight) ? desiredHeight : 0), safeHeight - marginY * 2);
   const anchorTop = Number.isFinite(anchor.top) ? anchor.top : 0;
   const anchorBottom = Number.isFinite(anchor.bottom) ? anchor.bottom : 0;
@@ -33,7 +37,7 @@ export function clampPopoverToViewport(
   const desiredTop = below >= height || below >= above ? anchorBottom + gap : anchorTop - gap - height;
   const top = Math.max(marginY, Math.min(desiredTop, safeHeight - marginY - height));
   return {
-    left: Math.max(marginX, Math.min(anchorRight - width, safeWidth - marginX - width)),
+    left: Math.max(leftEdge, Math.min(anchorRight - width, rightEdge - width)),
     top,
     width,
     maxHeight: Math.max(0, Math.min(height, safeHeight - marginY - top)),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getWebviewHtml } from '../../src/extension/webview-html';
 import type { SnapshotIdentity } from '../../src/shared/types';
+import { JSONLVIEW_DIAGNOSTIC_PROTOCOL_VERSION } from '../../src/shared/contracts/errors';
 
 const snapshot: SnapshotIdentity = {
   documentId: 'document&lt;unsafe',
@@ -24,7 +25,7 @@ describe('getWebviewHtml', () => {
       with: ({ path }: { path: string }) => ({ toString: () => `vscode-extension://${path}` }),
     };
 
-    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot, 250, 'desc');
+    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot, 250, 'desc', 'boot-1');
 
     expect(html).toContain("default-src 'none'");
     expect(html).toContain("style-src-elem vscode-webview://unit-test");
@@ -32,10 +33,31 @@ describe('getWebviewHtml', () => {
     expect(html).toMatch(/script-src 'nonce-[A-Za-z0-9_-]+'/);
     expect(html).not.toContain("script-src 'unsafe-inline'");
     expect(html).toContain('data-generation="generation&quot;unsafe"');
+    expect(html).toContain('data-startup-id="boot-1"');
+    expect(html).toContain('data-runtime-identity="{&quot;extensionId&quot;:&quot;unknown&quot;');
     expect(html).not.toContain('data-uri="file:///fixture.jsonl?value=<unsafe>"');
     expect(html).toContain('data-page-size="250"');
     expect(html).toContain('data-row-order="desc"');
-    expect(html).toContain('JSONLVIEW_DIAGNOSTIC');
+    expect(html).toContain(`type: 'JSONLVIEW_DIAGNOSTIC', diagnosticProtocolVersion: ${JSONLVIEW_DIAGNOSTIC_PROTOCOL_VERSION}`);
     expect(html).toContain('UnhandledRejection');
+  });
+
+  it('does not broaden the bounded style exception to scripts or style elements', () => {
+    const webview = {
+      cspSource: 'vscode-webview://unit-test',
+      asWebviewUri: (uri: { toString(): string }) => uri,
+    };
+    const vscodeUri = {
+      path: '/jsonl-view',
+      with: ({ path }: { path: string }) => ({ toString: () => `vscode-extension://${path}` }),
+    };
+
+    const html = getWebviewHtml(webview as never, vscodeUri as never, snapshot);
+
+    expect(html).toContain("style-src-elem vscode-webview://unit-test");
+    expect(html).toContain("style-src-attr 'unsafe-inline'");
+    expect(html).not.toContain("style-src 'unsafe-inline'");
+    expect(html).not.toContain("script-src 'unsafe-inline'");
+    expect(html.match(/<script nonce="[^"]+"/gu)).toHaveLength(2);
   });
 });

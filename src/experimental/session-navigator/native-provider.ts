@@ -7,6 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { NavigationEntity, NavigationRelation } from '../navigation-contract';
 import { collectFiles, type FileEntry } from './file-scan';
 import { FileSessionNavigatorProvider } from './generic-provider';
+import { SessionSourceChangedError } from './provider-errors';
 import { sourceIdFor } from './source-config';
 import { claudeFingerprint, collectClaudeFiles, readClaudeMetadata, type ClaudeMetadata } from './claude-metadata';
 import { MetadataBudget, readMetadataRecords, userMessagePreview } from './provider-metadata';
@@ -227,8 +228,15 @@ interface PiSessionMetadata {
  * tree that is intentionally not materialized as navigator entities.
  */
 class PiSessionNavigatorProvider extends NativeSessionNavigatorProvider {
+  private readonly sessionRootPath: string;
+
+  public constructor(setting: AuthorizedSourceSetting, sourceId: string) {
+    super(setting, sourceId);
+    this.sessionRootPath = resolvePiSessionRoot(this.rootPath);
+  }
+
   public async probe(signal: AbortSignal): Promise<string> {
-    const files = await collectPiFiles(this.rootPath, signal);
+    const files = await collectPiFiles(this.sessionRootPath, signal);
     return piFingerprint(files);
   }
 
@@ -241,7 +249,7 @@ class PiSessionNavigatorProvider extends NativeSessionNavigatorProvider {
     const fingerprint = await this.probe(signal);
     const pageCursor = decodePageCursor(cursor);
     assertCursorFingerprint(pageCursor, fingerprint);
-    const files = await collectPiFiles(this.rootPath, signal);
+    const files = await collectPiFiles(this.sessionRootPath, signal);
     const pageOffset = pageCursor.offset;
     const pageFiles = files.slice(pageOffset, pageOffset + Math.max(1, budget.maxFiles));
     const pending: PiSessionMetadata[] = [];
@@ -250,7 +258,7 @@ class PiSessionNavigatorProvider extends NativeSessionNavigatorProvider {
     for (const file of pageFiles) {
       throwIfAborted(signal);
       if (!metadataBudget.available() || pending.length >= budget.maxEntities) { truncated = true; break; }
-      const metadata = await readPiMetadata(file.path, file.relativePath, metadataBudget);
+      const metadata = await readPiMetadata(file.path, piRootRelativePath(this.rootPath, this.sessionRootPath, file.relativePath), metadataBudget);
       if (metadata !== undefined) { pending.push(metadata); truncated ||= metadata.sampled; }
     }
 
@@ -287,6 +295,17 @@ class PiSessionNavigatorProvider extends NativeSessionNavigatorProvider {
 }
 
 const PI_DISCOVERY_MAX_FILES = 4_096;
+
+function resolvePiSessionRoot(rootPath: string): string {
+  if (basename(rootPath).toLowerCase() === 'sessions') return rootPath;
+  const candidate = join(rootPath, 'sessions');
+  try { return statSync(candidate).isDirectory() ? candidate : rootPath; } catch { return rootPath; }
+}
+
+function piRootRelativePath(rootPath: string, sessionRootPath: string, sessionRelativePath: string): string {
+  const prefix = relative(rootPath, sessionRootPath);
+  return prefix.length === 0 ? sessionRelativePath : join(prefix, sessionRelativePath);
+}
 
 async function collectPiFiles(rootPath: string, signal: AbortSignal): Promise<readonly FileEntry[]> {
   return collectFiles(rootPath, signal, { ...DEFAULT_SESSION_NAVIGATOR_BUDGET, maxFiles: PI_DISCOVERY_MAX_FILES, maxMilliseconds: 750 }, Date.now());
@@ -421,7 +440,7 @@ function decodePageCursor(cursor: string | undefined): PageCursor {
   return match === null || match[1] === undefined ? { offset: 0 } : { offset: Math.min(Number(match[2]), Number.MAX_SAFE_INTEGER), fingerprint: match[1] };
 }
 function assertCursorFingerprint(cursor: PageCursor, fingerprint: string): void {
-  if (cursor.fingerprint !== undefined && cursor.fingerprint !== fingerprint) throw new Error('Session source changed while loading a page. Refresh the source before loading more.');
+  if (cursor.fingerprint !== undefined && cursor.fingerprint !== fingerprint) throw new SessionSourceChangedError();
 }
 
 async function readCodexTitles(path: string, budget: MetadataBudget): Promise<ReadonlyMap<string, string>> {

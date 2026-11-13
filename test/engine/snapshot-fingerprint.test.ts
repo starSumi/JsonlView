@@ -2,18 +2,20 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdtemp, open, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fingerprintRange,
   fingerprintStableRange,
   fingerprintWholeRange,
   formatFingerprint,
+  readFileHandle,
 } from '../../src/engine/snapshot-fingerprint';
 
 const temporaryDirectories: string[] = [];
 const openHandles: FileHandle[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(openHandles.splice(0).map((handle) => handle.close()));
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
@@ -35,6 +37,40 @@ function sha256(contents: Buffer | string): string {
 }
 
 describe('snapshot fingerprints', () => {
+  it('observes actual bytes and elapsed wait once for each short read and EOF attempt', async () => {
+    const { handle } = await createFixture('ab');
+    const observer = vi.fn();
+    const clock = vi.spyOn(performance, 'now');
+    clock.mockReturnValueOnce(10).mockReturnValueOnce(13).mockReturnValueOnce(20).mockReturnValueOnce(25);
+
+    await expect(readFileHandle(handle, Buffer.alloc(8), 0, 8, 0, observer)).resolves.toBe(2);
+    await expect(readFileHandle(handle, Buffer.alloc(8), 0, 8, 2, observer)).resolves.toBe(0);
+
+    expect(observer.mock.calls).toEqual([[3, 2], [5, 0]]);
+  });
+
+  it('reports a rejected attempt with zero bytes without letting a throwing observer replace the read error', async () => {
+    const { handle } = await createFixture('ab');
+    const failure = new Error('read failed');
+    vi.spyOn(handle, 'read').mockRejectedValueOnce(failure);
+    vi.spyOn(performance, 'now').mockReturnValueOnce(10).mockReturnValueOnce(17);
+    const observer = vi.fn(() => { throw new Error('observer failed'); });
+
+    await expect(readFileHandle(handle, Buffer.alloc(8), 0, 8, 0, observer)).rejects.toBe(failure);
+    expect(observer).toHaveBeenCalledExactlyOnceWith(7, 0);
+  });
+
+  it('preserves a successful read when its observer throws and skips clock work without an observer', async () => {
+    const { handle } = await createFixture('ab');
+    await expect(readFileHandle(handle, Buffer.alloc(8), 0, 8, 0, () => {
+      throw new Error('observer failed');
+    })).resolves.toBe(2);
+
+    const clock = vi.spyOn(performance, 'now');
+    await expect(readFileHandle(handle, Buffer.alloc(8), 0, 8, 0)).resolves.toBe(2);
+    expect(clock).not.toHaveBeenCalled();
+  });
+
   it('hashes an absolute byte range and reports a short read at end of file', async () => {
     const { handle } = await createFixture('0123456789');
 

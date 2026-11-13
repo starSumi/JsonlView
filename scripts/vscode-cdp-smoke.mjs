@@ -2,6 +2,9 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactDirectory } from './artifact-directory.mjs';
+import { CdpClient, findCdpTargetWithinDeadline, runCdpMeasurement } from './cdp-measurement-lifecycle.mjs';
+import { isExpectedPageNavigation, parsePageCursorOrdinal, samePageNavigationState } from './page-navigation-measurement.mjs';
+import { MAX_QUERY_TAP_EVENTS, pairQueryTemporalAssociation, summarizeQueryTemporalAssociation } from './query-temporal-association.mjs';
 import { assertOutsideTree } from './path-boundary.mjs';
 import { createMutableSyntheticFixture } from './synthetic-cdp-fixture.mjs';
 
@@ -11,10 +14,14 @@ const inspectOnly = process.argv.includes('--inspect-only');
 const exercise = process.argv.includes('--exercise');
 const wide = process.argv.includes('--wide');
 const leaveInsights = process.argv.includes('--leave-insights');
+const measurePageNavigation = process.argv.includes('--measure-page-navigation');
+const measureQueryTemporalAssociation = process.argv.includes('--measure-query-temporal-association');
 const syntheticChangeIndex = process.argv.indexOf('--synthetic-change');
 const syntheticChange = syntheticChangeIndex === -1 ? undefined : process.argv[syntheticChangeIndex + 1];
 const settleMilliseconds = Number(process.env.JSONLVIEW_CDP_SETTLE_MS ?? '12000');
 const baseUrl = `http://127.0.0.1:${String(port)}`;
+const CDP_OPERATION_TIMEOUT_MS = 20000;
+const SYNTHETIC_TARGET_DISCOVERY_TIMEOUT_MS = 30000;
 
 if (!Number.isSafeInteger(settleMilliseconds) || settleMilliseconds < 0) {
   throw new Error('JSONLVIEW_CDP_SETTLE_MS must be a non-negative safe integer.');
@@ -26,54 +33,32 @@ if (process.argv.some((argument) => ['--follow-file', '--append-file', '--change
 if (syntheticChangeIndex !== -1 && !['append', 'truncate', 'rewrite'].includes(syntheticChange)) {
   throw new Error('--synthetic-change requires append, truncate, or rewrite.');
 }
+if (measurePageNavigation && inspectOnly) {
+  throw new Error('--measure-page-navigation cannot be combined with --inspect-only.');
+}
+if (measureQueryTemporalAssociation && inspectOnly) {
+  throw new Error('--measure-query-temporal-association cannot be combined with --inspect-only.');
+}
+if (measurePageNavigation && measureQueryTemporalAssociation) {
+  throw new Error('Page-navigation and query temporal-association measurement modes are separate.');
+}
+if (measurePageNavigation && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
+  throw new Error('--measure-page-navigation cannot be combined with other smoke modes.');
+}
+if (measureQueryTemporalAssociation && (exercise || wide || leaveInsights || syntheticChangeIndex !== -1)) {
+  throw new Error('--measure-query-temporal-association cannot be combined with other smoke modes.');
+}
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 await mkdir(outputBaseDirectory, { recursive: true });
 await assertOutsideTree(resolve(import.meta.dirname, '..'), outputBaseDirectory, 'CDP output');
 const outputDirectory = await mkdtemp(join(outputBaseDirectory, 'cdp-run-'));
-const ownedFixture = syntheticChange === undefined ? undefined
-  : await createMutableSyntheticFixture(outputDirectory, 250);
-
-class CdpClient {
-  #nextId = 0;
-  #pending = new Map();
-
-  constructor(url) {
-    this.socket = new WebSocket(url);
-  }
-
-  async open() {
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener('open', resolveOpen, { once: true });
-      this.socket.addEventListener('error', rejectOpen, { once: true });
-    });
-    this.socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data));
-      if (message.id === undefined) return;
-      const pending = this.#pending.get(message.id);
-      if (!pending) return;
-      this.#pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message));
-      else pending.resolve(message.result);
-    });
-  }
-
-  send(method, params = {}) {
-    const id = ++this.#nextId;
-    return new Promise((resolveRequest, rejectRequest) => {
-      this.#pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  close() {
-    this.socket.close();
-  }
-}
+const ownedFixture = syntheticChange === undefined && !measurePageNavigation && !measureQueryTemporalAssociation ? undefined
+  : await createMutableSyntheticFixture(outputDirectory, measurePageNavigation || measureQueryTemporalAssociation ? 1000 : 250);
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
 async function targets() {
-  const response = await fetch(`${baseUrl}/json/list`);
+  const response = await fetch(`${baseUrl}/json/list`, { signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(`CDP target list failed: ${String(response.status)}`);
   return response.json();
 }
@@ -400,50 +385,810 @@ function isOwnedFixtureUri(uri, fixture) {
   }
 }
 
-async function sampleSyntheticView(target, action) {
+async function sampleSyntheticView(target, action, includeDetail = false, timeoutMs = 5000) {
   const client = new CdpClient(target.webSocketDebuggerUrl);
-  await client.open();
-  try {
-    const sampled = await client.send('Runtime.evaluate', {
-      expression: `(() => {
-        let inspected = document;
-        for (let depth = 0; depth < 3; depth += 1) {
-          const child = inspected.querySelector('iframe')?.contentDocument;
-          if (!child?.body) break;
-          inspected = child;
-        }
-        if (!inspected.querySelector('.app-shell')) return null;
-        if (${JSON.stringify(action)} === 'select') inspected.querySelectorAll('.data-grid-row')[1]?.click();
-        if (${JSON.stringify(action)} === 'rebuild') {
-          (inspected.querySelector('.snapshot-update button')
-            ?? inspected.querySelector('.invalidated-banner button'))?.click();
-        }
-        return {
-          uri: inspected.body?.dataset.uri ?? null,
-          indexedRecords: Number.parseInt(inspected.querySelector('.status-records')?.textContent ?? '', 10),
-          pending: Boolean(inspected.querySelector('.snapshot-update')),
-          blocked: Boolean(inspected.querySelector('.invalidated-banner')),
-          detail: inspected.querySelector('.detail-drawer')?.innerText ?? null,
-        };
-      })()`,
-      returnByValue: true,
-    });
-    return sampled.result.value;
-  } finally {
-    client.close();
-  }
+  return runCdpMeasurement({
+    client,
+    timeoutMs,
+    timeoutMessage: 'Synthetic Webview sampling exceeded its deadline.',
+    task: async () => {
+      await client.open();
+      const sampled = await client.send('Runtime.evaluate', {
+        expression: `(() => {
+          let inspected = document;
+          for (let depth = 0; depth < 3; depth += 1) {
+            const child = inspected.querySelector('iframe')?.contentDocument;
+            if (!child?.body) break;
+            inspected = child;
+          }
+          if (!inspected.querySelector('.app-shell')) return null;
+          if (${JSON.stringify(action)} === 'select') inspected.querySelectorAll('.data-grid-row')[1]?.click();
+          if (${JSON.stringify(action)} === 'rebuild') {
+            const rebuild = inspected.querySelector('button.rebuild-action')
+              ?? inspected.querySelector('.snapshot-update button')
+              ?? inspected.querySelector('.invalidated-banner button');
+            if (!rebuild) throw new Error('Synthetic Rebuild action was not found.');
+            if (rebuild.disabled) throw new Error('Synthetic Rebuild action is disabled.');
+            rebuild.click();
+          }
+          return {
+            uri: inspected.body?.dataset.uri ?? null,
+            indexedRecords: Number.parseInt(inspected.querySelector('.status-records')?.textContent ?? '', 10),
+            pending: Boolean(inspected.querySelector('.snapshot-update')),
+            blocked: Boolean(inspected.querySelector('.invalidated-banner')),
+            detail: ${JSON.stringify(includeDetail)} ? inspected.querySelector('.detail-drawer')?.innerText ?? null : null,
+          };
+        })()`,
+        returnByValue: true,
+      });
+      if (sampled.exceptionDetails) {
+        throw new Error(sampled.exceptionDetails.exception?.description ?? sampled.exceptionDetails.text);
+      }
+      return sampled.result.value;
+    },
+  });
 }
 
-async function waitForSyntheticView(target, predicate) {
+async function waitForSyntheticView(target, predicate, timeoutMs = 12000) {
+  const deadline = performance.now() + timeoutMs;
   let latest;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    latest = await sampleSyntheticView(target);
+  while (performance.now() < deadline) {
+    const remainingMs = deadline - performance.now();
+    latest = await sampleSyntheticView(target, undefined, false, Math.min(5000, remainingMs));
     if (predicate(latest)) return latest;
-    await delay(100);
+    const pauseMs = Math.min(100, deadline - performance.now());
+    if (pauseMs <= 0) break;
+    await delay(pauseMs);
   }
   return latest;
 }
 
+function preparePageNavigationMeasurement(parseCursorOrdinal, probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const pager = inspected.querySelector('.page-controls');
+  const grid = inspected.querySelector('.data-grid-scroll');
+  const cursor = pager?.querySelector('.page-cursor');
+  if (!view || !pager || !grid || !cursor) throw new Error('Page navigation controls are not ready.');
+  const registryKey = '__jsonlviewPageNavigationMeasurements';
+  let registry = view[registryKey];
+  if (!registry) {
+    registry = new Map();
+    view[registryKey] = registry;
+  }
+  if (registry.get(probeId)?.cancelled) {
+    registry.delete(probeId);
+    throw new Error('Page navigation measurement was cancelled before preparation.');
+  }
+  grid.scrollTop = 0;
+  return new Promise((resolvePreparation, rejectPreparation) => {
+    let timeoutId;
+    let retryId;
+    const frameIds = new Set();
+    let completed = false;
+    const finish = (error, result) => {
+      if (completed) return;
+      completed = true;
+      view.clearTimeout(timeoutId);
+      view.clearTimeout(retryId);
+      for (const frameId of frameIds) view.cancelAnimationFrame(frameId);
+      frameIds.clear();
+      if (registry.get(probeId) === probe) registry.delete(probeId);
+      if (error) rejectPreparation(error);
+      else resolvePreparation(result);
+    };
+    const scheduleFrame = (callback) => {
+      const frameId = view.requestAnimationFrame(() => {
+        frameIds.delete(frameId);
+        if (!completed) callback();
+      });
+      frameIds.add(frameId);
+    };
+    const check = () => {
+      if (completed) return;
+      scheduleFrame(() => scheduleFrame(() => {
+        const cursorText = cursor.textContent?.trim() ?? '';
+        const cursorOrdinal = parseCursorOrdinal(cursorText);
+        const row = cursorOrdinal === undefined ? null
+          : grid.querySelector('.data-grid-row[data-row-ordinal="' + cursorOrdinal + '"][data-row-generation]');
+        const busy = pager.getAttribute('aria-busy') === 'true' || grid.getAttribute('aria-busy') === 'true';
+        if (busy || !row) {
+          retryId = view.setTimeout(check, 25);
+          return;
+        }
+        finish(null, {
+          page: Number(pager.querySelector('input[aria-label="Page number"]')?.value),
+          cursorOrdinal,
+          generation: row.dataset.rowGeneration,
+        });
+      }));
+    };
+    const probe = { cancel: null };
+    probe.cancel = () => finish(new Error('Page navigation preparation was cancelled by the CDP runner.'));
+    registry.set(probeId, probe);
+    timeoutId = view.setTimeout(() => finish(new Error('Page top did not mount within 10 seconds.')), 10000);
+    check();
+  });
+}
+
+function installPageNavigationMeasurement(direction, parseCursorOrdinal, isSameState, expectedPage, probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const pager = inspected.querySelector('.page-controls');
+  const grid = inspected.querySelector('.data-grid-scroll');
+  const pageInput = pager?.querySelector('input[aria-label="Page number"]');
+  const cursor = pager?.querySelector('.page-cursor');
+  const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+  const button = pager?.querySelector('button[title=' + JSON.stringify(buttonTitle) + ']');
+  if (!view || !pager || !grid || !pageInput || !cursor || !button) {
+    throw new Error('Page navigation controls are not ready.');
+  }
+  const registryKey = '__jsonlviewPageNavigationMeasurements';
+  let registry = view[registryKey];
+  if (!registry) {
+    registry = new Map();
+    view[registryKey] = registry;
+  }
+  if (registry.get(probeId)?.cancelled) {
+    registry.delete(probeId);
+    return Promise.reject(new Error('Page navigation measurement was cancelled before setup.'));
+  }
+  const fromPage = Number(pageInput.value);
+  const fromCursor = cursor.textContent?.trim() ?? '';
+  const fromOrdinal = parseCursorOrdinal(fromCursor);
+  const firstRow = fromOrdinal === undefined ? null
+    : grid.querySelector('.data-grid-row[data-row-ordinal="' + fromOrdinal + '"][data-row-generation]');
+  const generation = firstRow?.dataset.rowGeneration;
+  if (!Number.isInteger(fromPage) || fromOrdinal === undefined || !generation || button.disabled) {
+    throw new Error('Requested page navigation is unavailable.');
+  }
+  return new Promise((resolveMeasurement, rejectMeasurement) => {
+    let startedAt;
+    let framePending = false;
+    let completed = false;
+    let timeoutId;
+    let observer;
+    const probe = { cancel: null };
+    registry.set(probeId, probe);
+    const readState = () => {
+      const page = Number(pageInput.value);
+      const cursorText = cursor.textContent?.trim() ?? '';
+      const cursorOrdinal = parseCursorOrdinal(cursorText);
+      const row = cursorOrdinal === undefined ? null
+        : grid.querySelector('.data-grid-row[data-row-ordinal="' + cursorOrdinal + '"][data-row-generation]');
+      const busy = pager.getAttribute('aria-busy') === 'true' || grid.getAttribute('aria-busy') === 'true';
+      return {
+        page,
+        cursorText,
+        cursorOrdinal,
+        mountedOrdinal: Number(row?.dataset.rowOrdinal),
+        generation: row?.dataset.rowGeneration,
+        mountedRows: grid.querySelectorAll('.data-grid-row[data-row-ordinal]').length,
+        busy,
+        ready: cursorText !== fromCursor && cursorText !== 'Loading page...'
+          && cursorOrdinal !== fromOrdinal && expectedPage(fromPage, page, direction)
+          && row?.dataset.rowGeneration === generation
+          && Number.isInteger(Number(row?.dataset.rowOrdinal)),
+      };
+    };
+    const cleanup = () => {
+      observer.disconnect();
+      pager.removeEventListener('click', onClick, true);
+      view.clearTimeout(timeoutId);
+      if (registry.get(probeId) === probe) registry.delete(probeId);
+    };
+    const finish = (error, result) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      if (error) rejectMeasurement(error);
+      else resolveMeasurement(result);
+    };
+    probe.cancel = () => finish(new Error('Page navigation measurement was cancelled by the CDP runner.'));
+    const check = () => {
+      if (startedAt === undefined || framePending) return;
+      const current = readState();
+      if (!current.ready || current.busy) return;
+      framePending = true;
+      view.requestAnimationFrame(() => view.requestAnimationFrame(() => {
+        framePending = false;
+        const settled = readState();
+        if (!settled.ready || settled.busy) {
+          check();
+          return;
+        }
+        if (!isSameState(current, settled)) {
+          check();
+          return;
+        }
+        const durationMs = view.performance.now() - startedAt;
+        finish(null, {
+          direction,
+          fromPage,
+          toPage: settled.page,
+          cursorFirstOrdinal: settled.cursorOrdinal,
+          mountedOrdinal: settled.mountedOrdinal,
+          mountedRows: settled.mountedRows,
+          durationMs,
+        });
+      }));
+    };
+    const onClick = (event) => {
+      if (!event.isTrusted || !event.composedPath().includes(button)) return;
+      if (startedAt !== undefined) {
+        finish(new Error('Concurrent page navigation clicks cannot share one measurement.'));
+        return;
+      }
+      startedAt = view.performance.now();
+      observer.observe(pager, { attributes: true, childList: true, characterData: true, subtree: true });
+      observer.observe(grid, { attributes: true, childList: true, characterData: true, subtree: true });
+      check();
+    };
+    timeoutId = view.setTimeout(() => {
+      finish(new Error('Page navigation did not commit within 15 seconds.'));
+    }, 15000);
+    observer = new view.MutationObserver(check);
+    pager.addEventListener('click', onClick, true);
+  });
+}
+
+function cancelPageNavigationMeasurement(probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const registry = view?.__jsonlviewPageNavigationMeasurements;
+  const probe = registry?.get(probeId);
+  if (probe?.cancel) probe.cancel();
+  else registry?.set(probeId, { cancelled: true });
+}
+
+async function identifySyntheticTarget(target, timeoutMs = CDP_OPERATION_TIMEOUT_MS) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  return runCdpMeasurement({
+    client,
+    timeoutMs,
+    timeoutMessage: 'Synthetic target identification exceeded 20 seconds.',
+    task: async () => {
+      await client.open();
+      const evaluated = await client.send('Runtime.evaluate', {
+        expression: '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return { appShell: Boolean(inspected.querySelector(".app-shell")), uri: inspected.body?.dataset.uri ?? null }; })()',
+        returnByValue: true,
+      });
+      return evaluated.result.value;
+    },
+  });
+}
+
+async function collectPageNavigationMeasurements(target) {
+  let probeSequence = 0;
+  const measureDirection = async (direction) => {
+    const probeId = 'page-nav:' + direction + ':' + String(++probeSequence);
+    const expression = '(' + installPageNavigationMeasurement.toString() + ')(' + JSON.stringify(direction)
+      + ', ' + parsePageCursorOrdinal.toString() + ', ' + samePageNavigationState.toString()
+      + ', ' + isExpectedPageNavigation.toString()
+      + ', ' + JSON.stringify(probeId) + ')';
+    const client = new CdpClient(target.webSocketDebuggerUrl);
+    const prepareExpression = '(' + preparePageNavigationMeasurement.toString()
+      + ')(' + parsePageCursorOrdinal.toString() + ', ' + JSON.stringify(probeId) + ')';
+    return runCdpMeasurement({
+      client,
+      timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+      timeoutMessage: 'Page navigation CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 1000,
+      task: async () => {
+        await client.open();
+        const preparedResponse = await client.send('Runtime.evaluate', {
+          expression: prepareExpression, awaitPromise: true, returnByValue: true,
+        });
+        if (preparedResponse.exceptionDetails) {
+          throw new Error(preparedResponse.exceptionDetails.exception?.description ?? preparedResponse.exceptionDetails.text);
+        }
+        const evaluation = client.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+          .then((response) => ({ response }), (error) => ({ error }));
+        const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+        const selector = '.page-controls button[title=' + JSON.stringify(buttonTitle) + ']';
+        const clickExpression = '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return inspected.querySelector(' + JSON.stringify(selector) + '); })()';
+        const clicked = await clickElement(client, clickExpression);
+        if (!clicked) throw new Error('The ' + direction + ' page button was not clickable.');
+        const outcome = await evaluation;
+        if (outcome.error) throw outcome.error;
+        const result = outcome.response;
+        if (result.exceptionDetails) {
+          throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+        }
+        return result.result.value;
+      },
+      onTimeout: () => {
+        const cancelExpression = '(' + cancelPageNavigationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')';
+        return client.send('Runtime.evaluate', { expression: cancelExpression });
+      },
+    });
+  };
+  const warmupsPerDirection = 3;
+  const measuredSamplesPerDirection = 20;
+  const measured = { next: [], previous: [] };
+  for (let index = 0; index < warmupsPerDirection; index += 1) {
+    await measureDirection('next');
+    await measureDirection('previous');
+  }
+  for (let index = 0; index < measuredSamplesPerDirection; index += 1) {
+    measured.next.push(await measureDirection('next'));
+    measured.previous.push(await measureDirection('previous'));
+  }
+  const summarize = (samples) => {
+    const sorted = samples.map((sample) => sample.durationMs).sort((left, right) => left - right);
+    const percentile = (value) => sorted[Math.max(0, Math.ceil(value * sorted.length) - 1)];
+    const round = (value) => Number(value.toFixed(3));
+    return {
+      sampleCount: samples.length,
+      minMs: round(sorted[0]),
+      p50Ms: round(percentile(0.5)),
+      p95Ms: round(percentile(0.95)),
+      maxMs: round(sorted.at(-1)),
+    };
+  };
+  return {
+    metric: 'webview-click-to-committed-dom-settle-proxy-plus-two-animation-frames',
+    clock: 'window.performance.now',
+    cacheCondition: 'run-owned synthetic fixture already indexed; paired warm-view sequence',
+    completionCondition: 'page number advances exactly one page in the requested direction, its cursor-first ordinal is mounted with the same generation, pager and grid idle, same page state survives two animation-frame callbacks',
+    presentationGuaranteed: false,
+    percentileMethod: 'nearest-rank',
+    warmupsPerDirection,
+    measuredSamplesPerDirection,
+    directions: {
+      next: { summary: summarize(measured.next), samples: measured.next },
+      previous: { summary: summarize(measured.previous), samples: measured.previous },
+    },
+  };
+}
+
+function installQueryTemporalAssociationGuard(arm) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  if (!view || !inspected.querySelector('.app-shell')) throw new Error('Query temporal-association Webview frame is not ready.');
+  const guardKey = '__jsonlviewQueryTemporalAssociationGuard';
+  let guard = view[guardKey];
+  if (!guard) {
+    guard = { armed: false, activeProbeId: null, outOfWindowEvents: 0 };
+    guard.onMessage = (event) => {
+      if (event.data?.__jsonlViewCdpQueryTap !== 1 || !guard.armed || guard.activeProbeId !== null) return;
+      guard.outOfWindowEvents = Math.min(Number.MAX_SAFE_INTEGER, guard.outOfWindowEvents + 1);
+    };
+    view.addEventListener('message', guard.onMessage);
+    view[guardKey] = guard;
+  }
+  if (arm) {
+    if (guard.activeProbeId !== null) throw new Error('A query temporal-association click window is still active.');
+    guard.outOfWindowEvents = 0;
+    guard.armed = true;
+  } else {
+    if (guard.activeProbeId !== null) throw new Error('A query temporal-association click window is still active.');
+    guard.outOfWindowEvents = 0;
+    guard.armed = false;
+  }
+  return { armed: guard.armed };
+}
+
+function installQueryTemporalAssociationMeasurement(direction, parseCursorOrdinal, isSameState, expectedPage, probeId, maxEvents, quietWindowMs) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const guard = view?.__jsonlviewQueryTemporalAssociationGuard;
+  const pager = inspected.querySelector('.page-controls');
+  const grid = inspected.querySelector('.data-grid-scroll');
+  const pageInput = pager?.querySelector('input[aria-label="Page number"]');
+  const cursor = pager?.querySelector('.page-cursor');
+  const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+  const button = pager?.querySelector('button[title=' + JSON.stringify(buttonTitle) + ']');
+  if (!view || !pager || !grid || !pageInput || !cursor || !button) {
+    throw new Error('Query temporal-association page controls are not ready.');
+  }
+  const registryKey = '__jsonlviewQueryTemporalAssociationMeasurements';
+  let registry = view[registryKey];
+  if (!registry) {
+    registry = new Map();
+    view[registryKey] = registry;
+  }
+  if (!guard?.armed) throw new Error('Query observation guard was not armed after the stable baseline.');
+  if (guard.activeProbeId !== null) throw new Error('A prior query temporal-association click window is still active.');
+  if (guard.outOfWindowEvents !== 0) throw new Error('A query tap arrived outside the bounded click window.');
+  if (registry.get(probeId)?.cancelled) {
+    registry.delete(probeId);
+    return Promise.reject(new Error('Query temporal-association measurement was cancelled before setup.'));
+  }
+  const fromPage = Number(pageInput.value);
+  const fromCursor = cursor.textContent?.trim() ?? '';
+  const fromOrdinal = parseCursorOrdinal(fromCursor);
+  const firstRow = fromOrdinal === undefined ? null
+    : grid.querySelector('.data-grid-row[data-row-ordinal="' + fromOrdinal + '"][data-row-generation]');
+  const generation = firstRow?.dataset.rowGeneration;
+  if (!Number.isSafeInteger(fromPage) || fromOrdinal === undefined || !generation || button.disabled) {
+    throw new Error('Requested query temporal-association page transition is unavailable.');
+  }
+  return new Promise((resolveMeasurement, rejectMeasurement) => {
+    let startedAt;
+    let framePending = false;
+    let frameOne;
+    let frameTwo;
+    let completed = false;
+    let active = false;
+    let timeoutId;
+    let quietTimer;
+    let observer;
+    let domTransition;
+    let overflow = false;
+    const events = [];
+    const probe = { cancel: null };
+    const readState = () => {
+      const page = Number(pageInput.value);
+      const cursorText = cursor.textContent?.trim() ?? '';
+      const cursorOrdinal = parseCursorOrdinal(cursorText);
+      const row = cursorOrdinal === undefined ? null
+        : grid.querySelector('.data-grid-row[data-row-ordinal="' + cursorOrdinal + '"][data-row-generation]');
+      const busy = pager.getAttribute('aria-busy') === 'true' || grid.getAttribute('aria-busy') === 'true';
+      return {
+        page, cursorText, cursorOrdinal, mountedOrdinal: Number(row?.dataset.rowOrdinal),
+        generation: row?.dataset.rowGeneration, busy,
+        ready: cursorText !== fromCursor && cursorText !== 'Loading page...'
+          && cursorOrdinal !== fromOrdinal && expectedPage(fromPage, page, direction)
+          && row?.dataset.rowGeneration === generation
+          && Number.isSafeInteger(Number(row?.dataset.rowOrdinal)),
+      };
+    };
+    const cleanup = () => {
+      active = false;
+      if (guard.activeProbeId === probeId) guard.activeProbeId = null;
+      observer?.disconnect();
+      pager.removeEventListener('click', onClick, true);
+      view.removeEventListener('message', onMessage);
+      view.clearTimeout(timeoutId);
+      view.clearTimeout(quietTimer);
+      if (frameOne !== undefined) view.cancelAnimationFrame(frameOne);
+      if (frameTwo !== undefined) view.cancelAnimationFrame(frameTwo);
+      if (registry.get(probeId) === probe) registry.delete(probeId);
+    };
+    const finish = (error, result) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      if (error) rejectMeasurement(error);
+      else resolveMeasurement(result);
+    };
+    const startQuietWindow = () => {
+      if (!domTransition || !active) return;
+      view.clearTimeout(quietTimer);
+      quietTimer = view.setTimeout(() => finish(null, {
+        ...domTransition, events, overflow, outOfWindowEvents: guard.outOfWindowEvents,
+      }), quietWindowMs);
+    };
+    const sanitizeTap = (message) => {
+      const safeIdentifier = (value) => typeof value === 'string' && value.length > 0 && value.length <= 128
+        && !/[\u0000-\u001f\u007f]/u.test(value) ? value : undefined;
+      const traceId = safeIdentifier(message?.traceId);
+      const startupId = safeIdentifier(message?.startupId);
+      const eventName = safeIdentifier(message?.eventName);
+      const sanitized = {
+        traceId, startupId, eventName, attributes: {},
+      };
+      try {
+        const eventKeys = ['__jsonlViewCdpQueryTap', 'traceId', 'startupId', 'eventName', 'attributes'];
+        const allowedAttributes = new Set([
+          'stage', 'request_seq', 'outcome', 'delivery', 'abort_observed', 'duration_ms', 'rows', 'stale_reason', 'error_name',
+        ]);
+        if (Object.keys(message).some((key) => !eventKeys.includes(key))) sanitized.invalid = true;
+        if (traceId === undefined || startupId === undefined || eventName === undefined) sanitized.invalid = true;
+        if (!message.attributes || typeof message.attributes !== 'object' || Array.isArray(message.attributes)
+          || Object.keys(message.attributes).length > 16) {
+          sanitized.invalid = true;
+        } else {
+          for (const key of Object.keys(message.attributes)) {
+            if (!allowedAttributes.has(key)) {
+              sanitized.invalid = true;
+              continue;
+            }
+            const value = message.attributes[key];
+            if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+              sanitized.invalid = true;
+              continue;
+            }
+            if (typeof value === 'string' && (value.length === 0 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value))) {
+              sanitized.invalid = true;
+              continue;
+            }
+            if (typeof value === 'number' && !Number.isFinite(value)) {
+              sanitized.invalid = true;
+              continue;
+            }
+            sanitized.attributes[key] = value;
+          }
+        }
+      } catch {
+        sanitized.invalid = true;
+      }
+      return sanitized;
+    };
+    const onMessage = (event) => {
+      const message = event.data;
+      if (!message || typeof message !== 'object' || message.__jsonlViewCdpQueryTap !== 1 || !active) return;
+      if (events.length >= maxEvents) {
+        overflow = true;
+      } else {
+        events.push(sanitizeTap(message));
+      }
+      // A host query may legitimately outlive the DOM transition. Keep the
+      // bounded event window open until the DOM has committed; only then does
+      // the quiet drain become a completion boundary.
+      if (domTransition) startQuietWindow();
+    };
+    const check = () => {
+      if (completed || !active || startedAt === undefined || framePending || domTransition) return;
+      const current = readState();
+      if (!current.ready || current.busy) return;
+      framePending = true;
+      frameOne = view.requestAnimationFrame(() => {
+        if (completed || !active) return;
+        frameTwo = view.requestAnimationFrame(() => {
+          if (completed || !active) return;
+        framePending = false;
+        const settled = readState();
+        if (!settled.ready || settled.busy || !isSameState(current, settled)) {
+          check();
+          return;
+        }
+        domTransition = {
+          direction, fromPage, toPage: settled.page, cursorFirstOrdinal: settled.cursorOrdinal,
+          mountedOrdinal: settled.mountedOrdinal, webviewElapsedMs: view.performance.now() - startedAt,
+        };
+        startQuietWindow();
+        });
+      });
+    };
+    const onClick = (event) => {
+      if (!event.isTrusted || !event.composedPath().includes(button)) return;
+      if (startedAt !== undefined) {
+        finish(new Error('Concurrent query temporal-association clicks cannot share one window.'));
+        return;
+      }
+      if (guard.outOfWindowEvents !== 0) {
+        finish(new Error('A query tap arrived outside the bounded click window.'));
+        return;
+      }
+      startedAt = view.performance.now();
+      active = true;
+      guard.activeProbeId = probeId;
+      observer.observe(pager, { attributes: true, childList: true, characterData: true, subtree: true });
+      observer.observe(grid, { attributes: true, childList: true, characterData: true, subtree: true });
+      check();
+    };
+    probe.cancel = () => finish(new Error('Query temporal-association measurement was cancelled by the CDP runner.'));
+    registry.set(probeId, probe);
+    view.addEventListener('message', onMessage);
+    observer = new view.MutationObserver(check);
+    pager.addEventListener('click', onClick, true);
+    timeoutId = view.setTimeout(() => {
+      finish(new Error('Query temporal-association page transition did not commit within 15 seconds.'));
+    }, 15000);
+  });
+}
+
+function cancelQueryTemporalAssociationMeasurement(probeId) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const probe = view?.__jsonlviewQueryTemporalAssociationMeasurements?.get(probeId);
+  if (probe?.cancel) probe.cancel();
+  else view?.__jsonlviewQueryTemporalAssociationMeasurements?.set(probeId, { cancelled: true });
+}
+
+function drainQueryTemporalAssociationGuard(quietWindowMs) {
+  let inspected = document;
+  for (let depth = 0; depth < 3; depth += 1) {
+    const child = inspected.querySelector('iframe')?.contentDocument;
+    if (!child?.body) break;
+    inspected = child;
+  }
+  const view = inspected.defaultView;
+  const guardKey = '__jsonlviewQueryTemporalAssociationGuard';
+  const guard = view?.[guardKey];
+  if (!view || !guard) throw new Error('Query temporal-association Webview guard disappeared before final drain.');
+  return new Promise((resolveDrain) => {
+    view.setTimeout(() => {
+      const outOfWindowEvents = guard.outOfWindowEvents;
+      view.removeEventListener('message', guard.onMessage);
+      delete view[guardKey];
+      resolveDrain(outOfWindowEvents);
+    }, quietWindowMs);
+  });
+}
+
+let queryTemporalAssociationGuardClosed = false;
+async function readAndCloseQueryTemporalAssociationGuard(target, quietWindowMs) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  const outOfWindowEvents = await runCdpMeasurement({
+    client,
+    timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+    timeoutMessage: 'Query temporal-association final drain exceeded 20 seconds.',
+    task: async () => {
+      await client.open();
+      const response = await client.send('Runtime.evaluate', {
+        expression: '(' + drainQueryTemporalAssociationGuard.toString() + ')(' + String(quietWindowMs) + ')',
+        awaitPromise: true, returnByValue: true,
+      });
+      if (response.exceptionDetails) {
+        throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+      }
+      return response.result.value;
+    },
+  });
+  queryTemporalAssociationGuardClosed = true;
+  return outOfWindowEvents;
+}
+
+async function configureQueryTemporalAssociationGuard(target, arm) {
+  const client = new CdpClient(target.webSocketDebuggerUrl);
+  return runCdpMeasurement({
+    client,
+    timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+    timeoutMessage: 'Query temporal-association Webview guard setup exceeded 20 seconds.',
+    task: async () => {
+      await client.open();
+      const response = await client.send('Runtime.evaluate', {
+        expression: '(' + installQueryTemporalAssociationGuard.toString() + ')(' + String(arm) + ')',
+        returnByValue: true,
+      });
+      if (response.exceptionDetails) {
+        throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+      }
+      return response.result.value;
+    },
+  });
+}
+
+async function collectQueryTemporalAssociationMeasurements(target) {
+  let probeSequence = 0;
+  const lastRequestSequence = new Map();
+  let controllerIdentity;
+  const measureDirection = async (direction) => {
+    const probeId = 'query-temporal-association:' + direction + ':' + String(++probeSequence);
+    const expression = '(' + installQueryTemporalAssociationMeasurement.toString() + ')(' + JSON.stringify(direction)
+      + ', ' + parsePageCursorOrdinal.toString() + ', ' + samePageNavigationState.toString()
+      + ', ' + isExpectedPageNavigation.toString() + ', ' + JSON.stringify(probeId)
+      + ', ' + String(MAX_QUERY_TAP_EVENTS) + ', 250)';
+    const client = new CdpClient(target.webSocketDebuggerUrl);
+    return runCdpMeasurement({
+      client,
+      timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+      timeoutMessage: 'Query temporal-association CDP measurement exceeded 20 seconds.',
+      cancelTimeoutMs: 1000,
+      task: async () => {
+        await client.open();
+        const evaluation = client.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+          .then((response) => ({ response }), (error) => ({ error }));
+        const buttonTitle = direction === 'next' ? 'Next page' : 'Previous page';
+        const selector = '.page-controls button[title=' + JSON.stringify(buttonTitle) + ']';
+        const clickExpression = '(() => { let inspected = document; for (let depth = 0; depth < 3; depth += 1) { const child = inspected.querySelector("iframe")?.contentDocument; if (!child?.body) break; inspected = child; } return inspected.querySelector(' + JSON.stringify(selector) + '); })()';
+        if (!await clickElement(client, clickExpression)) {
+          await client.send('Runtime.evaluate', {
+            expression: '(' + cancelQueryTemporalAssociationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
+          });
+          throw new Error('The ' + direction + ' page button was not clickable.');
+        }
+        const outcome = await evaluation;
+        if (outcome.error) throw outcome.error;
+        const response = outcome.response;
+        if (response.exceptionDetails) {
+          throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+        }
+        const measured = response.result.value;
+        const startEvent = measured.events?.[0];
+        if (!startEvent || typeof startEvent.traceId !== 'string' || typeof startEvent.startupId !== 'string'
+          || !Number.isSafeInteger(startEvent.attributes?.request_seq)) {
+          throw new Error('Query temporal-association window did not expose one valid query identity.');
+        }
+        const identity = JSON.stringify([startEvent.traceId, startEvent.startupId]);
+        if (controllerIdentity === undefined) controllerIdentity = identity;
+        if (identity !== controllerIdentity) {
+          throw new Error('Query temporal-association controller identity changed during the measurement run.');
+        }
+        const previousSequence = lastRequestSequence.get(identity);
+        if (previousSequence !== undefined && startEvent.attributes.request_seq <= previousSequence) {
+          throw new Error('Query temporal-association request sequence was repeated or moved backwards.');
+        }
+        lastRequestSequence.set(identity, startEvent.attributes.request_seq);
+        try {
+          return pairQueryTemporalAssociation({
+            events: measured.events, overflow: measured.overflow,
+            outOfWindowEvents: measured.outOfWindowEvents, domTransition: measured,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(detail + ' [eventCount=' + String(measured.events?.length ?? -1)
+            + ', overflow=' + String(measured.overflow === true)
+            + ', outOfWindow=' + String(measured.outOfWindowEvents ?? -1)
+            + ', eventNames=' + String((measured.events ?? []).map((event) => event.eventName).join(',')) + ']');
+        }
+      },
+      onTimeout: () => client.send('Runtime.evaluate', {
+        expression: '(' + cancelQueryTemporalAssociationMeasurement.toString() + ')(' + JSON.stringify(probeId) + ')',
+      }),
+    });
+  };
+  const warmupsPerDirection = 3;
+  const measuredSamplesPerDirection = 20;
+  const measured = { next: [], previous: [] };
+  let guardDrained = false;
+  try {
+    for (let index = 0; index < warmupsPerDirection; index += 1) {
+      await measureDirection('next');
+      await measureDirection('previous');
+    }
+    for (let index = 0; index < measuredSamplesPerDirection; index += 1) {
+      measured.next.push(await measureDirection('next'));
+      measured.previous.push(await measureDirection('previous'));
+    }
+    const outOfWindowEvents = await readAndCloseQueryTemporalAssociationGuard(target, 250);
+    guardDrained = true;
+    if (outOfWindowEvents !== 0) {
+      throw new Error('A late or out-of-window query tap arrived during the final drain.');
+    }
+  } finally {
+    if (!guardDrained && !queryTemporalAssociationGuardClosed) {
+      try {
+        await readAndCloseQueryTemporalAssociationGuard(target, 0);
+      } catch {
+        // A detached target has no remaining Webview guard to clean up.
+      }
+    }
+  }
+  return {
+    metric: 'host-get-rows-pair-co-occurring-with-webview-click-to-committed-dom-settle',
+    association: 'bounded-temporal-co-occurrence-only',
+    causalAttribution: false,
+    hostClock: 'extension-host-performance.now',
+    webviewClock: 'window.performance.now',
+    hostWindow: 'one trusted page click through DOM settle and a 250ms quiet drain; out-of-window taps fail the run',
+    measurementCondition: 'tap-enabled; development-only query instrumentation perturbs the measured path',
+    completionCondition: 'exactly one ordered host pair with matching traceId, startupId and request_seq co-occurs within the bounded click window with one adjacent page transition settled across two animation frames; this does not prove the click caused that query',
+    presentationGuaranteed: false,
+    warmupsPerDirection,
+    measuredSamplesPerDirection,
+    directions: {
+      next: summarizeQueryTemporalAssociation(measured.next),
+      previous: summarizeQueryTemporalAssociation(measured.previous),
+    },
+    combined: summarizeQueryTemporalAssociation([...measured.next, ...measured.previous]),
+  };
+}
+
+let ownedFixtureTarget;
 try {
 const initialTargets = await targets();
 const workbench = initialTargets.find((target) => target.type === 'page' && target.url.includes('workbench.html'));
@@ -479,18 +1224,21 @@ if (wide) {
 
 if (ownedFixture) {
   const workbenchClient = new CdpClient(workbench.webSocketDebuggerUrl);
-  await workbenchClient.open();
-  try {
-    await key(workbenchClient, 'Escape', 'Escape', 27);
-    await key(workbenchClient, 'p', 'KeyP', 80, 2);
-    await delay(350);
-    await workbenchClient.send('Input.insertText', { text: ownedFixture.fixture });
-    await delay(500);
-    await key(workbenchClient, 'Enter', 'Enter', 13);
-    await delay(900);
-  } finally {
-    workbenchClient.close();
-  }
+  await runCdpMeasurement({
+    client: workbenchClient,
+    timeoutMs: CDP_OPERATION_TIMEOUT_MS,
+    timeoutMessage: 'Synthetic fixture open exceeded 20 seconds.',
+    task: async () => {
+      await workbenchClient.open();
+      await key(workbenchClient, 'Escape', 'Escape', 27);
+      await key(workbenchClient, 'p', 'KeyP', 80, 2);
+      await delay(350);
+      await workbenchClient.send('Input.insertText', { text: ownedFixture.fixture });
+      await delay(500);
+      await key(workbenchClient, 'Enter', 'Enter', 13);
+      await delay(900);
+    },
+  });
 }
 
 if (!inspectOnly && !ownedFixture) {
@@ -557,26 +1305,49 @@ const inspectable = currentTargets.filter((target) =>
   return priority(left) - priority(right);
 });
 const inspections = [];
-for (let index = 0; index < inspectable.length; index += 1) {
-  inspections.push(await inspectTarget(inspectable[index], index));
+if (!measurePageNavigation && !measureQueryTemporalAssociation) {
+  for (let index = 0; index < inspectable.length; index += 1) {
+    inspections.push(await inspectTarget(inspectable[index], index));
+  }
+}
+
+let ownedFixtureBefore;
+if (ownedFixture) {
+  if (measurePageNavigation || measureQueryTemporalAssociation) {
+    const fixtureTarget = await findCdpTargetWithinDeadline({
+      candidates: inspectable,
+      probe: identifySyntheticTarget,
+      matches: (identity) => identity?.appShell && isOwnedFixtureUri(identity.uri, ownedFixture.fixture),
+      timeoutMs: SYNTHETIC_TARGET_DISCOVERY_TIMEOUT_MS,
+      timeoutMessage: `Synthetic fixture target discovery exceeded ${String(SYNTHETIC_TARGET_DISCOVERY_TIMEOUT_MS / 1000)} seconds.`,
+    });
+    ownedFixtureTarget = fixtureTarget?.candidate;
+  } else {
+    const inspectedFixture = inspections.find((entry) =>
+      isOwnedFixtureUri(entry.inspection?.bodyDataset?.uri, ownedFixture.fixture));
+    ownedFixtureTarget = inspectable.find((entry) => entry.id === inspectedFixture?.target.id);
+  }
+  if (!ownedFixtureTarget) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
+  if (measureQueryTemporalAssociation) await configureQueryTemporalAssociationGuard(ownedFixtureTarget, false);
+  const expectedRecords = measurePageNavigation || measureQueryTemporalAssociation ? 1000 : 250;
+  ownedFixtureBefore = await waitForSyntheticView(ownedFixtureTarget,
+    (sample) => sample?.indexedRecords === expectedRecords);
+  if (ownedFixtureBefore?.indexedRecords !== expectedRecords || ownedFixtureBefore.pending || ownedFixtureBefore.blocked) {
+    throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
+  }
+  if (measureQueryTemporalAssociation) await configureQueryTemporalAssociationGuard(ownedFixtureTarget, true);
 }
 
 let changeResult = null;
-if (ownedFixture) {
-  const inspectedFixture = inspections.find((entry) =>
-    isOwnedFixtureUri(entry.inspection?.bodyDataset?.uri, ownedFixture.fixture));
-  if (!inspectedFixture) throw new Error('The isolated host did not open the run-owned synthetic fixture.');
-  const target = inspectable.find((entry) => entry.id === inspectedFixture.target.id);
-  const before = await waitForSyntheticView(target, (sample) => sample?.indexedRecords === 250);
-  if (before?.indexedRecords !== 250 || before.pending || before.blocked) {
-    throw new Error('Synthetic fixture did not reach a stable indexed baseline; no mutation was made.');
-  }
+if (ownedFixture && syntheticChange !== undefined) {
+  const target = ownedFixtureTarget;
+  const before = ownedFixtureBefore;
   await ownedFixture.change(syntheticChange);
   const after = await waitForSyntheticView(target, (sample) =>
     syntheticChange === 'append' ? sample?.pending === true : sample?.blocked === true);
   await sampleSyntheticView(target, 'select');
   await delay(350);
-  const selected = await sampleSyntheticView(target);
+  const selected = await sampleSyntheticView(target, undefined, true);
   if (after?.pending || after?.blocked) await sampleSyntheticView(target, 'rebuild');
   const expectedRows = syntheticChange === 'append' ? 251 : syntheticChange === 'truncate' ? 0 : 250;
   const rebuilt = await waitForSyntheticView(target, (sample) =>
@@ -597,16 +1368,36 @@ if (ownedFixture) {
   };
 }
 
+const pageNavigation = measurePageNavigation
+  ? await collectPageNavigationMeasurements(ownedFixtureTarget)
+  : null;
+const queryTemporalAssociation = measureQueryTemporalAssociation
+  ? await collectQueryTemporalAssociationMeasurements(ownedFixtureTarget)
+  : null;
+
 const result = {
   port,
-  outputDirectory,
+  ...(measureQueryTemporalAssociation ? {} : { outputDirectory }),
   targetCount: currentTargets.length,
-  inspections,
+  ...(!measurePageNavigation && !measureQueryTemporalAssociation ? { inspections } : {}),
   ...(changeResult === null ? {} : { change: changeResult }),
+  ...(pageNavigation === null ? {} : { pageNavigation }),
+  ...(queryTemporalAssociation === null ? {} : { queryTemporalAssociation }),
 };
 await writeFile(resolve(outputDirectory, 'result.json'), JSON.stringify(result, null, 2), { flag: 'wx' });
 console.log(JSON.stringify(result, null, 2));
 if (changeResult !== null && !changeResult.pass) process.exitCode = 1;
+if (pageNavigation !== null && (pageNavigation.directions.next.summary.sampleCount !== 20
+  || pageNavigation.directions.previous.summary.sampleCount !== 20)) process.exitCode = 1;
+if (queryTemporalAssociation !== null && (queryTemporalAssociation.directions.next.associatedSampleCount !== 20
+  || queryTemporalAssociation.directions.previous.associatedSampleCount !== 20)) process.exitCode = 1;
 } finally {
+  if (measureQueryTemporalAssociation && ownedFixtureTarget && !queryTemporalAssociationGuardClosed) {
+    try {
+      await readAndCloseQueryTemporalAssociationGuard(ownedFixtureTarget, 0);
+    } catch {
+      // Target teardown is already the terminal failure boundary.
+    }
+  }
   await ownedFixture?.close();
 }

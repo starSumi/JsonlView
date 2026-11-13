@@ -1,3 +1,15 @@
+---
+id: "022-read-only-agent-history-adapter-roadmap"
+path: "docs/decisions/022-read-only-agent-history-adapter-roadmap.md"
+title: "Read-Only Agent-History Adapter Roadmap"
+kind: "decision"
+status: "planned"
+owner: "product"
+tags: ["adapters","agents","history"]
+evidence: []
+revisit: "when provider adapter coverage changes"
+rollback: "retain the read-only adapter boundary"
+---
 # ADR-022: Read-Only Agent-History Adapter Roadmap
 
 Status: planned

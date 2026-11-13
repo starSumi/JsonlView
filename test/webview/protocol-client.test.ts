@@ -15,6 +15,7 @@ const summary: DocumentSummary = {
     observedAt: '2026-08-30T00:00:00Z',
   },
   profileId: 'generic',
+  profileVersion: '1',
   profileSuggestions: [],
   indexedBytes: '100',
   indexedRecords: '1',
@@ -23,23 +24,44 @@ const summary: DocumentSummary = {
   problemRecords: '0',
 };
 
+it('sends the native text action without retaining a one-way pending request', () => {
+  const sent: WebviewRequest[] = [];
+  const client = new VsCodeMessageClient({ postMessage: (message) => { sent.push(message); } }, { documentId: 'doc', generation: 'g2' });
+  const ref = { generation: 'g2', ordinal: '0', byteStart: '0', byteEndExclusive: '3', contentByteLength: '2', delimiterByteLength: 1 as const, parseState: 'valid' as const };
+  client.send('OPEN_RECORD_TEXT', { ref });
+  expect(sent[0]).toMatchObject({ type: 'OPEN_RECORD_TEXT', payload: { ref } });
+  expect(client.hasPending('ready')).toBe(false);
+});
+
 function message<T extends ExtensionMessage['type']>(
   type: T,
   requestId: string,
   generation: string,
   payload: Extract<ExtensionMessage, { type: T }>['payload'],
+  delivery: 'request' | 'reply' | 'broadcast' = 'reply',
 ): Extract<ExtensionMessage, { type: T }> {
   return {
     protocolVersion: PROTOCOL_VERSION,
     type,
     documentId: 'doc',
     generation,
+    delivery,
     requestId,
     payload,
   } as Extract<ExtensionMessage, { type: T }>;
 }
 
 describe('VS Code message client', () => {
+  it('accepts cold and unsolicited preview metadata only for the current document generation and epoch', () => {
+    const client = new VsCodeMessageClient({ postMessage() {} }, { documentId: 'doc', generation: 'g2', epoch: 3 });
+    const status = { ...message('PREVIEW_STATUS', '', 'g2', { status: 'temporary', recordCount: 2, sizeBytes: 32, savedCopy: false }, 'broadcast'), epoch: 3 };
+    expect(client.accept(status)).toEqual(status);
+    expect(client.accept({ ...status, documentId: 'other' })).toBeUndefined();
+    expect(client.accept({ ...status, generation: 'g1' })).toBeUndefined();
+    expect(client.accept({ ...status, epoch: 2 })).toBeUndefined();
+    expect(client.accept({ ...status, payload: { ...status.payload, raw: 'untrusted' } })).toBeUndefined();
+  });
+
   it('accepts the correlated OPENED message and advances the session', () => {
     const sent: WebviewRequest[] = [];
     const client = new VsCodeMessageClient({ postMessage: (value) => sent.push(value) }, {
@@ -47,11 +69,24 @@ describe('VS Code message client', () => {
       generation: 'bootstrap',
     });
     const request = client.send('READY', {});
-    const opened = message('OPENED', request.id, 'g2', summary);
+    const opened = message('OPENED', request.id, 'g2', summary, 'reply');
 
     expect(client.accept(opened)).toBe(opened);
     expect(client.session).toEqual({ documentId: 'doc', generation: 'g2' });
     expect(sent[0]?.type).toBe('READY');
+  });
+
+  it('accepts delivery-less v1 replies only when their nonempty request id is pending', () => {
+    const client = new VsCodeMessageClient({ postMessage() {} }, { documentId: 'doc', generation: 'g2' });
+    const request = client.send('GET_ROWS', { limit: 10 });
+    const payload = { rows: [], columns: [], anchorOrdinal: '0', hasBefore: false, hasAfter: false, indexedRecords: '0' };
+    const legacy = { ...message('ROWS', request.id, 'g2', payload), delivery: undefined } as unknown as ExtensionMessage;
+    const orphan = { ...legacy, requestId: 'unmatched' };
+
+    expect(isExtensionMessage(legacy)).toBe(true);
+    expect(client.accept(orphan)).toBeUndefined();
+    expect(client.accept(legacy)).toMatchObject({ type: 'ROWS', requestId: request.id });
+    expect(client.hasPending('rows')).toBe(false);
   });
 
   it('rejects a correlated OPENED message whose snapshot identity is inconsistent', () => {
@@ -61,7 +96,7 @@ describe('VS Code message client', () => {
     });
     const request = client.send('READY', {});
     const inconsistent = {
-      ...message('OPENED', request.id, 'g2', summary),
+      ...message('OPENED', request.id, 'g2', summary, 'reply'),
       payload: {
         ...summary,
         snapshot: { ...summary.snapshot, generation: 'g1' },
@@ -149,13 +184,26 @@ describe('VS Code message client', () => {
   });
 
   it('accepts unsolicited progress only for the active generation', () => {
-    const active = message('INDEX_PROGRESS', '', 'g2', summary);
-    const stale = message('INDEX_PROGRESS', '', 'g1', {
+    const active = message('INDEX_PROGRESS', '', 'g2', summary, 'broadcast');
+    const stale = { ...message('INDEX_PROGRESS', '', 'g1', {
       ...summary,
       snapshot: { ...summary.snapshot, generation: 'g1' },
-    });
+    }, 'broadcast') };
     expect(shouldAcceptMessage(active, { documentId: 'doc', generation: 'g2' }, new Map())).toBe(true);
     expect(shouldAcceptMessage(stale, { documentId: 'doc', generation: 'g2' }, new Map())).toBe(false);
+    expect(shouldAcceptMessage({ ...active, delivery: undefined } as unknown as ExtensionMessage,
+      { documentId: 'doc', generation: 'g2' }, new Map())).toBe(false);
+  });
+
+  it('accepts Navigator visibility only as an unsolicited current-generation host state', () => {
+    const client = new VsCodeMessageClient({ postMessage() {} }, { documentId: 'doc', generation: 'g2', epoch: 3 });
+    const visibility = { protocolVersion: PROTOCOL_VERSION, direction: 'host-to-webview',
+      type: 'NAVIGATOR_VISIBILITY', documentId: 'doc', generation: 'g2', epoch: 3, requestId: '', delivery: 'broadcast',
+      payload: { visible: true } };
+
+    expect(client.accept(visibility)).toEqual(visibility);
+    expect(client.accept({ ...visibility, generation: 'g1' })).toBeUndefined();
+    expect(client.accept({ ...visibility, requestId: 'unexpected-request' })).toBeUndefined();
   });
 
   it('completes a follow request when its correlated progress arrives', () => {
@@ -166,7 +214,7 @@ describe('VS Code message client', () => {
     const request = client.send('SET_FOLLOW_MODE', { enabled: true });
 
     expect(client.hasPending('follow')).toBe(true);
-    expect(client.accept(message('INDEX_PROGRESS', request.id, 'g2', summary))?.type).toBe('INDEX_PROGRESS');
+    expect(client.accept(message('INDEX_PROGRESS', request.id, 'g2', summary, 'reply'))?.type).toBe('INDEX_PROGRESS');
     expect(client.hasPending('follow')).toBe(false);
   });
 
@@ -175,9 +223,9 @@ describe('VS Code message client', () => {
       documentId: 'doc', generation: 'g2',
     });
     const order = client.send('SET_ROW_ORDER', { direction: 'desc' });
-    expect(client.accept(message('ROW_ORDER_CHANGED', 'unknown', 'g2', { direction: 'desc' }))).toBeUndefined();
+    expect(client.accept(message('ROW_ORDER_CHANGED', 'unknown', 'g2', { direction: 'desc' }, 'reply'))).toBeUndefined();
     expect(client.hasPending('order')).toBe(true);
-    expect(client.accept(message('ROW_ORDER_CHANGED', order.id, 'g2', { direction: 'desc' }))?.type).toBe('ROW_ORDER_CHANGED');
+    expect(client.accept(message('ROW_ORDER_CHANGED', order.id, 'g2', { direction: 'desc' }, 'reply'))?.type).toBe('ROW_ORDER_CHANGED');
     expect(client.hasPending('order')).toBe(false);
   });
 
@@ -186,7 +234,7 @@ describe('VS Code message client', () => {
       documentId: 'doc',
       generation: 'g1',
     });
-    const opened = message('OPENED', '', 'g2', summary);
+    const opened = message('OPENED', '', 'g2', summary, 'broadcast');
 
     expect(client.accept(opened)).toBe(opened);
     expect(client.session).toEqual({ documentId: 'doc', generation: 'g2' });
@@ -200,13 +248,13 @@ describe('VS Code message client', () => {
       documentId: 'doc',
       generation: 'g1',
     });
-    const first = message('OPENED', '', 'g2', summary);
+    const first = message('OPENED', '', 'g2', summary, 'broadcast');
     expect(client.accept(first)).toBe(first);
 
     const late = message('OPENED', '', 'g1', {
       ...summary,
       snapshot: { ...summary.snapshot, generation: 'g1' },
-    });
+    }, 'broadcast');
     expect(client.accept(late)).toBeUndefined();
     expect(client.session).toEqual({ documentId: 'doc', generation: 'g2' });
   });
@@ -221,7 +269,7 @@ describe('VS Code message client', () => {
       ...message('OPENED', '', 'g1', {
         ...summary,
         snapshot: { ...summary.snapshot, generation: 'g1', epoch: 1 },
-      }),
+      }, 'broadcast'),
       epoch: 1,
     };
 
@@ -239,7 +287,7 @@ describe('VS Code message client', () => {
       ...message('OPENED', '', 'g2', {
         ...summary,
         snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 },
-      }),
+      }, 'broadcast'),
       epoch: 2,
     };
 
@@ -253,7 +301,7 @@ describe('VS Code message client', () => {
       generation: 'g1',
     });
     const inconsistent = {
-      ...message('OPENED', '', 'g2', summary),
+      ...message('OPENED', '', 'g2', summary, 'broadcast'),
       documentId: 'doc',
       generation: 'g3',
     };
@@ -272,7 +320,7 @@ describe('VS Code message client', () => {
       ...message('OPENED', '', 'g2', {
         ...summary,
         snapshot: { ...summary.snapshot, generation: 'g2', epoch: 2 },
-      }),
+      }, 'broadcast'),
       epoch: 3,
     };
 
@@ -310,9 +358,14 @@ describe('VS Code message client', () => {
       documentId: 'doc',
       generation: 'g2',
     });
-    const request = client.send('GET_INSIGHTS', { dimension: 'eventKind' });
+    const intent = {
+      version: 1 as const, intentRevision: 1, dimension: 'eventKind' as const, scope: 'current-view' as const,
+      document: { documentId: 'doc', generation: 'g2' }, profile: { id: 'generic', version: '1' },
+    };
+    const request = client.send('GET_INSIGHTS', { intent });
     const payload = {
-      dimension: 'eventKind' as const,
+      intent,
+      provenance: { scope: 'current-view' as const, predicateApplied: false, coverage: 'complete' as const },
       categories: [{ label: 'message', count: 2 }],
       timeBuckets: [],
       processedRecords: '2',
@@ -323,8 +376,8 @@ describe('VS Code message client', () => {
       bucketWidthMs: 300_000,
     };
 
-    expect(client.accept(message('INSIGHTS', 'unknown', 'g2', payload))).toBeUndefined();
-    expect(client.accept(message('INSIGHTS', request.id, 'g2', payload))?.type).toBe('INSIGHTS');
+    expect(client.accept(message('INSIGHTS', 'unknown', 'g2', payload, 'reply'))).toBeUndefined();
+    expect(client.accept(message('INSIGHTS', request.id, 'g2', payload, 'reply'))?.type).toBe('INSIGHTS');
     expect(client.hasPending('insights')).toBe(false);
   });
 
@@ -345,7 +398,28 @@ describe('VS Code message client', () => {
       scan: { examinedRecords: '5', examinedBytes: '20', cursorOrdinal: '4', direction: 'forward' as const, truncatedReason: 'byte_limit' as const },
     };
 
-    expect(client.accept(message('PROBLEMS', request.id, 'g2', payload))?.type).toBe('PROBLEMS');
+    expect(client.accept(message('PROBLEMS', request.id, 'g2', payload, 'reply'))?.type).toBe('PROBLEMS');
     expect(client.hasPending('problems')).toBe(false);
+  });
+
+  it('accepts a correlated Navigator Host readback and completes the handoff', () => {
+    const client = new VsCodeMessageClient({ postMessage: () => undefined }, {
+      documentId: 'doc',
+      generation: 'g2',
+    });
+    const request = client.send('OPEN_SESSION_NAVIGATOR', {});
+    const payload = {
+      version: 1 as const,
+      status: 'opened' as const,
+      enabled: 'enabled' as const,
+      authorization: 'granted' as const,
+      authorizationReadback: 'confirmed' as const,
+      action: 'focus-sessions' as const,
+      targetDocumentId: 'doc',
+      sourceId: 'source-1',
+    };
+
+    expect(client.accept(message('NAVIGATOR_STATUS', request.id, 'g2', payload, 'reply'))).toMatchObject({ type: 'NAVIGATOR_STATUS', payload });
+    expect(client.hasPending('ready')).toBe(false);
   });
 });

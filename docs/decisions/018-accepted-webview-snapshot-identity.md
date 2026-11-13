@@ -1,4 +1,16 @@
-# Accepted Webview Snapshot Identity
+---
+id: "018-accepted-webview-snapshot-identity"
+path: "docs/decisions/018-accepted-webview-snapshot-identity.md"
+title: "Accepted Webview Snapshot Identity"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["lifecycle","snapshots","webview"]
+evidence: []
+revisit: "when snapshot identity semantics change"
+rollback: "retain the previous snapshot identity contract"
+---
+# ADR-018: Accepted Webview Snapshot Identity
 
 Status: accepted
 

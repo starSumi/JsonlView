@@ -1,3 +1,15 @@
+---
+id: "027-synthetic-provider-index-contract"
+path: "docs/decisions/027-synthetic-provider-index-contract.md"
+title: "Synthetic Provider and Navigation Index Contract"
+kind: "decision"
+status: "proposed"
+owner: "product"
+tags: ["index","providers","synthetic"]
+evidence: []
+revisit: "when provider index evidence changes"
+rollback: "retain source-backed provider discovery only"
+---
 # ADR-027: Synthetic Provider and Navigation Index Contract
 
 Status: proposed experiment

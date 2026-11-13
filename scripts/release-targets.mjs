@@ -84,7 +84,7 @@ export function validateReleaseTargets(value) {
   if (ids.length !== new Set(ids).size) issues.push('extension targets must have distinct extension ids');
   if (!Array.isArray(value?.sharedContributionIds) || value.sharedContributionIds.length === 0) {
     issues.push('sharedContributionIds must be a non-empty array');
-  } else if (value.sharedContributionIds.some((id) => typeof id !== 'string' || !id.startsWith('jsonlView.'))) {
+  } else if (value.sharedContributionIds.some((id) => typeof id !== 'string' || !isSharedContributionId(id))) {
     issues.push('sharedContributionIds contains an invalid id');
   }
   if (value?.coInstallSupported !== false) issues.push('coInstallSupported must remain false while contribution ids are shared');
@@ -93,4 +93,10 @@ export function validateReleaseTargets(value) {
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSharedContributionId(id) {
+  return id.startsWith('jsonlView.')
+    || id === 'jsonlview.telemetry.otlp.enabled'
+    || id === 'jsonlview.telemetry.otlp.endpoint';
 }

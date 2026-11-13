@@ -23,6 +23,9 @@ describe('session navigator provider factory boundary', () => {
 
     expect(createFromCompatibilityBarrel).toBe(createSessionNavigatorProvider);
     expect(createSessionNavigatorProvider({ provider: 'generic', rootUri })).toBeInstanceOf(FileSessionNavigatorProvider);
+    for (const provider of ['gemini', 'opencode', 'agentsview'] as const) {
+      expect(createSessionNavigatorProvider({ provider, rootUri })).toBeInstanceOf(FileSessionNavigatorProvider);
+    }
     expect(createSessionNavigatorProvider({ provider: 'codex', rootUri })).not.toBeInstanceOf(FileSessionNavigatorProvider);
   });
 });

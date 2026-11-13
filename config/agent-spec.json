@@ -16,10 +16,15 @@
     { "script": "check:agent-spec", "text": "pnpm check:agent-spec" },
     { "script": "check:docs-index", "text": "pnpm check:docs-index" },
     { "script": "check:contract", "text": "pnpm check:contract" },
+    { "script": "review:modules", "text": "pnpm review:modules" },
+    { "script": "check:typescript-erasable", "text": "pnpm check:typescript-erasable" },
+    { "script": "check:typescript-gates", "text": "pnpm check:typescript-gates" },
+    { "script": "check:typescript-tests", "text": "pnpm check:typescript-tests" },
     { "script": "check:biome", "text": "pnpm check:biome" },
     { "script": "typecheck", "text": "pnpm typecheck" },
     { "script": "test", "text": "pnpm test" },
-    { "script": "build", "text": "pnpm build" }
+    { "script": "build", "text": "pnpm build" },
+    { "script": "verify:execution-identity", "text": "pnpm verify:execution-identity" }
   ],
   "architectureMarkers": [
     "src/extension/",

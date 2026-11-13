@@ -1,0 +1,30 @@
+.document-graph { display: flex; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.graph-command-rail { display: flex; flex: 0 0 90px; flex-direction: column; gap: 8px; padding: 12px 8px; border-right: 1px solid var(--vscode-panel-border); }
+.graph-command-rail button { display: flex; gap: 6px; align-items: center; min-height: 32px; padding: 6px; }
+.graph-command-rail [aria-current] { color: var(--vscode-textLink-foreground); border-color: currentColor; }
+.graph-body { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.graph-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 16px 4px; }
+.graph-toolbar button { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.graph-scope, .graph-footnote, .graph-node-heading { color: var(--vscode-descriptionForeground); font-size: 11px; }
+.graph-status { margin: 6px 16px 12px; font-size: 12px; }
+.graph-content { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.graph-inspector { flex: 0 0 220px; padding: 12px; border-left: 1px solid var(--vscode-panel-border); overflow: auto; overflow-wrap: anywhere; font-size: 12px; }
+.graph-inspector dl { margin-block: 8px; } .graph-inspector dt { color: var(--vscode-descriptionForeground); } .graph-inspector dd { margin: 0 0 8px; }
+.graph-scroll { flex: 1; min-width: 0; min-height: 160px; overflow: auto; background: var(--vscode-editor-background); }
+.graph-canvas { position: relative; }
+.graph-connectors { position: absolute; inset: 0; pointer-events: none; }
+.graph-connectors path { fill: none; stroke: var(--vscode-textLink-foreground); stroke-width: 1.5; opacity: .65; }
+.graph-connectors [data-kind="responds"] { stroke-dasharray: 5 4; }
+.graph-node-list { margin: 0; padding: 0; list-style: none; }
+.graph-node { position: absolute; width: 240px; height: 70px; border: 1px solid var(--vscode-panel-border); border-radius: 7px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); }
+.graph-node[data-selected="true"] { border-color: var(--vscode-focusBorder); }
+.graph-node-heading { display: flex; align-items: center; gap: 4px; height: 25px; padding: 2px 8px; overflow: hidden; }
+.graph-collapse { display: inline-flex; padding: 0; border: 0; background: transparent; }
+.graph-node-open { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; height: 38px; padding: 3px 10px; text-align: left; border: 0; background: transparent; }
+.graph-node-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-open svg { flex-shrink: 0; }
+.graph-footnote { padding: 8px 16px; border-top: 1px solid var(--vscode-panel-border); }
+.graph-state-panel { display: flex; flex: 1; align-items: center; justify-content: center; gap: 14px; padding: 24px; color: var(--vscode-descriptionForeground); }
+.graph-reveal-status { padding: 5px 14px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+@media (max-width: 600px) { .graph-command-rail { flex-basis: 72px; padding-inline: 4px; } .graph-command-rail button { flex-direction: column; gap: 2px; } .graph-toolbar { padding-inline: 8px; } .graph-scope { flex-basis: 100%; } }
+@media (max-width: 900px) { .graph-content { flex-direction: column; } .graph-inspector { flex: 0 1 150px; border-left: 0; border-top: 1px solid var(--vscode-panel-border); } }

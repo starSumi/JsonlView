@@ -1,3 +1,15 @@
+---
+id: "025-experimental-staged-mutation-and-local-mcp"
+path: "docs/decisions/025-experimental-staged-mutation-and-local-mcp.md"
+title: "Staged Mutation and Local Agent Navigation"
+kind: "decision"
+status: "proposed"
+owner: "product"
+tags: ["experimental","mcp","mutation"]
+evidence: []
+revisit: "when mutation or MCP contracts gain measured evidence"
+rollback: "keep the source read-only and disable the experiment"
+---
 # ADR-025: Experimental Staged Mutation and Local Agent Navigation
 
 Status: proposed

@@ -1,4 +1,16 @@
-# Webview Query Ownership and Keyboard Interaction
+---
+id: "019-webview-query-and-keyboard-ownership"
+path: "docs/decisions/019-webview-query-and-keyboard-ownership.md"
+title: "Webview Query Ownership and Keyboard Interaction"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["keyboard","query","webview"]
+evidence: []
+revisit: "when query or keyboard ownership changes"
+rollback: "restore the prior interaction owner"
+---
+# ADR-019: Webview Query Ownership and Keyboard Interaction
 
 Status: accepted
 

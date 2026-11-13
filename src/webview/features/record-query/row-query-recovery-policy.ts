@@ -1,4 +1,4 @@
-import type { RowSort } from '../../../shared/types';
+import type { RowScanBudget, RowSort } from '@shared/types';
 import {
   rowsOptionsAfterEmptyRebuild,
   rowsOptionsAfterOpened,
@@ -6,16 +6,28 @@ import {
   rowsOptionsAfterRebuild,
   rowsOptionsForViewport,
   type RebuildRowsOptions,
-} from '../../paging';
-import { snapshotIdentityChanged, type AcceptedSnapshotIdentity } from '../../snapshot-identity';
+} from '@webview/paging';
+import { snapshotIdentityChanged, type AcceptedSnapshotIdentity } from '@webview/snapshot-identity';
 
 export interface RecoveryRowsOptions extends Readonly<RebuildRowsOptions> {
+  readonly navigation?: 'logical' | 'physical';
   readonly sort?: RowSort;
+  readonly scanBudget?: RowScanBudget;
+  /** Original examined range, independent of each replay's execution deadline. */
+  readonly scanWindow?: Readonly<{ records: number; bytes?: string }>;
+}
+
+export interface QueryWindowReplay {
+  readonly limit: number;
+  readonly options: RecoveryRowsOptions;
 }
 
 export interface QueryViewport extends AcceptedSnapshotIdentity {
   readonly query: string;
   readonly firstVisibleOrdinal?: string;
+  readonly windowFirstOrdinal?: string;
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly queryWindow?: QueryWindowReplay;
 }
 
 export interface PendingViewportIntent extends AcceptedSnapshotIdentity {
@@ -30,6 +42,9 @@ export interface RebuildViewportCapture extends AcceptedSnapshotIdentity {
   readonly query: string;
   readonly viewportQuery: string;
   readonly firstVisibleOrdinal?: string;
+  readonly windowFirstOrdinal?: string;
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly queryWindow?: QueryWindowReplay;
   readonly pageText: string;
   readonly options: RecoveryRowsOptions;
 }
@@ -44,6 +59,9 @@ export interface RestoreViewportIntent extends AcceptedSnapshotIdentity {
   readonly query: string;
   readonly requestId: string;
   readonly firstVisibleOrdinal?: string;
+  readonly windowFirstOrdinal?: string;
+  readonly sortDirection?: 'asc' | 'desc';
+  readonly queryWindow?: QueryWindowReplay;
   readonly pageText: string;
   readonly phase: RestoreViewportPhase;
   readonly requestedOptions?: RecoveryRowsOptions;
@@ -53,7 +71,24 @@ function copyOptions(options: RecoveryRowsOptions): RecoveryRowsOptions {
   return {
     ...options,
     ...(options.sort === undefined ? {} : { sort: { ...options.sort } }),
+    ...(options.scanBudget === undefined ? {} : { scanBudget: { ...options.scanBudget } }),
+    ...(options.scanWindow === undefined ? {} : { scanWindow: { ...options.scanWindow } }),
   };
+}
+
+function copyQueryWindow(window: QueryWindowReplay | undefined): QueryWindowReplay | undefined {
+  return window === undefined ? undefined : {
+    ...window,
+    options: copyOptions(window.options),
+  };
+}
+
+function windowReplayOptions(
+  window: QueryWindowReplay | undefined,
+  pageSize: number | undefined,
+): RecoveryRowsOptions | undefined {
+  if (window === undefined || (pageSize !== undefined && window.limit !== pageSize)) return undefined;
+  return copyOptions(window.options);
 }
 
 /** Capture before cancellation; a pending explicit page-one intent remains {}. */
@@ -80,19 +115,32 @@ export function captureRebuild(input: {
   const firstVisibleOrdinal = queryMatchesViewport
     ? savedBelongsToSession ? saved.firstVisibleOrdinal : input.renderedFirstOrdinal
     : undefined;
+  const windowFirstOrdinal = queryMatchesViewport
+    ? savedBelongsToSession ? saved.windowFirstOrdinal : input.renderedFirstOrdinal
+    : undefined;
   const pageText = queryMatchesViewport ? input.pageText : '1';
+  const queryWindow = queryMatchesViewport && savedBelongsToSession
+    ? copyQueryWindow(saved.queryWindow) : undefined;
+  const replayOptions = windowReplayOptions(queryWindow, input.pageSize);
   return {
     ...input.session,
     query: input.query,
     viewportQuery,
     ...(firstVisibleOrdinal === undefined ? {} : { firstVisibleOrdinal }),
+    ...(windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal }),
+    ...(saved?.sortDirection === undefined ? {} : { sortDirection: saved.sortDirection }),
+    ...(queryWindow === undefined ? {} : { queryWindow }),
     pageText,
-    options: copyOptions(rowsOptionsForViewport(
-      firstVisibleOrdinal,
+    options: copyOptions(input.followMode ? rowsOptionsForViewport(
+      windowFirstOrdinal ?? firstVisibleOrdinal, pageText, input.pageSize, true, undefined,
+      saved?.sortDirection ?? 'asc')
+      : pendingMatchesSession ? pending.options : replayOptions ?? rowsOptionsForViewport(
+      windowFirstOrdinal ?? firstVisibleOrdinal,
       pageText,
       input.pageSize,
       input.followMode,
-      pendingMatchesSession ? pending.options : undefined,
+      undefined,
+      saved?.sortDirection ?? 'asc',
     )),
   };
 }
@@ -115,6 +163,7 @@ export function planOpened(input: {
   readonly query: string;
   readonly followMode: boolean;
   readonly pageText: string;
+  readonly pageSize?: number;
   readonly viewport?: QueryViewport | undefined;
   readonly pending?: PendingViewportIntent | undefined;
   readonly rebuild?: RebuildViewportIntent | undefined;
@@ -142,7 +191,9 @@ export function planOpened(input: {
   const resumeRows = replacesSnapshot && !input.followMode
     ? queryMatchesViewport
       ? pendingRebuild?.options ?? manualRebuild?.options
-        ?? rowsOptionsAfterRebuild(saved?.firstVisibleOrdinal, false)
+        ?? windowReplayOptions(saved?.queryWindow, input.pageSize)
+        ?? rowsOptionsAfterRebuild(saved?.windowFirstOrdinal ?? saved?.firstVisibleOrdinal,
+          false, saved?.sortDirection ?? 'asc')
       : {}
     : undefined;
   const candidateQuery = pendingRebuild?.query ?? manualRebuild?.query ?? saved?.query;
@@ -151,9 +202,14 @@ export function planOpened(input: {
     input.firstOpenedSession ? undefined : prior,
     input.opened,
     input.followMode,
-  ) ?? rowsOptionsAfterRebuild(prior === undefined ? undefined : saved?.firstVisibleOrdinal, input.followMode);
+  ) ?? rowsOptionsAfterRebuild(prior === undefined ? undefined : saved?.windowFirstOrdinal ?? saved?.firstVisibleOrdinal,
+    input.followMode, saved?.sortDirection ?? 'asc');
   const firstVisibleOrdinal = manualRebuild?.firstVisibleOrdinal
     ?? (queryMatchesViewport ? saved?.firstVisibleOrdinal : undefined);
+  const windowFirstOrdinal = manualRebuild?.windowFirstOrdinal
+    ?? (queryMatchesViewport ? saved?.windowFirstOrdinal : undefined);
+  const queryWindow = manualRebuild?.queryWindow
+    ?? (queryMatchesViewport ? copyQueryWindow(saved?.queryWindow) : undefined);
   const pageText = manualRebuild?.pageText ?? (queryMatchesViewport ? input.pageText : '1');
   return {
     kind: 'restore',
@@ -165,6 +221,9 @@ export function planOpened(input: {
         ...input.opened,
         query: query ?? input.query,
         ...(firstVisibleOrdinal === undefined ? {} : { firstVisibleOrdinal }),
+        ...(windowFirstOrdinal === undefined ? {} : { windowFirstOrdinal }),
+        ...(saved?.sortDirection === undefined ? {} : { sortDirection: saved.sortDirection }),
+        ...(queryWindow === undefined ? {} : { queryWindow }),
         pageText,
         requestId: '',
         phase: 'initial' as const,
@@ -177,6 +236,19 @@ export type EmptyRestoreDecision =
   | { readonly kind: 'wait-index'; readonly restore: RestoreViewportIntent }
   | { readonly kind: 'retry'; readonly options: RecoveryRowsOptions; readonly restore: RestoreViewportIntent }
   | { readonly kind: 'stop' };
+
+/** A pending page can differ from the old visible anchor, including page one. */
+function firstOrdinalForRestore(restore: RestoreViewportIntent, pageSize: number,
+  requested: RecoveryRowsOptions | undefined): string | undefined {
+  if (requested === undefined || requested.sortOffset !== undefined) return restore.firstVisibleOrdinal;
+  if (requested.anchorOrdinal === undefined) return requested.direction === 'backward' ? restore.firstVisibleOrdinal : '0';
+  try {
+    const anchor = BigInt(requested.anchorOrdinal);
+    const first = requested.direction === 'backward'
+      ? anchor - BigInt(Math.max(1, Math.floor(pageSize))) : anchor + 1n;
+    return (first < 0n ? 0n : first).toString();
+  } catch { return restore.firstVisibleOrdinal; }
+}
 
 /** A completed empty restore permits at most one distinct clamped request. */
 export function planEmptyRestore(input: {
@@ -198,13 +270,17 @@ export function planEmptyRestore(input: {
     || snapshotIdentityChanged(restore, input.session) || restore.phase === 'retrying') {
     return { kind: 'stop' };
   }
+  // An incomplete physical scan is not evidence that the requested window is empty.
+  if (input.scanTruncated && requested?.sort !== undefined
+    && (requested.sort.columnId === '__ordinal' || requested.sort.columnId === '$ordinal')
+    && requested.sortOffset === undefined) return { kind: 'stop' };
   // Partial index progress is not a source-size or matched-count authority.
   if (!input.indexingComplete && input.totalRecords === undefined) {
     return { kind: 'wait-index', restore: { ...restore, phase: 'waiting-index',
       ...(requested === undefined ? {} : { requestedOptions: copyOptions(requested) }) } };
   }
   const fallback = rowsOptionsAfterEmptyRebuild(
-    restore.firstVisibleOrdinal,
+    firstOrdinalForRestore(restore, input.pageSize, requested),
     restore.pageText,
     input.pageSize,
     input.totalRecords,

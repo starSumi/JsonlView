@@ -1,0 +1,2390 @@
+{
+  "schema": "jsonlview.documentation-index",
+  "version": 1,
+  "generated": true,
+  "documents": [
+    {
+      "id": "001-format-profile-boundary",
+      "path": "docs/decisions/001-format-profile-boundary.md",
+      "title": "Format And Profile Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "jsonl",
+        "profiles"
+      ],
+      "evidence": [],
+      "revisit": "when the source/profile separation changes",
+      "rollback": "supersede ADR-001 with an explicit replacement",
+      "summary": "ADR-001: Format And Profile Boundary",
+      "bytes": 2178,
+      "sha256": "8bbc3b75aeb0a8a9adc47131f2483c4a69c305305ab031b05eae3fe0f0eaa923"
+    },
+    {
+      "id": "002-generations-and-follow",
+      "path": "docs/decisions/002-generations-and-follow.md",
+      "title": "Generations And Follow Handoff",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "follow",
+        "generations",
+        "lifecycle"
+      ],
+      "evidence": [],
+      "revisit": "when source refresh or follow semantics change",
+      "rollback": "supersede ADR-002 and restore prior lifecycle behavior",
+      "summary": "ADR-002: Generations And Follow Handoff",
+      "bytes": 7525,
+      "sha256": "a85b54acb80f71e5f11bba222d92835f91d750b77850c294bcc7e5c6deb5e496"
+    },
+    {
+      "id": "003-native-acceleration",
+      "path": "docs/decisions/003-native-acceleration.md",
+      "title": "Native Acceleration",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "fallback",
+        "native",
+        "performance"
+      ],
+      "evidence": [],
+      "revisit": "when measured native parity or packaging changes",
+      "rollback": "disable native selection and use the portable scanner",
+      "summary": "ADR-003: Native Acceleration",
+      "bytes": 2667,
+      "sha256": "fe15c5538e17d065816733874136224b35aa7af621503ecee17810ac4be1b9e3"
+    },
+    {
+      "id": "004-webview-rendering",
+      "path": "docs/decisions/004-webview-rendering.md",
+      "title": "Webview Rendering And Bounded Detail",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounds",
+        "rendering",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when rendering or detail budgets change",
+      "rollback": "restore the bounded rendering contract",
+      "summary": "ADR-004: Webview Rendering And Bounded Detail",
+      "bytes": 5839,
+      "sha256": "080da904b86dd8f12f5f91f6964076f44924909743356e69b58473620bf46cfe"
+    },
+    {
+      "id": "005-release-provenance",
+      "path": "docs/decisions/005-release-provenance.md",
+      "title": "Release Provenance",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "artifacts",
+        "provenance",
+        "release"
+      ],
+      "evidence": [],
+      "revisit": "when a release artifact or target changes",
+      "rollback": "stop promotion and use the prior provenance gate",
+      "summary": "ADR-005: Release Provenance",
+      "bytes": 2449,
+      "sha256": "cc9fc555cc9ab158b2c5d584399fbe0fdbb655fc326201438c775da2e1dd7268"
+    },
+    {
+      "id": "006-claude-surface-strategies",
+      "path": "docs/decisions/006-claude-surface-strategies.md",
+      "title": "Claude Surface Strategies",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "claude",
+        "profiles",
+        "provider"
+      ],
+      "evidence": [],
+      "revisit": "when a Claude source surface changes",
+      "rollback": "retain the previous provider strategy",
+      "summary": "ADR-006: Claude surface strategies",
+      "bytes": 5266,
+      "sha256": "0abadb170391e50eb27e78968909354286b8b9fc9e76fc8ce7f891ea09a8e186"
+    },
+    {
+      "id": "007-source-backed-format-discovery",
+      "path": "docs/decisions/007-source-backed-format-discovery.md",
+      "title": "Source-Backed Format Discovery",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "discovery",
+        "formats",
+        "provider"
+      ],
+      "evidence": [],
+      "revisit": "when source-backed format discovery changes",
+      "rollback": "restore the previous discovery rules",
+      "summary": "ADR-007: Source-Backed Format Discovery",
+      "bytes": 7045,
+      "sha256": "2a94a054dedb32917f7e20d4e327e8b69422b94c18105ccdaca1a54bb6b41982"
+    },
+    {
+      "id": "008-promotion-synchronization",
+      "path": "docs/decisions/008-promotion-synchronization.md",
+      "title": "Promotion Synchronization",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "release",
+        "rollback",
+        "synchronization"
+      ],
+      "evidence": [],
+      "revisit": "when distribution synchronization changes",
+      "rollback": "stop promotion and use the last known good artifact",
+      "summary": "ADR-008: Promotion Synchronization",
+      "bytes": 4851,
+      "sha256": "2359048db7d05be4c89701e1235fd4e1b5796cf9a84f189f837a29032a5a7afa"
+    },
+    {
+      "id": "009-automatic-update-boundary",
+      "path": "docs/decisions/009-automatic-update-boundary.md",
+      "title": "Automatic Update Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "trust",
+        "updates",
+        "vscode"
+      ],
+      "evidence": [],
+      "revisit": "when update ownership or trust changes",
+      "rollback": "disable the proposed update path",
+      "summary": "ADR-009: Automatic Update Boundary",
+      "bytes": 4005,
+      "sha256": "5c7c64d4191c7f4dc61ac5a4bbbce70b4db013c6b436e633669d121fb5c8d323"
+    },
+    {
+      "id": "010-toolchain-baseline",
+      "path": "docs/decisions/010-toolchain-baseline.md",
+      "title": "Development Toolchain Baseline",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "node",
+        "pnpm",
+        "toolchain"
+      ],
+      "evidence": [],
+      "revisit": "when supported runtime or package manager changes",
+      "rollback": "restore the pinned toolchain contract",
+      "summary": "ADR-010: Development Toolchain Baseline",
+      "bytes": 5456,
+      "sha256": "07426586dbeb75153796608511acf921d55d425e990b7148cc0b3f65715ca1b1"
+    },
+    {
+      "id": "011-runtime-topology-and-refactor-shape",
+      "path": "docs/decisions/011-runtime-topology-and-refactor-shape.md",
+      "title": "Runtime Topology And Refactor Shape",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "extension-host",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when a runtime boundary or build consumer changes",
+      "rollback": "retain the modular monolith topology",
+      "summary": "ADR-011: Runtime Topology And Refactor Shape",
+      "bytes": 7196,
+      "sha256": "60c3cf72ac485435b4c89168f1562bb7586c93b6095262081ca1c22a04419db5"
+    },
+    {
+      "id": "012-registry-extension-identities",
+      "path": "docs/decisions/012-registry-extension-identities.md",
+      "title": "Registry Extension Identities",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "identity",
+        "marketplace",
+        "registry"
+      ],
+      "evidence": [],
+      "revisit": "when a distribution identity changes",
+      "rollback": "restore the prior published identity mapping",
+      "summary": "ADR-012: Registry Extension Identities",
+      "bytes": 4137,
+      "sha256": "4b921c38ee56259b0d7cb65296d70b60c51d0c68f576d9ff97a770eb7f8acf7c"
+    },
+    {
+      "id": "013-bounded-mixed-code-highlighting",
+      "path": "docs/decisions/013-bounded-mixed-code-highlighting.md",
+      "title": "Bounded Mixed-Code Highlighting",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounds",
+        "syntax",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when code presentation or language detection changes",
+      "rollback": "use the bounded plain-text presentation",
+      "summary": "ADR-013: Bounded Mixed-Code Highlighting",
+      "bytes": 4255,
+      "sha256": "63009b5b5cd09ca2a4668e569624d2092722097607399144512ee52c122cb741"
+    },
+    {
+      "id": "014-large-module-boundary-governance",
+      "path": "docs/decisions/014-large-module-boundary-governance.md",
+      "title": "Large Module Boundary Governance",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "governance",
+        "refactor"
+      ],
+      "evidence": [],
+      "revisit": "when module ownership or extraction budgets change",
+      "rollback": "restore the prior module boundary",
+      "summary": "ADR-014: Large Module Boundary Governance",
+      "bytes": 7199,
+      "sha256": "4e21b2f5c6def0505a989577acc2004445756a50b3c74571d1c3cbe3aa1f5738"
+    },
+    {
+      "id": "015-changelog-ci-guard",
+      "path": "docs/decisions/015-changelog-ci-guard.md",
+      "title": "Guard Curated Release Notes in CI",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "changelog",
+        "ci",
+        "release"
+      ],
+      "evidence": [],
+      "revisit": "when release-note policy changes",
+      "rollback": "restore the prior release-note guard",
+      "summary": "ADR-015: Guard Curated Release Notes in CI",
+      "bytes": 3467,
+      "sha256": "fa30c57b73d9135361b873ffee85e09b14f0a781b131b7456b191f42fdf63187"
+    },
+    {
+      "id": "016-otlp-metrics-and-columnar-format-gates",
+      "path": "docs/decisions/016-otlp-metrics-and-columnar-format-gates.md",
+      "title": "OTLP Metrics Semantics and Columnar Format Gates",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "columnar",
+        "otlp",
+        "telemetry"
+      ],
+      "evidence": [],
+      "revisit": "when telemetry or conversion contracts change",
+      "rollback": "keep conversion opt-in and bounded",
+      "summary": "ADR-016: OTLP Metrics Semantics and Columnar Format Gates",
+      "bytes": 5688,
+      "sha256": "50c009a100d71003c6a39faf6b6e543d7f1955ad3f48b413906626e940cad742"
+    },
+    {
+      "id": "017-physical-order-paging",
+      "path": "docs/decisions/017-physical-order-paging.md",
+      "title": "Physical Order Paging",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "ordering",
+        "paging",
+        "query"
+      ],
+      "evidence": [],
+      "revisit": "when paging or order semantics change",
+      "rollback": "restore physical-order navigation",
+      "summary": "ADR-017: Physical order paging and incomplete filtered results",
+      "bytes": 6163,
+      "sha256": "1fee91fa61f6b6b8f98881b9ec17a5fd1e28cec21967a93b4d5ab0f67f3c8495"
+    },
+    {
+      "id": "018-accepted-webview-snapshot-identity",
+      "path": "docs/decisions/018-accepted-webview-snapshot-identity.md",
+      "title": "Accepted Webview Snapshot Identity",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "lifecycle",
+        "snapshots",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when snapshot identity semantics change",
+      "rollback": "retain the previous snapshot identity contract",
+      "summary": "ADR-018: Accepted Webview Snapshot Identity",
+      "bytes": 3398,
+      "sha256": "2d720761fe67228de7b62b9ee25828bee6c5a51be559700db7b73ff38ce9a92f"
+    },
+    {
+      "id": "019-webview-query-and-keyboard-ownership",
+      "path": "docs/decisions/019-webview-query-and-keyboard-ownership.md",
+      "title": "Webview Query Ownership and Keyboard Interaction",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "keyboard",
+        "query",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when query or keyboard ownership changes",
+      "rollback": "restore the prior interaction owner",
+      "summary": "ADR-019: Webview Query Ownership and Keyboard Interaction",
+      "bytes": 4906,
+      "sha256": "9a9699d983a5b3ca0ba4eaf833a9a0ea44d52379d89bba8e7772734c9e576905"
+    },
+    {
+      "id": "020-read-only-indexing-status-strip",
+      "path": "docs/decisions/020-read-only-indexing-status-strip.md",
+      "title": "Read-Only Indexing Status Strip",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "indexing",
+        "status",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when indexing status presentation changes",
+      "rollback": "restore the prior status strip",
+      "summary": "ADR-020: Read-Only Indexing Status Strip",
+      "bytes": 4299,
+      "sha256": "f01187ff46525b3019c2b7eb0e067ecd024610006e0e77e23ed8f304a6c82ee4"
+    },
+    {
+      "id": "021-explicit-row-order-toggle",
+      "path": "docs/decisions/021-explicit-row-order-toggle.md",
+      "title": "Explicit Row-Order Toggle",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "navigation",
+        "ordering",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when row-order controls change",
+      "rollback": "restore the prior row-order behavior",
+      "summary": "ADR-021: Explicit Row-Order Toggle",
+      "bytes": 5170,
+      "sha256": "04ea45e0699d4e22c886ae10d49dba91e7679cd8c1dc331baf0cf577f328a501"
+    },
+    {
+      "id": "022-read-only-agent-history-adapter-roadmap",
+      "path": "docs/decisions/022-read-only-agent-history-adapter-roadmap.md",
+      "title": "Read-Only Agent-History Adapter Roadmap",
+      "kind": "decision",
+      "status": "planned",
+      "owner": "product",
+      "tags": [
+        "adapters",
+        "agents",
+        "history"
+      ],
+      "evidence": [],
+      "revisit": "when provider adapter coverage changes",
+      "rollback": "retain the read-only adapter boundary",
+      "summary": "ADR-022: Read-Only Agent-History Adapter Roadmap",
+      "bytes": 4197,
+      "sha256": "fb8d084071c3e50967c8bce01d77d82de5a5d096a4da2fbb6eb0d50fa1a6f003"
+    },
+    {
+      "id": "023-keyless-target-separated-publication",
+      "path": "docs/decisions/023-keyless-target-separated-publication.md",
+      "title": "Keyless and Target-Separated Publication",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "credentials",
+        "publication",
+        "release"
+      ],
+      "evidence": [],
+      "revisit": "when registry publication contracts change",
+      "rollback": "stop publication and use separate target gates",
+      "summary": "ADR-023: Keyless and Target-Separated Publication",
+      "bytes": 6323,
+      "sha256": "f73cdf389ac25c34c6b1128d18762f805d4017783d9e6470f5f37af5ced95f0e"
+    },
+    {
+      "id": "023-native-build-reproducibility",
+      "path": "docs/decisions/023-native-build-reproducibility.md",
+      "title": "Native Build Reproducibility",
+      "kind": "decision",
+      "status": "historical",
+      "owner": "product",
+      "tags": [
+        "historical",
+        "native",
+        "reproducibility"
+      ],
+      "evidence": [],
+      "revisit": "when native build reproducibility is re-evaluated",
+      "rollback": "retain the historical record and superseding decision",
+      "summary": "ADR-023: Native Build Reproducibility",
+      "bytes": 4678,
+      "sha256": "143996215d919059a1b144c54051c7f7702b860f97cfd5ef5a6a4781125a124d"
+    },
+    {
+      "id": "024-vsix-archive-reproducibility",
+      "path": "docs/decisions/024-vsix-archive-reproducibility.md",
+      "title": "VSIX Archive Reproducibility",
+      "kind": "decision",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "release",
+        "reproducibility",
+        "vsix"
+      ],
+      "evidence": [],
+      "revisit": "when archive reproducibility evidence changes",
+      "rollback": "withdraw the proposal without rewriting history",
+      "summary": "ADR-024: VSIX Archive Reproducibility",
+      "bytes": 4088,
+      "sha256": "a11950006d77b4a7187994a69ae7821b3c28fd8ee472e4f4e17eea132f8c91f6"
+    },
+    {
+      "id": "025-experimental-staged-mutation-and-local-mcp",
+      "path": "docs/decisions/025-experimental-staged-mutation-and-local-mcp.md",
+      "title": "Staged Mutation and Local Agent Navigation",
+      "kind": "decision",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "experimental",
+        "mcp",
+        "mutation"
+      ],
+      "evidence": [],
+      "revisit": "when mutation or MCP contracts gain measured evidence",
+      "rollback": "keep the source read-only and disable the experiment",
+      "summary": "ADR-025: Experimental Staged Mutation and Local Agent Navigation",
+      "bytes": 16924,
+      "sha256": "cb2d6172dc6086e1e26deac0ec814b9e0cc93cd5b584c2fa15bf637a6aa56de0"
+    },
+    {
+      "id": "026-read-only-navigation-prototype",
+      "path": "docs/decisions/026-read-only-navigation-prototype.md",
+      "title": "Opt-In Read-Only Navigation Prototype",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "agents",
+        "navigation",
+        "opt-in"
+      ],
+      "evidence": [],
+      "revisit": "when navigation leaves prototype scope",
+      "rollback": "disable the opt-in prototype",
+      "summary": "ADR-026: Opt-In Read-Only Navigation Prototype",
+      "bytes": 5556,
+      "sha256": "9861adcbfb0c7944485d66326604aecb8a60bbed44098f2dac8e6a8e365b27b3"
+    },
+    {
+      "id": "027-synthetic-provider-index-contract",
+      "path": "docs/decisions/027-synthetic-provider-index-contract.md",
+      "title": "Synthetic Provider and Navigation Index Contract",
+      "kind": "decision",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "index",
+        "providers",
+        "synthetic"
+      ],
+      "evidence": [],
+      "revisit": "when provider index evidence changes",
+      "rollback": "retain source-backed provider discovery only",
+      "summary": "ADR-027: Synthetic Provider and Navigation Index Contract",
+      "bytes": 5784,
+      "sha256": "c02671a5dbf9bdeef3639a7e16c7c0624235c9061aae3a9acdcedb31e6cbedb4"
+    },
+    {
+      "id": "028-staged-mutation-benchmark",
+      "path": "docs/decisions/028-staged-mutation-benchmark.md",
+      "title": "Staged Mutation Benchmark and Failure Replay",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "benchmark",
+        "failure",
+        "mutation"
+      ],
+      "evidence": [],
+      "revisit": "when mutation benchmark scope changes",
+      "rollback": "remove the mutation path from the candidate",
+      "summary": "ADR-028: Synthetic Staged-Mutation Benchmark and Failure Replay",
+      "bytes": 5169,
+      "sha256": "559300e58eb8dfa7986b325767406fe23203d3ff67fedfa101f4a090c951e67b"
+    },
+    {
+      "id": "029-opt-in-session-navigator-treeview",
+      "path": "docs/decisions/029-opt-in-session-navigator-treeview.md",
+      "title": "Opt-In Session Navigator TreeView",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "opt-in",
+        "session-navigator",
+        "treeview"
+      ],
+      "evidence": [],
+      "revisit": "when session navigator ownership changes",
+      "rollback": "disable the opt-in TreeView",
+      "summary": "ADR-029: Opt-In Session Navigator TreeView and Local Catalog",
+      "bytes": 7896,
+      "sha256": "5c9039eff1502c5a79501748534e35d1fe7ffe7e584508ce916cb9996b9871e7"
+    },
+    {
+      "id": "030-provider-native-session-navigator-contract",
+      "path": "docs/decisions/030-provider-native-session-navigator-contract.md",
+      "title": "Provider-Native Session Navigator Contract",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "contract",
+        "provider",
+        "session-navigator"
+      ],
+      "evidence": [],
+      "revisit": "when provider-native metadata contracts change",
+      "rollback": "use the provider-neutral navigation contract",
+      "summary": "ADR-030: Provider-Native Session Navigator Contract",
+      "bytes": 10042,
+      "sha256": "756bbb6915f07c537f666142f1db1c43d29d15c4d01583f70fd347d5a03ccd0c"
+    },
+    {
+      "id": "031-session-navigator-intake-and-loading",
+      "path": "docs/decisions/031-session-navigator-intake-and-loading.md",
+      "title": "Session Loading, Native Metadata, and Source Intake",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "freshness",
+        "loading",
+        "session-navigator"
+      ],
+      "evidence": [],
+      "revisit": "when loading or freshness behavior changes",
+      "rollback": "restore the previous intake behavior",
+      "summary": "ADR-031: Session Loading, Native Metadata, and Source Intake",
+      "bytes": 14959,
+      "sha256": "131ad6ccc52e75d1930ad05e10365f9ab6f74f76183c02007d543e69efb3a04a"
+    },
+    {
+      "id": "032-bounded-session-pagination",
+      "path": "docs/decisions/032-bounded-session-pagination.md",
+      "title": "Bounded Session Pagination and Source-State Continuations",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "bounds",
+        "pagination",
+        "session-navigator"
+      ],
+      "evidence": [],
+      "revisit": "when source-state continuation semantics change",
+      "rollback": "restore bounded pagination and discard stale continuations",
+      "summary": "ADR-032: Bounded Session Pagination and Source-State Continuations",
+      "bytes": 6631,
+      "sha256": "f504dc81cbe1021d25e07b082164b6ea67587b8957409aa28f950c5ec26e8877"
+    },
+    {
+      "id": "033-bounded-webview-diagnostics",
+      "path": "docs/decisions/033-bounded-webview-diagnostics.md",
+      "title": "Bounded Webview Diagnostics and Agent Handoff",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "diagnostics",
+        "handoff",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when diagnostics or agent handoff changes",
+      "rollback": "retain bounded diagnostics without external handoff",
+      "summary": "ADR-033: Bounded Webview Diagnostics and Agent Handoff",
+      "bytes": 8398,
+      "sha256": "08408f546205751d825b293869b24ce1c68b1fcbdbdcf9f20a7c155bed4d8660"
+    },
+    {
+      "id": "034-opt-in-otlp-observability",
+      "path": "docs/decisions/034-opt-in-otlp-observability.md",
+      "title": "Opt-In OTLP Observability Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "observability",
+        "opt-in",
+        "otlp"
+      ],
+      "evidence": [
+        "src/extension/observability/composite-observability-sink.ts",
+        "test/extension/observability/composite-observability-sink.test.ts",
+        "test/extension/observability/otlp-settings-manifest.test.ts",
+        "test/extension/observability/otlp-lazy-load.test.ts"
+      ],
+      "revisit": "before widening signals, dimensions, transport, or destination policy",
+      "rollback": "remove the OTLP settings, composite sink integration, and SDK dependencies; retain local query diagnostics",
+      "summary": "ADR-034: Opt-In OTLP Observability Boundary",
+      "bytes": 19613,
+      "sha256": "88a8bea012b95850f644e51ae91c862095ebba01502a5a8db61c3dc075af7c93"
+    },
+    {
+      "id": "035-architecture-decomposition-and-toolchain-ownership",
+      "path": "docs/decisions/035-architecture-decomposition-and-toolchain-ownership.md",
+      "title": "Runtime-Bounded Decomposition And Toolchain Ownership",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "ownership",
+        "toolchain"
+      ],
+      "evidence": [],
+      "revisit": "when an independently buildable boundary exists",
+      "rollback": "return to the modular monolith boundary",
+      "summary": "ADR-035: Runtime-Bounded Decomposition And Toolchain Ownership",
+      "bytes": 6368,
+      "sha256": "9b05b26668afae4a36ea8e280416e209f463966f7e033c65b2a37c0a108101e1"
+    },
+    {
+      "id": "036-pi-coding-agent-adapter",
+      "path": "docs/decisions/036-pi-coding-agent-adapter.md",
+      "title": "Pi Coding Agent Session Adapter",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "agent-history",
+        "pi",
+        "provider"
+      ],
+      "evidence": [],
+      "revisit": "when the Pi session format changes",
+      "rollback": "disable Pi discovery without touching source files",
+      "summary": "ADR-036: Pi Coding Agent Session Adapter",
+      "bytes": 3689,
+      "sha256": "b8415e82b4d765b75ae55f586ac67c048fb597f0aad489a965604dbc3fac5c79"
+    },
+    {
+      "id": "037-mcp-july-2026-compatibility-boundary",
+      "path": "docs/decisions/037-mcp-july-2026-compatibility-boundary.md",
+      "title": "MCP July 2026 Compatibility Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "compatibility",
+        "mcp",
+        "protocol"
+      ],
+      "evidence": [],
+      "revisit": "when the MCP protocol contract changes",
+      "rollback": "pin the last compatible MCP surface",
+      "summary": "ADR-037: MCP July 2026 Compatibility Boundary",
+      "bytes": 4274,
+      "sha256": "7230ca19de619b8015f0e4fecc6df3c0d631e3247b20276677703ec9951b76ae"
+    },
+    {
+      "id": "038-claude-tool-result-presentation",
+      "path": "docs/decisions/038-claude-tool-result-presentation.md",
+      "title": "Claude Top-Level Tool Result Presentation",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "claude",
+        "presentation",
+        "tools"
+      ],
+      "evidence": [],
+      "revisit": "when Claude tool-result shapes change",
+      "rollback": "retain the raw bounded presentation",
+      "summary": "ADR-038: Claude Top-Level Tool Result Presentation",
+      "bytes": 2592,
+      "sha256": "1cb092c9ffb5f0b3c6f0f5706c11309f688617d851b767b511f21f4e5a36675d"
+    },
+    {
+      "id": "039-architecture-evolution-slices",
+      "path": "docs/decisions/039-architecture-evolution-slices.md",
+      "title": "Architecture Evolution Slices",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "migration",
+        "vertical-slice"
+      ],
+      "evidence": [],
+      "revisit": "when a migration boundary or consumer changes",
+      "rollback": "revert one vertical slice and retain the facade",
+      "summary": "ADR-039: Architecture Evolution Slices",
+      "bytes": 5468,
+      "sha256": "6f0c23e3484a91886dd643c992888ead04884939db1ebdad9107b562cd6ad25f"
+    },
+    {
+      "id": "040-native-scanner-measurement-boundary",
+      "path": "docs/decisions/040-native-scanner-measurement-boundary.md",
+      "title": "Native Scanner Measurement Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "benchmark",
+        "native",
+        "scanner"
+      ],
+      "evidence": [],
+      "revisit": "when a new paired measurement changes the choice",
+      "rollback": "use the portable scanner and retain the measurement",
+      "summary": "ADR-040: Native Scanner Measurement Boundary",
+      "bytes": 3167,
+      "sha256": "2882650fd083403ec82a1859f1ee7eb915e2d914d63d988c1994e289391d39b3"
+    },
+    {
+      "id": "041-typed-rpc-and-ports-adapters-slices",
+      "path": "docs/decisions/041-typed-rpc-and-ports-adapters-slices.md",
+      "title": "Typed RPC And Ports-Adapters Slices",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "ports-adapters",
+        "rpc"
+      ],
+      "evidence": [],
+      "revisit": "when a second runtime consumer or protocol change appears",
+      "rollback": "revert one vertical slice and keep the prior facade",
+      "summary": "ADR-041: Typed RPC And Ports-Adapters Slices",
+      "bytes": 8616,
+      "sha256": "3c6a7d367cdffd0b86d13ddee078824a6284c2b14eb3964dddbe0f2ec60bb886"
+    },
+    {
+      "id": "042-documentation-ownership-and-external-evidence",
+      "path": "docs/decisions/042-documentation-ownership-and-external-evidence.md",
+      "title": "Documentation Ownership and External Evidence",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "documentation",
+        "evidence",
+        "harness"
+      ],
+      "evidence": [],
+      "revisit": "when product and harness ownership changes",
+      "rollback": "restore the prior ownership boundary",
+      "summary": "ADR-042: Documentation ownership and external evidence",
+      "bytes": 2770,
+      "sha256": "8adad5a5a98b41ef0abfe8f2f9f467e181887fdfae9e9e3e38e7e5b5fd88c6be"
+    },
+    {
+      "id": "043-core-closure-and-evidence-gated-evolution",
+      "path": "docs/decisions/043-core-closure-and-evidence-gated-evolution.md",
+      "title": "Core Closure And Evidence-Gated Evolution",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "evidence",
+        "roadmap",
+        "rollback"
+      ],
+      "evidence": [],
+      "revisit": "when a roadmap stage or core boundary changes",
+      "rollback": "revert the affected stage and retain the prior facade",
+      "summary": "ADR-043: Core Closure And Evidence-Gated Evolution",
+      "bytes": 7120,
+      "sha256": "e75a9c6d66ea211f85cbeabab67a2d70930871f9fb601a43bb5aef6394b40d6b"
+    },
+    {
+      "id": "044-data-format-ecosystem-boundary",
+      "path": "docs/decisions/044-data-format-ecosystem-boundary.md",
+      "title": "Data Format Ecosystem Boundary",
+      "kind": "decision",
+      "status": "planned",
+      "owner": "product",
+      "tags": [
+        "conversion",
+        "datasets",
+        "formats",
+        "streaming"
+      ],
+      "evidence": [],
+      "revisit": "when a format contract gains conformance evidence",
+      "rollback": "keep JSONL authoritative and disable the adapter",
+      "summary": "--- adr: \"044\" status: planned owner: product-format-boundary scope: jsonl-dataset-ecosystem sourceoftruth: physical-jsonl-bytes writemode: read-only-until-explicit-staged-export deferredtags: - format-adapter - semantic-conversion - staged-write - benchmark-gate - remote-inte...",
+      "bytes": 17060,
+      "sha256": "bc00e10ddc5e84fea67299243a736ea36af8d1b55fb3ed73be2dde6911c243b2"
+    },
+    {
+      "id": "045-table-query-and-column-ownership",
+      "path": "docs/decisions/045-table-query-and-column-ownership.md",
+      "title": "Table Query And Column Ownership",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounded-scan",
+        "columns",
+        "query",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when query, profile Event or scan continuation contracts change",
+      "rollback": "revert the table controls and retain source bytes",
+      "summary": "ADR-045: Table Query and Column Ownership",
+      "bytes": 5476,
+      "sha256": "53c84096ec2f9df7af2efcf7576878613ede60791a2af3870c3e5b373f22de25"
+    },
+    {
+      "id": "046-insights-analysis-intent-and-scope",
+      "path": "docs/decisions/046-insights-analysis-intent-and-scope.md",
+      "title": "Insights Analysis Intent And Scope",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounded-scan",
+        "insights",
+        "lifecycle",
+        "query"
+      ],
+      "evidence": [],
+      "revisit": "when adapter revision or analysis source watermark contracts change",
+      "rollback": "revert shared analysis protocol and host and webview together",
+      "summary": "ADR-046: Insights Analysis Intent and Scope",
+      "bytes": 7906,
+      "sha256": "504785fc4995882deadb864fe77f07e823052f1327c8b1e562d097b7c78aed2a"
+    },
+    {
+      "id": "047-execution-identity-and-request-correlation",
+      "path": "docs/decisions/047-execution-identity-and-request-correlation.md",
+      "title": "Execution Identity And Request Correlation",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "build",
+        "correlation",
+        "identity",
+        "lifecycle"
+      ],
+      "evidence": [],
+      "revisit": "when runtime bundles, build inputs or epoch semantics change",
+      "rollback": "revert identity distribution while retaining request correlation",
+      "summary": "ADR-047: Execution Identity and Request Correlation",
+      "bytes": 9268,
+      "sha256": "182777993ff5184635edded223c4c3cc888a3d3a1ad59d3a684cb543739ac77e"
+    },
+    {
+      "id": "048-bounded-conversation-and-dataset-scenes",
+      "path": "docs/decisions/048-bounded-conversation-and-dataset-scenes.md",
+      "title": "Bounded Conversation And Dataset Scenes",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounded-scan",
+        "conversation",
+        "datasets",
+        "projection"
+      ],
+      "evidence": [],
+      "revisit": "when projection budgets or dataset observation semantics change",
+      "rollback": "disable the optional projections and retain the physical record table",
+      "summary": "ADR-048: Bounded Conversation and Dataset Scenes",
+      "bytes": 7301,
+      "sha256": "2436569e9d0f6d3a0cbabba7068a2740966b82582c04fe5b850bca651fab4e2b"
+    },
+    {
+      "id": "049-shared-protocol-wire-registry",
+      "path": "docs/decisions/049-shared-protocol-wire-registry.md",
+      "title": "Shared Protocol Wire Registry",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "lifecycle",
+        "navigator",
+        "protocol",
+        "source-registration",
+        "transport"
+      ],
+      "evidence": [],
+      "revisit": "when a second wire consumer needs a new direction or protocol version",
+      "rollback": "remove the new registry exports and result message cases before consumer rollback",
+      "summary": "ADR-049: Shared Protocol Wire Registry",
+      "bytes": 9131,
+      "sha256": "3bd178005ae05a31d2fc458702580fd4fd82614d1ded14263c463836f964ceac"
+    },
+    {
+      "id": "050-navigator-catalog-metadata-plane",
+      "path": "docs/decisions/050-navigator-catalog-metadata-plane.md",
+      "title": "Navigator Catalog Metadata Plane",
+      "kind": "decision",
+      "status": "experimental",
+      "owner": "product",
+      "tags": [
+        "checkpoints",
+        "metadata",
+        "session-navigator",
+        "sqlite"
+      ],
+      "evidence": [],
+      "revisit": "when Save As registration or a second catalog consumer is promoted",
+      "rollback": "disable metadata-plane callers and retain the additive migration",
+      "summary": "ADR-050: Navigator Catalog Metadata Plane",
+      "bytes": 4981,
+      "sha256": "92c29c55077b0cf45f41dfd920837bc9dca820dcc2ff2733c71c5a98232ed437"
+    },
+    {
+      "id": "051-v2-plane-boundaries-and-engineering-gates",
+      "path": "docs/decisions/051-v2-plane-boundaries-and-engineering-gates.md",
+      "title": "V2 Plane Boundaries and Engineering Gates",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "evaluation",
+        "mcp",
+        "native",
+        "otel",
+        "rollback"
+      ],
+      "evidence": [],
+      "revisit": "when a V2 plane boundary or capability gate changes",
+      "rollback": "supersede ADR-051 with an explicit replacement and disable the affected capability",
+      "summary": "ADR-051: V2 Plane Boundaries and Engineering Gates",
+      "bytes": 2357,
+      "sha256": "724d17a995fbe5f9843f6f1c5994e02c8c3040db41b11b4735cbf615dbe2c1fe"
+    },
+    {
+      "id": "052-rust-query-mcp-acp-boundary",
+      "path": "docs/decisions/052-rust-query-mcp-acp-boundary.md",
+      "title": "Rust Query, MCP, and ACP Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "acp",
+        "json-rpc",
+        "mcp",
+        "query",
+        "rust"
+      ],
+      "evidence": [],
+      "revisit": "when a second native query consumer or remote ACP transport is promoted",
+      "rollback": "disable the native capability and omit the opt-in MCP or ACP entrypoints",
+      "summary": "ADR-052: Rust Query, MCP, and ACP Boundary",
+      "bytes": 7239,
+      "sha256": "c5707a96148ab8f12aa69b13fb9a75207652849b9c3f4077ed33fc53e1341d2e"
+    },
+    {
+      "id": "053-kimi-kap-server-journal-adapter",
+      "path": "docs/decisions/053-kimi-kap-server-journal-adapter.md",
+      "title": "Kimi KAP server journal adapter",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "jsonl",
+        "kimi",
+        "profiles",
+        "read-only",
+        "session-navigator"
+      ],
+      "evidence": [],
+      "revisit": "when the pinned KAP server journal contract changes",
+      "rollback": "disable the KAP server layout while retaining wire and Generic profiles",
+      "summary": "ADR-053: Kimi KAP Server Journal Adapter",
+      "bytes": 4321,
+      "sha256": "11a3cb48968b60565626aad57f161ffdd542882cee67f070102a64207ea1218a"
+    },
+    {
+      "id": "054-bounded-forward-page-read-window",
+      "path": "docs/decisions/054-bounded-forward-page-read-window.md",
+      "title": "Bounded forward-page read window",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "engine",
+        "file-io",
+        "performance",
+        "query"
+      ],
+      "evidence": [],
+      "revisit": "when representative record spans are measured or a supported workload shows read amplification or latency regression",
+      "rollback": "remove the query-local window and retain direct row reads",
+      "summary": "ADR-054: Bounded Forward-Page Read Window",
+      "bytes": 5051,
+      "sha256": "f202c3c8ec27b68291b7ac93aae492d6b469eb15f47a7056c97d71aa45a06d1c"
+    },
+    {
+      "id": "055-development-query-observation-tap",
+      "path": "docs/decisions/055-development-query-observation-tap.md",
+      "title": "Development query observation tap",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounds",
+        "cdp",
+        "extension",
+        "observability",
+        "testing",
+        "webview"
+      ],
+      "evidence": [
+        "focused-host-tap-tests",
+        "focused-cdp-temporal-association-tests"
+      ],
+      "revisit": "when the query event schema, Webview delivery contract, or request-intent correlation changes",
+      "rollback": "remove the development tap and Harness temporal-association mode while retaining existing observers",
+      "summary": "ADR-055: Development Query Observation Tap",
+      "bytes": 4948,
+      "sha256": "a4f4b0d5275f40715be854e0597d1271ba879bbf4a22f12f51536d915e410059"
+    },
+    {
+      "id": "056-modern-language-and-compiler-gates",
+      "path": "docs/decisions/056-modern-language-and-compiler-gates.md",
+      "title": "Modern Language And Compiler Gates",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "build",
+        "compiler",
+        "declarations",
+        "react",
+        "rust",
+        "typescript"
+      ],
+      "evidence": [],
+      "revisit": "when language gates, compiler allowlists, native lifetime APIs, or benchmark triggers change",
+      "rollback": "revert the coordinated language and compiler gate commits and invalidate affected receipts",
+      "summary": "ADR-056: Modern Language And Compiler Gates",
+      "bytes": 4374,
+      "sha256": "7ca9dd97f31df6e4adf76c2acf1870aeb1b360d4a55e66e9c30052e27043909f"
+    },
+    {
+      "id": "057-module-review-budget-and-hotspot-governance",
+      "path": "docs/decisions/057-module-review-budget-and-hotspot-governance.md",
+      "title": "Module Review Budget And Hotspot Governance",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "complexity",
+        "coupling",
+        "governance",
+        "refactoring"
+      ],
+      "evidence": [],
+      "revisit": "when module-review signals, ownership boundaries, or CI enforcement changes",
+      "rollback": "remove the report command and restore the previous review baseline without reverting product behavior",
+      "summary": "ADR-057: Module Review Budget And Hotspot Governance",
+      "bytes": 5378,
+      "sha256": "0af100bfd700606a85345d5a6a0f198581b6811d6e8174cfb7073915caeb69ed"
+    },
+    {
+      "id": "058-priority-background-index-slices",
+      "path": "docs/decisions/058-priority-background-index-slices.md",
+      "title": "Priority Scheduling For Background Index Slices",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "concurrency",
+        "engine",
+        "indexing",
+        "scheduler"
+      ],
+      "evidence": [],
+      "revisit": "when foreground queue latency, indexing delay, or supported workloads change",
+      "rollback": "restore FIFO dispatch while retaining serialized access and bounded index slices",
+      "summary": "ADR-058: Priority Scheduling for Background Index Slices",
+      "bytes": 5073,
+      "sha256": "17f02aeb046404fccefcafdc5b370e0fabaa1465b954452f4162fccd85ddfb26"
+    },
+    {
+      "id": "059-webview-style-attribute-csp-boundary",
+      "path": "docs/decisions/059-webview-style-attribute-csp-boundary.md",
+      "title": "Webview Style Attribute CSP Boundary",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "security",
+        "webview",
+        "csp",
+        "nonce"
+      ],
+      "evidence": [],
+      "revisit": "when runtime style attributes are removed from the Webview render path",
+      "rollback": "restore the previous CSP policy while retaining nonce-bound scripts and style elements",
+      "summary": "ADR-059: Webview Style Attribute CSP Boundary",
+      "bytes": 2423,
+      "sha256": "229a76ede43f8f3a218bab025a54bcb7e6ae0245728512583cb341c9c7445abd"
+    },
+    {
+      "id": "060-shared-query-anchor-and-treemap-metadata",
+      "path": "docs/decisions/060-shared-query-anchor-and-treemap-metadata.md",
+      "title": "Shared Query Anchor And Treemap Metadata",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "bounded-metadata",
+        "insights",
+        "query",
+        "transport",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "before a Treemap producer or consumer is connected, or a panel setting changes",
+      "rollback": "revert the task-owned shared contract, layout and anchor composition together",
+      "summary": "ADR-060: Shared Query Anchor and Treemap Metadata",
+      "bytes": 9617,
+      "sha256": "f61d11abf81418775bc81b72ed1777de04b6f8b8066a12cffeef3c3c1c50bee9"
+    },
+    {
+      "id": "061-virtualized-list-a11y-semantics",
+      "path": "docs/decisions/061-virtualized-list-a11y-semantics.md",
+      "title": "Virtualized List Accessibility Semantics",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "webview",
+        "virtualization"
+      ],
+      "evidence": [],
+      "revisit": "when Timeline or Problems virtualization or keyboard interaction changes",
+      "rollback": "restore the prior list containers and role mapping while retaining the focused semantic tests",
+      "summary": "ADR-061: Virtualized List Accessibility Semantics",
+      "bytes": 4247,
+      "sha256": "11e31f7dcac1370e0cebe7bd366704f5ad40770f13b17d5efc81754209708039"
+    },
+    {
+      "id": "062-catalog-versioned-persistence-contract",
+      "path": "docs/decisions/062-catalog-versioned-persistence-contract.md",
+      "title": "Catalog Versioned Persistence Contract",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "catalog",
+        "migration",
+        "persistence",
+        "validation"
+      ],
+      "evidence": [],
+      "revisit": "when the catalog schema, storage medium, or validation boundary changes",
+      "rollback": "stop the new catalog write path, retain the previous snapshot, and use the last validated schema version",
+      "summary": "ADR-062: Catalog Versioned Persistence Contract",
+      "bytes": 3502,
+      "sha256": "b047a3658e2608017e6c02c24c4f7cf0552f5d3068b81678d88ec0246b70fb77"
+    },
+    {
+      "id": "063-bounded-mcp-stdio-work",
+      "path": "docs/decisions/063-bounded-mcp-stdio-work.md",
+      "title": "Bounded MCP Stdio Work and Cooperative Cancellation",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "cancellation",
+        "concurrency",
+        "mcp",
+        "stdio"
+      ],
+      "evidence": [],
+      "revisit": "when MCP stdio query transport, source reader, or default resource budget changes",
+      "rollback": "restore the prior MCP adapter and keep stdio publication disabled until bounded query behavior is revalidated",
+      "summary": "ADR-063: Bounded MCP Stdio Work and Cooperative Cancellation",
+      "bytes": 6076,
+      "sha256": "8fd8d73d8d891a5e2fe1efa24fd7d356a69839e5204a499a6725468e78fbd19f"
+    },
+    {
+      "id": "064-independent-collections-board",
+      "path": "docs/decisions/064-independent-collections-board.md",
+      "title": "Independent Collections Metadata Board",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "navigator",
+        "sqlite",
+        "native-ui"
+      ],
+      "evidence": [
+        "source:src/experimental/session-navigator/collections-tree-provider.ts",
+        "source:test/experimental/collections-store.test.ts"
+      ],
+      "revisit": "when adding a collection reference kind or changing native view/source authorization boundaries",
+      "rollback": "revert the scoped feature while retaining collection metadata and all source/provider data",
+      "summary": "ADR-064: Independent Collections Metadata Board",
+      "bytes": 9438,
+      "sha256": "ebeedd8b0b38c0a1232db93bd1805e33bad52008e714655bc3e4641b150190db"
+    },
+    {
+      "id": "065-opportunistic-session-work-and-read-diagnostics",
+      "path": "docs/decisions/065-opportunistic-session-work-and-read-diagnostics.md",
+      "title": "Opportunistic Session Work and Read Diagnostics",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "concurrency",
+        "engine",
+        "performance",
+        "observability",
+        "profiles"
+      ],
+      "evidence": [],
+      "revisit": "when measured foreground queue delay, optional-work completion, or storage workloads change",
+      "rollback": "restore the prior session routing and Insights loop, revert read diagnostic plumbing together, and rerun the focused suites",
+      "summary": "ADR-065: Opportunistic Session Work and Read Diagnostics",
+      "bytes": 8881,
+      "sha256": "955862e78320439f80260eb74022c07c6b8b6e70d73997f90edd1312ec4a66b3"
+    },
+    {
+      "id": "066-bounded-trajectory-query-contract",
+      "path": "docs/decisions/066-bounded-trajectory-query-contract.md",
+      "title": "Bounded Trajectory Query Contract",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "mcp",
+        "query",
+        "security",
+        "profiles",
+        "identity"
+      ],
+      "evidence": [],
+      "revisit": "when a supported producer format changes or cold continuation and storage workloads justify a persistent index",
+      "rollback": "disable trajectory tool and resource registration, preserve the physical query tool, and revert the additive scanner and contracts together",
+      "summary": "ADR-066: Bounded Trajectory Query Contract",
+      "bytes": 8587,
+      "sha256": "adb08ff843357fdd37efeee293bbb42da5397a24607492d1b3f9744902e825cd"
+    },
+    {
+      "id": "067-correlated-internal-reveal",
+      "path": "docs/decisions/067-correlated-internal-reveal.md",
+      "title": "Correlated Internal Reveal and DOM Confirmation",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "navigator",
+        "protocol",
+        "identity",
+        "webview",
+        "security"
+      ],
+      "evidence": [],
+      "revisit": "when reveal gains an external bridge, concurrent viewers, or an observed virtualizer incompatibility",
+      "rollback": "revert the correlated reveal protocol, handoff, and UI consumers together; no persistent migration exists",
+      "summary": "ADR-067: Correlated internal reveal and DOM confirmation",
+      "bytes": 5333,
+      "sha256": "8c9d3336201d2aeec1ed4fd309f9c80819ce813310fcf2b4acd86ea9921fd3a7"
+    },
+    {
+      "id": "068-bounded-read-only-record-text",
+      "path": "docs/decisions/068-bounded-read-only-record-text.md",
+      "title": "Bounded Read-Only Record Text",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "security",
+        "identity",
+        "vscode",
+        "hydration",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when larger records require a streaming viewer or native host acceptance finds a lifecycle gap",
+      "rollback": "remove the additive record-text action and provider registration together while retaining existing detail and Raw views",
+      "summary": "ADR-068: Bounded Read-Only Record Text",
+      "bytes": 5357,
+      "sha256": "214481ccb2cc60524d22b4c522e975054ef4e47aa4eabdf86c643bb14294bc56"
+    },
+    {
+      "id": "069-bounded-raw-source-export",
+      "path": "docs/decisions/069-bounded-raw-source-export.md",
+      "title": "Bounded Raw Source Export",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "export",
+        "filesystem",
+        "security",
+        "identity"
+      ],
+      "evidence": [],
+      "revisit": "when filtered export, larger sources, or unsupported destination filesystems need a separate contract",
+      "rollback": "remove the export command and its two extension modules; preserve all user-created destination files",
+      "summary": "ADR-069: Bounded Raw Source Export",
+      "bytes": 5152,
+      "sha256": "3b3484b49e1959593cfaaef99cb1e3e2fe8b951a3720ae5e4243fd28806ba48c"
+    },
+    {
+      "id": "070-graph-authorization-and-snapshot-identity",
+      "path": "docs/decisions/070-graph-authorization-and-snapshot-identity.md",
+      "title": "Graph Authorization and Snapshot Identity",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "graph",
+        "security",
+        "identity",
+        "profiles"
+      ],
+      "evidence": [],
+      "revisit": "before expanding the current-document caller or adding asynchronous layouts",
+      "rollback": "disable a future Graph caller first, then revert the pure model changes and its tests together; no source or persistence migration is required",
+      "summary": "ADR-070: Graph Authorization and Snapshot Identity",
+      "bytes": 6575,
+      "sha256": "c818fdbd2ac902c2daa2052aba9ea3e5a86a1115a8b6e7a432462f1f9863646e"
+    },
+    {
+      "id": "071-current-document-graph-hierarchy-and-reveal",
+      "path": "docs/decisions/071-current-document-graph-hierarchy-and-reveal.md",
+      "title": "Current Document Graph Hierarchy and Reveal",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "graph",
+        "webview",
+        "identity",
+        "profiles",
+        "security",
+        "performance"
+      ],
+      "evidence": [],
+      "revisit": "before multi-source graph access, additional relationship semantics or asynchronous layouts",
+      "rollback": "remove the Graph tab and internal messages, then revert this caller and tests; preserve the bounded pure model and source bytes",
+      "summary": "ADR-071: Current Document Graph Hierarchy and Reveal",
+      "bytes": 9942,
+      "sha256": "56b328ce5696cf5c31ff3c56c36330038a6629349a563fa4ff92faa148dd02f0"
+    },
+    {
+      "id": "072-scoped-raw-export-recovery",
+      "path": "docs/decisions/072-scoped-raw-export-recovery.md",
+      "title": "Scoped Raw Export and Durable Recovery",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "export",
+        "filesystem",
+        "identity",
+        "recovery",
+        "security"
+      ],
+      "evidence": [],
+      "revisit": "when projected formats, larger budgets, journal retirement UI or destination filesystems require another contract",
+      "rollback": "remove the scoped commands and modules; preserve retained operation storage, owned pending evidence and all user destinations",
+      "summary": "ADR-072: Scoped Raw Export and Durable Recovery",
+      "bytes": 10555,
+      "sha256": "256a2de1be9c5653ab0d2e8a05bff175ca44b0a4ae6040a82bb438fa7a396194"
+    },
+    {
+      "id": "073-collections-entry-metadata",
+      "path": "docs/decisions/073-collections-entry-metadata.md",
+      "title": "Collections Aliases, Local Archive Intent and Explicit Rebind",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "sqlite",
+        "native-ui",
+        "migration"
+      ],
+      "evidence": [
+        "source:src/infrastructure/navigator/collections-store.ts",
+        "source:test/experimental/collections-metadata.test.ts"
+      ],
+      "revisit": "before authorizing non-catalog file references or changing provider archive observation",
+      "rollback": "retain v3 metadata, verified pre-v3 backup and pending journal; restore the matching pair only through reviewed reconciliation",
+      "summary": "ADR-073: Collections Aliases, Local Archive Intent and Explicit Rebind",
+      "bytes": 8825,
+      "sha256": "65f540a688ce4558fca6ca76656ab42c35b55f97004b594854611ddf4eb2b70a"
+    },
+    {
+      "id": "074-collections-shared-journal",
+      "path": "docs/decisions/074-collections-shared-journal.md",
+      "title": "Shared SQLite Journal for Accepted Collections Commands",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "sqlite",
+        "recovery",
+        "migration"
+      ],
+      "evidence": [
+        "source:src/infrastructure/navigator/collections-journal.ts",
+        "source:test/experimental/collections-journal.test.ts",
+        "source:test/experimental/collections-recovery.test.ts"
+      ],
+      "revisit": "before adding reconciliation UI, journal pruning or remote metadata storage",
+      "rollback": "retain schema4 database with pending commands and verified pre-v4 backup; restore only through reviewed reconciliation",
+      "summary": "ADR-074: Shared SQLite Journal for Accepted Collections Commands",
+      "bytes": 7342,
+      "sha256": "d43e0a1c146937a31a771ad84db973cdc5a38f2829c98a84e2e95c2937be69ce"
+    },
+    {
+      "id": "075-detail-drawer-page-local-lineage",
+      "path": "docs/decisions/075-detail-drawer-page-local-lineage.md",
+      "title": "Detail Drawer Page-Local Lineage",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "webview",
+        "lineage",
+        "identity",
+        "bounded-work"
+      ],
+      "evidence": [],
+      "revisit": "before lineage reads outside the accepted page, new provider relationship semantics, cross-source edges or asynchronous layout",
+      "rollback": "remove the Detail Drawer Lineage tab and its pure projection/tests; restore the Table fallback for the retired Graph tab without changing source bytes or Host authorization",
+      "summary": "ADR-075: Detail Drawer Page-Local Lineage",
+      "bytes": 7155,
+      "sha256": "82da6f6519355a6db35410680d76cc16c824a91326599d009377d1721eb4fbfe"
+    },
+    {
+      "id": "076-source-intake-stage",
+      "path": "docs/decisions/076-source-intake-stage.md",
+      "title": "Source Intake Stage and Explicit Actions",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "navigator",
+        "intake",
+        "webview",
+        "lifecycle"
+      ],
+      "evidence": [
+        "source-contract:source-drop-view",
+        "test-contract:source-drop-view",
+        "test-contract:source-drop-html"
+      ],
+      "revisit": "when native views support a whole-surface drop target with inline command buttons",
+      "rollback": "remove the added intake view and restore the prior import picker while retaining Collections and temporary preview ownership",
+      "summary": "ADR-076: Source Intake Stage and Explicit Actions",
+      "bytes": 5208,
+      "sha256": "6689318550b14770c23b87afc4fb8ed870a279817e9d8de9065359f39c5371c0"
+    },
+    {
+      "id": "078-lineage-rail-and-explicit-bounded-lookup",
+      "path": "docs/decisions/078-lineage-rail-and-explicit-bounded-lookup.md",
+      "title": "Lineage Rail and Explicit Bounded Lookup",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "lineage",
+        "webview",
+        "identity",
+        "bounded-work",
+        "cancellation"
+      ],
+      "evidence": [],
+      "revisit": "before adding automatic lookup, global identity indexes, cross-source links or native lookup acceleration",
+      "rollback": "remove explicit lookup and rail controls; restore ADR-075 page-only rendering without changing source bytes, query predicates or user settings",
+      "summary": "ADR-078: Lineage Rail and Explicit Bounded Lookup",
+      "bytes": 8381,
+      "sha256": "e11991ee91dba5484aca1bf61a094bc6f839408cef8a815906d0b5003e3d2d80"
+    },
+    {
+      "id": "079-acp-mcp-stream-lifecycle",
+      "path": "docs/decisions/079-acp-mcp-stream-lifecycle.md",
+      "title": "ACP and MCP Stream Lifecycle",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "acp",
+        "mcp",
+        "stdio",
+        "identity",
+        "cancellation"
+      ],
+      "evidence": [],
+      "revisit": "before adding new ACP capabilities, transports, MCP protocol versions or source-revocation coordination",
+      "rollback": "revert the stream changes together with their tests; disable affected explicit adapters if compatibility cannot be maintained",
+      "summary": "ADR-079: ACP and MCP Stream Lifecycle",
+      "bytes": 8002,
+      "sha256": "9669da9f7b13eeb3e02abaf70a3bc250d318a9f03c3d7cfa5a5d718e86a7a302"
+    },
+    {
+      "id": "080-agent-integration-adapters",
+      "path": "docs/decisions/080-agent-integration-adapters.md",
+      "title": "Agent Integration Adapters and Execution Targets",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "acp",
+        "mcp",
+        "plugins",
+        "runtime",
+        "adapters"
+      ],
+      "evidence": [],
+      "revisit": "when an adapter adds a protocol version, transport, permission scope or executable plugin",
+      "rollback": "disable the explicit integration profile and retain the existing local read-only product path",
+      "summary": "ADR-080: Agent Integration Adapters and Execution Targets",
+      "bytes": 9892,
+      "sha256": "ed65344674950e718bce64d7b3733ae1ffa05a185d2705235c514ae6f2b7e51b"
+    },
+    {
+      "id": "081-public-artifact-documentation-allowlists",
+      "path": "docs/decisions/081-public-artifact-documentation-allowlists.md",
+      "title": "Public Artifact Documentation Allowlists",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "packaging",
+        "documentation",
+        "vsix",
+        "npm"
+      ],
+      "evidence": [],
+      "revisit": "when public documentation, README assets, or package identity changes",
+      "rollback": "restore the prior package file sets and remove artifact README projection together",
+      "summary": "ADR-081: Public Artifact Documentation Allowlists",
+      "bytes": 4511,
+      "sha256": "a04171171abe2713fa50b97e16d4b458f429024c8c9936dc777de32245902ec0"
+    },
+    {
+      "id": "082-collection-archive-visibility",
+      "path": "docs/decisions/082-collection-archive-visibility.md",
+      "title": "Collection Archive Visibility",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "session-navigator",
+        "metadata"
+      ],
+      "evidence": [],
+      "revisit": "when Collection archive ownership or Agent Sessions visibility policy changes",
+      "rollback": "remove the default-off visibility setting and its metadata projection while retaining Collection archive metadata",
+      "summary": "ADR-082: Collection Archive Visibility",
+      "bytes": 3105,
+      "sha256": "0e7c0753b3daf52e74c5df2005e31a34b688514eeb2734d9483d86c698abd19b"
+    },
+    {
+      "id": "083-navigator-owners-surfaces-and-schema-review",
+      "path": "docs/decisions/083-navigator-owners-surfaces-and-schema-review.md",
+      "title": "Navigator Owners, Surfaces and Schema Review",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "session-navigator",
+        "collections",
+        "persistence"
+      ],
+      "evidence": [
+        "source:package.json",
+        "source:src/experimental/session-navigator/tree-provider.ts",
+        "source:src/infrastructure/navigator/catalog-store.ts",
+        "source:src/infrastructure/navigator/collections-schema.ts",
+        "source:test/experimental/session-navigator-manifest.test.ts"
+      ],
+      "revisit": "when a concrete feature requires another owner, view, command or metadata shape",
+      "rollback": "revert this review record and its index entries; runtime and stored metadata are unaffected",
+      "summary": "ADR-083: Navigator Owners, Surfaces and Schema Review",
+      "bytes": 28632,
+      "sha256": "ff72ac5267397133ea28b576c5df5ecd548273cf86c0fbc4ecb74de44c0a35af"
+    },
+    {
+      "id": "084-private-mcp-cli-and-protocol-owner",
+      "path": "docs/decisions/084-private-mcp-cli-and-protocol-owner.md",
+      "title": "Private MCP CLI and Canonical Protocol Owner",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "mcp",
+        "protocol",
+        "package",
+        "runtime"
+      ],
+      "evidence": [
+        "source:packages/mcp-server/package.json",
+        "source:packages/mcp-server/src/mcp-read-only-server.ts",
+        "source:src/extension/mcp/",
+        "source:test/extension/mcp/core-parity.test.ts",
+        "source:packages/mcp-server/test/cli.test.mjs"
+      ],
+      "revisit": "before publishing the MCP package or changing its source-grant contract",
+      "rollback": "restore extension-owned protocol adapters and keep the MCP workspace package private",
+      "summary": "ADR-084: Private MCP CLI and Canonical Protocol Owner",
+      "bytes": 4676,
+      "sha256": "fcd553f339fd7a4c66dfa764f420ef42af393af959086e6954b45ace2fba8e87"
+    },
+    {
+      "id": "085-collections-reference-entrypoint",
+      "path": "docs/decisions/085-collections-reference-entrypoint.md",
+      "title": "Collections Reference Entrypoint and Intake Separation",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "navigator",
+        "native-ui",
+        "authorization"
+      ],
+      "evidence": [
+        "source:src/experimental/session-navigator/collections-tree-provider.ts",
+        "source:src/experimental/session-navigator/tree-provider.ts",
+        "source:test/experimental/collections-metadata.test.ts",
+        "source:test/experimental/session-navigator-lifecycle.test.ts"
+      ],
+      "revisit": "when adding another reference kind or changing the intake and Collections boundary",
+      "rollback": "revert the native actions and view wiring without changing SQLite metadata, source authorization or preview ownership",
+      "summary": "ADR-085: Collections Reference Entrypoint and Intake Separation",
+      "bytes": 5796,
+      "sha256": "39759bfe4fcb6bde682e5e8e557376a62d4f4e64c16f7d1115de95fb8157fa52"
+    },
+    {
+      "id": "086-import-canvas-and-toolbar-entrypoint",
+      "path": "docs/decisions/086-import-canvas-and-toolbar-entrypoint.md",
+      "title": "Import Canvas and Collections Toolbar Entrypoint",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "navigator",
+        "intake",
+        "webview-panel",
+        "drag-and-drop"
+      ],
+      "evidence": [
+        "source:src/experimental/session-navigator/source-drop-html.ts",
+        "source:src/experimental/session-navigator/source-drop-view.ts",
+        "source:src/experimental/session-navigator/tree-provider.ts",
+        "test/experimental/source-drop-html.test.ts",
+        "test/experimental/source-drop-view.test.ts"
+      ],
+      "revisit": "after real Windows Explorer drag acceptance and when a supported modal extension surface becomes available",
+      "rollback": "restore the sidebar intake view and its title placement while retaining the bounded preview and authorization owners",
+      "summary": "ADR-086: Import Canvas and Collections Toolbar Entrypoint",
+      "bytes": 5428,
+      "sha256": "69ae3e77d467ff27e5428d3e333cee47d604639298c41f918b1b97c5afbf74db"
+    },
+    {
+      "id": "087-save-as-collection-onboarding",
+      "path": "docs/decisions/087-save-as-collection-onboarding.md",
+      "title": "Save As and Collection Onboarding",
+      "kind": "decision",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "navigator",
+        "collections",
+        "save-as",
+        "authorization"
+      ],
+      "evidence": [
+        "source:src/experimental/session-navigator/session-previews.ts",
+        "source:src/experimental/session-navigator/tree-provider.ts",
+        "source:src/experimental/session-navigator/collections-tree-provider.ts",
+        "source:src/extension/observability/lifecycle-failure.ts",
+        "test/experimental/session-navigator-lifecycle.test.ts",
+        "test/extension/observability/lifecycle-failure.test.ts"
+      ],
+      "revisit": "when changing Save As follow-up actions, exact-file authorization, or Collection reference semantics",
+      "rollback": "remove the post-save listener and filing flow while retaining the verified Save As action and saved-copy availability",
+      "summary": "ADR-087: Save As and Collection Onboarding",
+      "bytes": 5185,
+      "sha256": "f52a107afcb4806bd52dbb5d30f56b138a72fec2d0daa23e71d5dfbbe39f3479"
+    },
+    {
+      "id": "2026-11-09-agent-integration-adapters",
+      "path": "docs/superpowers/plans/2026-11-09-agent-integration-adapters.md",
+      "title": "Agent Integration Adapters Implementation Plan",
+      "kind": "guide",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "acp",
+        "mcp",
+        "plugins",
+        "runtime"
+      ],
+      "evidence": [],
+      "revisit": "after implementation gates or a compatibility boundary changes",
+      "rollback": "revert the integration adapter change set and retain the prior local read-only path",
+      "summary": "Agent Integration Adapters Implementation Plan",
+      "bytes": 9648,
+      "sha256": "e7b25b53e4f26feb870fb85572fd27dbecc944b1ca2e05c4945bf962b069893e"
+    },
+    {
+      "id": "acceleration-roadmap",
+      "path": "docs/acceleration-roadmap.md",
+      "title": "Acceleration roadmap",
+      "kind": "roadmap",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "fallback",
+        "native",
+        "performance",
+        "roadmap"
+      ],
+      "evidence": [],
+      "revisit": "when a measured workload changes the acceleration boundary",
+      "rollback": "supersede the roadmap entry and retain the prior record",
+      "summary": "Acceleration roadmap",
+      "bytes": 14221,
+      "sha256": "12004c5312ad2953f737390439b39579cb0602ed361ef56e2673252b9ed0ab15"
+    },
+    {
+      "id": "architecture-v2-roadmap",
+      "path": "docs/architecture-v2-roadmap.md",
+      "title": "JsonlView V2 Architecture Roadmap",
+      "kind": "roadmap",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "control-plane",
+        "mcp",
+        "native",
+        "projection",
+        "staged-mutation"
+      ],
+      "evidence": [],
+      "revisit": "when a V2 capability passes its stage gate or a plane boundary changes",
+      "rollback": "disable the capability and retain the portable read-only path",
+      "summary": "JsonlView V2 Architecture Roadmap",
+      "bytes": 4907,
+      "sha256": "007b0d534c7ed5c89e3979dfa098c78b775e3d1690ade3e531e23cd6dd9a50f4"
+    },
+    {
+      "id": "continuous-improvement",
+      "path": "docs/continuous-improvement.md",
+      "title": "Continuous improvement loop",
+      "kind": "guide",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "maintenance",
+        "reliability",
+        "rollback"
+      ],
+      "evidence": [],
+      "revisit": "when the maintenance or evidence workflow changes",
+      "rollback": "supersede this guide with the prior workflow",
+      "summary": "Continuous improvement loop",
+      "bytes": 5884,
+      "sha256": "15403d83d5c5854a59d640731dc76ec0e82b4bbfc254dfd619adc558f716b81d"
+    },
+    {
+      "id": "dataset-observations",
+      "path": "docs/dataset-observations.md",
+      "title": "Dataset observations",
+      "kind": "guide",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "bounded-scan",
+        "datasets",
+        "insights",
+        "projection"
+      ],
+      "evidence": [],
+      "revisit": "when dataset observation fields, budgets or scope change",
+      "rollback": "remove optional dataset observations while retaining Generic inspection",
+      "summary": "Dataset observations",
+      "bytes": 5710,
+      "sha256": "f53b32d824ec45c04c106627da48b9bb16baa575e7af8a89b3ee2e3a93b88ddc"
+    },
+    {
+      "id": "decisions-index",
+      "path": "docs/decisions/README.md",
+      "title": "JsonlView Decisions",
+      "kind": "index",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "architecture",
+        "decisions",
+        "documentation"
+      ],
+      "evidence": [],
+      "revisit": "when the decision record topology changes",
+      "rollback": "restore the previous decision index",
+      "summary": "JsonlView Decisions",
+      "bytes": 12891,
+      "sha256": "5ddcc9559c2cc31d1a90ca5c8e49ef44a83642e33811d2d3f60aab59e22384b7"
+    },
+    {
+      "id": "docs-index",
+      "path": "docs/README.md",
+      "title": "Product Documentation",
+      "kind": "index",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "documentation",
+        "ownership",
+        "public-surface"
+      ],
+      "evidence": [],
+      "revisit": "when the documentation topology changes",
+      "rollback": "remove this catalog entry in a reviewed metadata migration",
+      "summary": "Product Documentation",
+      "bytes": 6115,
+      "sha256": "067a23fee85dd4366d5bdba252601cee7315d5f8a3e30c25b2577d0de9b1df0d"
+    },
+    {
+      "id": "format-and-profile-boundaries",
+      "path": "docs/format-and-profile-boundaries.md",
+      "title": "Format and profile boundaries",
+      "kind": "guide",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "contracts",
+        "jsonl",
+        "profiles"
+      ],
+      "evidence": [],
+      "revisit": "when a source format or profile contract changes",
+      "rollback": "restore the prior contract and supersede this guide",
+      "summary": "Format and profile boundaries",
+      "bytes": 13384,
+      "sha256": "0beba73c379f280b751d6451402de2a58ce697ae37e4cb5ee78b19f1fae39da0"
+    },
+    {
+      "id": "kimi-format-profile",
+      "path": "docs/kimi-format-profile.md",
+      "title": "Kimi persisted session profile",
+      "kind": "guide",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "jsonl",
+        "kimi",
+        "profiles",
+        "read-only"
+      ],
+      "evidence": [],
+      "revisit": "when the upstream Kimi wire storage contract changes",
+      "rollback": "remove the Kimi registration and retain Generic access",
+      "summary": "Kimi persisted session profile",
+      "bytes": 13241,
+      "sha256": "81b4e37fe83a35ef03c873dc7b63166bff791832e4e85c0d88bbbbc97f10a8de"
+    },
+    {
+      "id": "marketplace-publishing",
+      "path": "docs/marketplace-publishing.md",
+      "title": "Visual Studio Marketplace publication",
+      "kind": "guide",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "marketplace",
+        "provenance",
+        "release"
+      ],
+      "evidence": [],
+      "revisit": "when the marketplace publication contract changes",
+      "rollback": "stop promotion and use the prior release runbook",
+      "summary": "Visual Studio Marketplace publication",
+      "bytes": 6033,
+      "sha256": "8a50809b4fdc9cce1cd0c5b60bbb9cf8b1abb3909fb03b37c682b49b0be8a56d"
+    },
+    {
+      "id": "mcp-local-plan",
+      "path": "docs/mcp-local-plan.md",
+      "title": "Local MCP and Audit Plan",
+      "kind": "guide",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "audit",
+        "mcp",
+        "otel",
+        "redaction",
+        "staging"
+      ],
+      "evidence": [],
+      "revisit": "when the read-only MCP transport or trust boundary gains evidence",
+      "rollback": "keep MCP disabled and retain local read-only navigation",
+      "summary": "Local MCP and Audit Plan",
+      "bytes": 9052,
+      "sha256": "81633289e93815e2dfc6908784dc9c5480de267706592f88b94f52cef562cb18"
+    },
+    {
+      "id": "metadata-index",
+      "path": "docs/metadata/README.md",
+      "title": "Documentation Metadata Contract",
+      "kind": "policy",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "documentation",
+        "governance",
+        "metadata",
+        "lifecycle"
+      ],
+      "evidence": [],
+      "revisit": "when the document schema or lifecycle operations change",
+      "rollback": "restore the previous validator and regenerate the index from the last accepted revision",
+      "summary": "Documentation Metadata Contract",
+      "bytes": 3085,
+      "sha256": "a3674601adeadbb7c3c658f30aedd7e4adf9d8535a48d5b19772ab87bef0fdaf"
+    },
+    {
+      "id": "navigator-bridge",
+      "path": "docs/designs/navigator-bridge.md",
+      "title": "Navigator Bridge in Record Detail",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "authorization",
+        "navigator",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when the Host publishes Navigator authorization status",
+      "rollback": "remove the bridge and retain the top-level Navigator action",
+      "summary": "Navigator bridge in the record detail",
+      "bytes": 1958,
+      "sha256": "2a48a6cfd0aa024bd94f022eb8735bb51df40e2d06815fc57e615e8ce9087995"
+    },
+    {
+      "id": "navigator-collections",
+      "path": "docs/designs/navigator-collections.md",
+      "title": "Navigator Collections Overview",
+      "kind": "design",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "navigator",
+        "overview",
+        "persistence"
+      ],
+      "evidence": [
+        "decision:ADR-064",
+        "source-contract:collections-tree-provider",
+        "test-contract:collections-store"
+      ],
+      "revisit": "when collection metadata ownership, source-qualified references, intake, or the independent Navigator view boundaries change",
+      "rollback": "revert the implemented Collections slice while preserving source/provider data and retaining owned collection metadata for recovery",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "at each collection identity, persistence, intake, or Navigator ownership contract change",
+      "x-last-reviewed": "2026-11-06",
+      "x-supersedes": "docs/archive/navigator-collections-20261031/navigator-collections-pre-split.md",
+      "summary": "Navigator Collections Overview",
+      "bytes": 8124,
+      "sha256": "727235f66ad1ae8ae77542f28726f0459295b2323763d8e605e169b20808003a"
+    },
+    {
+      "id": "navigator-collections-20261031-index",
+      "path": "docs/archive/navigator-collections-20261031/README.md",
+      "title": "Navigator Collections Documentation Migration Record",
+      "kind": "index",
+      "status": "archived",
+      "owner": "product",
+      "tags": [
+        "archive",
+        "collections",
+        "documentation",
+        "migration"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "when the replacement document set changes or historical traceability is audited",
+      "rollback": "restore the prior document path through a reviewed documentation migration and regenerate docs/index.json",
+      "x-priority": "P2",
+      "x-freshness": "current",
+      "x-review-cadence": "review when replacement links or archive policy changes",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Navigator collections documentation migration",
+      "bytes": 1542,
+      "sha256": "a5ac06fd23eab7737888eea2e0564dcd0aed51db3cc591e04d67df14fcf69140"
+    },
+    {
+      "id": "navigator-collections-actions",
+      "path": "docs/designs/navigator-collections-actions.md",
+      "title": "Navigator Collections VS Code Actions and Context Menus",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "actions",
+        "collections",
+        "context-menu",
+        "navigator"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f",
+        "https://code.visualstudio.com/api/references/contribution-points#contributes.menus",
+        "https://code.visualstudio.com/api/extension-guides/tree-view#view-actions",
+        "https://code.visualstudio.com/api/extension-guides/webview#context-menus"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-10",
+      "summary": "Current implementation boundary (2026-11-10)",
+      "bytes": 19540,
+      "sha256": "a2b6b95216471cbfe49c548b6402c608a1b0cdebb14e94ff6bfa45b26412119b"
+    },
+    {
+      "id": "navigator-collections-contracts",
+      "path": "docs/designs/navigator-collections-contracts.md",
+      "title": "Navigator Collections Domain Types and Store API",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "application-contract",
+        "collections",
+        "store-api",
+        "types"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Current implementation boundary (2026-11-06)",
+      "bytes": 23293,
+      "sha256": "02263a19a103485cd444198092bf0838e344c777e46835a1a91152c0d87bcdce"
+    },
+    {
+      "id": "navigator-collections-domain",
+      "path": "docs/designs/navigator-collections-domain.md",
+      "title": "Navigator Collections Domain Model and DAG",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "domain-model",
+        "navigator",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Current implementation boundary (2026-11-06)",
+      "bytes": 10982,
+      "sha256": "c865748e7acf1318e632d931e16632f07946deae848af8d12f198b9f576d6adb"
+    },
+    {
+      "id": "navigator-collections-pre-split",
+      "path": "docs/archive/navigator-collections-20261031/navigator-collections-pre-split.md",
+      "title": "Navigator Collections Metadata and Application Contract (pre-split)",
+      "kind": "design",
+      "status": "archived",
+      "owner": "product",
+      "tags": [
+        "application-contract",
+        "archive",
+        "collections",
+        "navigator",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "when the split document set or migration record changes",
+      "rollback": "restore the archived source at its prior path only through a reviewed documentation migration",
+      "x-priority": "P2",
+      "x-freshness": "stale",
+      "x-review-cadence": "review only when tracing historical design decisions",
+      "x-last-reviewed": "2026-11-01",
+      "x-superseded-by": "docs/designs/navigator-collections.md",
+      "summary": "Navigator collections: metadata and application contract",
+      "bytes": 98499,
+      "sha256": "7c61f2bf679ab5cba791d329e08be54228cc058e6d26d388b36626a4ac9c8b11"
+    },
+    {
+      "id": "navigator-collections-sqlite",
+      "path": "docs/designs/navigator-collections-sqlite.md",
+      "title": "Navigator Collections SQLite DDL and WAL",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "sqlite",
+        "transactions",
+        "persistence"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f",
+        "https://nodejs.org/docs/latest-v24.x/api/sqlite.html"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Current implementation boundary (2026-11-06)",
+      "bytes": 32900,
+      "sha256": "dcd68ecfee9c0c7e050ade24ec92c7ad575e2689b3c8fdfbf8b324e3530c430d"
+    },
+    {
+      "id": "navigator-collections-validation",
+      "path": "docs/designs/navigator-collections-validation.md",
+      "title": "Navigator Collections Validation, Migration, and Rollback",
+      "kind": "design",
+      "status": "proposed",
+      "owner": "product",
+      "tags": [
+        "collections",
+        "migration",
+        "rollback",
+        "validation"
+      ],
+      "evidence": [
+        "product-revision:14f7bfcd75edf25232c932da0dddf58a3682896f"
+      ],
+      "revisit": "before implementation and when provider identity or persistence contracts change",
+      "rollback": "withdraw the proposal and retain the source-preserving metadata boundary",
+      "x-priority": "P1",
+      "x-freshness": "current",
+      "x-review-cadence": "before implementation and at each contract change",
+      "x-last-reviewed": "2026-11-01",
+      "summary": "Current implementation boundary (2026-11-06)",
+      "bytes": 11697,
+      "sha256": "c8768c5a29a11f8d6f5c8ac79a1eaaaa92d03d8a84ae6312622a2ba0051e671b"
+    },
+    {
+      "id": "postmortem-policy",
+      "path": "docs/operations/postmortem-policy.md",
+      "title": "Incident Review and Postmortem Contract",
+      "kind": "policy",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "incidents",
+        "learning",
+        "operations"
+      ],
+      "evidence": [],
+      "revisit": "when incident response ownership changes",
+      "rollback": "use the previous policy and supersede this version",
+      "summary": "Incident Review and Postmortem Contract",
+      "bytes": 1796,
+      "sha256": "73565ea7ee9e71c78be57cc4eef0812fa822da45e37f3677c2b35bb608391b38"
+    },
+    {
+      "id": "promotion-runbook",
+      "path": "docs/promotion-runbook.md",
+      "title": "Promotion Runbook",
+      "kind": "guide",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "promotion",
+        "release",
+        "rollback"
+      ],
+      "evidence": [],
+      "revisit": "when a public distribution target changes",
+      "rollback": "revert the runbook change and retain the old gate",
+      "summary": "Promotion Runbook",
+      "bytes": 7722,
+      "sha256": "bfbf7cf764806220f5f1d03fba2942197a1cd3500c7b44bd4e326bf5eddd7083"
+    },
+    {
+      "id": "query-studio-and-navigator",
+      "path": "docs/designs/query-studio-and-navigator.md",
+      "title": "Query Studio And Navigator Interaction Contract",
+      "kind": "design",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "insights",
+        "navigator",
+        "query",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when a queued interaction or native Navigator composition is accepted",
+      "rollback": "restore the previous header composition and retain physical sources",
+      "summary": "Query Studio and Navigator interaction contract",
+      "bytes": 16773,
+      "sha256": "89c7751ec5b86a51b123a332f1fe89e983f29740e5cf1f5f7ce21a5ba0b2226d"
+    },
+    {
+      "id": "rust-engineering-rules",
+      "path": "docs/rust-engineering-rules.md",
+      "title": "Rust Native Engineering Rules",
+      "kind": "policy",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "abi",
+        "bounds",
+        "fallback",
+        "native",
+        "rust"
+      ],
+      "evidence": [],
+      "revisit": "when native ownership or promotion gates change",
+      "rollback": "disable native selection and use the portable scanner",
+      "summary": "Rust Native Engineering Rules",
+      "bytes": 2484,
+      "sha256": "f3ee3cb841890f18891af2c74f84b119b284f9dbdcc97fb8156fabe53e227c7c"
+    },
+    {
+      "id": "service-levels",
+      "path": "docs/reliability/service-levels.md",
+      "title": "Reliability Service Levels",
+      "kind": "reliability",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "error-budget",
+        "reliability",
+        "sli",
+        "slo"
+      ],
+      "evidence": [],
+      "revisit": "when reliability budgets or runtime surfaces change",
+      "rollback": "retain the last accepted service-level policy",
+      "summary": "Reliability Service Levels",
+      "bytes": 3067,
+      "sha256": "a3c95a60fa2285882bf29774858ba6fe659e52398758245d5df986a9c60e86c6"
+    },
+    {
+      "id": "theme-adaptation",
+      "path": "docs/designs/theme-adaptation.md",
+      "title": "Theme Adaptation Design",
+      "kind": "design",
+      "status": "accepted",
+      "owner": "product",
+      "tags": [
+        "accessibility",
+        "content-fidelity",
+        "design",
+        "vscode-theme",
+        "webview"
+      ],
+      "evidence": [],
+      "revisit": "when host-theme ownership or interaction tokens change",
+      "rollback": "restore the accepted design baseline",
+      "summary": "Theme Adaptation Design",
+      "bytes": 25677,
+      "sha256": "0cd89bdca6634cb889e68127b8085f885474bb9c9585b37c9b91541f3a6f80a3"
+    },
+    {
+      "id": "threat-model",
+      "path": "docs/security/threat-model.md",
+      "title": "Security Threat Model",
+      "kind": "security",
+      "status": "active",
+      "owner": "product",
+      "tags": [
+        "security",
+        "threat-model",
+        "trust-boundary"
+      ],
+      "evidence": [],
+      "revisit": "when an input, permission, or execution boundary changes",
+      "rollback": "restore the prior threat model and record the trigger",
+      "summary": "Security Threat Model",
+      "bytes": 4117,
+      "sha256": "56e0a1b71d86a39adec3abe0f13de9415bb0c6cdf62beac731dd35303583bf3f"
+    }
+  ]
+}

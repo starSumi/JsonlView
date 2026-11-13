@@ -9,6 +9,8 @@ export {
   type GetDetailOptions,
   type GetProblemsOptions,
   type GetRowsOptions,
+  type InspectRowsOptions,
+  type RowInspectionPage,
   type IndexMoreOptions,
   type JsonlEngineOptions,
   type NativeNewlineScannerSetting,
@@ -17,7 +19,7 @@ export {
   type SourceRefreshKind,
   type SourceRefreshResult,
 } from './jsonl-engine';
-export type { RowScanBudget } from '../shared/types';
+export type { RowScanBudget } from '@shared/types';
 export { JsonlEngineError, isAbortError, type EngineErrorCode } from './errors';
 export {
   evaluatePredicate,

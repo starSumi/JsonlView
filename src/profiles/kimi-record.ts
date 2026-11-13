@@ -1,0 +1,262 @@
+import type { AgentRowProjection } from '@shared/types';
+import { isObject, numberAt, objectAt, own, stringAt } from './utils';
+
+// Persisted agent-core-v2 wire records, not the similarly named transport protocol.
+export const KIMI_SOURCE_REVISION = 'ef727e517923cb312cb48d42825c49dfacd528e7';
+const MESSAGE_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
+const MAX_PARTS = 16;
+const TEXT_BUDGET = 240;
+const MAX_TOOL_SNAPSHOT_ITEMS = 32;
+
+export function isKimiMetadata(value: unknown): boolean {
+  const version = stringAt(value, 'protocol_version');
+  return stringAt(value, 'type') === 'metadata'
+    && isSupportedKimiWireVersion(version)
+    && kimiTimestamp(numberAt(value, 'created_at')) !== undefined;
+}
+
+export function isKimiAgentCoreRecord(value: unknown): boolean {
+  switch (stringAt(value, 'type')) {
+    case 'llm.tools_snapshot':
+      return isKimiToolsSnapshot(value);
+    case 'task.started':
+      return stringAt(objectAt(value, 'info'), 'description') !== undefined
+        || stringAt(value, 'description') !== undefined;
+    case 'prompt.steered':
+      return isObject(value) && Array.isArray(own(value, 'content'));
+    case 'config.update':
+      return isObject(value) && ['systemPrompt', 'modelAlias', 'profileName', 'thinkingEffort', 'thinkingLevel']
+        .some((field) => typeof own(value, field) === 'string');
+    case 'profile.bind':
+      return isObject(value) && hasStringFields(value, 'agentId', 'thinkingEffort', 'systemPrompt')
+        && isStringList(own(value, 'disallowedTools'));
+    case 'runtime.set_binding':
+      return hasStringFields(value, 'agentId', 'workspaceId', 'runtimeId');
+    case 'permission.set_mode':
+      return hasStringFields(value, 'agentId', 'mode');
+    case 'plugin.session_start':
+      return isObject(value) && hasStringFields(value, 'agentId')
+        && (own(value, 'content') === null || typeof own(value, 'content') === 'string');
+    case 'agent.message.appended': {
+      const message = objectAt(value, 'message', 'message');
+      return stringAt(value, 'kind') === 'event' && message !== undefined
+        && MESSAGE_ROLES.has(stringAt(message, 'role') ?? '')
+        && Array.isArray(own(message, 'content'));
+    }
+    case 'agent.turn.started':
+      return isObject(value) && stringAt(value, 'kind') === 'event'
+        && hasIntegerField(value, 'turnId') && hasOptionalStringField(value, 'queueItemId');
+    case 'agent.turn.ended':
+      return isObject(value) && stringAt(value, 'kind') === 'event' && hasIntegerField(value, 'turnId')
+        && isEnumValue(own(value, 'outcome'), ['done', 'failed', 'aborted']);
+    case 'turn.ended':
+      return isObject(value) && hasStringFields(value, 'agentId') && hasIntegerField(value, 'turnId')
+        && isEnumValue(own(value, 'reason'), ['completed', 'cancelled', 'failed', 'blocked']);
+    case 'llm.request':
+      return isObject(value) && hasStringFields(value, 'agentId', 'provider', 'model', 'systemPromptHash', 'toolsHash')
+        && isEnumValue(own(value, 'kind'), ['loop', 'compaction'])
+        && typeof own(value, 'toolSelect') === 'boolean' && hasNumberField(value, 'messageCount');
+    case 'usage.record': {
+      const usage = objectAt(value, 'usage');
+      return hasStringFields(value, 'agentId', 'model') && usage !== undefined
+        && ['inputOther', 'output', 'inputCacheRead', 'inputCacheCreation']
+          .every((field) => hasNonnegativeNumberField(usage, field));
+    }
+    case 'token_counting.measured':
+      return hasStringFields(value, 'agentId') && hasNonnegativeNumberField(value, 'length')
+        && hasNonnegativeNumberField(value, 'tokens');
+    case 'token_counting.turn_recorded':
+      return hasStringFields(value, 'agentId') && hasIntegerField(value, 'turnId')
+        && hasNonnegativeNumberField(value, 'length') && hasNonnegativeNumberField(value, 'tokens');
+    case 'task.terminated': {
+      const info = objectAt(value, 'info');
+      return hasStringFields(value, 'agentId') && info !== undefined
+        && hasStringFields(info, 'taskId', 'description', 'status', 'kind')
+        && isEnumValue(own(info, 'status'), ['running', 'completed', 'failed', 'timed_out', 'killed', 'lost'])
+        && hasNumberField(info, 'startedAt')
+        && (own(info, 'endedAt') === null || hasNumberField(info, 'endedAt'));
+    }
+    case 'turn.steer':
+      return isObject(value) && hasOptionalAgentId(value) && Array.isArray(own(value, 'input'))
+        && stringAt(value, 'origin', 'kind') !== undefined;
+    case 'prompt.completed':
+      return isObject(value) && hasStringFields(value, 'agentId', 'promptId', 'finishedAt')
+        && stringAt(value, 'promptId') !== undefined
+        && isEnumValue(own(value, 'reason'), ['completed', 'failed', 'blocked']);
+    case 'mcp.tools_discovered':
+      return isKimiMcpToolsDiscovered(value);
+    case 'tools.set_active_tools':
+      return isObject(value) && hasOptionalAgentId(value) && isStringList(own(value, 'names'));
+    case 'turn.prompt':
+      return isObject(value) && hasOptionalAgentId(value) && Array.isArray(own(value, 'input'))
+        && stringAt(value, 'origin', 'kind') !== undefined;
+    case 'context.append_message': {
+      const message = objectAt(value, 'message');
+      return message !== undefined && MESSAGE_ROLES.has(stringAt(message, 'role') ?? '')
+        && Array.isArray(own(message, 'content')) && Array.isArray(own(message, 'toolCalls'));
+    }
+    case 'context.append_loop_event': {
+      const event = objectAt(value, 'event');
+      if (!event) return false;
+      switch (stringAt(event, 'type')) {
+        case 'step.begin':
+        case 'step.end':
+          return stringAt(event, 'uuid') !== undefined;
+        case 'content.part':
+          return stringAt(event, 'stepUuid') !== undefined
+            && stringAt(event, 'part', 'type') !== undefined;
+        case 'tool.call':
+          return stringAt(event, 'stepUuid') !== undefined
+            && stringAt(event, 'toolCallId') !== undefined
+            && (stringAt(event, 'name') !== undefined
+              || own(event, 'command') !== undefined
+              || stringAt(event, 'display', 'command') !== undefined
+              || stringAt(event, 'args', 'command') !== undefined);
+        case 'tool.result': {
+          const output = objectAt(event, 'result')?.output;
+          return stringAt(event, 'toolCallId') !== undefined
+            && (typeof output === 'string' || Array.isArray(output));
+        }
+        default:
+          return false;
+      }
+    }
+    default:
+      return false;
+  }
+}
+
+/** @deprecated Use isKimiAgentCoreRecord for the full persisted event family. */
+export const isKimiContextRecord: (value: unknown) => boolean = isKimiAgentCoreRecord;
+
+function isKimiMcpToolsDiscovered(value: unknown): boolean {
+  if (!isObject(value) || !hasOptionalAgentId(value)
+    || stringAt(value, 'serverName') === undefined || stringAt(value, 'hash') === undefined) return false;
+  const tools = own(value, 'tools');
+  const enabledNames = own(value, 'enabledNames');
+  if (!Array.isArray(tools) || !isStringList(enabledNames)) return false;
+  for (const tool of tools.slice(0, MAX_TOOL_SNAPSHOT_ITEMS)) {
+    if (!isObject(tool) || stringAt(tool, 'name') === undefined || stringAt(tool, 'description') === undefined
+      || !Object.prototype.hasOwnProperty.call(tool, 'inputSchema')) return false;
+  }
+  return true;
+}
+
+function isStringList(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  for (const item of value) {
+    if (typeof item !== 'string') return false;
+  }
+  return true;
+}
+
+function hasOptionalAgentId(value: Record<string, unknown>): boolean {
+  const agentId = own(value, 'agentId');
+  return agentId === undefined || typeof agentId === 'string';
+}
+
+function hasStringFields(value: unknown, ...fields: readonly string[]): boolean {
+  return isObject(value) && fields.every((field) => typeof own(value, field) === 'string');
+}
+
+function hasNumberField(value: unknown, field: string): boolean {
+  return isObject(value) && typeof own(value, field) === 'number'
+    && Number.isSafeInteger(own(value, field));
+}
+
+function hasNonnegativeNumberField(value: unknown, field: string): boolean {
+  if (!isObject(value)) return false;
+  const candidate = own(value, field);
+  return typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate >= 0;
+}
+
+function hasIntegerField(value: unknown, field: string): boolean {
+  return hasNumberField(value, field);
+}
+
+function hasOptionalStringField(value: Record<string, unknown>, field: string): boolean {
+  const fieldValue = own(value, field);
+  return fieldValue === undefined || typeof fieldValue === 'string';
+}
+
+function isEnumValue(value: unknown, allowed: readonly string[]): boolean {
+  return typeof value === 'string' && allowed.includes(value);
+}
+
+function isSupportedKimiWireVersion(version: string | undefined): boolean {
+  if (version === undefined || !version.startsWith('1.') || version.length < 3 || version.length > 5) return false;
+  for (let index = 2; index < version.length; index += 1) {
+    const code = version.charCodeAt(index);
+    if (code < 48 || code > 57) return false;
+  }
+  return true;
+}
+
+/** Kimi's durable tool snapshot schema, bounded at the inspection edge. */
+export function isKimiToolsSnapshot(value: unknown): boolean {
+  if (!isObject(value) || stringAt(value, 'type') !== 'llm.tools_snapshot'
+    || stringAt(value, 'agentId') === undefined || stringAt(value, 'hash') === undefined) return false;
+  const tools = own(value, 'tools');
+  if (!Array.isArray(tools)) return false;
+  for (let index = 0; index < Math.min(tools.length, MAX_TOOL_SNAPSHOT_ITEMS); index += 1) {
+    const tool = tools[index];
+    if (!isObject(tool) || stringAt(tool, 'name') === undefined || stringAt(tool, 'description') === undefined
+      || !isObject(own(tool, 'parameters'))) return false;
+  }
+  return true;
+}
+
+export function kimiToolSnapshotCount(value: unknown): number | undefined {
+  const tools = isObject(value) ? own(value, 'tools') : undefined;
+  return isKimiToolsSnapshot(value) && Array.isArray(tools) ? tools.length : undefined;
+}
+
+/** Numeric wire timestamps are epoch milliseconds. No unit guessing or path IO. */
+export function kimiTimestamp(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isSafeInteger(value) || value < 0) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/** Bounded preview only; encrypted/hidden thinking and media payloads stay opaque. */
+export function kimiContentPreview(value: unknown): string {
+  if (typeof value === 'string') return value.slice(0, TEXT_BUDGET);
+  if (!Array.isArray(value)) return '';
+  let text = '';
+  for (let index = 0; index < Math.min(value.length, MAX_PARTS) && text.length < TEXT_BUDGET; index++) {
+    const part = value[index];
+    const type = stringAt(part, 'type');
+    let fragment: string | undefined;
+    if (type === 'text') fragment = stringAt(part, 'text');
+    else if (type === 'think') {
+      fragment = isObject(part) && (own(part, 'hidden') === true || own(part, 'encrypted') !== undefined)
+        ? '[hidden reasoning]' : stringAt(part, 'think');
+    } else if (type === 'image_url' || type === 'audio_url' || type === 'video_url') {
+      fragment = `[${type.slice(0, -4)} reference]`;
+    } else if (type) fragment = `[${type.slice(0, 48)}]`;
+    if (fragment) text += `${text ? ' ' : ''}${fragment.slice(0, TEXT_BUDGET - text.length)}`;
+  }
+  return text.slice(0, TEXT_BUDGET);
+}
+
+/** Kimi splits input tokens into uncached, cache-read and cache-creation buckets. */
+export function kimiUsage(value: unknown): AgentRowProjection['usage'] | undefined {
+  if (!isObject(value)) return undefined;
+  const inputOther = tokenCount(value, 'inputOther');
+  const cached = tokenCount(value, 'inputCacheRead');
+  const created = tokenCount(value, 'inputCacheCreation');
+  const output = tokenCount(value, 'output');
+  const sum = inputOther !== undefined && cached !== undefined && created !== undefined
+    ? inputOther + cached + created : undefined;
+  const input = sum !== undefined && Number.isSafeInteger(sum) ? sum : undefined;
+  const total = input !== undefined && output !== undefined && Number.isSafeInteger(input + output)
+    ? input + output : undefined;
+  if (input === undefined && output === undefined && cached === undefined) return undefined;
+  return { ...(input !== undefined ? { input } : {}), ...(output !== undefined ? { output } : {}),
+    ...(cached !== undefined ? { cached } : {}), ...(total !== undefined ? { total } : {}) };
+}
+
+function tokenCount(value: Record<string, unknown>, key: string): number | undefined {
+  const count = own(value, key);
+  return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}

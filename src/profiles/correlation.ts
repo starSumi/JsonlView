@@ -1,4 +1,4 @@
-import type { AgentEvidence } from '../shared/types';
+import type { AgentEvidence } from '@shared/types';
 import type {
   AgentProfile,
   CorrelationEvidence,

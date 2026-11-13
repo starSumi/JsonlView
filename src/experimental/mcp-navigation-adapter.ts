@@ -16,6 +16,42 @@ export type McpNavigationProtocolVersion = (typeof MCP_NAVIGATION_PROTOCOL_VERSI
 
 export const MCP_NAVIGATION_TOOL_NAME = 'jsonlview_query_session_metadata' as const;
 
+export interface McpNavigationCapabilityDescriptor {
+  readonly id: 'jsonlview.mcp.navigation';
+  readonly status: 'experimental';
+  readonly enabledByDefault: false;
+  readonly transport: 'none';
+  readonly process: 'none';
+  readonly network: false;
+  readonly commandExecution: false;
+  readonly sourceMutation: false;
+  readonly providerDatabaseWrite: false;
+  readonly redaction: 'metadata-only';
+  readonly identifiers: 'opaque';
+  readonly protocolVersions: readonly [McpNavigationProtocolVersion, McpNavigationProtocolVersion];
+  readonly tools: ReadonlyArray<{
+    readonly name: typeof MCP_NAVIGATION_TOOL_NAME;
+    readonly readOnly: true;
+    readonly destructive: false;
+  }>;
+  readonly limits: {
+    readonly default: Readonly<{
+      readonly maxEntities: number;
+      readonly maxRelations: number;
+      readonly maxRecords: number;
+      readonly maxMilliseconds: number;
+      readonly maxBytes: number;
+    }>;
+    readonly maximum: Readonly<{
+      readonly maxEntities: number;
+      readonly maxRelations: number;
+      readonly maxRecords: number;
+      readonly maxMilliseconds: number;
+      readonly maxBytes: number;
+    }>;
+  };
+}
+
 const DEFAULT_BUDGET: Required<McpNavigationBudget> = Object.freeze({
   maxEntities: 500,
   maxRelations: 2_000,
@@ -29,6 +65,34 @@ const MAX_BUDGET: Required<McpNavigationBudget> = Object.freeze({
   maxRecords: 50_000,
   maxMilliseconds: 10_000,
   maxBytes: 1024 * 1024,
+});
+
+/**
+ * Static opt-in capability metadata for host discovery. Reading this value
+ * does not construct a facade, inspect a provider, or create a transport.
+ */
+export const MCP_NAVIGATION_CAPABILITY: McpNavigationCapabilityDescriptor = Object.freeze({
+  id: 'jsonlview.mcp.navigation',
+  status: 'experimental',
+  enabledByDefault: false,
+  transport: 'none',
+  process: 'none',
+  network: false,
+  commandExecution: false,
+  sourceMutation: false,
+  providerDatabaseWrite: false,
+  redaction: 'metadata-only',
+  identifiers: 'opaque',
+  protocolVersions: MCP_NAVIGATION_PROTOCOL_VERSIONS,
+  tools: Object.freeze([Object.freeze({
+    name: MCP_NAVIGATION_TOOL_NAME,
+    readOnly: true,
+    destructive: false,
+  })] as const),
+  limits: Object.freeze({
+    default: DEFAULT_BUDGET,
+    maximum: MAX_BUDGET,
+  }),
 });
 const MAX_LIMIT = 100;
 const MAX_CURSOR_COUNT = 64;

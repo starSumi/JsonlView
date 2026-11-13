@@ -1,4 +1,4 @@
-import type { EventPresentationSection } from '../features/event-presentation/model';
+import type { EventPresentationSection } from '@features/event-presentation/model';
 
 export type CodexEventObject = Record<string, unknown>;
 

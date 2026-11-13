@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bundleInventoryDigest, compareBundleInventories } from './bundle-integrity.mjs';
+import { bundleInventoryDigest, compareBundleInventories, DISTRIBUTION_FILES } from './bundle-integrity.mjs';
 import { inspectNpmTarball } from './npm-tarball-integrity.mjs';
 import { inspectVsixArchive } from './vsix-archive-integrity.mjs';
 
@@ -72,8 +72,8 @@ function bundleFromNpmFiles(files) {
   if (selected.length === 0) return undefined;
   const bytes = selected.reduce((sum, file) => sum + file.bytes, 0);
   const hash = new Map(selected.map((file) => [file.path, file]));
-  const ordered = ['extension.cjs', 'webview.css', 'webview.js'].map((path) => hash.get(path)).filter(Boolean);
-  if (ordered.length !== 3 || selected.length !== 3) return undefined;
+  const ordered = DISTRIBUTION_FILES.map((path) => hash.get(path)).filter(Boolean);
+  if (ordered.length !== DISTRIBUTION_FILES.length || selected.length !== DISTRIBUTION_FILES.length) return undefined;
   return { files: ordered, bytes, sha256: bundleInventoryDigest(ordered) };
 }
 

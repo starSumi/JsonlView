@@ -1,3 +1,15 @@
+---
+id: "030-provider-native-session-navigator-contract"
+path: "docs/decisions/030-provider-native-session-navigator-contract.md"
+title: "Provider-Native Session Navigator Contract"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["contract","provider","session-navigator"]
+evidence: []
+revisit: "when provider-native metadata contracts change"
+rollback: "use the provider-neutral navigation contract"
+---
 # ADR-030: Provider-Native Session Navigator Contract
 
 Status: experimental

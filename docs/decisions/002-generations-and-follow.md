@@ -1,3 +1,15 @@
+---
+id: "002-generations-and-follow"
+path: "docs/decisions/002-generations-and-follow.md"
+title: "Generations And Follow Handoff"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["follow","generations","lifecycle"]
+evidence: []
+revisit: "when source refresh or follow semantics change"
+rollback: "supersede ADR-002 and restore prior lifecycle behavior"
+---
 # ADR-002: Generations And Follow Handoff
 
 Status: accepted
@@ -72,10 +84,37 @@ blocked until Rebuild. A destructive classification cannot be downgraded by a la
 hint for the same generation; a transient unknown may recover after a verified
 append classification.
 
+Source Follow and table viewport following are independent. With Follow enabled,
+safe new snapshots continue to be adopted while the user reads history. The
+Webview keeps one bounded reading page and restores its physical record anchor
+and row offset across safe generation changes and layout changes. User scrolling,
+selection, search, and page navigation enter Reading; they never suspend source
+updates. An in-flight explicit page keeps its complete cursor through generation
+adoption, unsolicited profile projection, and bounded empty-page recovery.
+A fixed New activity control remains until the current generation's
+newest physical row is actually visible. Back to bottom requests the bounded
+latest page and resumes viewport following; it clears search and filters while
+keeping physical row order. Request completion alone does not clear activity.
+User scrolling to the fully visible current source tail also resumes viewport
+following without replacing the page, clearing query input, or selecting a
+different record. The end of a historical or filtered page does not establish
+that the source tail is visible. Layout restoration and active text selection
+or editable input do not resume following.
+Existing grid navigation and Escape-to-close keep their keyboard meanings.
+
+This supersedes the earlier detail-tail navigation decision. Detail always
+retains the explicitly selected physical record, including outside the current
+table page. A safe append rebinds that intent through the complete physical
+record identity without changing the clicked record. Truncate, replace, and
+delete never inherit that intent. Closing the drawer clears its open intent,
+so a cancelled or late detail response cannot reopen it. Presentation keys can
+survive a verified generation rebind; transport authorization still requires the
+complete generation-bound reference.
+
 ## Evidence
 
 `src/engine/jsonl-engine.ts`, `src/extension/` controllers, follow policy tests,
-and the harness operations report. The full-range proof is deliberately
+Webview detail-recovery tests, and the harness operations report. The full-range proof is deliberately
 conservative: a positional file handle is not an immutable filesystem
 snapshot, so a moving writer is never silently treated as append-only. The
 large-file stable-resync path is explicitly a replacement snapshot, not an

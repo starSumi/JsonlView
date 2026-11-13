@@ -13,10 +13,28 @@ import { resolveNpmInvocation, resolvePnpmInvocation } from './package-manager-i
 import { getReleaseTargets } from './release-targets.mjs';
 import { locateNativeBinary } from './verify-native-provenance.mjs';
 import { extractReferencedAssets } from './check-public-surface.mjs';
+import { projectArtifactReadme, VSIX_PUBLIC_ASSETS } from './vsix-package-policy.mjs';
+import { assertExecutionIdentityMatchesSource, verifyBuiltExecutionIdentityForSource } from './execution-identity.mjs';
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, '..');
 const canonicalNpmName = getReleaseTargets().npm.name;
+
+export const NPM_PUBLIC_DOCUMENTS = Object.freeze([
+  'docs/format-and-profile-boundaries.md',
+]);
+export const NPM_PUBLIC_ASSETS = VSIX_PUBLIC_ASSETS;
+export const NPM_PUBLIC_FILES = Object.freeze([
+  'dist',
+  'native/jsonl-core',
+  ...NPM_PUBLIC_DOCUMENTS,
+  ...NPM_PUBLIC_ASSETS,
+  'third_party/licenses',
+  'README.md',
+  'CHANGELOG.md',
+  'LICENSE.txt',
+  'THIRD-PARTY-NOTICES.txt',
+]);
 
 if (isMainModule()) await main();
 
@@ -97,6 +115,7 @@ try {
   if (options.dist === undefined) await run('pnpm', ['build']);
   const frozenDist = resolve(options.dist ?? resolve(root, 'dist'));
   if (publicCandidate) await assertOutsideSourceTree(frozenDist, 'frozen dist');
+  const executionIdentity = await verifyBuiltExecutionIdentityForSource({ rootDirectory: root, distDirectory: frozenDist, requireCleanProduction: publicCandidate });
   const frozenBundle = await inventoryFrozenBundle(frozenDist);
   await mkdir(artifactRoot, { recursive: true });
   if (options.native === undefined) {
@@ -148,20 +167,8 @@ try {
     repository: sourcePackage.repository,
     type: sourcePackage.type,
     main: './dist/extension.cjs',
-    private: publicCandidate ? false : true,
-    files: [
-      'dist',
-      'native/jsonl-core',
-      'docs/acceleration-roadmap.md',
-      'docs/format-and-profile-boundaries.md',
-      'docs/decisions',
-      'docs/assets',
-      'third_party/licenses',
-      'README.md',
-      'CHANGELOG.md',
-      'LICENSE.txt',
-      'THIRD-PARTY-NOTICES.txt',
-    ],
+    private: !publicCandidate,
+    files: NPM_PUBLIC_FILES,
     ...(publicCandidate ? {
       publishConfig: {
         access: 'public',
@@ -187,24 +194,30 @@ try {
   if (stagedNativeSha256 !== nativeProvenance.binaries?.rebuilt?.sha256) {
     throw new Error('staged npm native addon differs from the verified frozen candidate');
   }
-  for (const relativePath of [
-    'docs/acceleration-roadmap.md',
-    'docs/format-and-profile-boundaries.md',
-  ]) {
+  for (const relativePath of NPM_PUBLIC_DOCUMENTS) {
     await cp(resolve(root, relativePath), resolve(output, relativePath));
   }
-  // Keep npm's public asset payload aligned with README; retired screenshots
-  // may remain in the checkout but are excluded from the candidate package.
+  // Keep the static public asset allowlist synchronized with README. A new
+  // README image must be reviewed before it becomes a package payload.
   const readme = await readFile(resolve(root, 'README.md'), 'utf8');
-  for (const asset of extractReferencedAssets(readme)) {
+  const referencedAssets = extractReferencedAssets(readme);
+  if (JSON.stringify(referencedAssets) !== JSON.stringify(NPM_PUBLIC_ASSETS)) {
+    throw new Error('README public assets differ from the reviewed npm/VSIX allowlist.');
+  }
+  for (const asset of NPM_PUBLIC_ASSETS) {
     const sourceAsset = resolve(root, asset);
     const stagedAsset = resolve(output, asset);
     await mkdir(dirname(stagedAsset), { recursive: true });
     await cp(sourceAsset, stagedAsset);
   }
-  await cp(resolve(root, 'docs/decisions'), resolve(output, 'docs/decisions'), { recursive: true });
   await cp(resolve(root, 'third_party/licenses'), resolve(output, 'third_party/licenses'), { recursive: true });
-  for (const file of ['README.md', 'CHANGELOG.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt']) {
+  const projectedReadme = projectArtifactReadme(readme, {
+    repositoryUrl: sourcePackage.repository?.url,
+    commitSha: gitState.sha,
+    allowedPaths: NPM_PUBLIC_FILES.filter((path) => path.startsWith('docs/')),
+  });
+  await writeFile(resolve(output, 'README.md'), projectedReadme, 'utf8');
+  for (const file of ['CHANGELOG.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt']) {
     await cp(resolve(root, file), resolve(output, file));
   }
 
@@ -212,6 +225,7 @@ try {
   const npmTarball = await createAndInspectTarball(output, tarballPath, options.replace, packageJson, files);
   const finalGitState = await readGitState();
   assertGitStateStable(gitState, finalGitState);
+  await assertExecutionIdentityMatchesSource(root, executionIdentity, { requireCleanProduction: publicCandidate });
   const manifest = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -223,6 +237,7 @@ try {
       gitState: gitState.dirty ? 'dirty' : 'clean',
       statusSha256: gitState.statusSha256,
       diffSha256: gitState.diffSha256,
+      executionIdentity,
     },
     package: {
       name: packageJson.name,
@@ -231,7 +246,7 @@ try {
       // package.json does not need a VS Code publisher field, but the paired
       // VSIX and npm candidates must still be tied to the same owner/repo.
       publisher: sourcePackage.publisher ?? null,
-      private: publicCandidate ? false : true,
+      private: !publicCandidate,
       license: packageJson.license,
       repository: packageJson.repository ?? null,
     },
@@ -488,6 +503,8 @@ function assertNativeDeclaration(value) {
     'export declare function abiVersion(): number;',
     'export declare function capabilities(): number;',
     'export declare function scanLf(input: Uint8Array, start: number, limit: number): Uint32Array;',
+    'export declare function mcpManagerCapability(): number;',
+    'export declare class McpManager',
   ]) {
     if (!value.includes(signature)) throw new Error(`native candidate declaration is missing: ${signature}`);
   }

@@ -1,3 +1,15 @@
+---
+id: "003-native-acceleration"
+path: "docs/decisions/003-native-acceleration.md"
+title: "Native Acceleration"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["fallback","native","performance"]
+evidence: []
+revisit: "when measured native parity or packaging changes"
+rollback: "disable native selection and use the portable scanner"
+---
 # ADR-003: Native Acceleration
 
 Status: accepted, experimental

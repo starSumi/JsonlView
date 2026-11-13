@@ -4,6 +4,8 @@ use napi_derive::napi;
 
 pub const ABI_VERSION: u32 = 2;
 pub const CAPABILITY_SCAN_LF: u32 = 1 << 0;
+pub const CAPABILITY_MCP_MANAGER: u32 = 1 << 1;
+pub const CAPABILITY_QUERY_RECORDS: u32 = 1 << 2;
 pub const MAX_SCAN_OFFSETS: u32 = 16 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -20,11 +22,16 @@ pub fn validate_scan_limit(limit: u32) -> std::result::Result<usize, ScanError> 
     Ok(limit as usize)
 }
 
-pub fn scan_lf_into_core(
-    input: &[u8],
+/// Return absolute LF offsets while borrowing only the input buffer.
+///
+/// The explicit `use<'input>` bound keeps this public opaque iterator tied to
+/// the borrowed input lifetime without capturing unrelated caller state. The
+/// N-API scanner still owns its result buffer; this helper is the shared Rust
+/// implementation used by the bounded core path.
+pub fn scan_lf_offsets<'input>(
+    input: &'input [u8],
     start: usize,
-    output: &mut [u32],
-) -> std::result::Result<usize, ScanError> {
+) -> std::result::Result<impl Iterator<Item = usize> + use<'input>, ScanError> {
     if input.len() > u32::MAX as usize {
         return Err(ScanError::InputTooLarge);
     }
@@ -32,9 +39,17 @@ pub fn scan_lf_into_core(
         return Err(ScanError::StartOutOfRange);
     }
 
+    Ok(memchr_iter(b'\n', &input[start..]).map(move |relative| start + relative))
+}
+
+pub fn scan_lf_into_core(
+    input: &[u8],
+    start: usize,
+    output: &mut [u32],
+) -> std::result::Result<usize, ScanError> {
     let mut written = 0;
-    for relative in memchr_iter(b'\n', &input[start..]).take(output.len()) {
-        output[written] = u32::try_from(start + relative).map_err(|_| ScanError::InputTooLarge)?;
+    for (slot, absolute) in output.iter_mut().zip(scan_lf_offsets(input, start)?) {
+        *slot = u32::try_from(absolute).map_err(|_| ScanError::InputTooLarge)?;
         written += 1;
     }
     Ok(written)
@@ -47,7 +62,12 @@ pub fn abi_version() -> u32 {
 
 #[napi]
 pub fn capabilities() -> u32 {
-    CAPABILITY_SCAN_LF
+    CAPABILITY_SCAN_LF | CAPABILITY_MCP_MANAGER | CAPABILITY_QUERY_RECORDS
+}
+
+#[napi(js_name = "mcpManagerCapability")]
+pub fn mcp_manager_capability() -> u32 {
+    CAPABILITY_MCP_MANAGER
 }
 
 #[napi(js_name = "scanLf")]
@@ -81,6 +101,32 @@ pub fn scan_lf(input: Uint8Array, start: u32, limit: u32) -> napi::Result<Uint32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scan_with_unrelated_marker<'input>(
+        input: &'input [u8],
+        _marker: &(),
+    ) -> impl Iterator<Item = usize> + use<'input> {
+        scan_lf_offsets(input, 0).expect("valid scan input")
+    }
+
+    #[test]
+    fn exposes_absolute_offsets_through_the_precisely_captured_iterator() {
+        let input = b"prefix\na\nb";
+        let offsets: Vec<_> = scan_lf_offsets(input, 2)
+            .expect("valid scan input")
+            .collect();
+        assert_eq!(offsets, [6, 8]);
+    }
+
+    #[test]
+    fn precise_capture_does_not_retain_an_unrelated_lifetime() {
+        let input = b"a\nb\n";
+        let offsets = {
+            let marker = ();
+            scan_with_unrelated_marker(input, &marker)
+        };
+        assert_eq!(offsets.collect::<Vec<_>>(), [1, 3]);
+    }
 
     #[test]
     fn fills_a_bounded_output_and_resumes_after_the_last_offset() {
@@ -134,3 +180,8 @@ mod tests {
         );
     }
 }
+
+mod mcp_manager;
+mod query_core;
+
+pub use query_core::{query_jsonl, query_records};

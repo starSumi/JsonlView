@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import { open, stat, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { summarizeDatasetRecord } from '@profiles/dataset-analysis';
+import { isBfclV3Candidate, summarizeBfclV3Record } from '@profiles/datasets/bfcl-v3';
+import { summarizeOpenTelemetryRecord } from '@shared/otel-insights';
 import { pathToFileURL } from 'node:url';
+import { projectConversation } from '@profiles/conversation-projection';
 import type {
   AgentRowProjection,
   CellProjection,
@@ -18,13 +22,18 @@ import type {
   RecordRef,
   RowPage,
   RowProjection,
+  RowProjectionPlan,
   RowScanBudget,
   RowSort,
   ScanTruncationReason,
   SnapshotIdentity,
-} from '../shared/types';
-import { MAX_TABLE_COLUMNS } from '../shared/types';
+} from '@shared/types';
+import { resolveRowProjectionPlan } from '@shared/row-projection';
+import { MAX_TABLE_COLUMNS } from '@shared/types';
+import { MAX_SOURCE_FILE_BYTES } from '@shared/source-limits';
 import { JsonlEngineError, isAbortError } from './errors';
+import { assertSourceObservation, observedReadAllowance, observedRowQueryGuard, validateSourceObservation } from './source-observation';
+import { ForwardPageReadWindow } from './forward-page-read-window';
 import { createNewlineScanner } from './newline-scanner';
 import { evaluatePredicate, jsonKindOf, resolveFieldPath } from './predicate';
 import {
@@ -35,18 +44,55 @@ import {
   sortValueForColumn,
 } from './row-sort';
 import { ProgressiveSchemaTracker } from './schema';
+import { QueryTimingAccumulator, createReadWaitObserver, withAsyncTrace, withTrace, type QueryTimingContext } from './query-timing';
 import {
   AdaptiveSegmentIndex,
   type InternalRecordRef,
-  type SegmentIndexDiagnostics,
 } from './segment-index';
+import type {
+  BackgroundIndexHandle,
+  EngineDiagnostics,
+  GetDetailOptions,
+  GetProblemsOptions,
+  GetRowsOptions,
+  IndexMoreOptions,
+  InspectRowsOptions,
+  JsonlEngineOptions,
+  JsonlEngineQueueOperation,
+  JsonlOperationContext,
+  NativeNewlineScannerSetting,
+  RowEnricher,
+  RowInspectionPage,
+  SourceRefreshResult,
+} from './jsonl-engine-types';
+export type {
+  BackgroundIndexHandle,
+  EngineDiagnostics,
+  GetDetailOptions,
+  GetProblemsOptions,
+  GetRowsOptions,
+  IndexMoreOptions,
+  InspectRowsOptions,
+  JsonlEngineOptions,
+  JsonlEngineQueueOperation,
+  JsonlOperationContext,
+  JsonlQueryTiming,
+  NativeNewlineScannerSetting,
+  RowEnricher,
+  RowInspectionPage,
+  SourceRefreshKind,
+  SourceRefreshResult,
+} from './jsonl-engine-types';
 import {
   fingerprintRange,
   fingerprintStableRange,
   fingerprintWholeRange,
+  assertBoundaryFingerprints,
   formatFingerprint,
   type FullSourceFingerprint,
+  type ReadWaitObserver,
   type SourceFingerprint,
+  readFileHandle,
 } from './snapshot-fingerprint';
 
 const DEFAULT_FINGERPRINT_BYTES = 64 * 1024;
@@ -64,6 +110,9 @@ const HARD_SORT_MAX_EXAMINED_RECORDS = 1_000_000;
 const HARD_SORT_MAX_EXAMINED_BYTES = 512 * 1024 * 1024;
 const HARD_SORT_MAX_MILLISECONDS = 60_000;
 const MAX_SORT_WINDOW = 2_048;
+const FORWARD_PAGE_READ_WINDOW_BYTES = 16 * 1024;
+const FORWARD_PAGE_READ_WINDOW_MIN_LIMIT = 100;
+const BACKGROUND_PROGRESS_THROTTLE_MS = 100;
 // Problems are an independent bounded scan. They are not folded into the
 // row page or DocumentSummary, so an explicit request can disclose progress
 // without retaining the complete source or a global problem array in the UI.
@@ -73,99 +122,6 @@ const DEFAULT_PROBLEM_MAX_MILLISECONDS = 5_000;
 const HARD_PROBLEM_MAX_EXAMINED_RECORDS = 1_000_000;
 const HARD_PROBLEM_MAX_EXAMINED_BYTES = 512 * 1024 * 1024;
 const HARD_PROBLEM_MAX_MILLISECONDS = 60_000;
-
-export interface JsonlEngineOptions {
-  documentId?: string;
-  generation?: string;
-  epoch?: number;
-  uri?: string;
-  readChunkBytes?: number;
-  segmentTargetBytes?: number;
-  segmentTargetRecords?: number;
-  exactCacheSegments?: number;
-  maxQueuedOperations?: number;
-  maxRecordBytes?: number;
-  /** Maximum bytes an explicit detail request may hydrate for one record. */
-  fullRecordMaxBytes?: number;
-  pageHydrationMaxBytes?: number;
-  previewBytes?: number;
-  rowPreviewCharacters?: number;
-  defaultColumnLimit?: number;
-  schemaMaxFields?: number;
-  schemaMaxDepth?: number;
-  schemaMaxArrayEntries?: number;
-  schemaMaxExamples?: number;
-  newlineScanner?: NativeNewlineScannerSetting;
-}
-
-export type NativeNewlineScannerSetting = 'off' | 'auto' | 'on';
-
-export interface JsonlOperationContext {
-  generation?: string;
-  signal?: AbortSignal;
-}
-
-export interface RowEnricher {
-  readonly profileId: string;
-  readonly columns?: readonly ColumnSpec[];
-  project(value: unknown, ref: RecordRef): AgentRowProjection | undefined;
-  predicateFields?(
-    projection: AgentRowProjection | undefined,
-    value: unknown,
-    ref: RecordRef,
-  ): Readonly<Record<string, JsonScalar | undefined>>;
-}
-
-export interface GetRowsOptions extends JsonlOperationContext {
-  anchorOrdinal?: string | bigint;
-  direction?: 'forward' | 'backward';
-  limit?: number;
-  predicate?: Predicate;
-  sort?: RowSort;
-  /** Zero-based logical offset used only when sort is present. */
-  sortOffset?: string | bigint;
-  columns?: ColumnSpec[];
-  enricher?: RowEnricher;
-  /** Receives each hydrated record without retaining it in the returned page. */
-  onHydrated?: (record: { value?: unknown; ref: RecordRef; parseState: ParseState }) => void;
-  scanBudget?: RowScanBudget;
-}
-
-export interface GetProblemsOptions extends JsonlOperationContext {
-  anchorOrdinal?: string | bigint;
-  direction?: 'forward' | 'backward';
-  limit?: number;
-  scanBudget?: RowScanBudget;
-}
-
-export interface GetDetailOptions extends JsonlOperationContext {
-  enricher?: RowEnricher;
-  /** Requests complete record hydration within the explicit detail budget. */
-  full?: boolean;
-}
-
-export interface IndexMoreOptions extends JsonlOperationContext {
-  maxBytes?: number;
-}
-
-export interface BackgroundIndexHandle {
-  readonly done: Promise<void>;
-  cancel(): void;
-}
-
-export type SourceRefreshKind = 'unchanged' | 'append' | 'truncate' | 'replace' | 'delete' | 'unknown';
-
-export interface SourceRefreshResult {
-  kind: SourceRefreshKind;
-  previousSizeBytes: string;
-  currentSizeBytes?: string;
-  observedAt: string;
-}
-
-export interface EngineDiagnostics extends SegmentIndexDiagnostics {
-  open: boolean;
-  observedSchemaRecords: string;
-}
 
 interface NormalizedOptions {
   readChunkBytes: number;
@@ -207,30 +163,118 @@ interface SortCandidate {
   key: unknown;
 }
 
+interface SerialExecutorTask {
+  name: JsonlEngineQueueOperation;
+  operation: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+  blockedBy: JsonlEngineQueueOperation;
+  enqueuedAt: number | undefined;
+  onTiming: ((queueWaitMs: number, engineExecMs: number, blockedBy: JsonlEngineQueueOperation) => void) | undefined;
+}
+
+type QueuePriority = 'interactive' | 'background';
+
 class SerialExecutor {
-  private tail: Promise<void> = Promise.resolve();
   private pending = 0;
+  private activeOperation: JsonlEngineQueueOperation | undefined;
+  private readonly interactiveQueue: SerialExecutorTask[] = [];
+  private readonly backgroundQueue: SerialExecutorTask[] = [];
+  private readonly idleWaiters: Array<() => void> = [];
+  private readonly maximumPending: number;
 
-  constructor(private readonly maximumPending: number) {}
+  constructor(maximumPending: number) {
+    this.maximumPending = maximumPending;
+  }
 
-  run<T>(operation: () => Promise<T>): Promise<T> {
+  run<T>(
+    name: JsonlEngineQueueOperation,
+    operation: () => Promise<T>,
+    onTiming?: (queueWaitMs: number, engineExecMs: number, blockedBy: JsonlEngineQueueOperation) => void,
+    priority: QueuePriority = name === 'index_more' ? 'background' : 'interactive',
+  ): Promise<T> {
     if (this.pending >= this.maximumPending) {
       return Promise.reject(new JsonlEngineError(
         'QUEUE_FULL',
         `The JSONL engine already has ${String(this.pending)} pending operations.`,
       ));
     }
+    const isBackground = priority === 'background';
+    const blockedBy = isBackground
+      ? this.backgroundQueue.at(-1)?.name
+        ?? this.interactiveQueue.at(-1)?.name
+        ?? this.activeOperation
+        ?? 'none'
+      : this.interactiveQueue.at(-1)?.name ?? this.activeOperation ?? 'none';
+    const enqueuedAt = onTiming === undefined ? undefined : performance.now();
     this.pending += 1;
-    const result = this.tail.then(operation, operation);
-    this.tail = result.then(
-      () => { this.pending -= 1; },
-      () => { this.pending -= 1; },
-    );
-    return result;
+
+    return new Promise<T>((resolve, reject) => {
+      const task: SerialExecutorTask = {
+        name,
+        operation,
+        resolve: (value) => resolve(value as T),
+        reject,
+        blockedBy,
+        enqueuedAt,
+        onTiming,
+      };
+      (isBackground ? this.backgroundQueue : this.interactiveQueue).push(task);
+      this.dispatch();
+    });
   }
 
   idle(): Promise<void> {
-    return this.tail;
+    if (this.pending === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
+  private dispatch(): void {
+    if (this.activeOperation !== undefined) return;
+    const task = this.interactiveQueue.shift() ?? this.backgroundQueue.shift();
+    if (task === undefined) return;
+
+    this.activeOperation = task.name;
+    const startedAt = task.onTiming === undefined ? undefined : performance.now();
+    const queueWaitMs = task.enqueuedAt === undefined || startedAt === undefined
+      ? undefined
+      : startedAt - task.enqueuedAt;
+    let result: Promise<unknown>;
+    try {
+      result = task.operation();
+    } catch (error) {
+      result = Promise.reject(error);
+    }
+    void result.then(
+      (value) => this.complete(task, startedAt, queueWaitMs, () => task.resolve(value)),
+      (error: unknown) => this.complete(task, startedAt, queueWaitMs, () => task.reject(error)),
+    );
+  }
+
+  private complete(
+    task: SerialExecutorTask,
+    startedAt: number | undefined,
+    queueWaitMs: number | undefined,
+    settle: () => void,
+  ): void {
+    this.activeOperation = undefined;
+    try {
+      if (queueWaitMs !== undefined && startedAt !== undefined) {
+        try {
+          const engineExecMs = performance.now() - startedAt;
+          task.onTiming?.(queueWaitMs, engineExecMs, task.blockedBy);
+        } catch {
+          // A diagnostic callback must never change the operation result.
+        }
+      }
+    } finally {
+      settle();
+      this.pending -= 1;
+      if (this.pending === 0) {
+        for (const resolve of this.idleWaiters.splice(0)) resolve();
+      }
+      this.dispatch();
+    }
   }
 }
 
@@ -241,6 +285,19 @@ class SerialExecutor {
 export class JsonlFileEngine {
   readonly filePath: string;
   readonly snapshot: SnapshotIdentity;
+  private readonly handle: FileHandle;
+  private readonly fileSize: bigint;
+  private readonly options: NormalizedOptions;
+  private readonly sourceDevice: bigint;
+  private readonly sourceInode: bigint;
+  private readonly sourceMtimeMs: number;
+  private readonly sourceMtimeNs: bigint;
+  private readonly sourceCtimeNs: bigint;
+  private readonly prefixFingerprint: SourceFingerprint;
+  private readonly tailFingerprint: SourceFingerprint;
+  private fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined;
+  private fullFingerprintKnown: boolean;
+  private readonly fingerprintAbort: AbortController;
 
   private readonly executor: SerialExecutor;
   private readonly lifecycleAbort = new AbortController();
@@ -254,23 +311,36 @@ export class JsonlFileEngine {
 
   private constructor(
     filePath: string,
-    private readonly handle: FileHandle,
-    private readonly fileSize: bigint,
+    handle: FileHandle,
+    fileSize: bigint,
     snapshot: SnapshotIdentity,
-    private readonly options: NormalizedOptions,
-    private readonly sourceDevice: bigint,
-    private readonly sourceInode: bigint,
-    private readonly sourceMtimeMs: number,
-    private readonly sourceMtimeNs: bigint,
-    private readonly sourceCtimeNs: bigint,
-    private readonly prefixFingerprint: SourceFingerprint,
-    private readonly tailFingerprint: SourceFingerprint,
-    private fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined,
-    private fullFingerprintKnown: boolean,
-    private readonly fingerprintAbort: AbortController,
+    options: NormalizedOptions,
+    sourceDevice: bigint,
+    sourceInode: bigint,
+    sourceMtimeMs: number,
+    sourceMtimeNs: bigint,
+    sourceCtimeNs: bigint,
+    prefixFingerprint: SourceFingerprint,
+    tailFingerprint: SourceFingerprint,
+    fullFingerprint: Promise<FullSourceFingerprint | undefined> | undefined,
+    fullFingerprintKnown: boolean,
+    fingerprintAbort: AbortController,
   ) {
     this.filePath = filePath;
     this.snapshot = snapshot;
+    this.handle = handle;
+    this.fileSize = fileSize;
+    this.options = options;
+    this.sourceDevice = sourceDevice;
+    this.sourceInode = sourceInode;
+    this.sourceMtimeMs = sourceMtimeMs;
+    this.sourceMtimeNs = sourceMtimeNs;
+    this.sourceCtimeNs = sourceCtimeNs;
+    this.prefixFingerprint = prefixFingerprint;
+    this.tailFingerprint = tailFingerprint;
+    this.fullFingerprint = fullFingerprint;
+    this.fullFingerprintKnown = fullFingerprintKnown;
+    this.fingerprintAbort = fingerprintAbort;
     this.executor = new SerialExecutor(options.maxQueuedOperations);
     this.index = new AdaptiveSegmentIndex(handle, fileSize, {
       readChunkBytes: options.readChunkBytes,
@@ -299,6 +369,12 @@ export class JsonlFileEngine {
       const sourceStat = await handle.stat({ bigint: true });
       if (!sourceStat.isFile()) {
         throw new JsonlEngineError('NOT_A_FILE', `JSONL source is not a regular file: ${absolutePath}`);
+      }
+      if (sourceStat.size > MAX_SOURCE_FILE_BYTES) {
+        throw new JsonlEngineError(
+          'SOURCE_TOO_LARGE',
+          `JSONL source exceeds the ${String(MAX_SOURCE_FILE_BYTES / (1024n * 1024n * 1024n))} GiB hard limit: ${absolutePath}`,
+        );
       }
 
       const prefixLength = Number(sourceStat.size < BigInt(DEFAULT_FINGERPRINT_BYTES)
@@ -386,7 +462,7 @@ export class JsonlFileEngine {
   }
 
   indexMore(options: IndexMoreOptions = {}): Promise<DocumentSummary> {
-    return this.enqueue(async () => {
+    return this.enqueue('index_more', async () => {
       const guard = this.makeGuard(options);
       guard();
       await this.assertSnapshotUnchanged(guard);
@@ -397,7 +473,7 @@ export class JsonlFileEngine {
   }
 
   finishIndexing(context: JsonlOperationContext = {}): Promise<DocumentSummary> {
-    return this.enqueue(async () => {
+    return this.enqueue('finish_indexing', async () => {
       const guard = this.makeGuard(context);
       guard();
       await this.assertSnapshotUnchanged(guard);
@@ -424,6 +500,7 @@ export class JsonlFileEngine {
       resolveDone = resolvePromise;
       rejectDone = rejectPromise;
     });
+    let lastProgressReportedAt: number | undefined;
 
     const settle = (error?: unknown): void => {
       if (settled) return;
@@ -444,7 +521,21 @@ export class JsonlFileEngine {
         ...(context.generation === undefined ? {} : { generation: context.generation }),
         signal: controller.signal,
       }).then((summary) => {
-        onProgress?.(summary);
+        if (onProgress !== undefined) {
+          const now = performance.now();
+          if (
+            summary.indexingComplete
+            || lastProgressReportedAt === undefined
+            || now - lastProgressReportedAt >= BACKGROUND_PROGRESS_THROTTLE_MS
+          ) {
+            lastProgressReportedAt = now;
+            try {
+              onProgress(summary);
+            } catch {
+              // Progress observers cannot interrupt indexing.
+            }
+          }
+        }
         if (summary.indexingComplete) settle();
         else setImmediate(step);
       }).catch(settle);
@@ -460,25 +551,85 @@ export class JsonlFileEngine {
   }
 
   getRows(options: GetRowsOptions = {}): Promise<RowPage> {
-    return this.enqueue(async () => {
-      const guard = this.makeGuard(options);
+    return this.queryRows(options, true, 'get_rows');
+  }
+
+  /** Opportunistic page work yields to queued interactive operations at dispatch. */
+  getBackgroundRows(options: GetRowsOptions = {}): Promise<RowPage> {
+    return this.queryRows(options, true, 'get_rows', 'background');
+  }
+
+  /**
+   * Opt-in physical forward pages with stat-only source checks before/after.
+   * Requires an absolute deadline and a positive maxExaminedBytes, also used as
+   * the total content-read request allowance across indexing and hydration.
+   * Metadata changes reject SOURCE_CHANGED; exhausted reads reject
+   * READ_BUDGET_EXCEEDED. Neither check starts a source fingerprint.
+   */
+  getObservedBackgroundRows(options: GetRowsOptions): Promise<RowPage> {
+    return this.queryRows(options, true, 'get_rows', 'background', true);
+  }
+  inspectRows(options: InspectRowsOptions = {}): Promise<RowInspectionPage> {
+    return this.queryRows(options, false, 'inspect_rows').then(({ rows: _rows, columns: _columns, projection: _projection, ...page }) => page);
+  }
+
+  /** Profile probes retain inspection semantics while using the background FIFO. */
+  inspectBackgroundRows(options: InspectRowsOptions = {}): Promise<RowInspectionPage> {
+    return this.queryRows(options, false, 'inspect_rows', 'background').then(({ rows: _rows, columns: _columns, projection: _projection, ...page }) => page);
+  }
+
+  private queryRows(
+    options: GetRowsOptions,
+    materializeRows: boolean,
+    operationName: 'get_rows' | 'inspect_rows',
+    priority: QueuePriority = 'interactive',
+    observedSourceOnly = false,
+  ): Promise<RowPage> {
+    const timing = options.onTiming === undefined ? undefined : new QueryTimingAccumulator();
+    let onReadWait = createReadWaitObserver(timing);
+    return this.enqueue(operationName, async () => {
+      const guard = observedSourceOnly ? observedRowQueryGuard(options, this.makeGuard(options)) : this.makeGuard(options);
+      if (observedSourceOnly) onReadWait = observedReadAllowance(options, guard, onReadWait);
+      const checkSnapshot = () => observedSourceOnly
+        ? assertSourceObservation(() => this.validateObservedSource(options), guard)
+        : this.assertSnapshotUnchanged(guard, onReadWait);
       guard();
-      await this.assertSnapshotUnchanged(guard);
+      await withAsyncTrace(timing, 'snapshotCheckMs', checkSnapshot);
       const limit = boundedInteger(options.limit ?? 100, 1, 500, 'limit');
       const direction = options.direction ?? 'forward';
       const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
+      const returnedByteLimit = normalizeReturnedByteLimit(options.maxReturnedBytes, this.options.pageHydrationMaxBytes);
       const sort = normalizeRowSort(options.sort);
+      const projection = resolveRowProjectionPlan(options.projection, options.enricher?.profileId);
+      const readWindow = direction === 'forward'
+        && limit >= FORWARD_PAGE_READ_WINDOW_MIN_LIMIT
+        && this.options.readChunkBytes >= FORWARD_PAGE_READ_WINDOW_BYTES
+        && options.sort === undefined
+        && options.predicate === undefined
+        && options.enricher === undefined
+        && options.onHydrated === undefined
+        && options.scanBudget === undefined
+        && scanBudget === undefined
+        ? new ForwardPageReadWindow(
+          this.handle,
+          this.fileSize,
+          FORWARD_PAGE_READ_WINDOW_BYTES,
+        )
+        : undefined;
+      const physicalCursor = options.anchorOrdinal !== undefined || options.direction !== undefined;
       if (sort !== undefined) {
-        if (options.anchorOrdinal !== undefined || options.direction !== undefined) {
+        if (physicalCursor && (!isOrdinalSort(sort) || options.sortOffset !== undefined)) {
           throw new JsonlEngineError(
             'INVALID_ARGUMENT',
-            'Sorted row requests cannot also specify a physical anchor or direction.',
+            'Physical cursors require ordinal order and cannot include a sorted offset.',
           );
         }
-        if (isOrdinalSort(sort)) {
-          return this.getOrdinalSortedRows(options, guard, limit, sort);
+        if (isOrdinalSort(sort) && !physicalCursor) {
+          return this.getOrdinalSortedRows(options, guard, limit, sort, materializeRows, projection, timing, onReadWait);
         }
-        return this.getSortedRows(options, guard, limit, sort);
+        if (!isOrdinalSort(sort)) {
+          return this.getSortedRows(options, guard, limit, sort, materializeRows, projection, timing, onReadWait);
+        }
       }
       const anchor = options.anchorOrdinal === undefined
         ? undefined
@@ -507,7 +658,8 @@ export class JsonlFileEngine {
             scanTruncatedReason = 'time_limit';
             break;
           }
-          const internal = await this.index.getRecord(ordinal, guard);
+          const internal = await withAsyncTrace(timing, 'indexWorkMs', () =>
+            this.index.getRecord(ordinal, guard, onReadWait));
           if (internal === undefined) break;
           scanTruncatedReason = scanLimitBeforeNextRecord(
             scanBudget,
@@ -524,7 +676,7 @@ export class JsonlFileEngine {
           }
           if (
             collected.length > 0
-            && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+            && retainedBytes + internal.contentByteLength > returnedByteLimit
           ) {
             // Leave the boundary record unconsumed. The next continuation can
             // present it without sampling a record excluded by this page cap.
@@ -532,15 +684,17 @@ export class JsonlFileEngine {
             scanTruncatedReason = 'hydration_limit';
             break;
           }
-          const candidate = await this.hydrate(internal, guard);
+          const candidate = await this.hydrate(internal, guard, false, readWindow, timing, onReadWait);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
+          guard();
           if (options.predicate !== undefined && candidate.value === undefined) {
             sawUninspectableRecord = true;
           }
           const profile = candidate.value === undefined
             ? undefined
-            : options.enricher?.project(candidate.value, candidate.ref);
-          const matches = this.matches(candidate, options.predicate, options.enricher, profile);
+            : withTrace(timing, 'projectionMs', () => options.enricher?.project(candidate.value, candidate.ref));
+          const matches = withTrace(timing, 'projectionMs', () =>
+            this.matches(candidate, options.predicate, options.enricher, profile));
           if (matches) {
             collected.push(profile === undefined ? { hydrated: candidate } : { hydrated: candidate, profile });
             retainedBytes += candidate.internal.contentByteLength;
@@ -553,9 +707,9 @@ export class JsonlFileEngine {
       } else {
         let ordinal: bigint;
         if (anchor === undefined) {
-          await this.index.finish(guard);
+          await withAsyncTrace(timing, 'indexWorkMs', () => this.index.finish(guard, onReadWait));
           ordinal = this.index.indexedRecords - 1n;
-        } else if (await this.index.ensureOrdinal(anchor, guard)) {
+        } else if (await withAsyncTrace(timing, 'indexWorkMs', () => this.index.ensureOrdinal(anchor, guard, onReadWait))) {
           ordinal = anchor - 1n;
         } else {
           ordinal = this.index.indexedRecords - 1n;
@@ -567,7 +721,8 @@ export class JsonlFileEngine {
             scanTruncatedReason = 'time_limit';
             break;
           }
-          const internal = await this.index.getRecord(ordinal, guard);
+          const internal = await withAsyncTrace(timing, 'indexWorkMs', () =>
+            this.index.getRecord(ordinal, guard, onReadWait));
           if (internal === undefined) break;
           scanTruncatedReason = scanLimitBeforeNextRecord(
             scanBudget,
@@ -584,7 +739,7 @@ export class JsonlFileEngine {
           }
           if (
             collected.length > 0
-            && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+            && retainedBytes + internal.contentByteLength > returnedByteLimit
           ) {
             // Leave the boundary record unconsumed so the next backward page
             // can present it without sampling excluded data.
@@ -592,15 +747,17 @@ export class JsonlFileEngine {
             scanTruncatedReason = 'hydration_limit';
             break;
           }
-          const candidate = await this.hydrate(internal, guard);
+          const candidate = await this.hydrate(internal, guard, false, undefined, timing, onReadWait);
           options.onHydrated?.({ value: candidate.value, ref: candidate.ref, parseState: candidate.state });
+          guard();
           if (options.predicate !== undefined && candidate.value === undefined) {
             sawUninspectableRecord = true;
           }
           const profile = candidate.value === undefined
             ? undefined
-            : options.enricher?.project(candidate.value, candidate.ref);
-          if (this.matches(candidate, options.predicate, options.enricher, profile)) {
+            : withTrace(timing, 'projectionMs', () => options.enricher?.project(candidate.value, candidate.ref));
+          if (withTrace(timing, 'projectionMs', () =>
+            this.matches(candidate, options.predicate, options.enricher, profile))) {
             collected.push(profile === undefined ? { hydrated: candidate } : { hydrated: candidate, profile });
             retainedBytes += candidate.internal.contentByteLength;
           }
@@ -620,10 +777,15 @@ export class JsonlFileEngine {
       }
       let selected = collected.slice(0, limit);
       if (direction === 'backward') selected = selected.reverse();
-      const columns = options.columns === undefined
-        ? this.defaultColumns(options.enricher?.columns)
-        : options.columns.slice(0, MAX_TABLE_COLUMNS);
-      const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+      const columns = materializeRows
+        ? options.columns === undefined
+          ? this.defaultColumns(options.enricher?.columns)
+          : options.columns.slice(0, MAX_TABLE_COLUMNS)
+        : [];
+      const rows = materializeRows
+        ? withTrace(timing, 'projectionMs', () => selected.map(({ hydrated, profile }) =>
+          this.projectRow(hydrated, columns, profile, options.enricher?.profileId, projection)))
+        : [];
       const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
       const lastOrdinal = selected[selected.length - 1]?.hydrated.internal.ordinal;
       // When the bounded probe collected one extra matching row, keep the
@@ -633,39 +795,53 @@ export class JsonlFileEngine {
         ? (direction === 'forward' ? lastOrdinal : firstOrdinal)
         : scanCursor;
       const total = this.index.totalRecords;
+      const cursorAdvanced = continuationCursor !== undefined && (anchor === undefined
+        || (direction === 'forward' ? continuationCursor > anchor : continuationCursor < anchor));
+      const hasPhysicalRemainder = continuationCursor !== undefined && (direction === 'forward'
+        ? total === undefined || continuationCursor + 1n < total
+        : continuationCursor > 0n);
+      const canContinue = hasExtra && cursorAdvanced && hasPhysicalRemainder;
+      const hasBefore = direction === 'backward'
+        ? canContinue
+        : firstOrdinal !== undefined ? firstOrdinal > 0n : anchor !== undefined && anchor > 0n;
+      const hasAfter = direction === 'forward'
+        ? canContinue
+        : lastOrdinal !== undefined ? (total === undefined || lastOrdinal + 1n < total)
+          : anchor !== undefined && (total === undefined || anchor + 1n < total);
+      // The scan selects an adjacent physical window; the ordinal sort controls presentation.
+      if (sort?.direction === 'desc') rows.reverse();
 
-      await this.assertSnapshotUnchanged(guard);
+      await withAsyncTrace(timing, 'snapshotCheckMs', checkSnapshot);
 
       return {
         rows,
         columns,
+        ...(options.projection === undefined ? {} : { projection }),
         anchorOrdinal: direction === 'forward'
           ? (lastOrdinal ?? anchor ?? 0n).toString()
           : (firstOrdinal ?? anchor ?? 0n).toString(),
-        hasBefore: direction === 'backward'
-          ? hasExtra
-          : firstOrdinal !== undefined
-            ? firstOrdinal > 0n
-            : anchor !== undefined && anchor > 0n,
-        hasAfter: direction === 'forward'
-          ? hasExtra
-          : lastOrdinal !== undefined
-            ? (total === undefined || lastOrdinal + 1n < total)
-            : anchor !== undefined
-              && anchor + 1n < (total ?? this.index.indexedRecords),
+        hasBefore: sort?.direction === 'desc' ? hasAfter : hasBefore,
+        hasAfter: sort?.direction === 'desc' ? hasBefore : hasAfter,
+        ...(sort === undefined ? {} : { sort }),
         indexedRecords: this.index.indexedRecords.toString(),
         ...(total === undefined ? {} : { totalRecords: total.toString() }),
-        ...(scanBudget === undefined && !stoppedByBudget && scanTruncatedReason === undefined ? {} : {
+        ...(sort === undefined && scanBudget === undefined && !stoppedByBudget && scanTruncatedReason === undefined ? {} : {
           scan: {
             examinedRecords: examinedRecords.toString(),
             examinedBytes: examinedBytes.toString(),
             ...(continuationCursor === undefined ? {} : { cursorOrdinal: continuationCursor.toString() }),
-            ...(scanTruncatedReason === undefined ? {} : { direction }),
+            ...(sort === undefined && scanTruncatedReason === undefined ? {} : { direction }),
             ...(scanTruncatedReason === undefined ? {} : { truncatedReason: scanTruncatedReason }),
           },
         }),
       };
-    });
+    }, timing === undefined ? undefined : (queueWaitMs, engineExecMs, blockedBy) => {
+      try {
+        options.onTiming?.(timing.toTiming(queueWaitMs, engineExecMs, blockedBy));
+      } catch {
+        // Timing callbacks are observational and cannot change query results.
+      }
+    }, priority);
   }
 
   /**
@@ -677,15 +853,17 @@ export class JsonlFileEngine {
     guard: () => void,
     limit: number,
     sort: RowSort,
+    materializeRows: boolean,
+    projection: RowProjectionPlan,
+    timing: QueryTimingContext,
+    onReadWait: ReadWaitObserver | undefined,
   ): Promise<RowPage> {
     const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
     const direction = sort.direction === 'desc' ? 'backward' : 'forward';
     const scanBudget = normalizeRowScanBudget(options.scanBudget, direction);
-    await this.index.finish(guard);
+    const returnedByteLimit = normalizeReturnedByteLimit(options.maxReturnedBytes, this.options.pageHydrationMaxBytes);
+    await withAsyncTrace(timing, 'indexWorkMs', () => this.index.finish(guard, onReadWait));
     const total = this.index.totalRecords ?? this.index.indexedRecords;
-    const columns = options.columns === undefined
-      ? this.defaultColumns(options.enricher?.columns)
-      : options.columns.slice(0, MAX_TABLE_COLUMNS);
     const selected: Array<{ hydrated: HydratedRecord; profile?: AgentRowProjection }> = [];
     let retainedBytes = 0n;
     let examinedRecords = 0n;
@@ -703,21 +881,21 @@ export class JsonlFileEngine {
         const ordinal = direction === 'forward' ? first + BigInt(index) : first - BigInt(index);
         if (ordinal < 0n || ordinal >= total) break;
         guard();
-        const internal = await this.index.getRecord(ordinal, guard);
+        const internal = await withAsyncTrace(timing, 'indexWorkMs', () => this.index.getRecord(ordinal, guard, onReadWait));
         if (internal === undefined) break;
         if (
           selected.length > 0
-          && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+          && retainedBytes + internal.contentByteLength > returnedByteLimit
         ) {
           hydrationTruncated = true;
           truncatedReason = 'hydration_limit';
           break;
         }
-        const hydrated = await this.hydrate(internal, guard);
+        const hydrated = await this.hydrate(internal, guard, false, undefined, timing, onReadWait);
         options.onHydrated?.({ value: hydrated.value, ref: hydrated.ref, parseState: hydrated.state });
         const profile = hydrated.value === undefined
           ? undefined
-          : options.enricher?.project(hydrated.value, hydrated.ref);
+          : withTrace(timing, 'projectionMs', () => options.enricher?.project(hydrated.value, hydrated.ref));
         selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
         retainedBytes += internal.contentByteLength;
         examinedRecords += 1n;
@@ -732,7 +910,7 @@ export class JsonlFileEngine {
         guard();
         truncatedReason = scanLimitBeforeNextRecord(scanBudget, examinedRecords, examinedBytes);
         if (truncatedReason !== undefined) break;
-        const internal = await this.index.getRecord(ordinal, guard);
+        const internal = await withAsyncTrace(timing, 'indexWorkMs', () => this.index.getRecord(ordinal, guard, onReadWait));
         if (internal === undefined) break;
         if (
           scanBudget?.maxExaminedBytes !== undefined
@@ -741,18 +919,19 @@ export class JsonlFileEngine {
           truncatedReason = 'byte_limit';
           break;
         }
-        const hydrated = await this.hydrate(internal, guard);
+        const hydrated = await this.hydrate(internal, guard, false, undefined, timing, onReadWait);
         options.onHydrated?.({ value: hydrated.value, ref: hydrated.ref, parseState: hydrated.state });
         if (hydrated.value === undefined) sawUninspectableRecord = true;
         const profile = hydrated.value === undefined
           ? undefined
-          : options.enricher?.project(hydrated.value, hydrated.ref);
-        if (this.matches(hydrated, options.predicate, options.enricher, profile)) {
+          : withTrace(timing, 'projectionMs', () => options.enricher?.project(hydrated.value, hydrated.ref));
+        if (withTrace(timing, 'projectionMs', () =>
+          this.matches(hydrated, options.predicate, options.enricher, profile))) {
           matchedRecords += 1n;
           if (matchedRecords > offset && selected.length < limit) {
             if (
               selected.length > 0
-              && retainedBytes + internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+              && retainedBytes + internal.contentByteLength > returnedByteLimit
             ) {
               hydrationTruncated = true;
               truncatedReason = 'hydration_limit';
@@ -778,7 +957,16 @@ export class JsonlFileEngine {
       }
     }
 
-    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+    // Hydration observes schema fields needed by a cold page's default columns.
+    const columns = materializeRows
+      ? options.columns === undefined
+        ? this.defaultColumns(options.enricher?.columns)
+        : options.columns.slice(0, MAX_TABLE_COLUMNS)
+      : [];
+    const rows = materializeRows
+      ? withTrace(timing, 'projectionMs', () => selected.map(({ hydrated, profile }) =>
+        this.projectRow(hydrated, columns, profile, options.enricher?.profileId, projection)))
+      : [];
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
     const lastOrdinal = selected.at(-1)?.hydrated.internal.ordinal;
     const hasMoreMatches = options.predicate === undefined
@@ -787,11 +975,12 @@ export class JsonlFileEngine {
     // A scan limit establishes an incomplete result, not another logical page.
     // Restarting a rank-based request cannot continue beyond that same budget.
     const hasAfter = hydrationTruncated || hasMoreMatches;
-    await this.assertSnapshotUnchanged(guard);
+    await withAsyncTrace(timing, 'snapshotCheckMs', () => this.assertSnapshotUnchanged(guard, onReadWait));
 
     return {
       rows,
       columns,
+      ...(options.projection === undefined ? {} : { projection }),
       anchorOrdinal: (lastOrdinal ?? firstOrdinal ?? 0n).toString(),
       hasBefore: offset > 0n,
       hasAfter,
@@ -824,6 +1013,10 @@ export class JsonlFileEngine {
     guard: () => void,
     limit: number,
     sort: RowSort,
+    materializeRows: boolean,
+    projection: RowProjectionPlan,
+    timing: QueryTimingContext,
+    onReadWait: ReadWaitObserver | undefined,
   ): Promise<RowPage> {
     const offset = parseNonNegativeBigInt(options.sortOffset ?? '0', 'sortOffset');
     const windowEnd = offset + BigInt(limit);
@@ -834,6 +1027,7 @@ export class JsonlFileEngine {
       );
     }
     const scanBudget = normalizeSortScanBudget(options.scanBudget);
+    const returnedByteLimit = normalizeReturnedByteLimit(options.maxReturnedBytes, this.options.pageHydrationMaxBytes);
     let columns = options.columns === undefined
       ? this.defaultColumns(options.enricher?.columns)
       : options.columns.slice(0, MAX_TABLE_COLUMNS);
@@ -866,7 +1060,7 @@ export class JsonlFileEngine {
         truncatedReason = 'time_limit';
         break;
       }
-      const internal = await this.index.getRecord(ordinal, guard);
+      const internal = await withAsyncTrace(timing, 'indexWorkMs', () => this.index.getRecord(ordinal, guard, onReadWait));
       if (internal === undefined) break;
       truncatedReason = scanLimitBeforeNextRecord(scanBudget, examinedRecords, examinedBytes);
       if (truncatedReason !== undefined) break;
@@ -877,15 +1071,16 @@ export class JsonlFileEngine {
         truncatedReason = 'byte_limit';
         break;
       }
-      const hydrated = await this.hydrate(internal, guard);
+      const hydrated = await this.hydrate(internal, guard, false, undefined, timing, onReadWait);
       options.onHydrated?.({ value: hydrated.value, ref: hydrated.ref, parseState: hydrated.state });
       if (options.predicate !== undefined && hydrated.value === undefined) {
         sawUninspectableRecord = true;
       }
       const profile = hydrated.value === undefined
         ? undefined
-        : options.enricher?.project(hydrated.value, hydrated.ref);
-      if (this.matches(hydrated, options.predicate, options.enricher, profile)) {
+        : withTrace(timing, 'projectionMs', () => options.enricher?.project(hydrated.value, hydrated.ref));
+      if (withTrace(timing, 'projectionMs', () =>
+        this.matches(hydrated, options.predicate, options.enricher, profile))) {
         matchedRecords += 1n;
         const candidate: SortCandidate = {
           internal,
@@ -908,19 +1103,22 @@ export class JsonlFileEngine {
       guard();
       if (
         selected.length > 0
-        && retainedBytes + candidate.internal.contentByteLength > BigInt(this.options.pageHydrationMaxBytes)
+        && retainedBytes + candidate.internal.contentByteLength > returnedByteLimit
       ) {
         hydrationTruncated = true;
         break;
       }
-      const hydrated = await this.hydrate(candidate.internal, guard);
+      const hydrated = await this.hydrate(candidate.internal, guard, false, undefined, timing, onReadWait);
       const profile = hydrated.value === undefined
         ? undefined
-        : options.enricher?.project(hydrated.value, hydrated.ref);
+        : withTrace(timing, 'projectionMs', () => options.enricher?.project(hydrated.value, hydrated.ref));
       selected.push(profile === undefined ? { hydrated } : { hydrated, profile });
       retainedBytes += candidate.internal.contentByteLength;
     }
-    const rows = selected.map(({ hydrated, profile }) => this.projectRow(hydrated, columns, profile));
+    const rows = materializeRows
+      ? withTrace(timing, 'projectionMs', () => selected.map(({ hydrated, profile }) =>
+        this.projectRow(hydrated, columns, profile, options.enricher?.profileId, projection)))
+      : [];
     const hasMoreRetainedMatches = candidates.length > Number(windowEnd);
     const hasAfter = hydrationTruncated || hasMoreRetainedMatches;
     const firstOrdinal = selected[0]?.hydrated.internal.ordinal;
@@ -931,11 +1129,12 @@ export class JsonlFileEngine {
     const sortNextOffset = selected.length < selectedCandidates.length
       ? offset + BigInt(selected.length)
       : undefined;
-    await this.assertSnapshotUnchanged(guard);
+    await withAsyncTrace(timing, 'snapshotCheckMs', () => this.assertSnapshotUnchanged(guard, onReadWait));
 
     return {
       rows,
       columns,
+      ...(options.projection === undefined ? {} : { projection }),
       // Keep a physical anchor for detail/rebuild diagnostics. Sorted paging
       // itself uses sortOffset and never interprets this as a logical rank.
       anchorOrdinal: (lastOrdinal ?? firstOrdinal ?? 0n).toString(),
@@ -962,7 +1161,7 @@ export class JsonlFileEngine {
    * as a complete-file problem index.
    */
   getProblems(options: GetProblemsOptions = {}): Promise<ProblemPage> {
-    return this.enqueue(async () => {
+    return this.enqueue('get_problems', async () => {
       const guard = this.makeGuard(options);
       guard();
       await this.assertSnapshotUnchanged(guard);
@@ -1071,7 +1270,7 @@ export class JsonlFileEngine {
   }
 
   getDetail(ref: RecordRef, options: GetDetailOptions = {}): Promise<RecordDetail> {
-    return this.enqueue(async () => {
+    return this.enqueue('get_detail', async () => {
       const guard = this.makeGuard({
         generation: options.generation ?? ref.generation,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1098,12 +1297,48 @@ export class JsonlFileEngine {
     });
   }
 
+  /** Exact record content for the host-only read-only text adapter; no JSON hydration. */
+  getRecordText(ref: RecordRef, maxBytes: number): Promise<{ sourceGeneration: string; text: string; complete: boolean }> {
+    return this.enqueue('get_detail', async () => {
+      const limit = boundedInteger(maxBytes, 1, 1_048_576, 'maxBytes');
+      const guard = this.makeGuard({ generation: ref.generation });
+      guard();
+      if (!await this.validateObservedSource({ generation: ref.generation })) {
+        throw new JsonlEngineError('SOURCE_CHANGED', 'The source changed before the bounded text read.');
+      }
+      const ordinal = parseNonNegativeBigInt(ref.ordinal, 'ref.ordinal');
+      if (ordinal >= this.index.indexedRecords) {
+        throw new JsonlEngineError('INVALID_RECORD_REF', 'The record is outside the current indexed snapshot.');
+      }
+      const internal = await this.index.getRecord(ordinal, guard);
+      if (internal === undefined || !sameCoordinates(internal, ref, this.snapshot.generation)) {
+        throw new JsonlEngineError('INVALID_RECORD_REF', 'Record coordinates do not match the current snapshot index.');
+      }
+      if (internal.contentByteLength > BigInt(limit)) {
+        return { sourceGeneration: this.snapshot.generation, text: '', complete: false };
+      }
+      await assertBoundaryFingerprints(this.handle, this.fileSize, this.prefixFingerprint, this.tailFingerprint, guard);
+      const bytes = await this.readExactly(internal.byteStart, Number(internal.contentByteLength), guard);
+      let text: string;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        throw new JsonlEngineError('INVALID_ARGUMENT', 'Read-only record text requires valid UTF-8.');
+      }
+      await assertBoundaryFingerprints(this.handle, this.fileSize, this.prefixFingerprint, this.tailFingerprint, guard);
+      if (!await this.validateObservedSource({ generation: ref.generation })) {
+        throw new JsonlEngineError('SOURCE_CHANGED', 'The source changed during the bounded text read.');
+      }
+      return { sourceGeneration: this.snapshot.generation, text, complete: true };
+    });
+  }
+
   getSchema(
     offset = 0,
     limit = 100,
     context: JsonlOperationContext = {},
   ): Promise<{ fields: FieldStats[]; totalFields: number; complete: boolean }> {
-    return this.enqueue(async () => {
+    return this.enqueue('get_schema', async () => {
       const guard = this.makeGuard(context);
       guard();
       const safeOffset = boundedInteger(offset, 0, Number.MAX_SAFE_INTEGER, 'offset');
@@ -1114,8 +1349,21 @@ export class JsonlFileEngine {
     });
   }
 
+  /**
+   * Bounded metadata observation for presentation handoffs. This does not prove
+   * content equality or classify append recovery, and never hashes source bytes.
+   * No queue mutation is involved, so callers may use it inside an engine task.
+   */
+  async validateObservedSource(context: JsonlOperationContext = {}): Promise<boolean> {
+    return validateSourceObservation({
+      filePath: this.filePath, handle: this.handle, isInvalidated: () => this.invalidated,
+      device: this.sourceDevice, inode: this.sourceInode, size: this.fileSize,
+      mtimeNs: this.sourceMtimeNs, ctimeNs: this.sourceCtimeNs,
+    }, this.makeGuard(context));
+  }
+
   classifyRefresh(context: JsonlOperationContext = {}): Promise<SourceRefreshResult> {
-    return this.enqueue(async () => {
+    return this.enqueue('classify_refresh', async () => {
       const guard = this.makeGuard(context);
       guard();
       const observedAt = new Date().toISOString();
@@ -1244,9 +1492,14 @@ export class JsonlFileEngine {
     }
   }
 
-  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+  private enqueue<T>(
+    name: JsonlEngineQueueOperation,
+    operation: () => Promise<T>,
+    onTiming?: (queueWaitMs: number, engineExecMs: number, blockedBy: JsonlEngineQueueOperation) => void,
+    priority?: QueuePriority,
+  ): Promise<T> {
     this.assertAccepting();
-    return this.executor.run(operation);
+    return this.executor.run(name, operation, onTiming, priority);
   }
 
   private assertAccepting(): void {
@@ -1269,7 +1522,10 @@ export class JsonlFileEngine {
     };
   }
 
-  private async assertSnapshotUnchanged(guard?: () => void): Promise<void> {
+  private async assertSnapshotUnchanged(
+    guard?: () => void,
+    onReadWait?: ReadWaitObserver,
+  ): Promise<void> {
     guard?.();
     if (this.invalidated) {
       throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source no longer matches this snapshot.');
@@ -1301,12 +1557,13 @@ export class JsonlFileEngine {
       throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source was truncated after this snapshot opened.');
     }
     if (current.size > this.fileSize) {
-      const prefix = await fingerprintRange(this.handle, 0n, this.prefixFingerprint.length);
+      const prefix = await fingerprintRange(this.handle, 0n, this.prefixFingerprint.length, onReadWait);
       guard?.();
       const oldTail = await fingerprintRange(
         this.handle,
         this.fileSize - BigInt(this.tailFingerprint.length),
         this.tailFingerprint.length,
+        onReadWait,
       );
       guard?.();
       if (
@@ -1315,7 +1572,7 @@ export class JsonlFileEngine {
         && oldTail.hash === this.tailFingerprint.hash
         && oldTail.length === this.tailFingerprint.length
       ) {
-        const original = await this.getFullFingerprint();
+        const original = await this.getFullFingerprint(onReadWait);
         if (original === undefined) {
           // Keep the already-open generation readable while a large writer is
           // still moving. The recovery coordinator will establish a stable
@@ -1323,7 +1580,7 @@ export class JsonlFileEngine {
           // beyond this snapshot are never admitted by this engine.
           return;
         }
-        const currentOldRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard);
+        const currentOldRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard, onReadWait);
         if (currentOldRange.hash !== original.hash || currentOldRange.length !== original.length) {
           this.invalidateSnapshot();
           throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed inside the open snapshot range.');
@@ -1346,11 +1603,11 @@ export class JsonlFileEngine {
       current.size === this.fileSize
       && (current.mtimeNs !== this.sourceMtimeNs || current.ctimeNs !== this.sourceCtimeNs)
     ) {
-      const original = await this.getFullFingerprint();
+      const original = await this.getFullFingerprint(onReadWait);
       if (original === undefined) {
         throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source has no stable baseline; rebuild after the writer settles.');
       }
-      const currentRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard);
+      const currentRange = await fingerprintWholeRange(this.handle, this.fileSize, undefined, guard, onReadWait);
       if (currentRange.hash !== original.hash || currentRange.length !== original.length) {
         this.invalidateSnapshot();
         throw new JsonlEngineError('SOURCE_CHANGED', 'The JSONL source changed inside the open snapshot range.');
@@ -1397,7 +1654,7 @@ export class JsonlFileEngine {
     }
   }
 
-  private getFullFingerprint(): Promise<FullSourceFingerprint | undefined> {
+  private getFullFingerprint(onReadWait?: ReadWaitObserver): Promise<FullSourceFingerprint | undefined> {
     if (this.fullFingerprint === undefined) {
       // Large files do not pay this O(n) read during open/first-page work. The
       // first refresh or snapshot guard that needs an exact baseline starts it
@@ -1409,6 +1666,7 @@ export class JsonlFileEngine {
           this.sourceMtimeNs,
           this.sourceCtimeNs,
           this.fingerprintAbort.signal,
+          onReadWait,
         ))
         .then((result) => {
           this.fullFingerprintKnown = result !== undefined;
@@ -1427,6 +1685,9 @@ export class JsonlFileEngine {
     internal: InternalRecordRef,
     guard: () => void,
     full = false,
+    readWindow?: ForwardPageReadWindow,
+    timing?: QueryTimingContext,
+    onReadWait?: ReadWaitObserver,
   ): Promise<HydratedRecord> {
     guard();
     const hydrationLimit = full ? this.options.fullRecordMaxBytes : this.options.maxRecordBytes;
@@ -1435,7 +1696,7 @@ export class JsonlFileEngine {
       const previewLength = Number(internal.contentByteLength < BigInt(this.options.previewBytes)
         ? internal.contentByteLength
         : BigInt(this.options.previewBytes));
-      const previewBytes = await this.readExactly(internal.byteStart, previewLength, guard);
+      const previewBytes = await this.readExactly(internal.byteStart, previewLength, guard, undefined, previewLength, onReadWait);
       const rawPreview = decodePreview(stripInitialBom(previewBytes, internal.ordinal));
       const ref = this.index.toPublic(internal, this.snapshot.generation);
       const problems: ProblemRef[] = [{
@@ -1454,12 +1715,19 @@ export class JsonlFileEngine {
     }
 
     const length = Number(internal.contentByteLength);
-    const bytes = await this.readExactly(internal.byteStart, length, guard);
+    const bytes = await this.readExactly(
+      internal.byteStart,
+      length,
+      guard,
+      readWindow,
+      length + internal.delimiterByteLength,
+      onReadWait,
+    );
     const hasBom = hasInitialBom(bytes, internal.ordinal);
     const content = stripInitialBom(bytes, internal.ordinal);
     let text: string;
     try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(content);
+      text = withTrace(timing, 'parseMs', () => new TextDecoder('utf-8', { fatal: true }).decode(content));
     } catch (error) {
       internal.parseState = 'encoding_error';
       const ref = this.index.toPublic(internal, this.snapshot.generation);
@@ -1495,7 +1763,7 @@ export class JsonlFileEngine {
 
     let value: unknown;
     try {
-      value = JSON.parse(text) as unknown;
+      value = withTrace(timing, 'parseMs', () => JSON.parse(text) as unknown);
     } catch (error) {
       internal.parseState = 'invalid_json';
       const ref = this.index.toPublic(internal, this.snapshot.generation);
@@ -1544,14 +1812,30 @@ export class JsonlFileEngine {
     );
   }
 
-  private async readExactly(start: bigint, length: number, guard: () => void): Promise<Buffer> {
+  private async readExactly(
+    start: bigint,
+    length: number,
+    guard: () => void,
+    readWindow?: ForwardPageReadWindow,
+    recordSpan = length,
+    onReadWait?: ReadWaitObserver,
+  ): Promise<Buffer> {
     if (length === 0) return Buffer.alloc(0);
+    const cached = await readWindow?.read(start, length, recordSpan, guard, onReadWait);
+    if (cached !== undefined) return cached;
     const result = Buffer.allocUnsafe(length);
     let offset = 0;
     while (offset < length) {
       guard();
       const readLength = Math.min(this.options.readChunkBytes, length - offset);
-      const { bytesRead } = await this.handle.read(result, offset, readLength, start + BigInt(offset));
+      const bytesRead = await readFileHandle(
+        this.handle,
+        result,
+        offset,
+        readLength,
+        start + BigInt(offset),
+        onReadWait,
+      );
       guard();
       if (bytesRead <= 0) {
         throw new JsonlEngineError('UNEXPECTED_EOF', 'The JSONL record ended before its indexed byte boundary.');
@@ -1594,6 +1878,8 @@ export class JsonlFileEngine {
     hydrated: HydratedRecord,
     columns: ColumnSpec[],
     profile?: AgentRowProjection,
+    selectedProfileId?: string,
+    projection: RowProjectionPlan = resolveRowProjectionPlan(undefined, selectedProfileId),
   ): RowProjection {
     const genericSummary = summaryForRecord(hydrated, this.options.rowPreviewCharacters);
     const cells = columns.flatMap((column): CellProjection[] => {
@@ -1626,11 +1912,24 @@ export class JsonlFileEngine {
       return [cellForValue(column.id, resolved.value, this.options.rowPreviewCharacters)];
     });
 
+    const bfclV3 = projection.dataset && hydrated.value !== undefined && isBfclV3Candidate(hydrated.value)
+      ? summarizeBfclV3Record(hydrated.value)
+      : undefined;
+    const opentelemetry = selectedProfileId === 'opentelemetry' && hydrated.value !== undefined
+      ? summarizeOpenTelemetryRecord(hydrated.value)
+      : undefined;
+    const datasetInsights = bfclV3 !== undefined
+      ? { bfclV3 }
+      : (opentelemetry?.recognized === true ? { opentelemetry } : undefined);
     return {
       ref: hydrated.ref,
       ...(hydrated.value === undefined ? {} : { kind: jsonKindOf(hydrated.value) }),
       cells,
       genericSummary,
+      ...(projection.conversation ? { conversation: projectConversation(hydrated.value, profile) } : {}),
+      ...(projection.dataset
+        ? { dataset: summarizeDatasetRecord(hydrated.value, hydrated.ref.parseState) } : {}),
+      ...(datasetInsights === undefined ? {} : { datasetInsights }),
       ...(profile === undefined ? {} : { profile }),
       ...(hydrated.problems.length === 0 ? {} : { problems: hydrated.problems }),
     };
@@ -1727,6 +2026,13 @@ function normalizeRowScanBudget(
     ...(maxExaminedBytes === undefined ? {} : { maxExaminedBytes }),
     ...(deadlineEpochMs === undefined ? {} : { deadlineEpochMs }),
   };
+}
+
+function normalizeReturnedByteLimit(value: string | bigint | undefined, engineLimit: number): bigint {
+  if (value === undefined) return BigInt(engineLimit);
+  const parsed = typeof value === 'bigint' ? value : parseNonNegativeBigInt(value, 'maxReturnedBytes');
+  if (parsed < 1n) throw new JsonlEngineError('INVALID_ARGUMENT', 'maxReturnedBytes must be greater than zero.');
+  return parsed < BigInt(engineLimit) ? parsed : BigInt(engineLimit);
 }
 
 function normalizeProblemScanBudget(

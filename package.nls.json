@@ -1,0 +1,3 @@
+{
+  "capabilities.untrustedWorkspaces.description": "JSONL viewing remains available in Restricted Mode, but ACP agents configured by legacy settings or profile lists are disabled because launching an external process requires a trusted workspace."
+}

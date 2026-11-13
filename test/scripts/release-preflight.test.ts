@@ -280,8 +280,8 @@ describe('release candidate integrity', () => {
   });
 
   it('pins the pnpm setup action to the verified peeled commit', async () => {
-    const expected = 'ea17c68df8912ef543352723c149a84f56e3d413';
-    for (const workflow of ['ci.yml', 'maintenance.yml']) {
+    const expected = '73e46992e05b19abd31f2f3c20e0e7370d762115';
+    for (const workflow of ['ci.yml', 'maintenance.yml', 'extension-publish.yml', 'npm-publish.yml']) {
       const source = await readFile(new URL(`../../.github/workflows/${workflow}`, import.meta.url), 'utf8');
       const references = [...source.matchAll(/uses:\s*pnpm\/action-setup@([^\s#]+)/g)].map((match) => match[1]);
       expect(references.length).toBeGreaterThan(0);
@@ -294,6 +294,16 @@ describe('release candidate integrity', () => {
     expect(source).toContain('${{ runner.temp }}/jsonlview-maintenance');
     expect(source).toContain('${{ runner.temp }}/jsonlview-benchmarks');
     expect(source).not.toContain('.maintenance-artifacts');
+  });
+
+  it('requires module review and the built standalone MCP CLI suite in the quality job', async () => {
+    const workflow = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const qualityJob = workflow.split(/^ {2}quality:\s*$/m)[1]?.split(/^ {2}[\w-]+:\s*$/m)[0] ?? '';
+    expect(qualityJob).toContain('run: pnpm review:modules');
+    expect(qualityJob).toContain('run: pnpm --filter @jsonlview/mcp-server test');
+    expect(qualityJob).not.toContain('continue-on-error: true');
+    const manifest = JSON.parse(await readFile(new URL('../../packages/mcp-server/package.json', import.meta.url), 'utf8'));
+    expect(manifest.scripts.test).toBe('pnpm build && node --test test/*.test.mjs');
   });
 
   it('runs the locked native CLI directly and fails the Windows job at the source', async () => {
@@ -324,6 +334,8 @@ describe('release candidate integrity', () => {
     expect(npm.command).toBe(process.execPath);
     expect(npm.prefix[0]).toMatch(/npm-cli\.js$/i);
     expect(pnpm.command.toLowerCase()).not.toMatch(/\.cmd$/);
+    if (pnpm.command.toLowerCase().endsWith('.exe') && pnpm.command.toLowerCase() !== process.execPath.toLowerCase()) expect(pnpm.prefix).toEqual([]);
+    else expect(pnpm.prefix[0]).toMatch(/pnpm\.(?:c?js)$/i);
   });
 
   it('distinguishes npm access tokens from npm runtime environment names', () => {
@@ -423,15 +435,15 @@ describe('release candidate integrity', () => {
   });
 
   it('rejects npm and VSIX candidates built from different production bundles', () => {
-    const npmFiles = ['extension.cjs', 'webview.css', 'webview.js'].map((path, index) => ({
+    const npmFiles = ['execution-bundle-inventory.json', 'execution-identity.json', 'extension.cjs', 'mcp-server.cjs', 'webview.css', 'webview.js'].map((path, index) => ({
       path,
       bytes: index + 1,
       sha256: String(index + 1).repeat(64),
     }));
     const vsixFiles = npmFiles.map((file) => ({ ...file }));
     vsixFiles[0] = { ...vsixFiles[0]!, sha256: 'f'.repeat(64) };
-    const npmBundle = { files: npmFiles, bytes: 6, sha256: bundleInventoryDigest(npmFiles) };
-    const vsixBundle = { files: vsixFiles, bytes: 6, sha256: bundleInventoryDigest(vsixFiles) };
+    const npmBundle = { files: npmFiles, bytes: 21, sha256: bundleInventoryDigest(npmFiles) };
+    const vsixBundle = { files: vsixFiles, bytes: 21, sha256: bundleInventoryDigest(vsixFiles) };
 
     expect(compareBundleInventories(npmBundle, npmBundle)).toEqual([]);
     expect(compareBundleInventories(npmBundle, vsixBundle)).toContain('bundle inventory digests differ');
@@ -490,7 +502,10 @@ describe('release candidate integrity', () => {
   it('rejects missing, duplicate, and unexpected VSIX production bundle entries', async () => {
     const directory = await createTemporaryDirectory();
     const validEntries = [
+      { name: 'extension/dist/execution-bundle-inventory.json', contents: Buffer.from('{}', 'utf8') },
+      { name: 'extension/dist/execution-identity.json', contents: Buffer.from('{}', 'utf8') },
       { name: 'extension/dist/extension.cjs', contents: Buffer.from('extension', 'utf8') },
+      { name: 'extension/dist/mcp-server.cjs', contents: Buffer.from('mcp-server', 'utf8') },
       { name: 'extension/dist/webview.css', contents: Buffer.from('css', 'utf8') },
       { name: 'extension/dist/webview.js', contents: Buffer.from('webview', 'utf8') },
     ];

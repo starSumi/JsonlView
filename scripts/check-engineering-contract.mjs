@@ -1,6 +1,7 @@
 import { access, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkDeprecatedQueryDtoImports } from './check-query-dto-facade.mjs';
 import { loadReleaseTargets } from './release-targets.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -14,6 +15,7 @@ const requiredContractText = [
   'pnpm check:agent-spec',
   'pnpm check:docs-index',
   'pnpm check:contract',
+  'pnpm verify:execution-identity',
 ];
 const adrFiles = [
   '001-format-profile-boundary.md',
@@ -49,28 +51,42 @@ const pinnedWorkflowActions = [
   {
     file: '.github/workflows/ci.yml',
     action: 'pnpm/action-setup',
-    // v6.1.0 is an annotated tag; pin the peeled commit so GitHub receives an
+    // v6.1.1 is an annotated tag; pin the peeled commit so GitHub receives an
     // immutable commit reference rather than the tag object itself.
-    sha: 'ea17c68df8912ef543352723c149a84f56e3d413',
+    sha: '73e46992e05b19abd31f2f3c20e0e7370d762115',
   },
   {
     file: '.github/workflows/maintenance.yml',
     action: 'pnpm/action-setup',
-    sha: 'ea17c68df8912ef543352723c149a84f56e3d413',
+    sha: '73e46992e05b19abd31f2f3c20e0e7370d762115',
+  },
+  {
+    file: '.github/workflows/extension-publish.yml',
+    action: 'pnpm/action-setup',
+    sha: '73e46992e05b19abd31f2f3c20e0e7370d762115',
+  },
+  {
+    file: '.github/workflows/npm-publish.yml',
+    action: 'pnpm/action-setup',
+    sha: '73e46992e05b19abd31f2f3c20e0e7370d762115',
   },
   {
     file: '.github/workflows/codeql.yml',
     action: 'github/codeql-action/init',
-    sha: '2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2',
+    sha: '33d7b85da1a04171e211befe2c739303b9a4c066',
   },
   {
     file: '.github/workflows/codeql.yml',
     action: 'github/codeql-action/analyze',
-    sha: '2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2',
+    sha: '33d7b85da1a04171e211befe2c739303b9a4c066',
   },
 ];
 
 const failures = [];
+const queryDtoImports = await checkDeprecatedQueryDtoImports();
+for (const violation of queryDtoImports.violations) {
+  failures.push(`${violation.file}:${violation.line} imports deprecated ${violation.specifier}; use @shared/contracts/query-dto`);
+}
 const text = async (relativePath) => readFile(join(root, relativePath), 'utf8');
 const exists = async (relativePath) => {
   try {
@@ -141,16 +157,19 @@ for (const pin of pinnedWorkflowActions) {
 }
 
 const packageJson = JSON.parse(await text('package.json'));
-for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'check:contract', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
+for (const script of ['typecheck', 'test', 'test:coverage', 'build', 'verify:execution-identity', 'agent-spec-lint', 'check:agent-spec', 'check:docs-index', 'docs:index', 'docs:index:generate', 'check:contract', 'check:architecture', 'check:typescript-erasable', 'check:typescript-gates', 'check:typescript-tests', 'check:biome', 'check:changelog', 'check:cargo-notices', 'generate:cargo-notices', 'check:runtime-notices', 'discover:producers', 'native:clippy', 'release:preflight', 'check:release-lineage', 'promotion:plan', 'promotion:join', 'sync:local', 'package:npm', 'package:vsix:candidate', 'verify:vsix-targets']) {
   if (typeof packageJson.scripts?.[script] !== 'string') failures.push(`package.json missing script: ${script}`);
 }
 
-for (const helper of ['scripts/check-agent-spec.mjs', 'scripts/check-docs-index.mjs', 'scripts/check-doc-metadata.mjs', 'scripts/npm-tarball-integrity.mjs', 'scripts/vsix-archive-integrity.mjs', 'scripts/verify-candidate-pair.mjs', 'scripts/verify-vsix-targets.mjs', 'scripts/release-targets.mjs', 'scripts/promotion-join.mjs', 'scripts/check-release-lineage.mjs', 'scripts/license-policy.mjs', 'scripts/check-changelog.mjs']) {
+for (const helper of ['scripts/check-agent-spec.mjs', 'scripts/check-docs-index.mjs', 'scripts/check-doc-metadata.mjs', 'scripts/document-metadata.mjs', 'scripts/docs-index.mjs', 'scripts/generate-doc-index.mjs', 'scripts/check-typescript-gates.mjs', 'scripts/react-compiler.mjs', 'scripts/react-compiler-smoke.mjs', 'scripts/npm-tarball-integrity.mjs', 'scripts/vsix-archive-integrity.mjs', 'scripts/verify-candidate-pair.mjs', 'scripts/verify-vsix-targets.mjs', 'scripts/release-targets.mjs', 'scripts/promotion-join.mjs', 'scripts/check-release-lineage.mjs', 'scripts/license-policy.mjs', 'scripts/check-changelog.mjs']) {
   if (!(await exists(helper))) failures.push(`release helper is missing: ${helper}`);
 }
 
-for (const config of ['config/agent-spec.json', 'config/docs-index.json', 'config/docs-metadata.json']) {
+for (const config of ['config/agent-spec.json', 'config/docs-index.json', 'config/docs-metadata.json', 'config/webview-architecture.json']) {
   if (!(await exists(config))) failures.push('project governance manifest is missing: ' + config);
+}
+for (const config of ['tsconfig.json', 'tsconfig.erasable-syntax.json', 'tsconfig.declaration-gate.json', 'tsconfig.tests.json']) {
+  if (!(await exists(config))) failures.push('TypeScript gate config is missing: ' + config);
 }
 
 try {
@@ -200,6 +219,8 @@ for (const signature of [
   'export declare function abiVersion(): number;',
   'export declare function capabilities(): number;',
   'export declare function scanLf(input: Uint8Array, start: number, limit: number): Uint32Array;',
+  'export declare function mcpManagerCapability(): number;',
+  'export declare class McpManager',
 ]) {
   if (!nativeDeclaration.includes(signature)) failures.push(`native/jsonl-core/index.d.ts is missing: ${signature}`);
 }

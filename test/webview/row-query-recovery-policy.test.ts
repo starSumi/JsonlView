@@ -108,6 +108,31 @@ describe('row query recovery policy', () => {
       .toEqual({ kind: 'stop' });
   });
 
+  it('uses the correlated page-one intent instead of the previously visible page for empty recovery', () => {
+    expect(planEmptyRestore({ ...emptyInput, restore: { ...restore, requestedOptions: {} },
+      requestedOptions: {}, totalRecords: '1000' })).toEqual({ kind: 'stop' });
+  });
+
+  it('lets explicit page one override a saved nonempty cursor during empty recovery', () => {
+    expect(planEmptyRestore({ ...emptyInput, restore: { ...restore, requestedOptions: emptyInput.requestedOptions },
+      requestedOptions: {}, totalRecords: '1000' })).toEqual({ kind: 'stop' });
+  });
+
+  it('lets an explicit nonempty cursor override saved page one during empty recovery', () => {
+    const requestedOptions = { anchorOrdinal: '300', direction: 'backward' as const };
+    expect(planEmptyRestore({ ...emptyInput, restore: { ...restore, requestedOptions: {} },
+      requestedOptions, totalRecords: '1000' }))
+      .toMatchObject({ kind: 'retry', options: { anchorOrdinal: '199', direction: 'forward' } });
+  });
+
+  it('clamps a backward page from its exclusive cursor rather than the previous viewport', () => {
+    const options = { anchorOrdinal: '300', direction: 'backward' as const };
+    const decision = planEmptyRestore({ ...emptyInput, restore: { ...restore, requestedOptions: options },
+      requestedOptions: options, totalRecords: '1000' });
+    expect(decision).toMatchObject({ kind: 'retry', options: { anchorOrdinal: '199', direction: 'forward' } });
+    expect(options).toEqual({ anchorOrdinal: '300', direction: 'backward' });
+  });
+
   it('retains the completed request while waiting so later progress cannot retry identical options', () => {
     const waiting = planEmptyRestore({ ...emptyInput, indexingComplete: false, totalRecords: undefined });
     if (waiting.kind !== 'wait-index') throw new Error('Expected pending indexing');
@@ -142,7 +167,7 @@ describe('row query recovery policy', () => {
     const captured = captureRebuild({ ...captureInput, viewport: { ...viewport, firstVisibleOrdinal: ordinal } });
     expect(captured.options.anchorOrdinal).toBe('900719925474099312344');
     expect(planEmptyRestore({ ...emptyInput, restore: { ...restore, firstVisibleOrdinal: ordinal },
-      totalRecords: '900719925474099312300' }))
+      requestedOptions: captured.options, totalRecords: '900719925474099312300' }))
       .toMatchObject({ kind: 'retry', options: { anchorOrdinal: '900719925474099312199', direction: 'forward' } });
   });
 });

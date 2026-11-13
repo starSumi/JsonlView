@@ -1,3 +1,15 @@
+---
+id: "032-bounded-session-pagination"
+path: "docs/decisions/032-bounded-session-pagination.md"
+title: "Bounded Session Pagination and Source-State Continuations"
+kind: "decision"
+status: "experimental"
+owner: "product"
+tags: ["bounds","pagination","session-navigator"]
+evidence: []
+revisit: "when source-state continuation semantics change"
+rollback: "restore bounded pagination and discard stale continuations"
+---
 # ADR-032: Bounded Session Pagination and Source-State Continuations
 
 Status: experimental; accepted for the opt-in Session Navigator.
@@ -82,3 +94,33 @@ The append remains atomic: a page row that violates the catalog schema rolls
 back without changing the previously committed generation, fingerprint, or
 continuation cursor. The returned snapshot still carries the existing facade
 shape and stable generation identity.
+
+## Bounded catalog tree branches (2026-10-15)
+
+The Extension Host owns catalog child continuations independently of provider
+scan continuations. A source or entity returns at most 200 indexed entities and
+one expandable More indexed sessions branch. Expanding the branch reads the
+next keyset page; it does not scan provider metadata or concatenate prior pages
+in the tree provider. VS Code owns the expanded branches while active reads
+alone occupy the provider's single-flight map. This preserves reachability
+without restoring unbounded entity materialization.
+
+Each branch carries source, catalog generation, parent, ordering, cursor, and
+source lifecycle epoch. Refresh, configuration changes, hidden views, source
+revocation, and disposal invalidate active reads. A late page cannot publish
+entities after these boundaries or a catalog generation switch. Repeated
+concurrent expansion shares one read. Invalid or expired cursors produce a
+diagnostic leaf with the existing refresh action; a refresh rebuilds branches
+from the current catalog.
+
+Title cursors retain the original selected title. SQLite applies NOCASE in
+both the order and keyset predicate; JavaScript locale case conversion does
+not define the cursor order. This follows SQLite's built-in collation contract,
+whose ASCII case folding differs from Unicode locale folding.
+
+Focused synthetic tests cover 205 roots and 205 children, bounded responses,
+unique reachability, repeated expansion, malformed and cross-parent cursors,
+generation drift, late lifecycle reads, and non-ASCII title boundaries. This is
+local contract and failure evidence; actual VS Code host presentation remains
+a separate acceptance gate. Revert this scoped change or disable the opt-in
+Navigator to roll back; source files and provider databases remain read-only.

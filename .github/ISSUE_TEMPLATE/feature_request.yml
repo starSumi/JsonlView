@@ -1,0 +1,106 @@
+name: Feature request
+description: Propose a useful, bounded improvement to JsonlView
+title: "[Feature]: "
+labels:
+  - enhancement
+  - rfc
+body:
+  - type: markdown
+    attributes:
+      value: |
+        JsonlView preserves the source JSONL record and is read-only by default.
+        If a proposal needs source mutation, network access, arbitrary command
+        execution, or provider database writes, describe the explicit opt-in,
+        trust boundary, and rollback behavior.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before opening this proposal
+      options:
+        - label: I searched existing issues and documentation for an existing or related proposal.
+          required: true
+        - label: I removed private data, secrets, and machine-specific paths from this proposal.
+          required: true
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Proposed product surface
+      options:
+        - Core data engine or indexing
+        - Table, Timeline, Schema, or Problems view
+        - Insights, Tree, Raw, Derived, or Bytes view
+        - Source intake or temporary preview
+        - Session Navigator
+        - Profile detection or semantic projection
+        - Native scanner
+        - ACP or diagnostic handoff
+        - Packaging or installation
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and user scenario
+      description: What limitation exists, who encounters it, and how often does it matter?
+      placeholder: Describe the real workflow and the cost of the current limitation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_workflow
+    attributes:
+      label: Current workflow and workaround
+      description: Explain what users do today and why it is insufficient.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the user-visible behavior, inputs, outputs, and important states.
+      placeholder: Include a small example or wire shape when it clarifies the proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and trade-offs
+      description: List alternatives considered and the reason this proposal is preferable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Compatibility, privacy, and performance impact
+      description: Explain effects on source authority, trust, local paths, memory, latency, and supported formats.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable outcomes that would make this proposal complete.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I can help implement or validate this proposal after the design is accepted.
+          required: false
+    validations:
+      required: false
+

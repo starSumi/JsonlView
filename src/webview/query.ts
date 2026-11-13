@@ -6,7 +6,7 @@ import type {
   Predicate,
   RowFilter,
   RowFilterOperator,
-} from '../shared/types';
+} from '@shared/types';
 
 /** Combine independent UI filters without changing the engine predicate AST. */
 export function combinePredicates(...predicates: Array<Predicate | undefined>): Predicate | undefined {

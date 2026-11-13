@@ -1,3 +1,15 @@
+---
+id: "format-and-profile-boundaries"
+path: "docs/format-and-profile-boundaries.md"
+title: "Format and profile boundaries"
+kind: "guide"
+status: "active"
+owner: "product"
+tags: ["contracts","jsonl","profiles"]
+evidence: []
+revisit: "when a source format or profile contract changes"
+rollback: "restore the prior contract and supersede this guide"
+---
 # Format and profile boundaries
 
 JsonlView is an event data studio. JSONL/NDJSON is its first physical format
@@ -124,6 +136,7 @@ they are physically stored as JSONL:
 | OpenTelemetry | log record, span record, trace/span IDs, severity, resource, attributes | one record or one file-exporter envelope |
 | Agent sessions | session, turn, message, reasoning, tool call/result, usage | one provider event envelope |
 | SWE trajectories | task, step, action, observation, patch, test, result | one trajectory event |
+| Training datasets | ShareGPT conversations, VirtualHome task/evaluation fields, or sft-master conversation/keyword-result rows | one dataset object per physical JSONL line |
 
 Detection requires multiple content signals and is bounded to a sample window.
 Ambiguous data falls back to Generic JSONL. Projection preserves unknown events
@@ -179,12 +192,12 @@ arbitrary application fields named `text` are not promoted to rich content.
 
 An OpenTelemetry Protocol File Exporter line can contain `resourceLogs`,
 `resourceSpans`, or `resourceMetrics` with multiple nested signal records. The
-current profile recognizes non-empty `resourceLogs` and `resourceSpans`; a
-`resourceMetrics`-only envelope remains Generic JSONL. The next scoped semantic
-slice is bounded metrics recognition and projection over this same JSONL
-adapter. Every envelope remains one physical row and receives a bounded
-summary. The viewer does not pretend nested signals have independent source
-offsets.
+profile recognizes all three envelope kinds plus bounded individual log, span,
+and metric records. Table columns expose signal, timestamp/severity, nested
+record count, service, first observed operation, trace/error counts, and
+duration. Detail renders a semantic envelope summary, while Insights aggregates
+the current physical page. Every envelope remains one physical row and receives
+a bounded summary; nested signals never acquire invented source offsets.
 
 ## Not supported by the current adapter
 

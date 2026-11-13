@@ -135,6 +135,27 @@ describe('release target contract', () => {
     ]));
   });
 
+  it('rejects top-level native and bundle digest drift explicitly', async () => {
+    const contract = await loadReleaseTargets();
+    const nativeDrift = verifyVsixTargetEvidence({
+      openVsx: archive('jsonl-view', 'JsonlView'),
+      marketplace: { ...archive('jsonlview-data-studio', 'JsonlView Data Studio'), native: { sha256: 'f'.repeat(64) } },
+    }, {
+      openVsxTarget: { key: 'open-vsx', ...contract.extensions['open-vsx'] },
+      marketplaceTarget: { key: 'marketplace', ...contract.extensions.marketplace },
+    });
+    expect(nativeDrift.failures).toContain('native payload digest differs between targets');
+
+    const bundleDrift = verifyVsixTargetEvidence({
+      openVsx: archive('jsonl-view', 'JsonlView'),
+      marketplace: { ...archive('jsonlview-data-studio', 'JsonlView Data Studio'), bundle: { sha256: 'e'.repeat(64) } },
+    }, {
+      openVsxTarget: { key: 'open-vsx', ...contract.extensions['open-vsx'] },
+      marketplaceTarget: { key: 'marketplace', ...contract.extensions.marketplace },
+    });
+    expect(bundleDrift.failures).toContain('production bundle digest differs between targets');
+  });
+
   it('keeps unperformed native comparisons distinct from false comparisons', () => {
     expect(booleanOrNull(undefined)).toBeNull();
     expect(booleanOrNull(false)).toBe(false);

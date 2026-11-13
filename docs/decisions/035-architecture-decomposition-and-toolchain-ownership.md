@@ -1,3 +1,15 @@
+---
+id: "035-architecture-decomposition-and-toolchain-ownership"
+path: "docs/decisions/035-architecture-decomposition-and-toolchain-ownership.md"
+title: "Runtime-Bounded Decomposition And Toolchain Ownership"
+kind: "decision"
+status: "accepted"
+owner: "product"
+tags: ["architecture","ownership","toolchain"]
+evidence: []
+revisit: "when an independently buildable boundary exists"
+rollback: "return to the modular monolith boundary"
+---
 # ADR-035: Runtime-Bounded Decomposition And Toolchain Ownership
 
 Status: accepted
