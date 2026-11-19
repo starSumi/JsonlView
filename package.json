@@ -748,7 +748,7 @@
     "@babel/parser": "7.29.8",
     "@biomejs/biome": "2.6.4",
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@napi-rs/cli": "3.10.5",
+    "@napi-rs/cli": "3.10.12",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
